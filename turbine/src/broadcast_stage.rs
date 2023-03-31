@@ -69,7 +69,7 @@ pub enum Error {
     #[error("Duplicate slot broadcast: {0}")]
     DuplicateSlotBroadcast(Slot),
     #[error("Invalid Merkle root, slot: {slot}, index: {index}")]
-    InvalidMerkleRoot { slot: Slot, index: u64 },
+    InvalidMerkleRoot { slot: Slot, index: u32 },
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -81,13 +81,15 @@ pub enum Error {
     #[error(transparent)]
     Serialize(#[from] std::boxed::Box<bincode::ErrorKind>),
     #[error("Shred not found, slot: {slot}, index: {index}")]
-    ShredNotFound { slot: Slot, index: u64 },
+    ShredNotFound { slot: Slot, index: u32 },
     #[error(transparent)]
     TransportError(#[from] solana_sdk::transport::TransportError),
     #[error("Unknown last index, slot: {0}")]
     UnknownLastIndex(Slot),
     #[error("Unknown slot meta, slot: {0}")]
     UnknownSlotMeta(Slot),
+    #[error("Slot last shred index is above u32::MAX, slot: {slot}, index: {index}")]
+    LastShredIndexOutOfRange { slot: Slot, index: u64 },
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -537,7 +539,7 @@ pub mod test {
     #[allow(clippy::type_complexity)]
     fn make_transmit_shreds(
         slot: Slot,
-        num: u64,
+        num: u32,
     ) -> (
         Vec<Shred>,
         Vec<Shred>,
@@ -578,21 +580,21 @@ pub mod test {
 
     fn check_all_shreds_received(
         transmit_receiver: &TransmitReceiver,
-        mut data_index: u64,
-        mut coding_index: u64,
-        num_expected_data_shreds: u64,
-        num_expected_coding_shreds: u64,
+        mut data_index: u32,
+        mut coding_index: u32,
+        num_expected_data_shreds: u32,
+        num_expected_coding_shreds: u32,
     ) {
         while let Ok((shreds, _)) = transmit_receiver.try_recv() {
             if shreds[0].is_data() {
                 for data_shred in shreds.iter() {
-                    assert_eq!(data_shred.index() as u64, data_index);
+                    assert_eq!(data_shred.index(), data_index);
                     data_index += 1;
                 }
             } else {
-                assert_eq!(shreds[0].index() as u64, coding_index);
+                assert_eq!(shreds[0].index(), coding_index);
                 for coding_shred in shreds.iter() {
-                    assert_eq!(coding_shred.index() as u64, coding_index);
+                    assert_eq!(coding_shred.index(), coding_index);
                     coding_index += 1;
                 }
             }
@@ -614,8 +616,8 @@ pub mod test {
         let updated_slot = 0;
         let (all_data_shreds, all_coding_shreds, _, _all_coding_transmit_shreds) =
             make_transmit_shreds(updated_slot, 10);
-        let num_data_shreds = all_data_shreds.len();
-        let num_coding_shreds = all_coding_shreds.len();
+        let num_data_shreds = u32::try_from(all_data_shreds.len()).unwrap();
+        let num_coding_shreds = u32::try_from(all_coding_shreds.len()).unwrap();
         assert!(num_data_shreds >= 10);
 
         // Insert all the shreds
@@ -637,13 +639,7 @@ pub mod test {
         )
         .unwrap();
         // Check all the data shreds were received only once
-        check_all_shreds_received(
-            &transmit_receiver,
-            0,
-            0,
-            num_data_shreds as u64,
-            num_coding_shreds as u64,
-        );
+        check_all_shreds_received(&transmit_receiver, 0, 0, num_data_shreds, num_coding_shreds);
     }
 
     struct MockBroadcastStage {

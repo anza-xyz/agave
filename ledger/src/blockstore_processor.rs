@@ -1268,7 +1268,7 @@ impl ReplaySlotStats {
         slot: Slot,
         num_txs: usize,
         num_entries: usize,
-        num_shreds: u64,
+        num_shreds: u32,
         bank_complete_time_us: u64,
         is_unified_scheduler_enabled: bool,
     ) {
@@ -1389,7 +1389,7 @@ impl ReplaySlotStats {
 pub struct ConfirmationProgress {
     pub last_entry: Hash,
     pub tick_hash_count: u64,
-    pub num_shreds: u64,
+    pub num_shreds: u32,
     pub num_entries: usize,
     pub num_txs: usize,
 }
@@ -1455,7 +1455,7 @@ pub fn confirm_slot(
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    slot_entries_load_result: (Vec<Entry>, u64, bool),
+    slot_entries_load_result: (Vec<Entry>, u32, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
