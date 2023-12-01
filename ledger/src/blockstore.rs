@@ -19,7 +19,7 @@ use {
         next_slots_iterator::NextSlotsIterator,
         shred::{
             self, max_ticks_per_n_shreds, ErasureSetId, ProcessShredsStats, ReedSolomonCache,
-            Shred, ShredData, ShredId, ShredType, Shredder,
+            Shred, ShredData, ShredId, ShredType, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -3679,6 +3679,84 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_entries_in_block(slot, vec![(start_index, end_index)], slot_meta)
+    }
+
+    /// Returns the merkle roots from the last `DATA_SHREDS_PER_FEC_BLOCK`
+    /// data shreds of a slot.
+    /// Will fail if:
+    ///     - Slot meta is missing
+    ///     - LAST_SHRED_IN_SLOT flag has not been received
+    ///     - There are missing shreds in the last fec set
+    /// If there are fewer than `DATA_SHREDS_PER_FEC_BLOCK` shreds in the slot
+    /// this will return all that are available.
+    fn get_last_merkle_roots(&self, slot: Slot) -> Result<Vec<Option<Hash>>> {
+        let slot_meta = self
+            .meta_cf
+            .get(slot)?
+            .ok_or(BlockstoreError::SlotUnavailable)?;
+        let last_shred_index = slot_meta
+            .last_index
+            .ok_or(BlockstoreError::InvalidShredData(Box::new(
+                bincode::ErrorKind::Custom(format!(
+                    "last shred index is missing for {slot} {slot_meta:?}"
+                )),
+            )))?;
+        let num_shreds = u64::try_from(DATA_SHREDS_PER_FEC_BLOCK)
+            .expect("DATA_SHREDS_PER_FEC_BLOCK should fit in u64");
+        let start_index = last_shred_index
+            .saturating_sub(num_shreds)
+            .saturating_add(1);
+        let keys: Vec<(Slot, u64)> = (start_index..=last_shred_index)
+            .map(|index| (slot, index))
+            .collect();
+
+        self.data_shred_cf
+            .multi_get_bytes(keys)
+            .into_iter()
+            .enumerate()
+            .map(|(idx, shred_bytes)| {
+                let shred_bytes = shred_bytes.ok().flatten();
+                if shred_bytes.is_none() {
+                    return Err(BlockstoreError::InvalidShredData(Box::new(
+                        bincode::ErrorKind::Custom(format!(
+                            "Missing shred for slot {slot}, index {idx}"
+                        )),
+                    )));
+                }
+                Ok(shred::layout::get_merkle_root(&shred_bytes.unwrap()))
+            })
+            .collect()
+    }
+
+    /// Returns true if the last `DATA_SHREDS_PER_FEC_BLOCK` data shreds of a
+    /// slot have the same merkle root, indicating they are a part of the same
+    /// FEC set.
+    /// Will fail if:
+    ///     - Slot meta is missing
+    ///     - LAST_SHRED_IN_SLOT flag has not been received
+    ///     - There are missing shreds in the last fec set
+    ///     - The block contains legacy shreds
+    pub fn is_last_fec_set_full(&self, slot: Slot) -> Result<bool> {
+        // We need to check if the last FEC set index contains at least `DATA_SHREDS_PER_FEC_BLOCK` data shreds.
+        // We compare the merkle roots of the last `DATA_SHREDS_PER_FEC_BLOCK` shreds in this block.
+        // Since the merkle root contains the fec_set_index, if all of them match, we know that the last fec set has
+        // at least `DATA_SHREDS_PER_FEC_BLOCK` shreds.
+        let last_merkle_roots = self.get_last_merkle_roots(slot)?;
+        if last_merkle_roots.len() < DATA_SHREDS_PER_FEC_BLOCK {
+            warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_merkle_roots.len());
+            return Ok(false);
+        }
+        let expected_merkle_root =
+            last_merkle_roots
+                .first()
+                .unwrap()
+                .ok_or(BlockstoreError::InvalidShredData(Box::new(
+                    bincode::ErrorKind::Custom("block contains legacy shreds".to_string()),
+                )))?;
+
+        Ok(last_merkle_roots
+            .iter()
+            .all(|merkle_root| *merkle_root == Some(expected_merkle_root)))
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
@@ -10254,13 +10332,31 @@ pub mod tests {
         fec_set_index: u32,
         chained_merkle_root: Option<Hash>,
     ) -> (Vec<Shred>, Vec<Shred>, Arc<LeaderScheduleCache>) {
+        setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+            slot,
+            parent_slot,
+            num_entries,
+            fec_set_index,
+            chained_merkle_root,
+            true,
+        )
+    }
+
+    fn setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+        slot: u64,
+        parent_slot: u64,
+        num_entries: u64,
+        fec_set_index: u32,
+        chained_merkle_root: Option<Hash>,
+        is_last_in_slot: bool,
+    ) -> (Vec<Shred>, Vec<Shred>, Arc<LeaderScheduleCache>) {
         let entries = make_slot_entries_with_transactions(num_entries);
         let leader_keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &leader_keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot, // is_last_in_slot
             chained_merkle_root,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
@@ -11783,5 +11879,129 @@ pub mod tests {
         assert!(blockstore
             .insert_shred_return_duplicate(coding_shred, &leader_schedule)
             .is_empty());
+    }
+
+    #[test]
+    fn test_is_last_fec_set_full() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let parent_slot = 0;
+        let slot = 1;
+
+        let fec_set_index = 30;
+        let (data_shreds, _, _) =
+            setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
+        let total_shreds = fec_set_index as u64 + data_shreds.len() as u64;
+
+        // FEC set should be padded
+        assert_eq!(data_shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
+
+        // Missing slot meta
+        assert_matches!(
+            blockstore.is_last_fec_set_full(0),
+            Err(BlockstoreError::SlotUnavailable)
+        );
+
+        // Incomplete slot
+        blockstore
+            .insert_shreds(
+                data_shreds[0..DATA_SHREDS_PER_FEC_BLOCK - 1].to_vec(),
+                None,
+                false,
+            )
+            .unwrap();
+        let meta = blockstore.meta(slot).unwrap().unwrap();
+        assert!(meta.last_index.is_none());
+        assert_matches!(
+            blockstore.is_last_fec_set_full(slot),
+            Err(BlockstoreError::InvalidShredData(_))
+        );
+        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
+
+        // Missing shreds
+        blockstore
+            .insert_shreds(data_shreds[1..].to_vec(), None, false)
+            .unwrap();
+        let meta = blockstore.meta(slot).unwrap().unwrap();
+        assert_eq!(meta.last_index, Some(total_shreds - 1));
+        assert_matches!(
+            blockstore.is_last_fec_set_full(slot),
+            Err(BlockstoreError::InvalidShredData(_))
+        );
+        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
+
+        // Full slot
+        blockstore.insert_shreds(data_shreds, None, false).unwrap();
+        assert!(blockstore.is_last_fec_set_full(slot).unwrap());
+        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
+
+        // Slot has less than DATA_SHREDS_PER_FEC_BLOCK shreds in total
+        let mut fec_set_index = 0;
+        let (first_data_shreds, _, _) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+                slot,
+                parent_slot,
+                10,
+                fec_set_index,
+                None,
+                false,
+            );
+        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
+        fec_set_index += first_data_shreds.len() as u32;
+        let (mut last_data_shreds, _, _) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+                slot,
+                parent_slot,
+                40,
+                fec_set_index,
+                Some(merkle_root),
+                false, // No padding
+            );
+        last_data_shreds.last_mut().unwrap().set_last_in_slot();
+        let total_shreds = first_data_shreds.len() + last_data_shreds.len();
+        assert!(total_shreds < DATA_SHREDS_PER_FEC_BLOCK);
+        blockstore
+            .insert_shreds(first_data_shreds, None, false)
+            .unwrap();
+        blockstore
+            .insert_shreds(last_data_shreds, None, false)
+            .unwrap();
+        assert!(!blockstore.is_last_fec_set_full(slot).unwrap());
+        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
+
+        // Slot has more than DATA_SHREDS_PER_FEC_BLOCK in total, but last FEC set has less
+        let mut fec_set_index = 0;
+        let (first_data_shreds, _, _) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+                slot,
+                parent_slot,
+                100,
+                fec_set_index,
+                None,
+                false,
+            );
+        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
+        fec_set_index += first_data_shreds.len() as u32;
+        let (mut last_data_shreds, _, _) =
+            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
+                slot,
+                parent_slot,
+                100,
+                fec_set_index,
+                Some(merkle_root),
+                false, // No padding
+            );
+        last_data_shreds.last_mut().unwrap().set_last_in_slot();
+        let total_shreds = first_data_shreds.len() + last_data_shreds.len();
+        assert!(last_data_shreds.len() < DATA_SHREDS_PER_FEC_BLOCK);
+        assert!(total_shreds > DATA_SHREDS_PER_FEC_BLOCK);
+        blockstore
+            .insert_shreds(first_data_shreds, None, false)
+            .unwrap();
+        blockstore
+            .insert_shreds(last_data_shreds, None, false)
+            .unwrap();
+        assert!(!blockstore.is_last_fec_set_full(slot).unwrap());
     }
 }

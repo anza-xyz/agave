@@ -140,7 +140,7 @@ impl ShredData {
     pub(super) fn set_last_in_slot(&mut self) {
         match self {
             Self::Legacy(shred) => shred.set_last_in_slot(),
-            Self::Merkle(_) => panic!("Not Implemented!"),
+            Self::Merkle(shred) => shred.set_last_in_slot(),
         }
     }
 
