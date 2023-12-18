@@ -46,4 +46,6 @@ impl TransactionProcessingCallback for MockBankCallback {
     fn get_feature_set(&self) -> Arc<FeatureSet> {
         self.feature_set.clone()
     }
+
+    fn insert_old_written_account(&self, _key: &Pubkey, _account: &AccountSharedData) {}
 }

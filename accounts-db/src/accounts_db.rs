@@ -35,10 +35,10 @@ use {
             AccountsFile, AccountsFileError, MatchAccountOwnerError, ALIGN_BOUNDARY_OFFSET,
         },
         accounts_hash::{
-            AccountHash, AccountsDeltaHash, AccountsHash, AccountsHashKind, AccountsHasher,
-            CalcAccountsHashConfig, CalculateHashIntermediate, HashStats, IncrementalAccountsHash,
-            SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
-            ZeroLamportAccounts,
+            AccountHash, AccountLTHash, AccountsDeltaHash, AccountsHash, AccountsHashKind,
+            AccountsHasher, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
+            IncrementalAccountsHash, SerdeAccountsDeltaHash, SerdeAccountsHash,
+            SerdeIncrementalAccountsHash, ZeroLamportAccounts,
         },
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountMapEntry, AccountSecondaryIndexes,
@@ -106,7 +106,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-            Arc, Condvar, Mutex,
+            Arc, Condvar, Mutex, RwLock,
         },
         thread::{sleep, Builder},
         time::{Duration, Instant},
@@ -500,6 +500,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     create_ancient_storage: CreateAncientStorage::Pack,
     test_partitioned_epoch_rewards: TestPartitionedEpochRewards::CompareResults,
     test_skip_rewrites_but_include_in_bank_hash: false,
+    enable_accumulate_account_hash_calculation: false,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -513,6 +514,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     create_ancient_storage: CreateAncientStorage::Pack,
     test_partitioned_epoch_rewards: TestPartitionedEpochRewards::None,
     test_skip_rewrites_but_include_in_bank_hash: false,
+    enable_accumulate_account_hash_calculation: false,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -558,6 +560,7 @@ pub struct AccountsDbConfig {
     /// how to create ancient storages
     pub create_ancient_storage: CreateAncientStorage,
     pub test_partitioned_epoch_rewards: TestPartitionedEpochRewards,
+    pub enable_accumulate_account_hash_calculation: bool,
 }
 
 #[cfg(not(test))]
@@ -911,6 +914,17 @@ impl<'a> LoadedAccount<'a> {
             }
             LoadedAccount::Cached(cached_account) => {
                 AccountsDb::hash_account(&cached_account.account, pubkey)
+            }
+        }
+    }
+
+    pub fn compute_lt_hash(&self, pubkey: &Pubkey) -> AccountLTHash {
+        match self {
+            LoadedAccount::Stored(stored_account_meta) => {
+                AccountsDb::lt_hash_account(stored_account_meta, stored_account_meta.pubkey())
+            }
+            LoadedAccount::Cached(cached_account) => {
+                AccountsDb::lt_hash_account(&cached_account.account, pubkey)
             }
         }
     }
@@ -1288,6 +1302,8 @@ pub struct AccountsDb {
 
     /// true if this client should skip rewrites but still include those rewrites in the bank hash as if rewrites had occurred.
     pub test_skip_rewrites_but_include_in_bank_hash: bool,
+
+    pub enable_accumulate_account_hash_calculation: bool,
 
     pub accounts_cache: AccountsCache,
 
@@ -2278,6 +2294,72 @@ pub struct PubkeyHashAccount {
     pub account: AccountSharedData,
 }
 
+#[derive(Debug, Eq, PartialEq, AbiExample)]
+pub enum LTHashCacheValue {
+    /// AccountLTHash is 2048 byte, while AccountSharedData is only 64 bytes. If
+    /// we are holding AccountLTHash directly, this would result the enum to be
+    /// 2056 bytes.
+    ///
+    /// From benchmark, i.e. `test_accounts_lt_hash`, it shows that boxing both
+    /// variants improves cache performance.
+    Hash(Box<AccountLTHash>),
+    Account(Box<AccountSharedData>),
+}
+
+pub type LTHashCacheMap = RwLock<HashMap<Pubkey, LTHashCacheValue>>;
+
+pub struct LTHashCacheStat {
+    hits: u64,
+    load_old_accounts: u64,
+    skip_load_old_accounts: u64,
+    before_size: u64,
+    pub after_size: u64,
+}
+
+impl std::fmt::Display for LTHashCacheStat {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "LTHashCacheStat {{ hits: {}, load_old_accounts: {}, \
+            skip_load_old_accounts: {} before_size: {}, after_size: {} }}",
+            self.hits,
+            self.load_old_accounts,
+            self.skip_load_old_accounts,
+            self.before_size,
+            self.after_size
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct AccountsDeltaHashCalculationOutput {
+    /// `delta_hash` computed from all the accounts that have been written to.
+    pub delta_hash: AccountsDeltaHash,
+
+    /// Contains the accounts that have been written to.
+    ///
+    /// Note that `accounts` collected in the vec may be in arbitrary order as a
+    /// result of parallel scanning in accounts_db.
+    pub accounts: Vec<Pubkey>,
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl PartialEq for AccountsDeltaHashCalculationOutput {
+    fn eq(&self, other: &Self) -> bool {
+        if self.delta_hash != other.delta_hash {
+            return false;
+        }
+
+        // The order of `accounts` doesn't matter for equality comparison.
+        // Convert into HashSet then compare.
+        return self.accounts.iter().copied().collect::<HashSet<_>>()
+            == other.accounts.iter().copied().collect::<HashSet<_>>();
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl Eq for AccountsDeltaHashCalculationOutput {}
+
 impl AccountsDb {
     pub const DEFAULT_ACCOUNTS_HASH_CACHE_DIR: &'static str = "accounts_hash_cache";
 
@@ -2380,6 +2462,7 @@ impl AccountsDb {
             partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
             epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             test_skip_rewrites_but_include_in_bank_hash: false,
+            enable_accumulate_account_hash_calculation: false,
         }
     }
 
@@ -2448,6 +2531,11 @@ impl AccountsDb {
             .map(|config| config.test_skip_rewrites_but_include_in_bank_hash)
             .unwrap_or_default();
 
+        let enable_accumulate_account_hash_calculation = accounts_db_config
+            .as_ref()
+            .map(|config| config.enable_accumulate_account_hash_calculation)
+            .unwrap_or_default();
+
         let partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig =
             PartitionedEpochRewardsConfig::new(test_partitioned_epoch_rewards);
 
@@ -2467,6 +2555,7 @@ impl AccountsDb {
             partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts,
             test_skip_rewrites_but_include_in_bank_hash,
+            enable_accumulate_account_hash_calculation,
             ..Self::default_with_accounts_index(
                 accounts_index,
                 base_working_path,
@@ -5897,17 +5986,14 @@ impl AccountsDb {
         )
     }
 
-    fn hash_account_data(
+    fn hash_account_data_internal(
         lamports: u64,
         owner: &Pubkey,
         executable: bool,
         rent_epoch: Epoch,
         data: &[u8],
         pubkey: &Pubkey,
-    ) -> AccountHash {
-        if lamports == 0 {
-            return AccountHash(Hash::default());
-        }
+    ) -> blake3::Hasher {
         let mut hasher = blake3::Hasher::new();
 
         // allocate a buffer on the stack that's big enough
@@ -5939,7 +6025,50 @@ impl AccountsDb {
         buffer.extend_from_slice(pubkey.as_ref());
         hasher.update(&buffer);
 
+        hasher
+    }
+
+    fn hash_account_data(
+        lamports: u64,
+        owner: &Pubkey,
+        executable: bool,
+        rent_epoch: Epoch,
+        data: &[u8],
+        pubkey: &Pubkey,
+    ) -> AccountHash {
+        if lamports == 0 {
+            return AccountHash::default();
+        }
+        let hasher =
+            Self::hash_account_data_internal(lamports, owner, executable, rent_epoch, data, pubkey);
         AccountHash(Hash::new_from_array(hasher.finalize().into()))
+    }
+
+    pub fn lt_hash_account<T: ReadableAccount>(account: &T, pubkey: &Pubkey) -> AccountLTHash {
+        Self::lt_hash_account_data(
+            account.lamports(),
+            account.owner(),
+            account.executable(),
+            account.rent_epoch(),
+            account.data(),
+            pubkey,
+        )
+    }
+
+    fn lt_hash_account_data(
+        lamports: u64,
+        owner: &Pubkey,
+        executable: bool,
+        rent_epoch: Epoch,
+        data: &[u8],
+        pubkey: &Pubkey,
+    ) -> AccountLTHash {
+        if lamports == 0 {
+            return AccountLTHash::default();
+        }
+        let hasher =
+            Self::hash_account_data_internal(lamports, owner, executable, rent_epoch, data, pubkey);
+        AccountLTHash::new_from_reader(hasher.finalize_xof())
     }
 
     fn bulk_assign_write_version(&self, count: usize) -> StoredMetaWriteVersion {
@@ -6613,6 +6742,136 @@ impl AccountsDb {
 
     pub fn checked_sum_for_capitalization<T: Iterator<Item = u64>>(balances: T) -> u64 {
         AccountsHasher::checked_cast_for_capitalization(balances.map(|b| b as u128).sum::<u128>())
+    }
+
+    /// # Accounts Hash Q/A
+    ///
+    /// ## How many places do we calculate accounts hash?
+    /// There are several places that we calculate accounts hash.
+    /// 1. when bank freeze, a hash of all the accounts that changed during the
+    ///    slot is computed. And this hash is used for voting.
+    /// 2. when we take snapshot (incremental or full), a hash of all the
+    ///    accounts up to the snapshot slot is computed and is included in the
+    ///    snapshot.
+    /// 3. when we compute epoch hash, which is the full hash at 25% of the
+    ///    epoch. This hash is included at 75% of the epoch.
+    ///
+    /// ## How to calculate accounts hash?
+    /// Given a set of accounts hashes, ordering them by pubkeys. Then compute a
+    /// merkle tree with fan-out of 16. Return the root hash as the final
+    /// account hash.
+    ///
+    /// ## Are account hash stored?
+    /// Yes. Account hash is stored in the AppendVec and write cache before
+    /// flush.
+    ///
+    /// ## Where do we compute hash for individual accounts?
+    /// Good question. We could compute the account hash when we store the
+    /// account in the accounts db. However, that's in the critical path of
+    /// execution. Therefore, we don't compute hash right at storing. The
+    /// computation is done in the background and inserted into the storage
+    /// later.
+    ///
+    /// ## Why are there two ways to compute accounts hash one from index one from storage?
+    /// Good question. Compute accounts hash from index is only used at start
+    /// up, when it is guaranteed that no execution is running and changing the
+    /// index. Because of that this computation, just can the index get the
+    /// latest hash for the account and send them to do the merkle tree hash.
+    /// However, for other hash calculation, the execution is running and index
+    /// will be changing. We can't rely on the index to get the account's hash.
+    /// Therefore, those computation must be done from the account storage.
+    /// Without the help of the index, we need to scan the storage to get all
+    /// accounts. And there might be duplication. Therefore, we have to dedup.
+    /// And then, merkle them.
+    ///
+    /// ## What's account hash cache?
+    /// Since accounts hash calculation repeat every X slots due to periodical
+    /// full/incremental snapshots. Scanning the appendvec is expensive. And
+    /// those appenvec may not change between each hash calculation. Therefore,
+    /// we introduce the accounts hash cache to store the san result and reuse
+    /// them if the underlying appendvec didn't change.
+    pub fn calculate_accounts_lt_hash_from_index(
+        &self,
+        ancestors: Option<&Ancestors>,
+        max_root: Option<Slot>,
+    ) -> AccountLTHash {
+        let mut collect = Measure::start("lt_hash_collect");
+        let keys: Vec<_> = self
+            .accounts_index
+            .account_maps
+            .iter()
+            .flat_map(|map| map.keys())
+            .collect();
+        collect.stop();
+
+        let mut scan = Measure::start("lt_hash_scan");
+        // Pick a chunk size big enough to allow us to produce output vectors
+        // that are smaller than the overall size. We'll also accumulate the
+        // lamports within each chunk and fewer chunks results in less
+        // contention to accumulate the sum.
+        let chunks = crate::accounts_hash::MERKLE_FANOUT.pow(4);
+        let total_lamports = Mutex::<u64>::new(0);
+        let total_lt_hash = Mutex::<AccountLTHash>::new(AccountLTHash::default());
+        let total_count = Mutex::<u64>::new(0);
+
+        let get_hashes = || {
+            keys.par_chunks(chunks).for_each(|pubkeys| {
+                let mut local_sum = 0u128;
+                let mut local_lt_hash_sum = AccountLTHash::default();
+                let mut local_count = 0;
+                pubkeys.iter().for_each(|pubkey| {
+                    if let Some(index_entry) = self.accounts_index.get_cloned(pubkey) {
+                        let _ = self.accounts_index.get_account_info_with_and_then(
+                            &index_entry,
+                            ancestors,
+                            max_root,
+                            |(slot, account_info)| {
+                                if !account_info.is_zero_lamport() {
+                                    if let Some(loaded_account) = self
+                                        .get_account_accessor(
+                                            slot,
+                                            pubkey,
+                                            &account_info.storage_location(),
+                                        )
+                                        .get_loaded_account()
+                                    {
+                                        let balance = loaded_account.lamports();
+                                        let lt_hash = loaded_account.compute_lt_hash(pubkey);
+                                        local_sum += balance as u128;
+                                        local_lt_hash_sum.add(&lt_hash);
+                                        local_count += 1;
+                                    }
+                                }
+                            },
+                        );
+                    }
+                });
+                let mut total = total_lamports.lock().unwrap();
+                *total =
+                    AccountsHasher::checked_cast_for_capitalization(*total as u128 + local_sum);
+                let mut total = total_lt_hash.lock().unwrap();
+                total.add(&local_lt_hash_sum);
+                let mut total = total_count.lock().unwrap();
+                *total += local_count;
+            })
+        };
+
+        get_hashes();
+
+        scan.stop();
+        let total_lamports = *total_lamports.lock().unwrap();
+        let total_lt_hash = *total_lt_hash.lock().unwrap();
+        let total_count = *total_count.lock().unwrap();
+
+        datapoint_info!(
+            "calculate_accounts_lt_hash_from_index",
+            ("accounts_scan", scan.as_us(), i64),
+            ("collect", collect.as_us(), i64),
+            ("total_lamports", total_lamports, i64),
+            ("hash_count", total_count, i64),
+        );
+
+        total_lt_hash
     }
 
     pub fn calculate_accounts_hash_from_index(
@@ -7598,6 +7857,52 @@ impl AccountsDb {
         Ok(())
     }
 
+    /// A generic function to collect `interested` account data from a `slot`
+    /// into a vector for future processing.
+    ///
+    /// Returns the result vector, accounts-db scan time in microseconds, and a
+    /// start `Measure`` when we began accumulating.
+    fn collect_from_slot_into_vec<R, B>(
+        &self,
+        slot: Slot,
+        extract_cache_value: impl Fn(LoadedAccount) -> Option<R> + Sync,
+        extract_storage_value: impl Fn(LoadedAccount) -> B + Sync,
+        flatten_storage_value: impl Fn(Pubkey, B) -> R,
+    ) -> (Vec<R>, u64, Measure)
+    where
+        R: Send,
+        B: Send + Default + Sync,
+    {
+        type ScanResult<R, B> = ScanStorageResult<R, DashMap<Pubkey, B>>;
+        let mut scan = Measure::start("scan");
+        let scan_result: ScanResult<R, B> = self.scan_account_storage(
+            slot,
+            |loaded_account: LoadedAccount| {
+                // Cache only has one version per key, don't need to worry about versioning
+                extract_cache_value(loaded_account)
+            },
+            |accum: &DashMap<Pubkey, B>, loaded_account: LoadedAccount| {
+                // Storage may have duplicates so only keep the latest version for each key
+                accum.insert(
+                    *loaded_account.pubkey(),
+                    extract_storage_value(loaded_account),
+                );
+            },
+        );
+        scan.stop();
+
+        let accumulate = Measure::start("accumulate");
+        let result: Vec<_> = match scan_result {
+            ScanStorageResult::Cached(cached_result) => cached_result,
+            ScanStorageResult::Stored(stored_result) => stored_result
+                .into_iter()
+                .map(|(pubkey, storage_val)| flatten_storage_value(pubkey, storage_val))
+                .collect(),
+        };
+
+        (result, scan.as_us(), accumulate)
+    }
+
     /// helper to return
     /// 1. pubkey, hash pairs for the slot
     /// 2. us spent scanning
@@ -7606,74 +7911,136 @@ impl AccountsDb {
         &self,
         slot: Slot,
     ) -> (Vec<(Pubkey, AccountHash)>, u64, Measure) {
-        let mut scan = Measure::start("scan");
-        let scan_result: ScanStorageResult<(Pubkey, AccountHash), DashMap<Pubkey, AccountHash>> =
-            self.scan_account_storage(
-                slot,
-                |loaded_account: LoadedAccount| {
-                    // Cache only has one version per key, don't need to worry about versioning
-                    Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
-                },
-                |accum: &DashMap<Pubkey, AccountHash>, loaded_account: LoadedAccount| {
-                    let loaded_hash = loaded_account.loaded_hash();
-                    accum.insert(*loaded_account.pubkey(), loaded_hash);
-                },
-            );
-        scan.stop();
-
-        let accumulate = Measure::start("accumulate");
-        let hashes: Vec<_> = match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
-        };
-
-        (hashes, scan.as_us(), accumulate)
-    }
-
-    /// Return all of the accounts for a given slot
-    pub fn get_pubkey_hash_account_for_slot(&self, slot: Slot) -> Vec<PubkeyHashAccount> {
-        type ScanResult =
-            ScanStorageResult<PubkeyHashAccount, DashMap<Pubkey, (AccountHash, AccountSharedData)>>;
-        let scan_result: ScanResult = self.scan_account_storage(
+        self.collect_from_slot_into_vec(
             slot,
             |loaded_account: LoadedAccount| {
                 // Cache only has one version per key, don't need to worry about versioning
+                Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
+            },
+            |loaded_account: LoadedAccount| loaded_account.loaded_hash(),
+            |pubkey, hash| (pubkey, hash),
+        )
+    }
+
+    pub fn get_pubkey_hash_account_for_slot(&self, slot: Slot) -> Vec<PubkeyHashAccount> {
+        self.collect_from_slot_into_vec(
+            slot,
+            |loaded_account: LoadedAccount| {
                 Some(PubkeyHashAccount {
                     pubkey: *loaded_account.pubkey(),
                     hash: loaded_account.loaded_hash(),
                     account: loaded_account.take_account(),
                 })
             },
-            |accum: &DashMap<Pubkey, (AccountHash, AccountSharedData)>,
-             loaded_account: LoadedAccount| {
-                // Storage may have duplicates so only keep the latest version for each key
-                accum.insert(
-                    *loaded_account.pubkey(),
-                    (loaded_account.loaded_hash(), loaded_account.take_account()),
-                );
+            |loaded_account: LoadedAccount| {
+                (loaded_account.loaded_hash(), loaded_account.take_account())
             },
-        );
-
-        match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result
-                .into_iter()
-                .map(|(pubkey, (hash, account))| PubkeyHashAccount {
-                    pubkey,
-                    hash,
-                    account,
-                })
-                .collect(),
-        }
+            |pubkey, hash_account| PubkeyHashAccount {
+                pubkey,
+                hash: hash_account.0,
+                account: hash_account.1,
+            },
+        )
+        .0
     }
 
-    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
+    pub fn get_pubkey_account_for_slot(&self, slot: Slot) -> Vec<(Pubkey, AccountSharedData)> {
+        self.collect_from_slot_into_vec(
+            slot,
+            |loaded_account| Some((*loaded_account.pubkey(), loaded_account.take_account())),
+            |loaded_account| loaded_account.take_account(),
+            |pubkey, account| (pubkey, account),
+        )
+        .0
+    }
+
+    /// Wrapper function to calculate accounts delta hash for `slot` (only used
+    /// for testing and benchmarking.)
     ///
     /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
     /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
+    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHashCalculationOutput {
         self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
+    }
+
+    pub fn accumulate_accounts_lt_hash(
+        &self,
+        slot: Slot,
+        ancestors: &Ancestors,
+        accumulated_accounts_hash: &RwLock<Option<AccountLTHash>>,
+        written_accounts_before: &LTHashCacheMap,
+        written_accounts_after: &LTHashCacheMap,
+    ) -> LTHashCacheStat {
+        let mut old_ancestors = ancestors.clone();
+        old_ancestors.remove(&slot);
+
+        let cache_hits = AtomicU64::new(0);
+        let old_account_loads = AtomicU64::new(0);
+        let skip_old_account_loads = AtomicU64::new(0);
+
+        let accounts = self.get_pubkey_account_for_slot(slot);
+
+        accounts.par_chunks(250).for_each(|accounts| {
+            let mut loc_cache_hits = 0_u64;
+            let mut loc_old_account_loads = 0_u64;
+            let mut loc_skip_old_account_loads = 0_u64;
+            let mut loc_accumulated_accounts_hash = AccountLTHash::default();
+            let mut loc_written_accounts_after_map: HashMap<Pubkey, LTHashCacheValue> =
+                HashMap::default();
+
+            let r_written_accounts_before = written_accounts_before.read().unwrap();
+            accounts.iter().for_each(|(k, account)| {
+                let mut get_old_hash = || {
+                    if let Some(val) = r_written_accounts_before.get(k) {
+                        // Get old `lt_hash` from cache of writes in parent slot
+                        match val {
+                            LTHashCacheValue::Hash(hash) => {
+                                loc_cache_hits += 1;
+                                return Some(**hash); // TODO on demand calculate, calculate in bg
+                            }
+                            LTHashCacheValue::Account(account) => {
+                                loc_skip_old_account_loads += 1;
+                                return Some(Self::lt_hash_account(account.as_ref(), k));
+                            }
+                        }
+                    }
+                    loc_old_account_loads += 1;
+                    self.load_with_fixed_root(&old_ancestors, k)
+                        .map(|(account, _)| Self::lt_hash_account(&account, k))
+                };
+
+                if let Some(old) = get_old_hash() {
+                    // todo if old == new, then we can avoid this update altogether
+                    loc_accumulated_accounts_hash.sub(&old);
+                }
+                let new = Self::lt_hash_account(account, k);
+                loc_accumulated_accounts_hash.add(&new);
+                loc_written_accounts_after_map.insert(*k, LTHashCacheValue::Hash(Box::new(new)));
+            });
+            drop(r_written_accounts_before);
+            accumulated_accounts_hash
+                .write()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .add(&loc_accumulated_accounts_hash);
+            written_accounts_after
+                .write()
+                .unwrap()
+                .extend(loc_written_accounts_after_map);
+            cache_hits.fetch_add(loc_cache_hits, Ordering::AcqRel);
+            old_account_loads.fetch_add(loc_old_account_loads, Ordering::AcqRel);
+            skip_old_account_loads.fetch_add(loc_skip_old_account_loads, Ordering::AcqRel);
+        });
+
+        LTHashCacheStat {
+            hits: cache_hits.load(Ordering::Acquire),
+            load_old_accounts: old_account_loads.load(Ordering::Acquire),
+            skip_load_old_accounts: skip_old_account_loads.load(Ordering::Acquire),
+            before_size: written_accounts_before.read().unwrap().len() as u64,
+            after_size: written_accounts_after.read().unwrap().len() as u64,
+        }
     }
 
     /// Calculate accounts delta hash for `slot`
@@ -7685,9 +8052,10 @@ impl AccountsDb {
         slot: Slot,
         ignore: Option<Pubkey>,
         mut skipped_rewrites: HashMap<Pubkey, AccountHash>,
-    ) -> AccountsDeltaHash {
+    ) -> AccountsDeltaHashCalculationOutput {
         let (mut hashes, scan_us, mut accumulate) = self.get_pubkey_hash_for_slot(slot);
-        let dirty_keys = hashes.iter().map(|(pubkey, _hash)| *pubkey).collect();
+        let dirty_keys: Vec<_> = hashes.iter().map(|(pubkey, _hash)| *pubkey).collect();
+        let dirty_keys_copy = dirty_keys.clone();
 
         hashes.iter().for_each(|(k, _h)| {
             skipped_rewrites.remove(k);
@@ -7725,7 +8093,10 @@ impl AccountsDb {
             .skipped_rewrites_num
             .fetch_add(num_skipped_rewrites, Ordering::Relaxed);
 
-        accounts_delta_hash
+        AccountsDeltaHashCalculationOutput {
+            delta_hash: accounts_delta_hash,
+            accounts: dirty_keys_copy,
+        }
     }
 
     /// Set the accounts delta hash for `slot` in the `accounts_delta_hashes` map

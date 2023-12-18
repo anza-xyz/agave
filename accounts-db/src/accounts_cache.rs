@@ -134,6 +134,7 @@ pub type CachedAccount = Arc<CachedAccountInner>;
 pub struct CachedAccountInner {
     pub account: AccountSharedData,
     hash: SeqLock<Option<AccountHash>>,
+    // TODO: add lt_hash
     pubkey: Pubkey,
 }
 

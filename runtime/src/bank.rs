@@ -46,6 +46,7 @@ use {
         epoch_rewards_hasher::hash_rewards_into_partitions,
         epoch_stakes::{EpochStakes, NodeVoteAccounts},
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
+        lthash_cache::LTHashCache,
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
@@ -72,10 +73,12 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
             AccountShrinkThreshold, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-            CalcAccountsHashDataSource, VerifyAccountsHashAndLamportsConfig,
+            AccountsDeltaHashCalculationOutput, CalcAccountsHashDataSource, LTHashCacheStat,
+            LTHashCacheValue, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
-            AccountHash, AccountsHash, CalcAccountsHashConfig, HashStats, IncrementalAccountsHash,
+            AccountHash, AccountLTHash, AccountsHash, CalcAccountsHashConfig, HashStats,
+            IncrementalAccountsHash,
         },
         accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult, ZeroLamport},
         accounts_partition::{self, Partition, PartitionIndex},
@@ -514,6 +517,8 @@ impl PartialEq for Bank {
             return true;
         }
         let Self {
+            accumulated_accounts_hash: _,
+            lt_hash_cache: _,
             skipped_rewrites: _,
             rc: _,
             status_cache: _,
@@ -830,6 +835,10 @@ pub struct Bank {
 
     pub incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
 
+    pub accumulated_accounts_hash: RwLock<Option<AccountLTHash>>,
+
+    pub lt_hash_cache: LTHashCache,
+
     epoch_reward_status: EpochRewardStatus,
 
     transaction_processor: TransactionBatchProcessor<BankForks>,
@@ -961,6 +970,8 @@ pub(super) enum RewardInterval {
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
+            accumulated_accounts_hash: RwLock::default(),
+            lt_hash_cache: LTHashCache::default(),
             skipped_rewrites: Mutex::default(),
             incremental_snapshot_persistence: None,
             rc: BankRc::new(accounts, Slot::default()),
@@ -1272,6 +1283,20 @@ impl Bank {
 
         let accounts_data_size_initial = parent.load_accounts_data_size();
         let mut new = Self {
+            accumulated_accounts_hash: RwLock::new(
+                *parent.accumulated_accounts_hash.read().unwrap(),
+            ),
+
+            lt_hash_cache: LTHashCache {
+                // Start this slot's old written accounts with the accounts
+                // written in the last slot. many accounts are written every
+                // slot (like votes)
+                written_accounts_before: RwLock::new(std::mem::take(
+                    &mut parent.lt_hash_cache.written_accounts_after.write().unwrap(),
+                )),
+                ..LTHashCache::default()
+            },
+
             skipped_rewrites: Mutex::default(),
             incremental_snapshot_persistence: None,
             rc,
@@ -1346,6 +1371,18 @@ impl Bank {
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
         };
+
+        if new.accumulated_accounts_hash.read().unwrap().is_none() {
+            info!("start computing lt_hash {}", new.slot);
+            let lt_hash = new
+                .rc
+                .accounts
+                .accounts_db
+                .calculate_accounts_lt_hash_from_index(None, Some(new.slot));
+            let mut w_lt_hash = new.accumulated_accounts_hash.write().unwrap();
+            *w_lt_hash = Some(lt_hash);
+            info!("finish computing lt_hash {} {}", new.slot, lt_hash);
+        }
 
         new.transaction_processor = TransactionBatchProcessor::new(
             new.slot,
@@ -1834,6 +1871,9 @@ impl Bank {
         );
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
+            // todo: this has to be saved and loaded in bank persistence somehow
+            accumulated_accounts_hash: RwLock::default(),
+            lt_hash_cache: LTHashCache::default(),
             skipped_rewrites: Mutex::default(),
             incremental_snapshot_persistence: fields.incremental_snapshot_persistence,
             rc: bank_rc,
@@ -6423,7 +6463,12 @@ impl Bank {
         let ignore = (!self.is_partitioned_rewards_feature_enabled()
             && self.force_partition_rewards_in_first_block_of_epoch())
         .then_some(sysvar::epoch_rewards::id());
-        let accounts_delta_hash = self
+
+        let mut delta_hash_timer = Measure::start("delta_hash_compute");
+        let AccountsDeltaHashCalculationOutput {
+            delta_hash: accounts_delta_hash,
+            accounts: _pubkeys,
+        } = self
             .rc
             .accounts
             .accounts_db
@@ -6432,6 +6477,27 @@ impl Bank {
                 ignore,
                 self.skipped_rewrites.lock().unwrap().clone(),
             );
+        delta_hash_timer.stop();
+
+        let mut lt_hash_timer = Measure::start("lt_hash_compute");
+        let lt_hash_cache_stat = self.calculate_account_lt_hash();
+        lt_hash_timer.stop();
+
+        info!(
+            "slot_hash_time slot={} delta_hash={}us lt_hash={}us {}",
+            slot,
+            delta_hash_timer.as_us(),
+            lt_hash_timer.as_us(),
+            lt_hash_cache_stat
+        );
+
+        datapoint_info!(
+            "calc_accounts_hash_per_slot",
+            ("slot", slot, i64),
+            ("delta_hash_us", delta_hash_timer.as_us(), i64),
+            ("lt_hash_us", lt_hash_timer.as_us(), i64),
+            ("num_lt_hashes", lt_hash_cache_stat.after_size, i64),
+        );
 
         let mut signature_count_buf = [0u8; 8];
         LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count());
@@ -6467,7 +6533,7 @@ impl Bank {
             .get_bank_hash_stats(slot)
             .expect("No bank hash stats were found for this bank, that should not be possible");
         info!(
-            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, lt_hash: {:?}, stats: {bank_hash_stats:?}",
             accounts_delta_hash.0,
             self.signature_count(),
             self.last_blockhash(),
@@ -6476,9 +6542,32 @@ impl Bank {
                 format!(", epoch_accounts_hash: {:?}", epoch_accounts_hash.as_ref())
             } else {
                 "".to_string()
-            }
+            },
+            self.accumulated_accounts_hash.read().unwrap()
         );
         hash
+    }
+
+    fn calculate_account_lt_hash(&self) -> LTHashCacheStat {
+        let slot = self.slot;
+        let parent_accumulated_hash = self
+            .parent()
+            .map(|bank| {
+                bank.accumulated_accounts_hash
+                    .read()
+                    .unwrap()
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        *self.accumulated_accounts_hash.write().unwrap() = Some(parent_accumulated_hash);
+        self.rc.accounts.accounts_db.accumulate_accounts_lt_hash(
+            slot,
+            &self.ancestors,
+            &self.accumulated_accounts_hash,
+            &self.lt_hash_cache.written_accounts_before,
+            &self.lt_hash_cache.written_accounts_after,
+        )
     }
 
     /// The epoch accounts hash is hashed into the bank's hash once per epoch at a predefined slot.
@@ -7699,6 +7788,15 @@ impl TransactionProcessingCallback for Bank {
         } else {
             LoadedProgramMatchCriteria::NoCriteria
         }
+    }
+
+    fn insert_old_written_account(&self, key: &Pubkey, account: &AccountSharedData) {
+        // TODO: find all the places this has to happen
+        // Start computing LTHash for the old account state in background.
+        let mut old_written_accounts = self.lt_hash_cache.written_accounts_before.write().unwrap();
+        old_written_accounts
+            .entry(*key)
+            .or_insert(LTHashCacheValue::Account(Box::new(account.clone())));
     }
 }
 

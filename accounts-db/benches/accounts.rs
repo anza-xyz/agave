@@ -10,9 +10,10 @@ use {
     solana_accounts_db::{
         accounts::{AccountAddressFilter, Accounts},
         accounts_db::{
-            test_utils::create_test_accounts, AccountShrinkThreshold, AccountsDb,
+            test_utils::create_test_accounts, AccountShrinkThreshold, AccountsDb, LTHashCacheMap,
             VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         },
+        accounts_hash::AccountLTHash,
         accounts_index::{AccountSecondaryIndexes, ScanConfig},
         ancestors::Ancestors,
     },
@@ -26,6 +27,7 @@ use {
     },
     std::{
         collections::{HashMap, HashSet},
+        hint::black_box,
         path::PathBuf,
         sync::{Arc, RwLock},
         thread::Builder,
@@ -339,5 +341,34 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
             &HashSet::new(),
             AccountAddressFilter::Exclude,
         )
+    });
+}
+
+/// Bench for computing lattice hash
+/// test test_accounts_lt_hash                             ... bench:   5,420,262 ns/iter (+/- 60,676) -- seq
+/// test test_accounts_lt_hash                             ... bench:   2,857,909 ns/iter (+/- 30,022) -- par_chunks (500)
+/// test test_accounts_lt_hash                             ... bench:   2,476,487 ns/iter (+/- 55,287) -- par_chunks (250)
+/// test test_accounts_lt_hash                             ... bench:   2,415,198 ns/iter (+/- 64,917) -- enum cache value
+/// test test_accounts_lt_hash                             ... bench:   1,783,466 ns/iter (+/- 210,289) -- boxing AccountLTHash
+/// test test_accounts_lt_hash                             ... bench:   1,631,536 ns/iter (+/- 310,180) -- boxing AccountSharedData
+#[bench]
+fn test_accounts_lt_hash(bencher: &mut Bencher) {
+    solana_logger::setup();
+    let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_lt_hash")]);
+    let accounts = Accounts::new(Arc::new(accounts_db));
+    let mut pubkeys: Vec<Pubkey> = vec![];
+    create_test_accounts(&accounts, &mut pubkeys, 1_000, 0);
+
+    let mut ancestor = Ancestors::default();
+    ancestor.insert(0, 1);
+
+    bencher.iter(|| {
+        black_box(accounts.accounts_db.accumulate_accounts_lt_hash(
+            0,
+            &ancestor,
+            &RwLock::new(Some(AccountLTHash::default())),
+            &LTHashCacheMap::default(),
+            &LTHashCacheMap::default(),
+        ))
     });
 }

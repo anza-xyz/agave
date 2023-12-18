@@ -236,6 +236,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                         .get_account_shared_data(key)
                         .map(|mut account| {
                             if message.is_writable(i) {
+                                {
+                                    // TODO: find all the places this has to happen
+                                    // Start computing LTHash for the old account state in background.
+                                    callbacks.insert_old_written_account(key, &account);
+                                }
+
                                 if !feature_set
                                     .is_active(&feature_set::disable_rent_fees_collection::id())
                                 {
@@ -524,6 +530,8 @@ mod tests {
         fn get_feature_set(&self) -> Arc<FeatureSet> {
             self.feature_set.clone()
         }
+
+        fn insert_old_written_account(&self, _key: &Pubkey, _account: &AccountSharedData) {}
     }
 
     fn load_accounts_with_fee_and_rent(
