@@ -439,9 +439,9 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    pub fn get_account_info(
+    pub async fn get_account_info(
         &self,
-        pubkey: &Pubkey,
+        pubkey: Pubkey,
         config: Option<RpcAccountInfoConfig>,
     ) -> Result<RpcResponse<Option<UiAccount>>> {
         let RpcAccountInfoConfig {
@@ -456,7 +456,12 @@ impl JsonRpcRequestProcessor {
         })?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
-        let response = get_encoded_account(&bank, pubkey, encoding, data_slice, None)?;
+        let response = task::spawn_blocking({
+            let bank = Arc::clone(&bank);
+            move || get_encoded_account(&bank, &pubkey, encoding, data_slice, None)
+        })
+        .await
+        .expect("rpc: get_encoded_account panicked")?;
         Ok(new_response(&bank, response))
     }
 
@@ -3033,7 +3038,7 @@ pub mod rpc_accounts {
             meta: Self::Metadata,
             pubkey_str: String,
             config: Option<RpcAccountInfoConfig>,
-        ) -> Result<RpcResponse<Option<UiAccount>>>;
+        ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>>;
 
         #[rpc(meta, name = "getMultipleAccounts")]
         fn get_multiple_accounts(
@@ -3080,10 +3085,13 @@ pub mod rpc_accounts {
             meta: Self::Metadata,
             pubkey_str: String,
             config: Option<RpcAccountInfoConfig>,
-        ) -> Result<RpcResponse<Option<UiAccount>>> {
+        ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>> {
             debug!("get_account_info rpc request received: {:?}", pubkey_str);
-            let pubkey = verify_pubkey(&pubkey_str)?;
-            meta.get_account_info(&pubkey, config)
+            async move {
+                let pubkey = verify_pubkey(&pubkey_str)?;
+                meta.get_account_info(pubkey, config).await
+            }
+            .boxed()
         }
 
         fn get_multiple_accounts(
