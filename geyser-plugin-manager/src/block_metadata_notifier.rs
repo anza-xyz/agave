@@ -4,7 +4,7 @@ use {
         geyser_plugin_manager::GeyserPluginManager,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaBlockInfoV3, ReplicaBlockInfoVersions,
+        ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
     log::*,
     solana_measure::measure::Measure,
@@ -51,7 +51,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
                 executed_transaction_count,
                 entry_count,
             );
-            let block_info = ReplicaBlockInfoVersions::V0_0_3(&block_info);
+            let block_info = ReplicaBlockInfoVersions::V0_0_4(&block_info);
             match plugin.notify_block_metadata(block_info) {
                 Err(err) => {
                     error!(
@@ -106,8 +106,8 @@ impl BlockMetadataNotifierImpl {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-    ) -> ReplicaBlockInfoV3<'a> {
-        ReplicaBlockInfoV3 {
+    ) -> ReplicaBlockInfoV4<'a> {
+        ReplicaBlockInfoV4 {
             parent_slot,
             parent_blockhash,
             slot,
