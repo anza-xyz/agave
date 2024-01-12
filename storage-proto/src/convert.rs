@@ -99,6 +99,7 @@ impl From<Reward> for generated::Reward {
                 Some(RewardType::PartitionData) => generated::RewardType::PartitionData,
             } as i32,
             commission: reward.commission.map(|c| c.to_string()).unwrap_or_default(),
+            num_partitions: reward.num_partitions.map(|num| num as u32),
         }
     }
 }
@@ -119,6 +120,7 @@ impl From<generated::Reward> for Reward {
                 _ => None,
             },
             commission: reward.commission.parse::<u8>().ok(),
+            num_partitions: reward.num_partitions.map(|num| num as usize),
         }
     }
 }
