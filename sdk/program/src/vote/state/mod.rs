@@ -18,7 +18,7 @@ use {
         sysvar::clock::Clock,
         vote::{authorized_voters::AuthorizedVoters, error::VoteError},
     },
-    bincode::{serialize_into, serialized_size, ErrorKind},
+    bincode::{serialize_into, ErrorKind},
     serde_derive::{Deserialize, Serialize},
     std::{collections::VecDeque, fmt::Debug, io::Cursor},
 };
@@ -475,8 +475,11 @@ impl VoteState {
         3762 // see test_vote_state_size_of.
     }
 
-    // we retain bincode deserialize for not(target_os = "solana")
-    // because the hand-written parser does not support V0_23_5
+    // NOTE we retain `bincode::deserialize` for `not(target_os = "solana")` pending testing on mainnet-beta
+    // once that testing is done, `VoteState::deserialize_into` may be used for all targets
+    // conversion of V0_23_5 to current must be handled specially, however
+    // because it inserts a null voter into `authorized_voters`
+    // which `VoteStateVersions::is_uninitialized` erroneously reports as initialized
     pub fn deserialize(input: &[u8]) -> Result<Self, InstructionError> {
         #[cfg(not(target_os = "solana"))]
         {
@@ -492,26 +495,32 @@ impl VoteState {
         }
     }
 
-    /// Deserializes the input buffer into the provided `VoteState`
+    /// Deserializes the input `VoteStateVersions` buffer directly into a provided `VoteState` struct
     ///
-    /// This function exists to deserialize `VoteState` in a BPF context without going above
-    /// the compute limit, and must be kept up to date with `bincode::deserialize`.
+    /// In a BPF context, V0_23_5 is not supported, but in non-BPF, all versions are supported for
+    /// compatibility with `bincode::deserialize`
     pub fn deserialize_into(
         input: &[u8],
         vote_state: &mut VoteState,
     ) -> Result<(), InstructionError> {
-        let minimum_size =
-            serialized_size(vote_state).map_err(|_| InstructionError::InvalidAccountData)?;
-        if (input.len() as u64) < minimum_size {
-            return Err(InstructionError::InvalidAccountData);
-        }
-
         let mut cursor = Cursor::new(input);
 
         let variant = read_u32(&mut cursor)?;
         match variant {
-            // V0_23_5. not supported; these should not exist on mainnet
-            0 => Err(InstructionError::InvalidAccountData),
+            // V0_23_5. not supported for bpf targets; these should not exist on mainnet
+            // supported for non-bpf targets for backwards compatibility
+            0 => {
+                #[cfg(not(target_os = "solana"))]
+                {
+                    *vote_state = bincode::deserialize::<VoteStateVersions>(input)
+                        .map(|versioned| versioned.convert_to_current())
+                        .map_err(|_| InstructionError::InvalidAccountData)?;
+
+                    Ok(())
+                }
+                #[cfg(target_os = "solana")]
+                Err(InstructionError::InvalidAccountData)
+            }
             // V1_14_11. substantially different layout and data from V0_23_5
             1 => deserialize_vote_state_into(&mut cursor, vote_state, false),
             // Current. the only difference from V1_14_11 is the addition of a slot-latency to each vote
@@ -519,6 +528,8 @@ impl VoteState {
             _ => Err(InstructionError::InvalidAccountData),
         }?;
 
+        // if cursor overruns the input, it produces null bytes and continues to advance `position`
+        // this check ensures we do not accept such a malformed input erroneously
         if cursor.position() > input.len() as u64 {
             return Err(InstructionError::InvalidAccountData);
         }
@@ -1089,7 +1100,7 @@ pub mod serde_tower_sync {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, itertools::Itertools, rand::Rng};
+    use {super::*, bincode::serialized_size, itertools::Itertools, rand::Rng};
 
     #[test]
     fn test_vote_serialize() {
@@ -1147,16 +1158,28 @@ mod tests {
         assert_eq!(e, InstructionError::InvalidAccountData);
 
         // variant
-        let serialized_len_x4 = serialized_size(&test_vote_state).unwrap() * 4;
+        let serialized_len_x4 = serialized_size(&VoteState::default()).unwrap() * 4;
         let mut rng = rand::thread_rng();
         for _ in 0..1000 {
             let raw_data_length = rng.gen_range(1..serialized_len_x4);
-            let raw_data: Vec<u8> = (0..raw_data_length).map(|_| rng.gen::<u8>()).collect();
+            let mut raw_data: Vec<u8> = (0..raw_data_length).map(|_| rng.gen::<u8>()).collect();
+
+            // pure random data will ~never have a valid enum tag, so lets help it out
+            if raw_data_length >= 4 && rng.gen::<bool>() {
+                let tag = rng.gen::<u8>() % 3;
+                raw_data[0] = tag;
+                raw_data[1] = 0;
+                raw_data[2] = 0;
+                raw_data[3] = 0;
+            }
 
             // it is extremely improbable, though theoretically possible, for random bytes to be syntactically valid
-            // so we only check that the deserialize function does not panic
+            // so we only check that the parser does not panic and that it succeeds or fails exactly in line with bincode
             let mut test_vote_state = VoteState::default();
-            let _ = VoteState::deserialize_into(&raw_data, &mut test_vote_state);
+            let test_res = VoteState::deserialize_into(&raw_data, &mut test_vote_state);
+            let bincode_res = bincode::deserialize::<VoteStateVersions>(&raw_data);
+
+            assert_eq!(test_res.is_ok(), bincode_res.is_ok());
         }
     }
 
