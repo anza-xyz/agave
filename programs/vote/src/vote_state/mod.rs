@@ -153,7 +153,7 @@ impl From<TowerSync> for VoteTransaction {
 
 // utility function, used by Stakes, tests
 pub fn from<T: ReadableAccount>(account: &T) -> Option<VoteState> {
-    VoteState::deserialize(account.data()).ok()
+    VoteState::deserialize_with_bincode(account.data()).ok()
 }
 
 // utility function, used by Stakes, tests
