@@ -153,7 +153,7 @@ impl From<TowerSync> for VoteTransaction {
 
 // utility function, used by Stakes, tests
 pub fn from<T: ReadableAccount>(account: &T) -> Option<VoteState> {
-    VoteState::deserialize_with_bincode(account.data()).ok()
+    VoteState::deserialize(account.data()).ok()
 }
 
 // utility function, used by Stakes, tests
@@ -854,9 +854,7 @@ pub fn authorize<S: std::hash::BuildHasher>(
     clock: &Clock,
     feature_set: &FeatureSet,
 ) -> Result<(), InstructionError> {
-    let mut vote_state: VoteState = vote_account
-        .get_state::<VoteStateVersions>()?
-        .convert_to_current();
+    let mut vote_state = VoteState::deserialize(vote_account.get_data())?;
 
     match vote_authorize {
         VoteAuthorize::Voter => {
@@ -897,9 +895,7 @@ pub fn update_validator_identity<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     feature_set: &FeatureSet,
 ) -> Result<(), InstructionError> {
-    let mut vote_state: VoteState = vote_account
-        .get_state::<VoteStateVersions>()?
-        .convert_to_current();
+    let mut vote_state = VoteState::deserialize(vote_account.get_data())?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;
@@ -926,8 +922,8 @@ pub fn update_commission<S: std::hash::BuildHasher>(
 
     let enforce_commission_update_rule =
         if feature_set.is_active(&feature_set::allow_commission_decrease_at_any_time::id()) {
-            if let Ok(decoded_vote_state) = vote_account.get_state::<VoteStateVersions>() {
-                vote_state = Some(decoded_vote_state.convert_to_current());
+            if let Ok(decoded_vote_state) = VoteState::deserialize(vote_account.get_data()) {
+                vote_state = Some(decoded_vote_state);
                 is_commission_increase(vote_state.as_ref().unwrap(), commission)
             } else {
                 true
@@ -948,9 +944,7 @@ pub fn update_commission<S: std::hash::BuildHasher>(
 
     let mut vote_state = match vote_state {
         Some(vote_state) => vote_state,
-        None => vote_account
-            .get_state::<VoteStateVersions>()?
-            .convert_to_current(),
+        None => VoteState::deserialize(vote_account.get_data())?,
     };
 
     // current authorized withdrawer must say "yay"
@@ -1007,9 +1001,7 @@ pub fn withdraw<S: std::hash::BuildHasher>(
 ) -> Result<(), InstructionError> {
     let mut vote_account = instruction_context
         .try_borrow_instruction_account(transaction_context, vote_account_index)?;
-    let vote_state: VoteState = vote_account
-        .get_state::<VoteStateVersions>()?
-        .convert_to_current();
+    let vote_state = VoteState::deserialize(vote_account.get_data())?;
 
     verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;
 
@@ -1071,9 +1063,9 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     {
         return Err(InstructionError::InvalidAccountData);
     }
-    let versioned = vote_account.get_state::<VoteStateVersions>()?;
 
-    if !versioned.is_uninitialized() {
+    let vote_state = VoteState::deserialize(vote_account.get_data())?;
+    if !vote_state.is_uninitialized() {
         return Err(InstructionError::AccountAlreadyInitialized);
     }
 
@@ -1088,13 +1080,11 @@ fn verify_and_get_vote_state<S: std::hash::BuildHasher>(
     clock: &Clock,
     signers: &HashSet<Pubkey, S>,
 ) -> Result<VoteState, InstructionError> {
-    let versioned = vote_account.get_state::<VoteStateVersions>()?;
-
-    if versioned.is_uninitialized() {
+    let mut vote_state = VoteState::deserialize(vote_account.get_data())?;
+    if vote_state.is_uninitialized() {
         return Err(InstructionError::UninitializedAccount);
     }
 
-    let mut vote_state = versioned.convert_to_current();
     let authorized_voter = vote_state.get_and_update_authorized_voter(clock.epoch)?;
     verify_authorized_signer(&authorized_voter, signers)?;
 
