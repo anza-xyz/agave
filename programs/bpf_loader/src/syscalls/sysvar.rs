@@ -1,4 +1,7 @@
-use super::*;
+use {
+    super::*,
+    solana_sdk::stake_history::{StakeHistoryEntry, StakeHistoryGetEntry},
+};
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
@@ -154,5 +157,38 @@ declare_builtin_function!(
             memory_mapping,
             invoke_context,
         )
+    }
+);
+
+declare_builtin_function!(
+    /// Get a StakeHistoryEntry at a given epoch
+    SyscallGetStakeHistoryEntry,
+    fn rust(
+        invoke_context: &mut InvokeContext,
+        var_addr: u64,
+        epoch: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &mut MemoryMapping,
+    ) -> Result<u64, Error> {
+        consume_compute_meter(
+            invoke_context,
+            invoke_context
+                .get_compute_budget()
+                .sysvar_base_cost
+                .saturating_add(size_of::<Option<StakeHistoryEntry>>() as u64),
+        )?;
+
+        let stake_history = invoke_context.get_sysvar_cache().get_stake_history()?;
+        let var = translate_type_mut::<Option<StakeHistoryEntry>>(
+            memory_mapping,
+            var_addr,
+            invoke_context.get_check_aligned(),
+        )?;
+
+        *var = stake_history.get_entry(epoch);
+
+        Ok(SUCCESS)
     }
 );

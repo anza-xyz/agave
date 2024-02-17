@@ -1405,6 +1405,7 @@ mod tests {
             epoch_schedule::EpochSchedule,
             pubkey::Pubkey,
             stake::state::warmup_cooldown_rate,
+            stake_history::StakeHistoryGetEntry,
             sysvar::{epoch_schedule, SysvarId},
         },
         test_case::test_case,
@@ -1979,7 +1980,7 @@ mod tests {
         }
 
         for epoch in 0..=stake.deactivation_epoch + 1 {
-            let history = stake_history.get(epoch).unwrap();
+            let history = stake_history.get_entry(epoch).unwrap();
             let other_activations: u64 = other_activations[..=epoch as usize].iter().sum();
             let expected_stake = history.effective - base_stake - other_activations;
             let (expected_activating, expected_deactivating) = if epoch < stake.deactivation_epoch {

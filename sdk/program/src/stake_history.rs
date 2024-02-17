@@ -7,7 +7,7 @@
 //! [`sysvar::stake_history`]: crate::sysvar::stake_history
 
 pub use crate::clock::Epoch;
-use std::ops::Deref;
+use std::{ops::Deref, sync::Arc};
 
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
 
@@ -59,6 +59,8 @@ impl std::ops::Add for StakeHistoryEntry {
 pub struct StakeHistory(Vec<(Epoch, StakeHistoryEntry)>);
 
 impl StakeHistory {
+    // deprecated due to naming clash with `Sysvar::get()`
+    #[deprecated(note = "Please use `get_entry` instead")]
     pub fn get(&self, epoch: Epoch) -> Option<&StakeHistoryEntry> {
         self.binary_search_by(|probe| epoch.cmp(&probe.0))
             .ok()
@@ -81,6 +83,48 @@ impl Deref for StakeHistory {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Default, Clone)]
+pub struct StakeHistorySyscall(());
+
+pub trait StakeHistoryGetEntry {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry>;
+}
+
+impl StakeHistoryGetEntry for StakeHistory {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
+        self.binary_search_by(|probe| epoch.cmp(&probe.0))
+            .ok()
+            .map(|index| self[index].1.clone())
+    }
+}
+
+impl StakeHistoryGetEntry for StakeHistorySyscall {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
+        // HANA im gonna be honest i dont understand why we cast to a u8 pointer
+        let mut var = None;
+        let var_addr = &mut var as *mut _ as *mut u8;
+
+        #[cfg(target_os = "solana")]
+        let result = unsafe { crate::syscalls::sol_get_stake_history_entry(var_addr, epoch) };
+
+        #[cfg(not(target_os = "solana"))]
+        let result = crate::program_stubs::sol_get_stake_history_entry(var_addr, epoch);
+
+        // HANA i dislike how this swallows errors but im not sure we really want to return Result<Option<_>, _>
+        match result {
+            crate::entrypoint::SUCCESS => var,
+            _ => None,
+        }
+    }
+}
+
+// required for SysvarCache
+impl StakeHistoryGetEntry for Arc<StakeHistory> {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
+        self.deref().get_entry(epoch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,7 +132,6 @@ mod tests {
     #[test]
     fn test_stake_history() {
         let mut stake_history = StakeHistory::default();
-
         for i in 0..MAX_ENTRIES as u64 + 1 {
             stake_history.add(
                 i,
@@ -98,15 +141,18 @@ mod tests {
                 },
             );
         }
+
         assert_eq!(stake_history.len(), MAX_ENTRIES);
         assert_eq!(stake_history.iter().map(|entry| entry.0).min().unwrap(), 1);
-        assert_eq!(stake_history.get(0), None);
-        assert_eq!(
-            stake_history.get(1),
-            Some(&StakeHistoryEntry {
-                activating: 1,
+
+        assert_eq!(stake_history.get_entry(0), None);
+        for i in 1..MAX_ENTRIES as u64 + 1 {
+            let expected = Some(StakeHistoryEntry {
+                activating: i,
                 ..StakeHistoryEntry::default()
-            })
-        );
+            });
+
+            assert_eq!(stake_history.get_entry(i), expected);
+        }
     }
 }
