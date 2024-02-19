@@ -11,6 +11,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-geyser-plugin-interface = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { workspace = true }
 console = { workspace = true }
@@ -41,7 +42,6 @@ solana-download-utils = { workspace = true }
 solana-entry = { workspace = true }
 solana-faucet = { workspace = true }
 solana-genesis-utils = { workspace = true }
-solana-geyser-plugin-interface = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
