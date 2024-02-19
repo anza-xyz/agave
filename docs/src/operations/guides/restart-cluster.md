@@ -11,7 +11,7 @@ pagination_label: "Validator Guides: Restart a Cluster"
 In Solana 1.14 or greater, run the following command to output the latest
 optimistically confirmed slot your validator observed:
 ```bash
-solana-ledger-tool -l ledger latest-optimistic-slots
+agave-ledger-tool -l ledger latest-optimistic-slots
 ```
 
 In Solana 1.13 or less, the latest optimistically confirmed can be found by looking for the more recent occurrence of
@@ -34,11 +34,11 @@ instead.
 ### Step 4. Create a new snapshot for slot `SLOT_X` with a hard fork at slot `SLOT_X`
 
 ```bash
-$ solana-ledger-tool -l <LEDGER_PATH> --snapshot-archive-path <SNAPSHOTS_PATH> --incremental-snapshot-archive-path <INCREMENTAL_SNAPSHOTS_PATH> create-snapshot SLOT_X <SNAPSHOTS_PATH> --hard-fork SLOT_X
+$ agave-ledger-tool -l <LEDGER_PATH> --snapshot-archive-path <SNAPSHOTS_PATH> --incremental-snapshot-archive-path <INCREMENTAL_SNAPSHOTS_PATH> create-snapshot SLOT_X <SNAPSHOTS_PATH> --hard-fork SLOT_X
 ```
 
 The snapshots directory should now contain the new snapshot.
-`solana-ledger-tool create-snapshot` will also output the new shred version, and bank hash value,
+`agave-ledger-tool create-snapshot` will also output the new shred version, and bank hash value,
 call this NEW_SHRED_VERSION and NEW_BANK_HASH respectively.
 
 Adjust your validator's arguments:
@@ -95,7 +95,7 @@ Post something like the following to #announcements (adjusting the text as appro
 >   ...                                # <-- your other --identity/--vote-account/etc arguments
 > ```
 >
->      You can check for which slots your ledger has with: `solana-ledger-tool -l path/to/ledger bounds`
+>      You can check for which slots your ledger has with: `agave-ledger-tool -l path/to/ledger bounds`
 >
 > 3. Wait until 80% of the stake comes online
 >
@@ -122,7 +122,7 @@ and create a new snapshot with additional `--destake-vote-account <PUBKEY>`
 arguments for each of the non-responsive validator's vote account address
 
 ```bash
-$ solana-ledger-tool -l ledger create-snapshot SLOT_X ledger --hard-fork SLOT_X \
+$ agave-ledger-tool -l ledger create-snapshot SLOT_X ledger --hard-fork SLOT_X \
     --destake-vote-account <VOTE_ACCOUNT_1> \
     --destake-vote-account <VOTE_ACCOUNT_2> \
     .
