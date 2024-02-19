@@ -207,7 +207,7 @@ refill or deduct from it as needed. To check the account balance do:
 solana balance validator-keypair.json
 ```
 
-> **Note** `solana-watchtower` can monitor for a minimum validator identity
+> **Note** `agave-watchtower` can monitor for a minimum validator identity
 > balance. See [monitoring best practices](./monitoring.md) for details.
 
 ## Withdrawing From The Vote Account

@@ -102,6 +102,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-watchtower"
+version = "1.18.0"
+dependencies = [
+ "clap 2.33.3",
+ "humantime",
+ "log",
+ "solana-clap-utils",
+ "solana-cli-config",
+ "solana-cli-output",
+ "solana-logger",
+ "solana-metrics",
+ "solana-notifier",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-sdk",
+ "solana-version",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7609,25 +7628,6 @@ dependencies = [
  "solana-sdk",
  "test-case",
  "thiserror",
-]
-
-[[package]]
-name = "solana-watchtower"
-version = "1.18.0"
-dependencies = [
- "clap 2.33.3",
- "humantime",
- "log",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-cli-output",
- "solana-logger",
- "solana-metrics",
- "solana-notifier",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-sdk",
- "solana-version",
 ]
 
 [[package]]
