@@ -82,21 +82,21 @@ CPU), you can target your specific architecture using the `-march` flag. Refer
 to the following doc for
 [instructions on building from source](../../cli/install.md#build-from-source).
 
-### solana-install
+### agave-install
 
 If you are not comfortable building from source, or you need to quickly install
 a new version to test something out, you could instead try using the
-`solana-install` command.
+`agave-install` command.
 
 Assuming you want to install Solana version `1.14.17`, you would execute the
 following:
 
 ```
-solana-install init 1.14.17
+agave-install init 1.14.17
 ```
 
 This command downloads the executable for `1.14.17` and installs it into a
-`.local` directory. You can also look at `solana-install --help` for more
+`.local` directory. You can also look at `agave-install --help` for more
 options.
 
 > **Note** this command only works if you already have the solana cli installed.
