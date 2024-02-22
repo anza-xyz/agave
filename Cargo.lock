@@ -102,6 +102,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-install"
+version = "1.18.3"
+dependencies = [
+ "atty",
+ "bincode",
+ "bzip2",
+ "chrono",
+ "clap 2.33.3",
+ "console",
+ "crossbeam-channel",
+ "ctrlc",
+ "dirs-next",
+ "indicatif",
+ "lazy_static",
+ "nix 0.26.4",
+ "reqwest",
+ "scopeguard",
+ "semver 1.0.21",
+ "serde",
+ "serde_yaml 0.8.26",
+ "serde_yaml 0.9.30",
+ "solana-clap-utils",
+ "solana-config-program",
+ "solana-logger",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-version",
+ "tar",
+ "tempfile",
+ "url 2.5.0",
+ "winapi 0.3.9",
+ "winreg",
+]
+
+[[package]]
 name = "agave-ledger-tool"
 version = "1.18.3"
 dependencies = [
@@ -6380,41 +6415,6 @@ dependencies = [
  "static_assertions",
  "test-case",
  "thiserror",
-]
-
-[[package]]
-name = "solana-install"
-version = "1.18.3"
-dependencies = [
- "atty",
- "bincode",
- "bzip2",
- "chrono",
- "clap 2.33.3",
- "console",
- "crossbeam-channel",
- "ctrlc",
- "dirs-next",
- "indicatif",
- "lazy_static",
- "nix 0.26.4",
- "reqwest",
- "scopeguard",
- "semver 1.0.21",
- "serde",
- "serde_yaml 0.8.26",
- "serde_yaml 0.9.30",
- "solana-clap-utils",
- "solana-config-program",
- "solana-logger",
- "solana-rpc-client",
- "solana-sdk",
- "solana-version",
- "tar",
- "tempfile",
- "url 2.5.0",
- "winapi 0.3.9",
- "winreg",
 ]
 
 [[package]]
