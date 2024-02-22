@@ -26,11 +26,11 @@ The command will monitor your validator, but you will not get notifications unle
 
 It is a best practice to run the `agave-watchtower` command on a separate server from your validator.
 
-In the case that you run `agave-watchtower` on the same computer as your `solana-validator` process, then during catastrophic events like a power outage, you will not be aware of the issue, because your `agave-watchtower` process will stop at the same time as your `solana-validator` process.
+In the case that you run `agave-watchtower` on the same computer as your `agave-validator` process, then during catastrophic events like a power outage, you will not be aware of the issue, because your `agave-watchtower` process will stop at the same time as your `agave-validator` process.
 
 Additionally, while running the `agave-watchtower` process manually with environment variables set in the terminal is a good way to test out the command, it is not operationally sound because the process will not be restarted when the terminal closes or during a system restart.
 
-Instead, you could run your `agave-watchtower` command as a system process similar to `solana-validator`. In the system process file, you can specify the environment variables for your bot.
+Instead, you could run your `agave-watchtower` command as a system process similar to `agave-validator`. In the system process file, you can specify the environment variables for your bot.
 
 ### Setup Telegram Notifications
 

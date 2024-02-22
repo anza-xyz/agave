@@ -121,7 +121,7 @@ cat >> ~/solana/on-reboot <<EOF
   echo \$! > system-stats.pid
 
   if ${GPU_CUDA_OK} && [[ -e /dev/nvidia0 ]]; then
-    echo Selecting solana-validator-cuda
+    echo Selecting agave-validator-cuda
     export SOLANA_CUDA=1
   elif ${GPU_FAIL_IF_NONE} ; then
     echo "Expected GPU, found none!"

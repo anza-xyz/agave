@@ -19,7 +19,7 @@ solana-program = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-test = { workspace = true }
 solana-sdk = { workspace = true }
-solana-validator = { workspace = true }
+agave-validator = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "lib"]
