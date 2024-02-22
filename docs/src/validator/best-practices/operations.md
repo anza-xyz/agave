@@ -49,17 +49,17 @@ It is a best practice to always build your Solana binaries from source. If you b
 
 If you build from source on the validator machine (or a machine with the same CPU), you can target your specific architecture using the `-march` flag. Refer to the Solana docs for [instructions on building from source](../../cli/install-solana-cli-tools.md#build-from-source).
 
-### solana-install
+### agave-install
 
-If you are not comfortable building from source, or you need to quickly install a new version to test something out, you could instead try using the `solana-install` command.
+If you are not comfortable building from source, or you need to quickly install a new version to test something out, you could instead try using the `agave-install` command.
 
 Assuming you want to install Solana version `1.14.17`, you would execute the following:
 
 ```
-solana-install init 1.14.17
+agave-install init 1.14.17
 ```
 
-This command downloads the executable for `1.14.17` and installs it into a `.local` directory. You can also look at `solana-install --help` for more options.
+This command downloads the executable for `1.14.17` and installs it into a `.local` directory. You can also look at `agave-install --help` for more options.
 
 > **Note** this command only works if you already have the solana cli installed. If you do not have the cli installed, refer to [install solana cli tools](../../cli/install-solana-cli-tools.md)
 
