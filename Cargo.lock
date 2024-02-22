@@ -63,6 +63,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-cargo-registry"
+version = "1.18.3"
+dependencies = [
+ "clap 2.33.3",
+ "flate2",
+ "hex",
+ "hyper",
+ "log",
+ "rustc_version 0.4.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "solana-clap-utils",
+ "solana-cli",
+ "solana-cli-config",
+ "solana-cli-output",
+ "solana-logger",
+ "solana-remote-wallet",
+ "solana-rpc-client",
+ "solana-rpc-client-api",
+ "solana-sdk",
+ "solana-version",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.8",
+]
+
+[[package]]
 name = "agave-ledger-tool"
 version = "1.18.3"
 dependencies = [
@@ -5670,35 +5699,6 @@ dependencies = [
  "solana-logger",
  "solana-sdk",
  "tar",
-]
-
-[[package]]
-name = "solana-cargo-registry"
-version = "1.18.3"
-dependencies = [
- "clap 2.33.3",
- "flate2",
- "hex",
- "hyper",
- "log",
- "rustc_version 0.4.0",
- "serde",
- "serde_json",
- "sha2 0.10.8",
- "solana-clap-utils",
- "solana-cli",
- "solana-cli-config",
- "solana-cli-output",
- "solana-logger",
- "solana-remote-wallet",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-sdk",
- "solana-version",
- "tar",
- "tempfile",
- "tokio",
- "toml 0.8.8",
 ]
 
 [[package]]
