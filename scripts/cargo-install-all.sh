@@ -108,7 +108,7 @@ else
     solana-gossip
     solana-install
     solana-keygen
-    solana-ledger-tool
+    agave-ledger-tool
     solana-log-analyzer
     solana-net-shaper
     solana-validator

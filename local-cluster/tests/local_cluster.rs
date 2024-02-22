@@ -2315,7 +2315,7 @@ fn test_hard_fork_with_gap_in_roots() {
     );
 
     // create hard-forked snapshot only for validator a, emulating the manual cluster restart
-    // procedure with `solana-ledger-tool create-snapshot`
+    // procedure with `agave-ledger-tool create-snapshot`
     let genesis_slot = 0;
     {
         let blockstore_a = Blockstore::open(&val_a_ledger_path).unwrap();
