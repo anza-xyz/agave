@@ -70,16 +70,16 @@ ensure you miss as little data as possible. Running the solana software as a
 systemd service is one great option.
 
 For monitoring, we provide
-[`solana-watchtower`](https://github.com/solana-labs/solana/blob/master/watchtower/README.md),
+[`agave-watchtower`](https://github.com/solana-labs/solana/blob/master/watchtower/README.md),
 which can monitor your validator and detect with the `solana-validator` process
 is unhealthy. It can directly be configured to alert you via Slack, Telegram,
-Discord, or Twillio. For details, run `solana-watchtower --help`.
+Discord, or Twillio. For details, run `agave-watchtower --help`.
 
 ```bash
-solana-watchtower --validator-identity <YOUR VALIDATOR IDENTITY>
+agave-watchtower --validator-identity <YOUR VALIDATOR IDENTITY>
 ```
 
-> You can find more information about the [best practices for Solana Watchtower](../validator/best-practices/monitoring.md#solana-watchtower) here in the docs.
+> You can find more information about the [best practices for Solana Watchtower](../validator/best-practices/monitoring.md#agave-watchtower) here in the docs.
 
 #### New Software Release Announcements
 

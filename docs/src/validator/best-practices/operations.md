@@ -128,7 +128,7 @@ It is important that you do not accidentally run out of funds in your identity a
 solana balance validator-keypair.json
 ```
 
-> **Note** `solana-watchtower` can monitor for a minimum validator identity balance.  See [monitoring best practices](./monitoring.md) for details.
+> **Note** `agave-watchtower` can monitor for a minimum validator identity balance.  See [monitoring best practices](./monitoring.md) for details.
 
 ## Withdrawing From The Vote Account
 
