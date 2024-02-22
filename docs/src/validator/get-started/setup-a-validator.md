@@ -358,13 +358,7 @@ exec agave-validator \
     --limit-ledger-size
 ```
 
-<<<<<<< HEAD:docs/src/validator/get-started/setup-a-validator.md
-Refer to `solana-validator --help` for more information on what each flag is doing in this script. Also refer to the section on [best practices for operating a validator](../best-practices/operations.md).
-=======
-Refer to `agave-validator --help` for more information on what each flag is
-doing in this script. Also refer to the section on
-[best practices for operating a validator](./best-practices/general.md).
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10)):docs/src/operations/setup-a-validator.md
+Refer to `agave-validator --help` for more information on what each flag is doing in this script. Also refer to the section on [best practices for operating a validator](../best-practices/operations.md).
 
 ## Verifying Your Validator Is Working
 
@@ -374,23 +368,13 @@ Test that your `validator.sh` file is running properly by executing the `validat
 /home/sol/bin/validator.sh
 ```
 
-<<<<<<< HEAD:docs/src/validator/get-started/setup-a-validator.md
-The script should execute the `solana-validator` process. In a new terminal window, shh into your server, then verify that the process is running:
-=======
-The script should execute the `agave-validator` process. In a new terminal
-window, shh into your server, then verify that the process is running:
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10)):docs/src/operations/setup-a-validator.md
+The script should execute the `agave-validator` process. In a new terminal window, shh into your server, then verify that the process is running:
 
 ```
 ps aux | grep agave-validator
 ```
 
-<<<<<<< HEAD:docs/src/validator/get-started/setup-a-validator.md
-You should see a line in the output that includes `solana-validator` with all the flags that were added to your `validator.sh` script.
-=======
-You should see a line in the output that includes `agave-validator` with all
-the flags that were added to your `validator.sh` script.
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10)):docs/src/operations/setup-a-validator.md
+You should see a line in the output that includes `agave-validator` with all the flags that were added to your `validator.sh` script.
 
 Next, we need to look at the logs to make sure everything is operating properly.
 
@@ -479,14 +463,7 @@ tail -f /home/sol/agave-validator*.log
 
 ## Monitoring
 
-<<<<<<< HEAD:docs/src/validator/get-started/setup-a-validator.md
-`solana-watchtower` is a command you can run on a separate machine to monitor your server. You can read more about handling [automatic restarts and monitoring](../best-practices/monitoring.md#solana-watchtower) using Solana Watchtower here in the docs.
-=======
-`agave-watchtower` is a command you can run on a separate machine to monitor
-your server. You can read more about handling
-[automatic restarts and monitoring](./best-practices/monitoring.md#agave-watchtower)
-using Solana Watchtower here in the docs.
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10)):docs/src/operations/setup-a-validator.md
+`agave-watchtower` is a command you can run on a separate machine to monitor your server. You can read more about handling [automatic restarts and monitoring](../best-practices/monitoring.md#solana-watchtower) using Solana Watchtower here in the docs.
 
 ## Common issues
 

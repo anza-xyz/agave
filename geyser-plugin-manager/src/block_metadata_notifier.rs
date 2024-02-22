@@ -3,13 +3,9 @@ use {
         block_metadata_notifier_interface::BlockMetadataNotifier,
         geyser_plugin_manager::GeyserPluginManager,
     },
-<<<<<<< HEAD
     log::*,
     solana_accounts_db::stake_rewards::RewardInfo,
     solana_geyser_plugin_interface::geyser_plugin_interface::{
-=======
-    agave_geyser_plugin_interface::geyser_plugin_interface::{
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
         ReplicaBlockInfoV3, ReplicaBlockInfoVersions,
     },
     log::*,

@@ -29,12 +29,6 @@ source ci/rust-version.sh nightly
 # reason to bend dev-context-only-utils's original intention and that listed
 # package isn't part of released binaries.
 declare tainted_packages=(
-<<<<<<< HEAD
-=======
-  solana-accounts-bench
-  solana-banking-bench
-  agave-ledger-tool
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
 )
 
 # convert to comma separeted (ref: https://stackoverflow.com/a/53839433)

@@ -407,14 +407,8 @@ impl Rocks {
                 let secondary_path = path.join("solana-secondary");
 
                 info!(
-<<<<<<< HEAD
                     "Opening Rocks with secondary (read only) access at: {:?}",
                     secondary_path
-=======
-                    "Opening Rocks with secondary (read only) access at: {secondary_path:?}. \
-                    This secondary access could temporarily degrade other accesses, such as \
-                    by agave-validator"
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
                 );
                 info!("This secondary access could temporarily degrade other accesses, such as by solana-validator");
 

@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-plugin-interface"
-version = "1.18.0"
+version = "1.17.23"
 dependencies = [
  "log",
  "solana-sdk",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "agave-validator"
-version = "1.18.0"
+version = "1.17.23"
 dependencies = [
  "agave-geyser-plugin-interface",
  "chrono",
@@ -126,7 +126,6 @@ dependencies = [
  "solana-send-transaction-service",
  "solana-storage-bigtable",
  "solana-streamer",
- "solana-svm",
  "solana-test-validator",
  "solana-tpu-client",
  "solana-version",
@@ -5043,23 +5042,9 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "solana-geyser-plugin-interface"
-version = "1.17.23"
-dependencies = [
- "log",
- "solana-sdk",
- "solana-transaction-status",
- "thiserror",
-]
-
-[[package]]
-=======
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
 name = "solana-geyser-plugin-manager"
 version = "1.17.23"
 dependencies = [
- "agave-geyser-plugin-interface",
  "bs58",
  "crossbeam-channel",
  "json5",
@@ -6409,91 +6394,6 @@ dependencies = [
  "solana-streamer",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-<<<<<<< HEAD
-name = "solana-validator"
-version = "1.17.23"
-dependencies = [
- "chrono",
- "clap 2.33.3",
- "console",
- "core_affinity",
- "crossbeam-channel",
- "fd-lock",
- "indicatif",
- "itertools",
- "jsonrpc-core",
- "jsonrpc-core-client",
- "jsonrpc-derive",
- "jsonrpc-ipc-server",
- "jsonrpc-server-utils",
- "lazy_static",
- "libc",
- "libloading",
- "log",
- "num_cpus",
- "rand 0.8.5",
- "rayon",
- "serde",
- "serde_json",
- "serde_yaml",
- "signal-hook",
- "solana-accounts-db",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-core",
- "solana-download-utils",
- "solana-entry",
- "solana-faucet",
- "solana-genesis-utils",
- "solana-geyser-plugin-interface",
- "solana-geyser-plugin-manager",
- "solana-gossip",
- "solana-ledger",
- "solana-logger",
- "solana-metrics",
- "solana-net-utils",
- "solana-perf",
- "solana-poh",
- "solana-rpc",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-sdk",
- "solana-send-transaction-service",
- "solana-storage-bigtable",
- "solana-streamer",
- "solana-test-validator",
- "solana-tpu-client",
- "solana-version",
- "solana-vote-program",
- "symlink",
- "thiserror",
- "tikv-jemallocator",
-=======
-name = "solana-unified-scheduler-logic"
-version = "1.18.0"
-dependencies = [
- "solana-sdk",
-]
-
-[[package]]
-name = "solana-unified-scheduler-pool"
-version = "1.18.0"
-dependencies = [
- "assert_matches",
- "crossbeam-channel",
- "derivative",
- "log",
- "solana-ledger",
- "solana-program-runtime",
- "solana-runtime",
- "solana-sdk",
- "solana-unified-scheduler-logic",
- "solana-vote",
->>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
 ]
 
 [[package]]
