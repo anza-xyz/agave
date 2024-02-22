@@ -87,6 +87,7 @@ The vote authority can be changed later with the
 [vote-authorize-voter-checked](../cli/usage.md#solana-vote-authorize-voter-checked) command.
 
 The vote authority can be changed at most once per epoch. If the authority is
+<<<<<<< HEAD:docs/src/running-validator/vote-accounts.md
 changed with [vote-authorize-voter-checked](../cli/usage.md#solana-vote-authorize-voter-checked),
 this will not take effect until the beginning of the next epoch.
 To support a smooth transition of the vote signing,
@@ -94,6 +95,15 @@ To support a smooth transition of the vote signing,
 multiple times. This allows the validator process to keep voting successfully
 when the network reaches an epoch boundary at which the validator's vote
 authority account changes.
+=======
+changed with
+[vote-authorize-voter-checked](../../cli/usage.md#solana-vote-authorize-voter-checked),
+this will not take effect until the beginning of the next epoch. To support a
+smooth transition of the vote signing, `agave-validator` allows the
+`--authorized-voter` argument to be specified multiple times. This allows the
+validator process to keep voting successfully when the network reaches an epoch
+boundary at which the validator's vote authority account changes.
+>>>>>>> e1e36d2fea ([anza migration] rename crates (#10)):docs/src/operations/guides/vote-accounts.md
 
 ### Authorized Withdrawer
 
@@ -198,7 +208,7 @@ no longer listed in the `solana leader-schedule` output.
 ### Vote Account Authorized Voter
 
 The _vote authority_ keypair may only be changed at epoch boundaries and
-requires some additional arguments to `solana-validator` for a seamless
+requires some additional arguments to `agave-validator` for a seamless
 migration.
 
 1. Run `solana epoch-info`. If there is not much time remaining time in the
@@ -208,14 +218,22 @@ migration.
 3. Determine the current _vote authority_ keypair by running `solana vote-account ~/vote-account-keypair.json`. It may be validator's
    identity account (the default) or some other keypair. The following steps
    assume that `~/validator-keypair.json` is that keypair.
+<<<<<<< HEAD:docs/src/running-validator/vote-accounts.md
 4. Run `solana vote-authorize-voter-checked ~/vote-account-keypair.json ~/validator-keypair.json ~/new-vote-authority.json`.
    The new vote authority is scheduled to become active starting at the next epoch.
 5. `solana-validator` now needs to be restarted with the old and new vote
+=======
+4. Run
+   `solana vote-authorize-voter-checked ~/vote-account-keypair.json ~/validator-keypair.json ~/new-vote-authority.json`.
+   The new vote authority is scheduled to become active starting at the next
+   epoch.
+5. `agave-validator` now needs to be restarted with the old and new vote
+>>>>>>> e1e36d2fea ([anza migration] rename crates (#10)):docs/src/operations/guides/vote-accounts.md
    authority keypairs, so that it can smoothly transition at the next epoch. Add
    the two arguments on restart: `--authorized-voter ~/validator-keypair.json --authorized-voter ~/new-vote-authority.json`
 6. After the cluster reaches the next epoch, remove the
    `--authorized-voter ~/validator-keypair.json` argument and restart
-   `solana-validator`, as the old vote authority keypair is no longer required.
+   `agave-validator`, as the old vote authority keypair is no longer required.
 
 ### Vote Account Authorized Withdrawer
 

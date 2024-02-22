@@ -1,11 +1,18 @@
 /// Module responsible for notifying plugins about entries
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
+<<<<<<< HEAD
     log::*,
     solana_entry::entry::EntrySummary,
     solana_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaEntryInfo, ReplicaEntryInfoVersions,
+=======
+    agave_geyser_plugin_interface::geyser_plugin_interface::{
+        ReplicaEntryInfoV2, ReplicaEntryInfoVersions,
+>>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
     },
+    log::*,
+    solana_entry::entry::EntrySummary,
     solana_ledger::entry_notifier_interface::EntryNotifier,
     solana_measure::measure::Measure,
     solana_metrics::*,

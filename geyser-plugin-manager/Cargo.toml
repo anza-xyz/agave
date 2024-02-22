@@ -10,7 +10,11 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+<<<<<<< HEAD
 
+=======
+agave-geyser-plugin-interface = { workspace = true }
+>>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
 json5 = { workspace = true }
@@ -21,7 +25,6 @@ log = { workspace = true }
 serde_json = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }
-solana-geyser-plugin-interface = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }

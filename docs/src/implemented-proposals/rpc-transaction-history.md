@@ -67,9 +67,15 @@ results of BigTable queries more complicated but is not a significant issue.
 
 ## Data Population
 
+<<<<<<< HEAD
 The ongoing population of instance data will occur on an epoch cadence through the
 use of a new `solana-ledger-tool` command that will convert rocksdb data for a
 given slot range into the instance schema.
+=======
+The ongoing population of instance data will occur on an epoch cadence through
+the use of a new `agave-ledger-tool` command that will convert rocksdb data for
+a given slot range into the instance schema.
+>>>>>>> e1e36d2fea ([anza migration] rename crates (#10))
 
 The same process will be run once, manually, to backfill the existing ledger
 data.
