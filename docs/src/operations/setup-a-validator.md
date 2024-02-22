@@ -572,9 +572,9 @@ tail -f /home/sol/solana-validator*.log
 
 ## Monitoring
 
-`solana-watchtower` is a command you can run on a separate machine to monitor
+`agave-watchtower` is a command you can run on a separate machine to monitor
 your server. You can read more about handling
-[automatic restarts and monitoring](./best-practices/monitoring.md#solana-watchtower)
+[automatic restarts and monitoring](./best-practices/monitoring.md#agave-watchtower)
 using Solana Watchtower here in the docs.
 
 ## Common issues

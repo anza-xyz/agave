@@ -127,7 +127,7 @@ else
       solana-stake-accounts
       solana-test-validator
       solana-tokens
-      solana-watchtower
+      agave-watchtower
     )
   fi
 
