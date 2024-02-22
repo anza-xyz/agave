@@ -7,7 +7,7 @@ use {
         sysvar,
     },
     solana_sdk::{signature::Signer, transaction::Transaction},
-    solana_validator::test_validator::*,
+    agave_validator::test_validator::*,
 };
 
 #[test]

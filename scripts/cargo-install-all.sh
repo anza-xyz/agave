@@ -111,7 +111,7 @@ else
     agave-ledger-tool
     solana-log-analyzer
     solana-net-shaper
-    solana-validator
+    agave-validator
     rbpf-cli
   )
 

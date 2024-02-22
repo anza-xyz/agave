@@ -1,8 +1,8 @@
 [package]
-name = "solana-validator"
+name = "agave-validator"
 description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana-validator"
-default-run = "solana-validator"
+documentation = "https://docs.rs/agave-validator"
+default-run = "agave-validator"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
