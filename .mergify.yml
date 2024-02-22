@@ -139,12 +139,7 @@ pull_request_rules:
       - label=feature-gate
     actions:
       backport:
-<<<<<<< HEAD
         assignees: *BackportAssignee
-=======
-        assignees: &BackportAssignee
-          - "{{ merged_by|replace('mergify[bot]', label|select('equalto', 'community')|first|default(author)|replace('community', '@anza-xyz/community-pr-subscribers')) }}"
->>>>>>> 16d08a02a3 ([anza migration] ci (#5))
         title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
         ignore_conflicts: true
         labels:
