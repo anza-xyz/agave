@@ -5,7 +5,7 @@ use {
     },
     log::*,
     solana_accounts_db::stake_rewards::RewardInfo,
-    solana_geyser_plugin_interface::geyser_plugin_interface::{
+    agave_geyser_plugin_interface::geyser_plugin_interface::{
         ReplicaBlockInfoV3, ReplicaBlockInfoVersions,
     },
     solana_measure::measure::Measure,
