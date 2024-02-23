@@ -2,6 +2,15 @@
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
 use {
+    agave_validator::{
+        admin_rpc_service,
+        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
+        bootstrap,
+        cli::{app, warn_for_deprecated_arguments, DefaultArgs},
+        dashboard::Dashboard,
+        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
+        redirect_stderr_to_file,
+    },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     console::style,
     crossbeam_channel::unbounded,
@@ -65,15 +74,6 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-    agave_validator::{
-        admin_rpc_service,
-        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
-        bootstrap,
-        cli::{app, warn_for_deprecated_arguments, DefaultArgs},
-        dashboard::Dashboard,
-        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
-        redirect_stderr_to_file,
-    },
     std::{
         collections::{HashSet, VecDeque},
         env,
