@@ -11,9 +11,11 @@ edition = { workspace = true }
 [dependencies]
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
+chrono = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 solana-clap-utils = { workspace = true }

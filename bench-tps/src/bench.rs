@@ -2,9 +2,12 @@ use {
     crate::{
         bench_tps_client::*,
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
+        confirmations_processing::{SignatureBatch, SignatureBatchSender},
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
     },
+    chrono::Utc,
+    crossbeam_channel::unbounded,
     log::*,
     rand::distributions::{Distribution, Uniform},
     rayon::prelude::*,
@@ -356,6 +359,7 @@ fn create_sender_threads<T>(
     threads: usize,
     exit_signal: Arc<AtomicBool>,
     shared_tx_active_thread_count: &Arc<AtomicIsize>,
+    signatures_sender: SignatureBatchSender,
 ) -> Vec<JoinHandle<()>>
 where
     T: 'static + BenchTpsClient + Send + Sync + ?Sized,
@@ -367,6 +371,7 @@ where
             let shared_tx_active_thread_count = shared_tx_active_thread_count.clone();
             let total_tx_sent_count = total_tx_sent_count.clone();
             let client = client.clone();
+            let signatures_sender = signatures_sender.clone();
             Builder::new()
                 .name("solana-client-sender".to_string())
                 .spawn(move || {
@@ -377,6 +382,7 @@ where
                         &total_tx_sent_count,
                         thread_batch_sleep_ms,
                         &client,
+                        signatures_sender,
                     );
                 })
                 .unwrap()
@@ -464,6 +470,8 @@ where
         None
     };
 
+    let (signatures_sender, signatures_receiver) = unbounded();
+
     let s_threads = create_sender_threads(
         &client,
         &shared_txs,
@@ -472,6 +480,7 @@ where
         threads,
         exit_signal.clone(),
         &shared_tx_active_thread_count,
+        signatures_sender,
     );
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
@@ -916,6 +925,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
     total_tx_sent_count: &Arc<AtomicUsize>,
     thread_batch_sleep_ms: usize,
     client: &Arc<T>,
+    signatures_sender: SignatureBatchSender,
 ) {
     let mut last_sent_time = timestamp();
     loop {
@@ -957,6 +967,12 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                 );
             }
 
+            let signatures = transactions.iter().map(|tx| tx.signatures[0]).collect();
+            signatures_sender.send(SignatureBatch {
+                signatures,
+                sent_at: Utc::now(),
+            });
+
             if let Err(error) = client.send_batch(transactions) {
                 warn!("send_batch_sync in do_tx_transfers failed: {}", error);
             }
@@ -990,6 +1006,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
             );
         }
         if exit_signal.load(Ordering::Relaxed) {
+            drop(signatures_sender);
             break;
         }
     }
