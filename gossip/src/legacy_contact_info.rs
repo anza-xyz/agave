@@ -229,21 +229,6 @@ impl LegacyContactInfo {
     pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
         addr.port() != 0u16 && Self::is_valid_ip(addr.ip()) && socket_addr_space.check(addr)
     }
-
-    pub(crate) fn valid_client_facing_addr(
-        &self,
-        protocol: Protocol,
-        socket_addr_space: &SocketAddrSpace,
-    ) -> Option<(SocketAddr, SocketAddr)> {
-        Some((
-            self.rpc()
-                .ok()
-                .filter(|addr| socket_addr_space.check(addr))?,
-            self.tpu(protocol)
-                .ok()
-                .filter(|addr| socket_addr_space.check(addr))?,
-        ))
-    }
 }
 
 impl TryFrom<&ContactInfo> for LegacyContactInfo {
