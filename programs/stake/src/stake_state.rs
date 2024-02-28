@@ -24,7 +24,7 @@ use {
             stake_flags::StakeFlags,
             tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
         },
-        stake_history::{StakeHistory, StakeHistoryEntry, StakeHistoryGetEntry},
+        stake_history::{StakeHistory, StakeHistoryEntry},
         transaction_context::{
             BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
         },
