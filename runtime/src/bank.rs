@@ -124,7 +124,7 @@ use {
             self, include_loaded_accounts_data_size_in_fee_calculation,
             remove_rounding_in_fee_calculation, FeatureSet,
         },
-        fee::FeeStructure,
+        fee::{FeeDetails, FeeStructure},
         fee_calculator::{FeeCalculator, FeeRateGovernor},
         genesis_config::{ClusterType, GenesisConfig},
         hard_forks::HardForks,
@@ -253,6 +253,24 @@ impl AddAssign for SquashTiming {
         self.squash_accounts_index_ms += rhs.squash_accounts_index_ms;
         self.squash_accounts_store_ms += rhs.squash_accounts_store_ms;
         self.squash_cache_ms += rhs.squash_cache_ms;
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CollectorFeeDetails {
+    pub transaction_fee: u64,
+    pub priority_fee: u64,
+}
+
+impl CollectorFeeDetails {
+    pub(crate) fn add(&mut self, fee_details: &FeeDetails) {
+        self.transaction_fee = self
+            .transaction_fee
+            .saturating_add(fee_details.transaction_fee());
+        self.priority_fee = self
+            .priority_fee
+            .saturating_add(fee_details.prioritization_fee());
     }
 }
 
@@ -551,6 +569,7 @@ impl PartialEq for Bank {
             epoch_reward_status: _,
             transaction_processor: _,
             check_program_modification_slot: _,
+            collector_fee_details,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -584,6 +603,8 @@ impl PartialEq for Bank {
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
             && epoch_stakes == &other.epoch_stakes
             && is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
+            && *collector_fee_details.read().unwrap()
+                == *other.collector_fee_details.read().unwrap()
     }
 }
 
@@ -813,6 +834,9 @@ pub struct Bank {
     transaction_processor: TransactionBatchProcessor<BankForks>,
 
     check_program_modification_slot: bool,
+
+    /// Collected fee details
+    collector_fee_details: RwLock<CollectorFeeDetails>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1000,6 +1024,7 @@ impl Bank {
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
+            collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
         };
 
         bank.transaction_processor = TransactionBatchProcessor::new(
@@ -1319,6 +1344,7 @@ impl Bank {
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
+            collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
         };
 
         new.transaction_processor = TransactionBatchProcessor::new(
@@ -1866,6 +1892,8 @@ impl Bank {
             epoch_reward_status: fields.epoch_reward_status,
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
+            // collector_fee_details is not serialized to snapshot
+            collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
         };
 
         bank.transaction_processor = TransactionBatchProcessor::new(
@@ -4900,6 +4928,66 @@ impl Bank {
             .collect();
 
         self.collector_fees.fetch_add(fees, Relaxed);
+        results
+    }
+
+    // Note: this function is not yet used; next PR will call it behind a feature gate
+    #[allow(dead_code)]
+    fn filter_program_errors_and_collect_fee_details(
+        &self,
+        txs: &[SanitizedTransaction],
+        execution_results: &[TransactionExecutionResult],
+    ) -> Vec<Result<()>> {
+        let mut accumulated_fee_details = FeeDetails::default();
+
+        let results = txs
+            .iter()
+            .zip(execution_results)
+            .map(|(tx, execution_result)| {
+                let (execution_status, durable_nonce_fee) = match &execution_result {
+                    TransactionExecutionResult::Executed { details, .. } => {
+                        Ok((&details.status, details.durable_nonce_fee.as_ref()))
+                    }
+                    TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
+                }?;
+                let is_nonce = durable_nonce_fee.is_some();
+
+                let message = tx.message();
+                let fee_details = self.fee_structure.calculate_fee_details(
+                    message,
+                    &process_compute_budget_instructions(message.program_instructions_iter())
+                        .unwrap_or_default()
+                        .into(),
+                    self.feature_set
+                        .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+                );
+
+                // In case of instruction error, even though no accounts
+                // were stored we still need to charge the payer the
+                // fee.
+                //
+                //...except nonce accounts, which already have their
+                // post-load, fee deducted, pre-execute account state
+                // stored
+                if execution_status.is_err() && !is_nonce {
+                    self.withdraw(
+                        tx.message().fee_payer(),
+                        fee_details.total_fee(
+                            self.feature_set
+                                .is_active(&remove_rounding_in_fee_calculation::id()),
+                        ),
+                    )?;
+                }
+
+                accumulated_fee_details.accumulate(&fee_details);
+                Ok(())
+            })
+            .collect();
+
+        self.collector_fee_details
+            .write()
+            .unwrap()
+            .add(&accumulated_fee_details);
         results
     }
 
