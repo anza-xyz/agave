@@ -62,7 +62,6 @@ impl Bank {
     //       transaction fee: same fee_rate_governor rule
     //       priority fee: 100% reward
     //       next PR will call it behind a feature gate
-    #[allow(dead_code)]
     pub(super) fn distribute_transaction_fee_details(&self) {
         let CollectorFeeDetails {
             transaction_fee,
