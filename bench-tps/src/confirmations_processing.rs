@@ -6,7 +6,6 @@ use {
     serde::Serialize,
     solana_client::rpc_config::RpcBlockConfig,
     solana_measure::measure::Measure,
-    solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         commitment_config::CommitmentConfig, commitment_config::CommitmentLevel,
         signature::Signature, slot_history::Slot,
@@ -95,7 +94,7 @@ pub type SignatureBatchReceiver = Receiver<SignatureBatch>;
 pub type SignatureBatchSender = Sender<SignatureBatch>;
 
 // TODO(klykov): extract to TxConfirmationService
-fn create_confirmation_handler_thread<T>(
+pub fn create_confirmation_thread<T>(
     client: &Arc<T>,
     sign_receiver: SignatureBatchReceiver,
 ) -> JoinHandle<()>
@@ -254,7 +253,7 @@ fn process_blocks(
     }
     // push block data
     {
-        let blockData = BlockData {
+        let block_data = BlockData {
             block_hash: block.blockhash.clone(),
             block_leader: slot_leader,
             block_slot: slot,
@@ -268,7 +267,7 @@ fn process_blocks(
             bench_tps_cu_consumed,
             total_cu_consumed,
         };
-        let ss = serde_json::to_value(&blockData).unwrap();
+        let ss = serde_json::to_value(&block_data).unwrap();
         info!("BlockData: {}", ss.to_string());
         //writer.serialize(record).await.unwrap();
     }

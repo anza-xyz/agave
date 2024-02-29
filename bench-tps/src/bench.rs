@@ -2,7 +2,9 @@ use {
     crate::{
         bench_tps_client::*,
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
-        confirmations_processing::{SignatureBatch, SignatureBatchSender},
+        confirmations_processing::{
+            create_confirmation_thread, SignatureBatch, SignatureBatchSender,
+        },
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
     },
@@ -472,7 +474,7 @@ where
 
     let (signatures_sender, signatures_receiver) = unbounded();
 
-    let s_threads = create_sender_threads(
+    let sender_threads = create_sender_threads(
         &client,
         &shared_txs,
         thread_batch_sleep_ms,
@@ -482,6 +484,14 @@ where
         &shared_tx_active_thread_count,
         signatures_sender,
     );
+
+    // TODO maybe move the logic inside the create_xxx?
+    let check_confirmations = true;
+    let confirmation_thread = if check_confirmations {
+        Some(create_confirmation_thread(&client, signatures_receiver))
+    } else {
+        None
+    };
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
 
@@ -508,7 +518,7 @@ where
 
     // join the tx send threads
     info!("Waiting for transmit threads...");
-    for t in s_threads {
+    for t in sender_threads {
         if let Err(err) = t.join() {
             info!("  join() failed with: {:?}", err);
         }
@@ -517,6 +527,13 @@ where
     if let Some(blockhash_thread) = blockhash_thread {
         info!("Waiting for blockhash thread...");
         if let Err(err) = blockhash_thread.join() {
+            info!("  join() failed with: {:?}", err);
+        }
+    }
+
+    if let Some(confirmation_thread) = confirmation_thread {
+        info!("Waiting for confirmation thread...");
+        if let Err(err) = confirmation_thread.join() {
             info!("  join() failed with: {:?}", err);
         }
     }
