@@ -93,21 +93,21 @@ impl CostModel {
         transaction: &SanitizedTransaction,
         feature_set: &FeatureSet,
     ) {
-        let mut builtin_costs = 0u64;
-        let mut bpf_costs = 0u64;
+        let mut programs_execution_costs = 0u64;
         let mut loaded_accounts_data_size_cost = 0u64;
         let mut data_bytes_len_total = 0u64;
         let mut compute_unit_limit_is_set = false;
+        let mut has_user_space_instructions = false;
 
         for (program_id, instruction) in transaction.message().program_instructions_iter() {
-            // to keep the same behavior, look for builtin first
-            if let Some(builtin_cost) = BUILT_IN_INSTRUCTION_COSTS.get(program_id) {
-                builtin_costs = builtin_costs.saturating_add(*builtin_cost);
+            programs_execution_costs = if let Some(builtin_cost) = BUILT_IN_INSTRUCTION_COSTS.get(program_id) {
+                programs_execution_costs.saturating_add(*builtin_cost)
             } else {
-                bpf_costs = bpf_costs
+                has_user_space_instructions = true;
+                programs_execution_costs
                     .saturating_add(u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT))
-                    .min(u64::from(MAX_COMPUTE_UNIT_LIMIT));
             }
+            .min(u64::from(MAX_COMPUTE_UNIT_LIMIT));
             data_bytes_len_total =
                 data_bytes_len_total.saturating_add(instruction.data.len() as u64);
 
@@ -120,8 +120,6 @@ impl CostModel {
             }
         }
 
-        // calculate bpf cost based on compute budget instructions
-
         // if failed to process compute_budget instructions, the transaction will not be executed
         // by `bank`, therefore it should be considered as no execution cost by cost model.
         match process_compute_budget_instructions(transaction.message().program_instructions_iter())
@@ -132,8 +130,8 @@ impl CostModel {
                 // 'compute_unit_limit_is_set' flag, because compute_budget does not distinguish
                 // builtin and bpf instructions when calculating default compute-unit-limit. (see
                 // compute_budget.rs test `test_process_mixed_instructions_without_compute_budget`)
-                if bpf_costs > 0 && compute_unit_limit_is_set {
-                    bpf_costs = u64::from(compute_budget_limits.compute_unit_limit);
+                if has_user_space_instructions && compute_unit_limit_is_set {
+                    programs_execution_costs = u64::from(compute_budget_limits.compute_unit_limit);
                 }
 
                 if feature_set
@@ -146,13 +144,11 @@ impl CostModel {
                 }
             }
             Err(_) => {
-                builtin_costs = 0;
-                bpf_costs = 0;
+                programs_execution_costs = 0;
             }
         }
 
-        tx_cost.builtins_execution_cost = builtin_costs;
-        tx_cost.bpf_execution_cost = bpf_costs;
+        tx_cost.programs_execution_cost = programs_execution_costs;
         tx_cost.loaded_accounts_data_size_cost = loaded_accounts_data_size_cost;
         tx_cost.data_bytes_cost = data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST;
     }

@@ -236,14 +236,10 @@ impl QosService {
             batched_transaction_details.costs.batched_data_bytes_cost,
             Ordering::Relaxed,
         );
-        self.metrics.stats.estimated_builtins_execute_cu.fetch_add(
+        self.metrics.stats.estimated_programs_execute_cu.fetch_add(
             batched_transaction_details
                 .costs
-                .batched_builtins_execute_cost,
-            Ordering::Relaxed,
-        );
-        self.metrics.stats.estimated_bpf_execute_cu.fetch_add(
-            batched_transaction_details.costs.batched_bpf_execute_cost,
+                .batched_programs_execute_cost,
             Ordering::Relaxed,
         );
 
@@ -297,7 +293,7 @@ impl QosService {
     pub fn accumulate_actual_execute_cu(&self, units: u64) {
         self.metrics
             .stats
-            .actual_bpf_execute_cu
+            .actual_programs_execute_cu
             .fetch_add(units, Ordering::Relaxed);
     }
 
@@ -331,12 +327,8 @@ impl QosService {
                 saturating_add_assign!(
                     batched_transaction_details
                         .costs
-                        .batched_builtins_execute_cost,
-                    cost.builtins_execution_cost()
-                );
-                saturating_add_assign!(
-                    batched_transaction_details.costs.batched_bpf_execute_cost,
-                    cost.bpf_execution_cost()
+                        .batched_programs_execute_cost,
+                    cost.programs_execution_cost()
                 );
             }
             Err(transaction_error) => match transaction_error {
@@ -427,14 +419,11 @@ struct QosServiceMetricsStats {
     /// accumulated estimated instruction data Compute Units to be packed into block
     estimated_data_bytes_cu: AtomicU64,
 
-    /// accumulated estimated builtin programs Compute Units to be packed into block
-    estimated_builtins_execute_cu: AtomicU64,
-
-    /// accumulated estimated SBF program Compute Units to be packed into block
-    estimated_bpf_execute_cu: AtomicU64,
+    /// accumulated estimated program Compute Units to be packed into block
+    estimated_programs_execute_cu: AtomicU64,
 
     /// accumulated actual program Compute Units that have been packed into block
-    actual_bpf_execute_cu: AtomicU64,
+    actual_programs_execute_cu: AtomicU64,
 
     /// accumulated actual program execute micro-sec that have been packed into block
     actual_execute_time_us: AtomicU64,
@@ -515,22 +504,15 @@ impl QosServiceMetrics {
                     i64
                 ),
                 (
-                    "estimated_builtins_execute_cu",
+                    "estimated_programs_execute_cu",
                     self.stats
-                        .estimated_builtins_execute_cu
+                        .estimated_programs_execute_cu
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "estimated_bpf_execute_cu",
-                    self.stats
-                        .estimated_bpf_execute_cu
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "actual_bpf_execute_cu",
-                    self.stats.actual_bpf_execute_cu.swap(0, Ordering::Relaxed),
+                    "actual_programs_execute_cu",
+                    self.stats.actual_programs_execute_cu.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (

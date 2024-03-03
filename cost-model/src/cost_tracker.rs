@@ -105,7 +105,7 @@ impl CostTracker {
         estimated_tx_cost: &TransactionCost,
         actual_execution_units: u64,
     ) {
-        let estimated_execution_units = estimated_tx_cost.bpf_execution_cost();
+        let estimated_execution_units = estimated_tx_cost.programs_execution_cost();
         match actual_execution_units.cmp(&estimated_execution_units) {
             Ordering::Equal => (),
             Ordering::Greater => {
