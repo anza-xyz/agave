@@ -1318,7 +1318,7 @@ mod tests {
                     program,
                     new_test_loaded_program_with_usage(
                         *deployment_slot,
-                        (*deployment_slot) + 2,
+                        (*deployment_slot).saturating_add(2),
                         AtomicU64::new(usage_counter),
                     ),
                 );
