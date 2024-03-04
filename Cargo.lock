@@ -5563,6 +5563,7 @@ dependencies = [
  "chrono",
  "clap 2.33.3",
  "crossbeam-channel",
+ "csv",
  "log",
  "rand 0.8.5",
  "rayon",

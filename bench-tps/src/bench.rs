@@ -3,13 +3,13 @@ use {
         bench_tps_client::*,
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         confirmations_processing::{
-            create_confirmation_thread, SignatureBatch, SignatureBatchSender,
+            create_confirmation_channel, create_confirmation_thread, SignatureBatch,
+            SignatureBatchSender,
         },
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
     },
     chrono::Utc,
-    crossbeam_channel::unbounded,
     log::*,
     rand::distributions::{Distribution, Uniform},
     rayon::prelude::*,
@@ -361,7 +361,7 @@ fn create_sender_threads<T>(
     threads: usize,
     exit_signal: Arc<AtomicBool>,
     shared_tx_active_thread_count: &Arc<AtomicIsize>,
-    signatures_sender: SignatureBatchSender,
+    signatures_sender: Option<SignatureBatchSender>,
 ) -> Vec<JoinHandle<()>>
 where
     T: 'static + BenchTpsClient + Send + Sync + ?Sized,
@@ -414,6 +414,8 @@ where
         use_durable_nonce,
         instruction_padding_config,
         num_conflict_groups,
+        block_data_file,
+        transaction_data_file,
         ..
     } = config;
 
@@ -472,7 +474,8 @@ where
         None
     };
 
-    let (signatures_sender, signatures_receiver) = unbounded();
+    let (signatures_sender, signatures_receiver) =
+        create_confirmation_channel(block_data_file.as_ref(), transaction_data_file.as_ref());
 
     let sender_threads = create_sender_threads(
         &client,
@@ -485,13 +488,12 @@ where
         signatures_sender,
     );
 
-    // TODO maybe move the logic inside the create_xxx?
-    let check_confirmations = true;
-    let confirmation_thread = if check_confirmations {
-        Some(create_confirmation_thread(&client, signatures_receiver))
-    } else {
-        None
-    };
+    let confirmation_thread = create_confirmation_thread(
+        &client,
+        signatures_receiver,
+        block_data_file.as_ref(),
+        transaction_data_file.as_ref(),
+    );
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
 
@@ -942,7 +944,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
     total_tx_sent_count: &Arc<AtomicUsize>,
     thread_batch_sleep_ms: usize,
     client: &Arc<T>,
-    signatures_sender: SignatureBatchSender,
+    signatures_sender: Option<SignatureBatchSender>,
 ) {
     let mut last_sent_time = timestamp();
     loop {
@@ -985,10 +987,12 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
             }
 
             let signatures = transactions.iter().map(|tx| tx.signatures[0]).collect();
-            signatures_sender.send(SignatureBatch {
-                signatures,
-                sent_at: Utc::now(),
-            });
+            if let Some(signatures_sender) = &signatures_sender {
+                signatures_sender.send(SignatureBatch {
+                    signatures,
+                    sent_at: Utc::now(),
+                });
+            }
 
             if let Err(error) = client.send_batch(transactions) {
                 warn!("send_batch_sync in do_tx_transfers failed: {}", error);
