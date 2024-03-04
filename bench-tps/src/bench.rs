@@ -3,8 +3,7 @@ use {
         bench_tps_client::*,
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         confirmations_processing::{
-            create_confirmation_channel, create_confirmation_thread, SignatureBatch,
-            SignatureBatchSender,
+            create_log_transactions_service_and_sender, SignatureBatch, SignatureBatchSender,
         },
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
@@ -474,8 +473,11 @@ where
         None
     };
 
-    let (signatures_sender, signatures_receiver) =
-        create_confirmation_channel(block_data_file.as_ref(), transaction_data_file.as_ref());
+    let (log_transaction_service, signatures_sender) = create_log_transactions_service_and_sender(
+        &client,
+        block_data_file.as_ref(),
+        transaction_data_file.as_ref(),
+    );
 
     let sender_threads = create_sender_threads(
         &client,
@@ -486,13 +488,6 @@ where
         exit_signal.clone(),
         &shared_tx_active_thread_count,
         signatures_sender,
-    );
-
-    let confirmation_thread = create_confirmation_thread(
-        &client,
-        signatures_receiver,
-        block_data_file.as_ref(),
-        transaction_data_file.as_ref(),
     );
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
@@ -533,9 +528,9 @@ where
         }
     }
 
-    if let Some(confirmation_thread) = confirmation_thread {
+    if let Some(log_transaction_service) = log_transaction_service {
         info!("Waiting for confirmation thread...");
-        if let Err(err) = confirmation_thread.join() {
+        if let Err(err) = log_transaction_service.join() {
             info!("  join() failed with: {:?}", err);
         }
     }
