@@ -512,7 +512,9 @@ impl QosServiceMetrics {
                 ),
                 (
                     "actual_programs_execute_cu",
-                    self.stats.actual_programs_execute_cu.swap(0, Ordering::Relaxed),
+                    self.stats
+                        .actual_programs_execute_cu
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -717,7 +719,7 @@ mod tests {
             let committed_status: Vec<CommitTransactionDetails> = qos_cost_results
                 .iter()
                 .map(|tx_cost| CommitTransactionDetails::Committed {
-                    compute_units: tx_cost.as_ref().unwrap().bpf_execution_cost()
+                    compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                         + execute_units_adjustment,
                 })
                 .collect();
@@ -844,7 +846,7 @@ mod tests {
                         CommitTransactionDetails::NotCommitted
                     } else {
                         CommitTransactionDetails::Committed {
-                            compute_units: tx_cost.as_ref().unwrap().bpf_execution_cost()
+                            compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                                 + execute_units_adjustment,
                         }
                     }
@@ -880,8 +882,7 @@ mod tests {
         let signature_cost = 1;
         let write_lock_cost = 2;
         let data_bytes_cost = 3;
-        let builtins_execution_cost = 4;
-        let bpf_execution_cost = 10;
+        let programs_execution_cost = 10;
         let num_txs = 4;
 
         let tx_cost_results: Vec<_> = (0..num_txs)
@@ -891,8 +892,7 @@ mod tests {
                         signature_cost,
                         write_lock_cost,
                         data_bytes_cost,
-                        builtins_execution_cost,
-                        bpf_execution_cost,
+                        programs_execution_cost,
                         ..UsageCostDetails::default()
                     }))
                 } else {
@@ -904,8 +904,7 @@ mod tests {
         let expected_signatures = signature_cost * (num_txs / 2);
         let expected_write_locks = write_lock_cost * (num_txs / 2);
         let expected_data_bytes = data_bytes_cost * (num_txs / 2);
-        let expected_builtins_execution_costs = builtins_execution_cost * (num_txs / 2);
-        let expected_bpf_execution_costs = bpf_execution_cost * (num_txs / 2);
+        let expected_programs_execution_costs = programs_execution_cost * (num_txs / 2);
         let batched_transaction_details =
             QosService::accumulate_batched_transaction_costs(tx_cost_results.iter());
         assert_eq!(
@@ -921,14 +920,10 @@ mod tests {
             batched_transaction_details.costs.batched_data_bytes_cost
         );
         assert_eq!(
-            expected_builtins_execution_costs,
+            expected_programs_execution_costs,
             batched_transaction_details
                 .costs
-                .batched_builtins_execute_cost
-        );
-        assert_eq!(
-            expected_bpf_execution_costs,
-            batched_transaction_details.costs.batched_bpf_execute_cost
+                .batched_programs_execute_cost
         );
     }
 }
