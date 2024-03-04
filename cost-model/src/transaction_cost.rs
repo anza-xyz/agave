@@ -91,9 +91,6 @@ pub struct UsageCostDetails {
     pub signature_cost: u64,
     pub write_lock_cost: u64,
     pub data_bytes_cost: u64,
-    // since https://github.com/solana-labs/solana/issues/30620 activated everywhere,
-    // all builtins consume compute units same as bpf. It is no longer necessary
-    // to separate builtin execution cost from bpf's
     pub programs_execution_cost: u64,
     pub loaded_accounts_data_size_cost: u64,
     pub account_data_size: u64,
