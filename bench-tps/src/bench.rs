@@ -91,8 +91,13 @@ fn get_transaction_loaded_accounts_data_size(enable_padding: bool) -> u32 {
     }
 }
 
-pub type TimestampedTransaction = (Transaction, Option<u64>);
-pub type SharedTransactions = Arc<RwLock<VecDeque<Vec<TimestampedTransaction>>>>;
+#[derive(Debug, PartialEq, Default, Eq, Clone)]
+pub(crate) struct TimestampedTransaction {
+    transaction: Transaction,
+    timestamp: Option<u64>,
+}
+
+pub(crate) type SharedTransactions = Arc<RwLock<VecDeque<Vec<TimestampedTransaction>>>>;
 
 /// Keypairs split into source and destination
 /// used for transfer transactions
@@ -597,37 +602,33 @@ fn generate_system_txs(
 
         pairs_with_compute_unit_prices
             .par_iter()
-            .map(|((from, to), compute_unit_price)| {
-                (
-                    transfer_with_compute_unit_price_and_padding(
-                        from,
-                        &to.pubkey(),
-                        1,
-                        *blockhash,
-                        instruction_padding_config,
-                        Some(**compute_unit_price),
-                        skip_tx_account_data_size,
-                    ),
-                    Some(timestamp()),
-                )
+            .map(|((from, to), compute_unit_price)| TimestampedTransaction {
+                transaction: transfer_with_compute_unit_price_and_padding(
+                    from,
+                    &to.pubkey(),
+                    1,
+                    *blockhash,
+                    instruction_padding_config,
+                    Some(**compute_unit_price),
+                    skip_tx_account_data_size,
+                ),
+                timestamp: Some(timestamp()),
             })
             .collect()
     } else {
         pairs
             .par_iter()
-            .map(|(from, to)| {
-                (
-                    transfer_with_compute_unit_price_and_padding(
-                        from,
-                        &to.pubkey(),
-                        1,
-                        *blockhash,
-                        instruction_padding_config,
-                        None,
-                        skip_tx_account_data_size,
-                    ),
-                    Some(timestamp()),
-                )
+            .map(|(from, to)| TimestampedTransaction {
+                transaction: transfer_with_compute_unit_price_and_padding(
+                    from,
+                    &to.pubkey(),
+                    1,
+                    *blockhash,
+                    instruction_padding_config,
+                    None,
+                    skip_tx_account_data_size,
+                ),
+                timestamp: Some(timestamp()),
             })
             .collect()
     }
@@ -802,8 +803,8 @@ fn generate_nonced_system_txs<T: 'static + BenchTpsClient + Send + Sync + ?Sized
 
         let blockhashes: Vec<Hash> = get_nonce_blockhashes(&client, &pubkeys);
         for i in 0..length {
-            transactions.push((
-                nonced_transfer_with_padding(
+            transactions.push(TimestampedTransaction {
+                transaction: nonced_transfer_with_padding(
                     source[i],
                     &dest[i].pubkey(),
                     1,
@@ -813,16 +814,16 @@ fn generate_nonced_system_txs<T: 'static + BenchTpsClient + Send + Sync + ?Sized
                     skip_tx_account_data_size,
                     instruction_padding_config,
                 ),
-                None,
-            ));
+                timestamp: None,
+            });
         }
     } else {
         let pubkeys: Vec<Pubkey> = dest_nonce.iter().map(|keypair| keypair.pubkey()).collect();
         let blockhashes: Vec<Hash> = get_nonce_blockhashes(&client, &pubkeys);
 
         for i in 0..length {
-            transactions.push((
-                nonced_transfer_with_padding(
+            transactions.push(TimestampedTransaction {
+                transaction: nonced_transfer_with_padding(
                     dest[i],
                     &source[i].pubkey(),
                     1,
@@ -832,8 +833,8 @@ fn generate_nonced_system_txs<T: 'static + BenchTpsClient + Send + Sync + ?Sized
                     skip_tx_account_data_size,
                     instruction_padding_config,
                 ),
-                None,
-            ));
+                timestamp: None,
+            });
         }
     }
     transactions
@@ -962,7 +963,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                 let now = timestamp();
                 // Transactions without durable nonce that are too old will be rejected by the cluster Don't bother
                 // sending them.
-                if let Some(tx_timestamp) = tx.1 {
+                if let Some(tx_timestamp) = tx.timestamp {
                     if tx_timestamp < min_timestamp {
                         min_timestamp = tx_timestamp;
                     }
@@ -971,7 +972,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                         continue;
                     }
                 }
-                transactions.push(tx.0);
+                transactions.push(tx.transaction);
             }
 
             if min_timestamp != u64::MAX {
