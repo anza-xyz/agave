@@ -95,6 +95,7 @@ fn get_transaction_loaded_accounts_data_size(enable_padding: bool) -> u32 {
 pub(crate) struct TimestampedTransaction {
     transaction: Transaction,
     timestamp: Option<u64>,
+    compute_unit_price: Option<u64>,
 }
 
 pub(crate) type SharedTransactions = Arc<RwLock<VecDeque<Vec<TimestampedTransaction>>>>;
@@ -602,17 +603,21 @@ fn generate_system_txs(
 
         pairs_with_compute_unit_prices
             .par_iter()
-            .map(|((from, to), compute_unit_price)| TimestampedTransaction {
-                transaction: transfer_with_compute_unit_price_and_padding(
-                    from,
-                    &to.pubkey(),
-                    1,
-                    *blockhash,
-                    instruction_padding_config,
-                    Some(**compute_unit_price),
-                    skip_tx_account_data_size,
-                ),
-                timestamp: Some(timestamp()),
+            .map(|((from, to), compute_unit_price)| {
+                let compute_unit_price = Some(**compute_unit_price);
+                TimestampedTransaction {
+                    transaction: transfer_with_compute_unit_price_and_padding(
+                        from,
+                        &to.pubkey(),
+                        1,
+                        *blockhash,
+                        instruction_padding_config,
+                        compute_unit_price,
+                        skip_tx_account_data_size,
+                    ),
+                    timestamp: Some(timestamp()),
+                    compute_unit_price,
+                }
             })
             .collect()
     } else {
@@ -629,6 +634,7 @@ fn generate_system_txs(
                     skip_tx_account_data_size,
                 ),
                 timestamp: Some(timestamp()),
+                compute_unit_price: None,
             })
             .collect()
     }
@@ -815,6 +821,7 @@ fn generate_nonced_system_txs<T: 'static + BenchTpsClient + Send + Sync + ?Sized
                     instruction_padding_config,
                 ),
                 timestamp: None,
+                compute_unit_price: None,
             });
         }
     } else {
@@ -834,6 +841,7 @@ fn generate_nonced_system_txs<T: 'static + BenchTpsClient + Send + Sync + ?Sized
                     instruction_padding_config,
                 ),
                 timestamp: None,
+                compute_unit_price: None,
             });
         }
     }
