@@ -2,7 +2,7 @@
 pub mod bench;
 pub mod bench_tps_client;
 pub mod cli;
-mod confirmations_processing;
 pub mod keypairs;
+mod log_transaction_service;
 mod perf_utils;
 pub mod send_batch;

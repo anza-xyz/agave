@@ -2,7 +2,7 @@ use {
     crate::{
         bench_tps_client::*,
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
-        confirmations_processing::{
+        log_transaction_service::{
             create_log_transactions_service_and_sender, SignatureBatchSender, TransactionInfoBatch,
         },
         perf_utils::{sample_txs, SampleStats},
