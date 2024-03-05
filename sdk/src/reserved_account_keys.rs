@@ -17,21 +17,13 @@ use {
     std::collections::HashSet,
 };
 
-// Temporary until a zk token program module is added to the sdk
+// Inline zk token program id since it isn't available in the sdk
 mod zk_token_proof_program {
     solana_sdk::declare_id!("ZkTokenProof1111111111111111111111111111111");
 }
 
 pub struct ReservedAccountKeys;
 impl ReservedAccountKeys {
-    /// Compute a set of all reserved keys, regardless of if they are active or not
-    pub fn active_and_inactive() -> HashSet<Pubkey> {
-        RESERVED_ACCOUNT_KEYS
-            .iter()
-            .map(|reserved_key| reserved_key.key)
-            .collect()
-    }
-
     /// Compute the active set of reserved keys based on activated features
     pub fn active(feature_set: &FeatureSet) -> HashSet<Pubkey> {
         Self::compute_active(&RESERVED_ACCOUNT_KEYS, feature_set)
@@ -45,6 +37,16 @@ impl ReservedAccountKeys {
         account_keys
             .iter()
             .filter(|reserved_key| reserved_key.is_active(feature_set))
+            .map(|reserved_key| reserved_key.key)
+            .collect()
+    }
+
+    /// Compute a set of all reserved keys, regardless of if they are active or not.
+    /// Since this method doesn't take into account which reserved keys are active,
+    /// it should not be used by the runtime.
+    pub fn active_and_inactive() -> HashSet<Pubkey> {
+        RESERVED_ACCOUNT_KEYS
+            .iter()
             .map(|reserved_key| reserved_key.key)
             .collect()
     }
