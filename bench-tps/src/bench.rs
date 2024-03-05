@@ -1003,7 +1003,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                     })
                     .is_err()
                 {
-                    info!("Receiver has been dropped, stop sending transactions.");
+                    error!("Receiver has been dropped, stop sending transactions.");
                     break;
                 }
             }
