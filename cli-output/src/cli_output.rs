@@ -1648,7 +1648,12 @@ impl VerboseDisplay for CliAuthorizedVoters {}
 
 impl fmt::Display for CliAuthorizedVoters {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.authorized_voters)
+        let (_epoch, current_authorized_voter) = self
+            .authorized_voters
+            .first_key_value()
+            .expect("CliAuthorizedVoters::authorized_voters should have at least one entry");
+        write!(f, "{current_authorized_voter}")?;
+        Ok(())
     }
 }
 
