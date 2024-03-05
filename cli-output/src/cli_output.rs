@@ -1653,6 +1653,15 @@ impl fmt::Display for CliAuthorizedVoters {
             .first_key_value()
             .expect("CliAuthorizedVoters::authorized_voters should have at least one entry");
         write!(f, "{current_authorized_voter}")?;
+        if self.authorized_voters.len() > 1 {
+            let (epoch, upcoming_authorized_voter) =
+                self.authorized_voters.last_key_value().unwrap();
+            writeln!(f)?;
+            write!(
+                f,
+                "  New Vote Authority as of Epoch {epoch}: {upcoming_authorized_voter}"
+            )?;
+        }
         Ok(())
     }
 }
