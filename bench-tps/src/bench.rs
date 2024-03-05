@@ -965,8 +965,10 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
             let tx_len = txs0.len();
             let transfer_start = Instant::now();
             let mut old_transactions = false;
-            let mut transactions = Vec::<_>::new();
             let mut min_timestamp = u64::MAX;
+            let mut transactions = Vec::<_>::with_capacity(txs0.len());
+            let mut signatures = Vec::<_>::with_capacity(txs0.len());
+            let mut compute_unit_prices = Vec::<_>::with_capacity(txs0.len());
             for tx in txs0 {
                 let now = timestamp();
                 // Transactions without durable nonce that are too old will be rejected by the cluster Don't bother
@@ -980,7 +982,9 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                         continue;
                     }
                 }
+                signatures.push(tx.transaction.signatures[0]);
                 transactions.push(tx.transaction);
+                compute_unit_prices.push(tx.compute_unit_price);
             }
 
             if min_timestamp != u64::MAX {
@@ -990,12 +994,12 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                 );
             }
 
-            let signatures = transactions.iter().map(|tx| tx.signatures[0]).collect();
             if let Some(signatures_sender) = &signatures_sender {
                 if signatures_sender
                     .send(SignatureBatch {
                         signatures,
                         sent_at: Utc::now(),
+                        compute_unit_prices,
                     })
                     .is_err()
                 {

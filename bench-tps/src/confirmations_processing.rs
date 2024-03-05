@@ -8,6 +8,7 @@ use {
     solana_client::rpc_config::RpcBlockConfig,
     solana_measure::measure::Measure,
     solana_sdk::{
+        clock::{DEFAULT_MS_PER_SLOT, DEFAULT_S_PER_SLOT, MAX_PROCESSING_AGE},
         commitment_config::{CommitmentConfig, CommitmentLevel},
         signature::Signature,
         slot_history::Slot,
@@ -25,24 +26,20 @@ use {
     },
 };
 
-const BLOCK_PROCESSING_PERIOD_MS: u64 = 400;
-const PROCESS_BLOCKS_EVERY_MS: u64 = 16 * BLOCK_PROCESSING_PERIOD_MS;
-const REMOVE_TIMEOUT_TX_EVERY_SEC: i64 = 120;
+const PROCESS_BLOCKS_EVERY_MS: u64 = 16 * DEFAULT_MS_PER_SLOT;
+const REMOVE_TIMEOUT_TX_EVERY_SEC: i64 = (MAX_PROCESSING_AGE as f64 * DEFAULT_S_PER_SLOT) as i64;
 
 #[derive(Clone)]
 pub(crate) struct SignatureBatch {
     pub signatures: Vec<Signature>,
     pub sent_at: DateTime<Utc>,
-    // pub sent_slot: Slot, I think it can be calculated from time
+    pub compute_unit_prices: Vec<Option<u64>>, // TODO(klykov) pub sent_slot: Slot, I think it can be calculated from time
 }
 
-//TODO(klykov) If there will be no other data, rename to transaction time or something lile that
 #[derive(Clone)]
 pub(crate) struct TransactionSendInfo {
     pub sent_at: DateTime<Utc>,
-    //pub sent_slot: Slot,
-    //TODO add priority fee
-    //pub priority_fee: u64,
+    pub compute_unit_price: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -69,8 +66,7 @@ struct TransactionData {
     pub error: Option<String>,
     pub blockhash: Option<String>,
     pub timed_out: bool,
-    //TODO add priority fee
-    //pub priority_fee: u64,
+    pub compute_unit_price: u64,
 }
 
 fn check_confirmations(
@@ -161,10 +157,12 @@ impl LogTransactionService {
                         Ok(SignatureBatch {
                             signatures,
                             sent_at,
+                            compute_unit_prices
                         }) => {
                             let mut measure_send_txs = Measure::start("measure_update_map");
-                            signatures.iter().for_each( |sign| {signature_to_tx_info.insert(*sign, TransactionSendInfo {
+                            signatures.iter().zip(compute_unit_prices).for_each( |(sign, compute_unit_price)| {signature_to_tx_info.insert(*sign, TransactionSendInfo {
                                 sent_at,
+                                compute_unit_price
                             });});
 
                             measure_send_txs.stop();
@@ -257,7 +255,11 @@ impl LogTransactionService {
             let signature = &transaction.signatures[0];
 
             total_cu_consumed = total_cu_consumed.saturating_add(cu_consumed);
-            if let Some(TransactionSendInfo { sent_at }) = signature_to_tx_info.remove(signature) {
+            if let Some(TransactionSendInfo {
+                sent_at,
+                compute_unit_price,
+            }) = signature_to_tx_info.remove(signature)
+            {
                 num_bench_tps_transactions = num_bench_tps_transactions.saturating_add(1);
                 bench_tps_cu_consumed = bench_tps_cu_consumed.saturating_add(cu_consumed);
 
@@ -268,6 +270,7 @@ impl LogTransactionService {
                     meta.as_ref(),
                     Some(block.blockhash.clone()),
                     Some(slot_leader.clone()),
+                    compute_unit_price,
                     true,
                 );
             }
@@ -301,6 +304,7 @@ impl LogTransactionService {
                     None,
                     None,
                     None,
+                    tx_info.compute_unit_price,
                     true,
                 );
             }
@@ -339,6 +343,7 @@ impl LogWriter {
         meta: Option<&UiTransactionStatusMeta>,
         blockhash: Option<String>,
         slot_leader: Option<String>,
+        compute_unit_price: Option<u64>,
         timed_out: bool,
     ) {
         if let Some(transaction_log_writer) = &mut self.transaction_log_writer {
@@ -356,7 +361,7 @@ impl LogWriter {
                 blockhash,
                 slot_leader: slot_leader,
                 timed_out,
-                //priority_fees: transaction_record.priority_fees,
+                compute_unit_price: compute_unit_price.unwrap_or(0),
             };
             transaction_log_writer.serialize(tx_data);
         }
