@@ -3,7 +3,7 @@ use {
         bench_tps_client::*,
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         confirmations_processing::{
-            create_log_transactions_service_and_sender, SignatureBatch, SignatureBatchSender,
+            create_log_transactions_service_and_sender, SignatureBatchSender, TransactionInfoBatch,
         },
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
@@ -996,7 +996,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
 
             if let Some(signatures_sender) = &signatures_sender {
                 if signatures_sender
-                    .send(SignatureBatch {
+                    .send(TransactionInfoBatch {
                         signatures,
                         sent_at: Utc::now(),
                         compute_unit_prices,
