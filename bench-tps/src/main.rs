@@ -199,8 +199,6 @@ fn main() {
         bind_address,
         client_node_id,
         commitment_config,
-        block_data_file,
-        transaction_data_file,
         ..
     } = &cli_config;
 

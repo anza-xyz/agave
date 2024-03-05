@@ -2,7 +2,6 @@ use {
     crate::bench_tps_client::{BenchTpsClient, Result},
     chrono::{DateTime, TimeZone, Utc},
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
-    csv,
     log::*,
     serde::Serialize,
     solana_client::rpc_config::RpcBlockConfig,
@@ -127,7 +126,7 @@ impl LogTransactionService {
                 Self::run(client, signature_receiver, log_writer);
             })
             .expect("LogTransactionService is up.");
-        return Self { thread_handler };
+        Self { thread_handler }
     }
 
     fn run<T>(client: Arc<T>, signature_receiver: SignatureBatchReceiver, mut log_writer: LogWriter)
@@ -336,6 +335,7 @@ impl LogWriter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_to_transaction_log(
         &mut self,
         signature: &Signature,
@@ -352,23 +352,26 @@ impl LogWriter {
             let tx_data = TransactionData {
                 signature: signature.to_string(),
                 confirmed_slot,
-                confirmed_at: block_time.map(|time| Utc.timestamp(time, 0)),
-                // TODO use sent_slot instead of sent_at by using map
+                confirmed_at: block_time.map(|time| {
+                    Utc.timestamp_opt(time, 0)
+                        .latest()
+                        .expect("valid timestamp")
+                }),
                 sent_at: sent_at.to_string(),
-                //sent_slot: transaction_record.sent_slot,
                 successful: meta.as_ref().map_or(false, |m| m.status.is_ok()),
                 error: meta
                     .as_ref()
                     .and_then(|m| m.err.as_ref().map(|x| x.to_string())),
                 blockhash,
-                slot_leader: slot_leader,
+                slot_leader,
                 timed_out,
                 compute_unit_price: compute_unit_price.unwrap_or(0),
             };
-            transaction_log_writer.serialize(tx_data);
+            let _ = transaction_log_writer.serialize(tx_data);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_to_block_log(
         &mut self,
         blockhash: String,
@@ -385,13 +388,17 @@ impl LogWriter {
                 block_hash: blockhash,
                 block_leader: slot_leader,
                 block_slot: slot,
-                block_time: block_time.map(|time| Utc.timestamp(time, 0)),
+                block_time: block_time.map(|time| {
+                    Utc.timestamp_opt(time, 0)
+                        .latest()
+                        .expect("valid timestamp")
+                }),
                 num_bench_tps_transactions,
                 total_num_transactions,
                 bench_tps_cu_consumed,
                 total_cu_consumed,
             };
-            block_log_writer.serialize(block_data);
+            let _ = block_log_writer.serialize(block_data);
         }
     }
 
