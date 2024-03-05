@@ -1,6 +1,6 @@
 use {
     crate::bench_tps_client::{BenchTpsClient, Result},
-    chrono::{DateTime, Utc},
+    chrono::{DateTime, TimeZone, Utc},
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
     csv,
     log::*,
@@ -33,7 +33,7 @@ const REMOVE_TIMEOUT_TX_EVERY_SEC: i64 = (MAX_PROCESSING_AGE as f64 * DEFAULT_S_
 pub(crate) struct SignatureBatch {
     pub signatures: Vec<Signature>,
     pub sent_at: DateTime<Utc>,
-    pub compute_unit_prices: Vec<Option<u64>>, // TODO(klykov) pub sent_slot: Slot, I think it can be calculated from time
+    pub compute_unit_prices: Vec<Option<u64>>,
 }
 
 #[derive(Clone)]
@@ -47,7 +47,7 @@ struct BlockData {
     pub block_hash: String,
     pub block_slot: Slot,
     pub block_leader: String,
-    pub block_time: u64,
+    pub block_time: Option<DateTime<Utc>>,
     pub total_num_transactions: usize,
     pub num_bench_tps_transactions: usize,
     pub total_cu_consumed: u64,
@@ -57,10 +57,9 @@ struct BlockData {
 #[derive(Clone, Serialize)]
 struct TransactionData {
     pub signature: String,
-    //pub sent_slot: Slot,
-    pub sent_at: String,
+    pub sent_at: String, //TODO(klykov) use consistently DateTime<Utc>? I think it cane be serialized
     pub confirmed_slot: Option<Slot>,
-    //pub confirmed_at: Option<String>,
+    pub confirmed_at: Option<DateTime<Utc>>,
     pub successful: bool,
     pub slot_leader: Option<String>,
     pub error: Option<String>,
@@ -120,7 +119,7 @@ impl LogTransactionService {
         }
 
         let client = client.clone();
-        let mut log_writer = LogWriter::new(block_data_file, transaction_data_file);
+        let log_writer = LogWriter::new(block_data_file, transaction_data_file);
 
         let thread_handler = Builder::new()
             .name("LogTransactionService".to_string())
@@ -266,6 +265,7 @@ impl LogTransactionService {
                 log_writer.write_to_transaction_log(
                     signature,
                     Some(slot),
+                    block.block_time,
                     sent_at,
                     meta.as_ref(),
                     Some(block.blockhash.clone()),
@@ -299,6 +299,7 @@ impl LogTransactionService {
             if !is_not_timeout_tx {
                 log_writer.write_to_transaction_log(
                     signature,
+                    None,
                     None,
                     tx_info.sent_at,
                     None,
@@ -339,6 +340,7 @@ impl LogWriter {
         &mut self,
         signature: &Signature,
         confirmed_slot: Option<Slot>,
+        block_time: Option<i64>,
         sent_at: DateTime<Utc>,
         meta: Option<&UiTransactionStatusMeta>,
         blockhash: Option<String>,
@@ -350,7 +352,7 @@ impl LogWriter {
             let tx_data = TransactionData {
                 signature: signature.to_string(),
                 confirmed_slot,
-                //confirmed_at: Some(Utc::now().to_string()),
+                confirmed_at: block_time.map(|time| Utc.timestamp(time, 0)),
                 // TODO use sent_slot instead of sent_at by using map
                 sent_at: sent_at.to_string(),
                 //sent_slot: transaction_record.sent_slot,
@@ -383,7 +385,7 @@ impl LogWriter {
                 block_hash: blockhash,
                 block_leader: slot_leader,
                 block_slot: slot,
-                block_time: block_time.map_or(0, |time| time as u64),
+                block_time: block_time.map(|time| Utc.timestamp(time, 0)),
                 num_bench_tps_transactions,
                 total_num_transactions,
                 bench_tps_cu_consumed,
