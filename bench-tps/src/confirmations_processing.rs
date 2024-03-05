@@ -1,5 +1,5 @@
 use {
-    crate::bench_tps_client::BenchTpsClient,
+    crate::bench_tps_client::{BenchTpsClient, Result},
     chrono::{DateTime, Utc},
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
     csv,
@@ -13,8 +13,8 @@ use {
         slot_history::Slot,
     },
     solana_transaction_status::{
-        option_serializer::OptionSerializer, RewardType, TransactionDetails, UiConfirmedBlock,
-        UiTransactionEncoding,
+        option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta, RewardType,
+        TransactionDetails, UiConfirmedBlock, UiTransactionEncoding, UiTransactionStatusMeta,
     },
     std::{
         collections::HashMap,
@@ -26,27 +26,8 @@ use {
 };
 
 const BLOCK_PROCESSING_PERIOD_MS: u64 = 400;
-
-//TODO(klykov) extract some method retry
-fn get_blocks_with_retry<T>(client: &Arc<T>, start_block: u64) -> Result<Vec<Slot>, ()>
-where
-    T: 'static + BenchTpsClient + Send + Sync + ?Sized,
-{
-    const N_TRY_REQUEST_BLOCKS: u64 = 4;
-    for _ in 0..N_TRY_REQUEST_BLOCKS {
-        let block_slots = client.get_blocks(start_block, None);
-
-        match block_slots {
-            Ok(slots) => {
-                return Ok(slots);
-            }
-            Err(error) => {
-                warn!("Failed to download blocks: {}, retry", error);
-            }
-        }
-    }
-    Err(())
-}
+const PROCESS_BLOCKS_EVERY_MS: u64 = 16 * BLOCK_PROCESSING_PERIOD_MS;
+const REMOVE_TIMEOUT_TX_EVERY_SEC: i64 = 120;
 
 #[derive(Clone)]
 pub(crate) struct SignatureBatch {
@@ -86,15 +67,11 @@ struct TransactionData {
     pub successful: bool,
     pub slot_leader: Option<String>,
     pub error: Option<String>,
-    pub block_hash: Option<String>,
-    pub slot_processed: Option<Slot>,
+    pub blockhash: Option<String>,
     pub timed_out: bool,
     //TODO add priority fee
     //pub priority_fee: u64,
 }
-
-pub(crate) type SignatureBatchReceiver = Receiver<SignatureBatch>;
-pub(crate) type SignatureBatchSender = Sender<SignatureBatch>;
 
 fn check_confirmations(
     block_data_file: Option<&String>,
@@ -102,6 +79,9 @@ fn check_confirmations(
 ) -> bool {
     block_data_file.is_some() || transaction_data_file.is_some()
 }
+
+pub(crate) type SignatureBatchSender = Sender<SignatureBatch>;
+type SignatureBatchReceiver = Receiver<SignatureBatch>;
 
 pub(crate) fn create_log_transactions_service_and_sender<T>(
     client: &Arc<T>,
@@ -121,13 +101,15 @@ where
     }
 }
 
-type CsvFileWriter = csv::Writer<File>;
-
 pub(crate) struct LogTransactionService {
     thread_handler: JoinHandle<()>,
 }
 
 impl LogTransactionService {
+    pub fn join(self) -> thread::Result<()> {
+        self.thread_handler.join()
+    }
+
     fn new<T>(
         client: &Arc<T>,
         signature_receiver: SignatureBatchReceiver,
@@ -142,33 +124,19 @@ impl LogTransactionService {
         }
 
         let client = client.clone();
-        let mut block_log_writer = block_data_file.map(|block_data_file| {
-            CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
-        });
-        let mut transaction_log_writer = block_data_file.map(|block_data_file| {
-            CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
-        });
+        let mut log_writer = LogWriter::new(block_data_file, transaction_data_file);
 
         let thread_handler = Builder::new()
             .name("LogTransactionService".to_string())
             .spawn(move || {
-                Self::run(
-                    client,
-                    signature_receiver,
-                    block_log_writer,
-                    transaction_log_writer,
-                );
+                Self::run(client, signature_receiver, log_writer);
             })
-            .expect("LogTransaction service is up.");
+            .expect("LogTransactionService is up.");
         return Self { thread_handler };
     }
 
-    fn run<T>(
-        client: Arc<T>,
-        signature_receiver: SignatureBatchReceiver,
-        mut block_log_writer: Option<CsvFileWriter>,
-        mut transaction_log_writer: Option<CsvFileWriter>,
-    ) where
+    fn run<T>(client: Arc<T>, signature_receiver: SignatureBatchReceiver, mut log_writer: LogWriter)
+    where
         T: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
         let commitment: CommitmentConfig = CommitmentConfig {
@@ -181,11 +149,9 @@ impl LogTransactionService {
             commitment: Some(commitment),
             max_supported_transaction_version: Some(0),
         };
-        let block_processing_timer_receiver =
-            tick(Duration::from_millis(16 * BLOCK_PROCESSING_PERIOD_MS));
+        let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
 
-        // TODO(klykov): wrap with retry
-        let mut start_block = client.get_slot().expect("get_slot succeed");
+        let mut start_block = get_slot_with_retry(&client).expect("get_slot_with_retry succeed");
 
         let mut signature_to_tx_info = HashMap::<Signature, TransactionSendInfo>::new();
         loop {
@@ -195,41 +161,34 @@ impl LogTransactionService {
                         Ok(SignatureBatch {
                             signatures,
                             sent_at,
-                            //sent_slot
                         }) => {
-                            let mut measure_send_txs = Measure::start("measure_send_txs");
-
+                            let mut measure_send_txs = Measure::start("measure_update_map");
                             signatures.iter().for_each( |sign| {signature_to_tx_info.insert(*sign, TransactionSendInfo {
-                                sent_at, //sent_slot
+                                sent_at,
                             });});
 
                             measure_send_txs.stop();
-                            let time_send_ns = measure_send_txs.as_ms();
-                            info!("TIME: {time_send_ns}")
+                            let time_send_ns = measure_send_txs.as_ns();
+                            info!("@@@ Time to add signatures to map: {time_send_ns}")
                         }
                         Err(e) => {
                             info!("Stop LogTransactionService, error message received {e}");
-                            if let Some(block_log_writer) = &mut block_log_writer {
-                                block_log_writer.flush();
-                            }
-                            if let Some(transaction_log_writer) = &mut transaction_log_writer {
-                                transaction_log_writer.flush();
-                            }
+                            log_writer.flush();
                             break;
                         }
                     }
                 },
                 recv(block_processing_timer_receiver) -> _ => {
+                            let mut measure_send_txs = Measure::start("measure_update_map");
                     info!("sign_receiver queue len: {}", signature_receiver.len());
-                    // TODO(klykov) Move to process_blocks();
                     let block_slots = get_blocks_with_retry(&client, start_block);
                     let Ok(block_slots) = block_slots else {
                         error!("Failed to get blocks");
-                        //TODO(klykov) shall I drop receiver?
+                        drop(signature_receiver);
                         break;
                     };
                     if block_slots.is_empty() {
-                    continue;
+                        continue;
                     }
                     start_block = *block_slots.last().unwrap() + 1;
                     let blocks = block_slots.iter().map(|slot| {
@@ -239,52 +198,40 @@ impl LogTransactionService {
                     )
                     });
                     for (block, slot) in blocks.zip(&block_slots) {
-                        let block = match block {
-                            Ok(x) => x,
-                            Err(_) => continue,
+                        let Ok(block) = block else {
+                            continue;
                         };
-                        Self::process_blocks(
+                        Self::process_block(
                             block,
                             &mut signature_to_tx_info,
                             *slot,
-                            &mut block_log_writer,
-                            &mut transaction_log_writer
+                            &mut log_writer,
                         )
                     }
-                    //TODO extract clean_transaction_map
-                    let now: DateTime<Utc> = Utc::now();
-                    signature_to_tx_info.retain(|_key, value| {
-                        let duration_since_past_time = now.signed_duration_since(value.sent_at);
-                        info!("Remove stale tx");
-                        duration_since_past_time.num_seconds() < 120
-                    });
+                    Self::clean_transaction_map(&mut log_writer, &mut signature_to_tx_info);
+
                     // maybe ok to write every time here? Or create a separate timer
-                            if let Some(block_log_writer) = &mut block_log_writer {
-                                block_log_writer.flush();
-                            }
-                            if let Some(transaction_log_writer) = &mut transaction_log_writer {
-                                transaction_log_writer.flush();
-                            }
+                    log_writer.flush();
+                    measure_send_txs.stop();
+                    let time_send_ns = measure_send_txs.as_ns();
+                    info!("@@@ Time to process blocks: {time_send_ns}")
+
                 },
             }
         }
     }
 
-    fn process_blocks(
+    fn process_block(
         block: UiConfirmedBlock,
         signature_to_tx_info: &mut HashMap<Signature, TransactionSendInfo>,
         slot: u64,
-        block_log_writer: &mut Option<csv::Writer<File>>,
-        transaction_log_writer: &mut Option<csv::Writer<File>>,
+        log_writer: &mut LogWriter,
     ) {
-        let rewards = block.rewards.as_ref().unwrap();
-        let slot_leader = match rewards
+        let rewards = block.rewards.as_ref().expect("Rewards are present.");
+        let slot_leader = rewards
             .iter()
             .find(|r| r.reward_type == Some(RewardType::Fee))
-        {
-            Some(x) => x.pubkey.clone(),
-            None => "".to_string(),
-        };
+            .map_or("".to_string(), |x| x.pubkey.clone());
 
         let Some(transactions) = &block.transactions else {
             warn!("Empty block: {slot}");
@@ -294,7 +241,7 @@ impl LogTransactionService {
         let mut num_bench_tps_transactions: usize = 0;
         let mut total_cu_consumed: u64 = 0;
         let mut bench_tps_cu_consumed: u64 = 0;
-        for solana_transaction_status::EncodedTransactionWithStatusMeta {
+        for EncodedTransactionWithStatusMeta {
             transaction, meta, ..
         } in transactions
         {
@@ -310,52 +257,130 @@ impl LogTransactionService {
             let signature = &transaction.signatures[0];
 
             total_cu_consumed = total_cu_consumed.saturating_add(cu_consumed);
-            // TODO(klykov): rename variable
-            if let Some(transaction_record) = signature_to_tx_info.remove(signature) {
+            if let Some(TransactionSendInfo { sent_at }) = signature_to_tx_info.remove(signature) {
                 num_bench_tps_transactions = num_bench_tps_transactions.saturating_add(1);
                 bench_tps_cu_consumed = bench_tps_cu_consumed.saturating_add(cu_consumed);
 
-                if let Some(transaction_log_writer) = transaction_log_writer {
-                    let tx_data = TransactionData {
-                        signature: signature.to_string(),
-                        confirmed_slot: Some(slot),
-                        //confirmed_at: Some(Utc::now().to_string()),
-                        // TODO use sent_slot instead of sent_at by using map
-                        sent_at: transaction_record.sent_at.to_string(),
-                        //sent_slot: transaction_record.sent_slot,
-                        successful: if let Some(meta) = &meta {
-                            meta.status.is_ok()
-                        } else {
-                            false
-                        },
-                        error: if let Some(meta) = &meta {
-                            meta.err.as_ref().map(|x| x.to_string())
-                        } else {
-                            None
-                        },
-                        block_hash: Some(block.blockhash.clone()),
-                        slot_processed: Some(slot),
-                        slot_leader: Some(slot_leader.clone()),
-                        timed_out: false,
-                        //priority_fees: transaction_record.priority_fees,
-                    };
-                    transaction_log_writer.serialize(tx_data);
-                }
+                log_writer.write_to_transaction_log(
+                    signature,
+                    Some(slot),
+                    sent_at,
+                    meta.as_ref(),
+                    Some(block.blockhash.clone()),
+                    Some(slot_leader.clone()),
+                    true,
+                );
             }
         }
-        // push block data
-        if let Some(block_log_writer) = block_log_writer {
+        log_writer.write_to_block_log(
+            block.blockhash.clone(),
+            slot_leader,
+            slot,
+            block.block_time,
+            num_bench_tps_transactions,
+            transactions.len(),
+            bench_tps_cu_consumed,
+            total_cu_consumed,
+        )
+    }
+
+    fn clean_transaction_map(
+        log_writer: &mut LogWriter,
+        signature_to_tx_info: &mut HashMap<Signature, TransactionSendInfo>,
+    ) {
+        let now: DateTime<Utc> = Utc::now();
+        signature_to_tx_info.retain(|signature, tx_info| {
+            let duration_since_past_time = now.signed_duration_since(tx_info.sent_at);
+            let is_not_timeout_tx =
+                duration_since_past_time.num_seconds() < REMOVE_TIMEOUT_TX_EVERY_SEC;
+            if !is_not_timeout_tx {
+                log_writer.write_to_transaction_log(
+                    signature,
+                    None,
+                    tx_info.sent_at,
+                    None,
+                    None,
+                    None,
+                    true,
+                );
+            }
+            is_not_timeout_tx
+        });
+    }
+}
+
+type CsvFileWriter = csv::Writer<File>;
+struct LogWriter {
+    block_log_writer: Option<CsvFileWriter>,
+    transaction_log_writer: Option<CsvFileWriter>,
+}
+
+impl LogWriter {
+    fn new(block_data_file: Option<&String>, transaction_data_file: Option<&String>) -> Self {
+        let block_log_writer = block_data_file.map(|block_data_file| {
+            CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
+        });
+        let transaction_log_writer = transaction_data_file.map(|transaction_data_file| {
+            CsvFileWriter::from_writer(
+                File::create(transaction_data_file).expect("File can be created."),
+            )
+        });
+        Self {
+            block_log_writer,
+            transaction_log_writer,
+        }
+    }
+
+    fn write_to_transaction_log(
+        &mut self,
+        signature: &Signature,
+        confirmed_slot: Option<Slot>,
+        sent_at: DateTime<Utc>,
+        meta: Option<&UiTransactionStatusMeta>,
+        blockhash: Option<String>,
+        slot_leader: Option<String>,
+        timed_out: bool,
+    ) {
+        if let Some(transaction_log_writer) = &mut self.transaction_log_writer {
+            let tx_data = TransactionData {
+                signature: signature.to_string(),
+                confirmed_slot,
+                //confirmed_at: Some(Utc::now().to_string()),
+                // TODO use sent_slot instead of sent_at by using map
+                sent_at: sent_at.to_string(),
+                //sent_slot: transaction_record.sent_slot,
+                successful: meta.as_ref().map_or(false, |m| m.status.is_ok()),
+                error: meta
+                    .as_ref()
+                    .and_then(|m| m.err.as_ref().map(|x| x.to_string())),
+                blockhash,
+                slot_leader: slot_leader,
+                timed_out,
+                //priority_fees: transaction_record.priority_fees,
+            };
+            transaction_log_writer.serialize(tx_data);
+        }
+    }
+
+    fn write_to_block_log(
+        &mut self,
+        blockhash: String,
+        slot_leader: String,
+        slot: Slot,
+        block_time: Option<i64>,
+        num_bench_tps_transactions: usize,
+        total_num_transactions: usize,
+        bench_tps_cu_consumed: u64,
+        total_cu_consumed: u64,
+    ) {
+        if let Some(block_log_writer) = &mut self.block_log_writer {
             let block_data = BlockData {
-                block_hash: block.blockhash.clone(),
+                block_hash: blockhash,
                 block_leader: slot_leader,
                 block_slot: slot,
-                block_time: if let Some(time) = block.block_time {
-                    time as u64
-                } else {
-                    0
-                },
+                block_time: block_time.map_or(0, |time| time as u64),
                 num_bench_tps_transactions,
-                total_num_transactions: transactions.len(),
+                total_num_transactions,
                 bench_tps_cu_consumed,
                 total_cu_consumed,
             };
@@ -363,7 +388,52 @@ impl LogTransactionService {
         }
     }
 
-    pub fn join(self) -> thread::Result<()> {
-        self.thread_handler.join()
+    fn flush(&mut self) {
+        if let Some(block_log_writer) = &mut self.block_log_writer {
+            let _ = block_log_writer.flush();
+        }
+        if let Some(transaction_log_writer) = &mut self.transaction_log_writer {
+            let _ = transaction_log_writer.flush();
+        }
     }
+}
+
+const NUM_RETRY: u64 = 5;
+
+fn get_slot_with_retry<T>(client: &Arc<T>) -> Result<Slot>
+where
+    T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+{
+    for _ in 1..NUM_RETRY {
+        let current_slot = client.get_slot();
+
+        match current_slot {
+            Ok(slot) => {
+                return Ok(slot);
+            }
+            Err(error) => {
+                warn!("Failed to get slot: {error}, retry.");
+            }
+        }
+    }
+    client.get_slot()
+}
+
+fn get_blocks_with_retry<T>(client: &Arc<T>, start_block: u64) -> Result<Vec<Slot>>
+where
+    T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+{
+    for _ in 1..NUM_RETRY {
+        let block_slots = client.get_blocks(start_block, None);
+
+        match block_slots {
+            Ok(slots) => {
+                return Ok(slots);
+            }
+            Err(error) => {
+                warn!("Failed to download blocks: {error}, retry.");
+            }
+        }
+    }
+    client.get_blocks(start_block, None)
 }

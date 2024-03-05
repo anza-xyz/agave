@@ -983,10 +983,16 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
 
             let signatures = transactions.iter().map(|tx| tx.signatures[0]).collect();
             if let Some(signatures_sender) = &signatures_sender {
-                signatures_sender.send(SignatureBatch {
-                    signatures,
-                    sent_at: Utc::now(),
-                });
+                if signatures_sender
+                    .send(SignatureBatch {
+                        signatures,
+                        sent_at: Utc::now(),
+                    })
+                    .is_err()
+                {
+                    info!("Receiver has been dropped, stop sending transactions.");
+                    break;
+                }
             }
 
             if let Err(error) = client.send_batch(transactions) {
