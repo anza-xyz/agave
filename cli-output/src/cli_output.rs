@@ -1654,8 +1654,10 @@ impl fmt::Display for CliAuthorizedVoters {
             write!(f, "None")?;
         }
         if self.authorized_voters.len() > 1 {
-            let (epoch, upcoming_authorized_voter) =
-                self.authorized_voters.last_key_value().unwrap();
+            let (epoch, upcoming_authorized_voter) = self
+                .authorized_voters
+                .last_key_value()
+                .expect("CliAuthorizedVoters::authorized_voters.len() > 1");
             writeln!(f)?;
             write!(
                 f,
