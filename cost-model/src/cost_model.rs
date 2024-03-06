@@ -100,15 +100,18 @@ impl CostModel {
         let mut has_user_space_instructions = false;
 
         for (program_id, instruction) in transaction.message().program_instructions_iter() {
-            programs_execution_costs =
+            let ix_execution_cost =
                 if let Some(builtin_cost) = BUILT_IN_INSTRUCTION_COSTS.get(program_id) {
-                    programs_execution_costs.saturating_add(*builtin_cost)
+                    *builtin_cost
                 } else {
                     has_user_space_instructions = true;
-                    programs_execution_costs
-                        .saturating_add(u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT))
-                }
+                    u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
+                };
+
+            programs_execution_costs = programs_execution_costs
+                .saturating_add(ix_execution_cost)
                 .min(u64::from(MAX_COMPUTE_UNIT_LIMIT));
+
             data_bytes_len_total =
                 data_bytes_len_total.saturating_add(instruction.data.len() as u64);
 
