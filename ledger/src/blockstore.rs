@@ -31,10 +31,7 @@ use {
     itertools::Itertools,
     log::*,
     rand::Rng,
-    rayon::{
-        iter::{IntoParallelIterator, ParallelIterator},
-        ThreadPool,
-    },
+    rayon::iter::{IntoParallelIterator, ParallelIterator},
     rocksdb::{DBRawIterator, LiveFile},
     solana_accounts_db::hardened_unpack::{
         unpack_genesis_archive, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -93,16 +90,6 @@ pub use {
     blockstore_purge::PurgeType,
     rocksdb::properties as RocksProperties,
 };
-
-// get_max_thread_count to match number of threads in the old code.
-// see: https://github.com/solana-labs/solana/pull/24853
-lazy_static! {
-    static ref PAR_THREAD_POOL_ALL_CPUS: ThreadPool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
-        .thread_name(|i| format!("solBstoreAll{i:02}"))
-        .build()
-        .unwrap();
-}
 
 pub const MAX_REPLAY_WAKE_UP_SIGNALS: usize = 1;
 pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
