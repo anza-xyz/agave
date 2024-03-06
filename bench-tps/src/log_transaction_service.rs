@@ -242,15 +242,15 @@ impl LogTransactionService {
                 bench_tps_cu_consumed = bench_tps_cu_consumed.saturating_add(cu_consumed);
 
                 tx_log_writer.write(
-                    signature,
-                    Some(slot),
-                    block.block_time,
-                    sent_at,
-                    meta.as_ref(),
                     Some(block.blockhash.clone()),
                     Some(slot_leader.clone()),
-                    compute_unit_price,
+                    signature,
+                    sent_at,
+                    Some(slot),
+                    block.block_time,
+                    meta.as_ref(),
                     false,
+                    compute_unit_price,
                 );
             }
         }
@@ -277,15 +277,15 @@ impl LogTransactionService {
                 duration_since_past_time.num_seconds() < REMOVE_TIMEOUT_TX_EVERY_SEC;
             if !is_not_timeout_tx {
                 tx_log_writer.write(
+                    None,
+                    None,
                     signature,
-                    None,
-                    None,
                     tx_info.sent_at,
                     None,
                     None,
                     None,
-                    tx_info.compute_unit_price,
                     true,
+                    tx_info.compute_unit_price,
                 );
             }
             is_not_timeout_tx
@@ -301,9 +301,9 @@ type CsvFileWriter = csv::Writer<File>;
 
 #[derive(Clone, Serialize)]
 struct BlockData {
-    pub block_hash: String,
+    pub blockhash: String,
     pub block_slot: Slot,
-    pub block_leader: String,
+    pub slot_leader: String,
     pub block_time: Option<DateTime<Utc>>,
     pub total_num_transactions: usize,
     pub num_bench_tps_transactions: usize,
@@ -337,23 +337,24 @@ impl BlockLogWriter {
         bench_tps_cu_consumed: u64,
         total_cu_consumed: u64,
     ) {
-        if let Some(block_log_writer) = &mut self.log_writer {
-            let block_data = BlockData {
-                block_hash: blockhash,
-                block_leader: slot_leader,
-                block_slot: slot,
-                block_time: block_time.map(|time| {
-                    Utc.timestamp_opt(time, 0)
-                        .latest()
-                        .expect("valid timestamp")
-                }),
-                num_bench_tps_transactions,
-                total_num_transactions,
-                bench_tps_cu_consumed,
-                total_cu_consumed,
-            };
-            let _ = block_log_writer.serialize(block_data);
-        }
+        let Some(block_log_writer) = &mut self.log_writer else {
+            return;
+        };
+        let block_data = BlockData {
+            blockhash,
+            slot_leader,
+            block_slot: slot,
+            block_time: block_time.map(|time| {
+                Utc.timestamp_opt(time, 0)
+                    .latest()
+                    .expect("valid timestamp")
+            }),
+            num_bench_tps_transactions,
+            total_num_transactions,
+            bench_tps_cu_consumed,
+            total_cu_consumed,
+        };
+        let _ = block_log_writer.serialize(block_data);
     }
 
     fn flush(&mut self) {
@@ -365,14 +366,14 @@ impl BlockLogWriter {
 
 #[derive(Clone, Serialize)]
 struct TransactionData {
+    pub blockhash: Option<String>,
+    pub slot_leader: Option<String>,
     pub signature: String,
     pub sent_at: Option<DateTime<Utc>>,
     pub confirmed_slot: Option<Slot>,
-    pub confirmed_at: Option<DateTime<Utc>>,
+    pub block_time: Option<DateTime<Utc>>,
     pub successful: bool,
-    pub slot_leader: Option<String>,
     pub error: Option<String>,
-    pub blockhash: Option<String>,
     pub timed_out: bool,
     pub compute_unit_price: u64,
 }
@@ -396,37 +397,38 @@ impl TransactionLogWriter {
     #[allow(clippy::too_many_arguments)]
     fn write(
         &mut self,
-        signature: &Signature,
-        confirmed_slot: Option<Slot>,
-        block_time: Option<i64>,
-        sent_at: DateTime<Utc>,
-        meta: Option<&UiTransactionStatusMeta>,
         blockhash: Option<String>,
         slot_leader: Option<String>,
-        compute_unit_price: Option<u64>,
+        signature: &Signature,
+        sent_at: DateTime<Utc>,
+        confirmed_slot: Option<Slot>,
+        block_time: Option<i64>,
+        meta: Option<&UiTransactionStatusMeta>,
         timed_out: bool,
+        compute_unit_price: Option<u64>,
     ) {
-        if let Some(transaction_log_writer) = &mut self.log_writer {
-            let tx_data = TransactionData {
-                signature: signature.to_string(),
-                confirmed_slot,
-                confirmed_at: block_time.map(|time| {
-                    Utc.timestamp_opt(time, 0)
-                        .latest()
-                        .expect("valid timestamp")
-                }),
-                sent_at: Some(sent_at),
-                successful: meta.as_ref().map_or(false, |m| m.status.is_ok()),
-                error: meta
-                    .as_ref()
-                    .and_then(|m| m.err.as_ref().map(|x| x.to_string())),
-                blockhash,
-                slot_leader,
-                timed_out,
-                compute_unit_price: compute_unit_price.unwrap_or(0),
-            };
-            let _ = transaction_log_writer.serialize(tx_data);
-        }
+        let Some(transaction_log_writer) = &mut self.log_writer else {
+            return;
+        };
+        let tx_data = TransactionData {
+            blockhash,
+            slot_leader,
+            signature: signature.to_string(),
+            sent_at: Some(sent_at),
+            confirmed_slot,
+            block_time: block_time.map(|time| {
+                Utc.timestamp_opt(time, 0)
+                    .latest()
+                    .expect("valid timestamp")
+            }),
+            successful: meta.as_ref().map_or(false, |m| m.status.is_ok()),
+            error: meta
+                .as_ref()
+                .and_then(|m| m.err.as_ref().map(|x| x.to_string())),
+            timed_out,
+            compute_unit_price: compute_unit_price.unwrap_or(0),
+        };
+        let _ = transaction_log_writer.serialize(tx_data);
     }
 
     fn flush(&mut self) {
