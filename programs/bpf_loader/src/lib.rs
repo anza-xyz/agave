@@ -51,7 +51,7 @@ use {
         rc::Rc,
         sync::{atomic::Ordering, Arc},
     },
-    syscalls::create_program_runtime_environment_v1,
+    syscalls::{create_program_runtime_environment_v1, morph_program_runtime_environment_v1},
 };
 
 pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
@@ -106,11 +106,16 @@ macro_rules! deploy_program {
      $account_size:expr, $slot:expr, $drop:expr, $new_programdata:expr $(,)?) => {{
         let mut load_program_metrics = LoadProgramMetrics::default();
         let mut register_syscalls_time = Measure::start("register_syscalls_time");
-        let deployment_program_runtime_environment = create_program_runtime_environment_v1(
-            &$invoke_context.feature_set,
-            $invoke_context.get_compute_budget(),
+        let deployment_slot: Slot = $slot;
+        let environments = $invoke_context.get_runtime_environments_for_slot(
+            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
+        ).map_err(|e| {
+            ic_msg!($invoke_context, "Failed to get runtime environment: {}", e);
+            InstructionError::ProgramEnvironmentSetupFailure
+        })?;
+        let deployment_program_runtime_environment = morph_program_runtime_environment_v1(
+            environments.program_runtime_v1.clone(),
             true, /* deployment */
-            false, /* debugging_features */
         ).map_err(|e| {
             ic_msg!($invoke_context, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
@@ -143,7 +148,7 @@ macro_rules! deploy_program {
             $loader_key,
             $account_size,
             $slot,
-            $invoke_context.programs_modified_by_tx.environments.program_runtime_v1.clone(),
+            environments.program_runtime_v1.clone(),
             true,
         )?;
         if let Some(old_entry) = $invoke_context.find_program_in_cache(&$program_id) {

@@ -2,7 +2,9 @@ use {
     crate::{
         compute_budget::ComputeBudget,
         ic_msg,
-        loaded_programs::{LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch},
+        loaded_programs::{
+            LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch, ProgramRuntimeEnvironments,
+        },
         log_collector::LogCollector,
         stable_log,
         sysvar_cache::SysvarCache,
@@ -19,6 +21,7 @@ use {
     solana_sdk::{
         account::AccountSharedData,
         bpf_loader_deprecated,
+        clock::Slot,
         feature_set::FeatureSet,
         hash::Hash,
         instruction::{AccountMeta, InstructionError},
@@ -207,6 +210,17 @@ impl<'a> InvokeContext<'a> {
         self.programs_modified_by_tx
             .find(pubkey)
             .or_else(|| self.programs_loaded_for_tx_batch.find(pubkey))
+    }
+
+    pub fn get_runtime_environments_for_slot(
+        &self,
+        slot: Slot,
+    ) -> Result<&ProgramRuntimeEnvironments, InstructionError> {
+        let epoch_schedule = self.sysvar_cache.get_epoch_schedule()?;
+        let epoch = epoch_schedule.get_epoch(slot);
+        Ok(self
+            .programs_loaded_for_tx_batch
+            .get_environments_for_epoch(epoch))
     }
 
     /// Push a stack frame onto the invocation stack

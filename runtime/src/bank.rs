@@ -101,8 +101,8 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, ProgramCache,
-            ProgramRuntimeEnvironments,
+            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, LoadedProgramsForTxBatch,
+            ProgramCache, ProgramRuntimeEnvironments,
         },
         runtime_config::RuntimeConfig,
         timings::{ExecuteTimingType, ExecuteTimings},
@@ -1527,6 +1527,19 @@ impl Bank {
             .unwrap()
             .get_environments_for_epoch(epoch)
             .clone()
+    }
+
+    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> LoadedProgramsForTxBatch {
+        let loaded_program_cache_r = self.program_cache.read().unwrap();
+        let epoch = self.epoch_schedule.get_epoch(slot);
+        LoadedProgramsForTxBatch::new(
+            slot,
+            loaded_program_cache_r
+                .get_environments_for_epoch(epoch)
+                .clone(),
+            loaded_program_cache_r.get_upcoming_environments_for_epoch(epoch),
+            loaded_program_cache_r.latest_root_epoch,
+        )
     }
 
     /// Epoch in which the new cooldown warmup rate for stake was activated

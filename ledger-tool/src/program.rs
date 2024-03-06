@@ -514,9 +514,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
-    let slot = bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET;
     let mut loaded_programs =
-        LoadedProgramsForTxBatch::new(slot, bank.get_runtime_environments_for_slot(slot));
+        bank.new_program_cache_for_tx_batch_for_slot(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
     for key in cached_account_keys {
         loaded_programs.replenish(key, bank.load_program(&key, false, bank.epoch()));
         debug!("Loaded program {}", key);

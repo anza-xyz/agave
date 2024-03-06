@@ -513,6 +513,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new(
                         self.slot,
                         program_cache.get_environments_for_epoch(self.epoch).clone(),
+                        program_cache.get_upcoming_environments_for_epoch(self.epoch),
+                        program_cache.latest_root_epoch,
                     ));
                 }
                 // Submit our last completed loading task.
@@ -526,6 +528,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         let mut ret = LoadedProgramsForTxBatch::new(
                             self.slot,
                             program_cache.get_environments_for_epoch(self.epoch).clone(),
+                            program_cache.get_upcoming_environments_for_epoch(self.epoch),
+                            program_cache.latest_root_epoch,
                         );
                         ret.hit_max_limit = true;
                         return ret;
@@ -630,6 +634,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut programs_modified_by_tx = LoadedProgramsForTxBatch::new(
             self.slot,
             programs_loaded_for_tx_batch.environments.clone(),
+            programs_loaded_for_tx_batch.upcoming_environments.clone(),
+            programs_loaded_for_tx_batch.latest_root_epoch,
         );
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = MessageProcessor::process_message(
