@@ -43,15 +43,15 @@ pub(crate) struct LogTransactionService {
     thread_handler: JoinHandle<()>,
 }
 
-pub(crate) fn create_log_transactions_service_and_sender<T>(
-    client: &Arc<T>,
-    block_data_file: Option<&String>,
-    transaction_data_file: Option<&String>,
+pub(crate) fn create_log_transactions_service_and_sender<Client>(
+    client: &Arc<Client>,
+    block_data_file: Option<&str>,
+    transaction_data_file: Option<&str>,
 ) -> (Option<LogTransactionService>, Option<SignatureBatchSender>)
 where
-    T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
 {
-    if check_confirmations(block_data_file, transaction_data_file) {
+    if verify_data_files(block_data_file, transaction_data_file) {
         let (sender, receiver) = unbounded();
         let log_tx_service =
             LogTransactionService::new(client, receiver, block_data_file, transaction_data_file);
@@ -77,17 +77,17 @@ type MapSignatureToTxInfo = HashMap<Signature, TransactionSendInfo>;
 type SignatureBatchReceiver = Receiver<TransactionInfoBatch>;
 
 impl LogTransactionService {
-    fn new<T>(
-        client: &Arc<T>,
+    fn new<Client>(
+        client: &Arc<Client>,
         signature_receiver: SignatureBatchReceiver,
-        block_data_file: Option<&String>,
-        transaction_data_file: Option<&String>,
+        block_data_file: Option<&str>,
+        transaction_data_file: Option<&str>,
     ) -> Self
     where
-        T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+        Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
-        if !check_confirmations(block_data_file, transaction_data_file) {
-            panic!("Expect block-data-file or transaction-data-file is specified.");
+        if !verify_data_files(block_data_file, transaction_data_file) {
+            panic!("Expect block-data-file or transaction-data-file is specified, must have been verified by callee.");
         }
 
         let client = client.clone();
@@ -106,9 +106,12 @@ impl LogTransactionService {
         self.thread_handler.join()
     }
 
-    fn run<T>(client: Arc<T>, signature_receiver: SignatureBatchReceiver, mut log_writer: LogWriter)
-    where
-        T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+    fn run<Client>(
+        client: Arc<Client>,
+        signature_receiver: SignatureBatchReceiver,
+        mut log_writer: LogWriter,
+    ) where
+        Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
         let commitment: CommitmentConfig = CommitmentConfig {
             commitment: CommitmentLevel::Confirmed,
@@ -122,7 +125,8 @@ impl LogTransactionService {
         };
         let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
 
-        let mut start_block = get_slot_with_retry(&client).expect("get_slot_with_retry succeed");
+        let mut start_block = get_slot_with_retry(&client)
+            .expect("get_slot_with_retry succeed, cannot proceed without having slot. Must be a problem with RPC.");
 
         let mut signature_to_tx_info = MapSignatureToTxInfo::new();
         loop {
@@ -152,7 +156,6 @@ impl LogTransactionService {
                     let block_slots = get_blocks_with_retry(&client, start_block);
                     let Ok(block_slots) = block_slots else {
                         error!("Failed to get blocks, stop LogWriterService.");
-                        drop(signature_receiver);
                         break;
                     };
                     if block_slots.is_empty() {
@@ -284,10 +287,7 @@ impl LogTransactionService {
     }
 }
 
-fn check_confirmations(
-    block_data_file: Option<&String>,
-    transaction_data_file: Option<&String>,
-) -> bool {
+fn verify_data_files(block_data_file: Option<&str>, transaction_data_file: Option<&str>) -> bool {
     block_data_file.is_some() || transaction_data_file.is_some()
 }
 
@@ -324,7 +324,7 @@ struct LogWriter {
 }
 
 impl LogWriter {
-    fn new(block_data_file: Option<&String>, transaction_data_file: Option<&String>) -> Self {
+    fn new(block_data_file: Option<&str>, transaction_data_file: Option<&str>) -> Self {
         let block_log_writer = block_data_file.map(|block_data_file| {
             CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
         });
@@ -419,42 +419,41 @@ impl LogWriter {
 const NUM_RETRY: u64 = 5;
 const RETRY_EVERY_MS: u64 = 4 * DEFAULT_MS_PER_SLOT;
 
-fn get_slot_with_retry<T>(client: &Arc<T>) -> Result<Slot>
+fn call_rpc_with_retry<Func, Data>(f: Func, retry_warning: &str) -> Result<Data>
 where
-    T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+    Func: Fn() -> Result<Data>,
 {
-    for _ in 1..NUM_RETRY {
-        let current_slot = client.get_slot();
-
-        match current_slot {
+    let mut iretry = 0;
+    loop {
+        match f() {
             Ok(slot) => {
                 return Ok(slot);
             }
             Err(error) => {
-                warn!("Failed to get slot: {error}, retry.");
+                if iretry == NUM_RETRY {
+                    return Err(error);
+                }
+                warn!("{retry_warning}: {error}, retry.");
                 sleep(Duration::from_millis(RETRY_EVERY_MS));
             }
         }
+        iretry += 1;
     }
-    client.get_slot()
 }
 
-fn get_blocks_with_retry<T>(client: &Arc<T>, start_block: u64) -> Result<Vec<Slot>>
+fn get_slot_with_retry<Client>(client: &Arc<Client>) -> Result<Slot>
 where
-    T: 'static + BenchTpsClient + Send + Sync + ?Sized,
+    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
 {
-    for _ in 1..NUM_RETRY {
-        let block_slots = client.get_blocks(start_block, None);
+    call_rpc_with_retry(|| client.get_slot(), "Failed to get slot")
+}
 
-        match block_slots {
-            Ok(slots) => {
-                return Ok(slots);
-            }
-            Err(error) => {
-                warn!("Failed to download blocks: {error}, retry.");
-                sleep(Duration::from_millis(RETRY_EVERY_MS));
-            }
-        }
-    }
-    client.get_blocks(start_block, None)
+fn get_blocks_with_retry<Client>(client: &Arc<Client>, start_block: u64) -> Result<Vec<Slot>>
+where
+    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
+{
+    call_rpc_with_retry(
+        || client.get_blocks(start_block, None),
+        "Failed to download blocks",
+    )
 }

@@ -481,8 +481,8 @@ where
 
     let (log_transaction_service, signatures_sender) = create_log_transactions_service_and_sender(
         &client,
-        block_data_file.as_ref(),
-        transaction_data_file.as_ref(),
+        block_data_file.as_deref(),
+        transaction_data_file.as_deref(),
     );
 
     let sender_threads = create_sender_threads(
