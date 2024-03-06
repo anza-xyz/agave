@@ -421,7 +421,7 @@ impl SnapshotStorageRebuilder {
             .thread_name(|i| format!("solRbuildSnap{i:02}"))
             .num_threads(self.num_threads)
             .build()
-            .unwrap()
+            .expect("new rayon threadpool")
     }
 }
 

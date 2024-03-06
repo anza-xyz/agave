@@ -177,7 +177,7 @@ pub fn ip_echo_server(
         .thread_name("solIpEchoSrvrRt")
         .enable_all()
         .build()
-        .unwrap();
+        .expect("new tokio runtime");
     runtime.spawn(run_echo_server(tcp_listener, shred_version));
     runtime
 }

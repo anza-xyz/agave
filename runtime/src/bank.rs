@@ -1486,7 +1486,7 @@ impl Bank {
             ThreadPoolBuilder::new()
                 .thread_name(|i| format!("solBnkNewEpch{i:02}"))
                 .build()
-                .unwrap(),
+                .expect("new rayon threadpool"),
             "thread_pool_creation",
         );
 
