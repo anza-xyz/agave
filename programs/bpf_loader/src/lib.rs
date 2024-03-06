@@ -1541,6 +1541,7 @@ mod tests {
             },
             account_utils::StateMut,
             clock::Clock,
+            epoch_schedule::EpochSchedule,
             instruction::{AccountMeta, InstructionError},
             pubkey::Pubkey,
             rent::Rent,
@@ -3728,7 +3729,10 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_upgrade() {
-        let transaction_accounts = vec![];
+        let transaction_accounts = vec![(
+            sysvar::epoch_schedule::id(),
+            create_account_for_test(&EpochSchedule::default()),
+        )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
@@ -3768,7 +3772,10 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_non_upgrade() {
-        let transaction_accounts = vec![];
+        let transaction_accounts = vec![(
+            sysvar::epoch_schedule::id(),
+            create_account_for_test(&EpochSchedule::default()),
+        )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
