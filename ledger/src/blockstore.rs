@@ -32,7 +32,7 @@ use {
     log::*,
     rand::Rng,
     rayon::{
-        iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+        iter::{IntoParallelIterator, ParallelIterator},
         ThreadPool,
     },
     rocksdb::{DBRawIterator, LiveFile},
@@ -3281,27 +3281,6 @@ impl Blockstore {
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
         self.get_slot_entries_in_block(slot, vec![(start_index, end_index)], slot_meta)
-    }
-
-    fn get_any_valid_slot_entries(&self, slot: Slot, start_index: u64) -> Vec<Entry> {
-        let (completed_ranges, slot_meta) = self
-            .get_completed_ranges(slot, start_index)
-            .unwrap_or_default();
-        if completed_ranges.is_empty() {
-            return vec![];
-        }
-        let slot_meta = slot_meta.unwrap();
-
-        let entries: Vec<Vec<Entry>> = PAR_THREAD_POOL_ALL_CPUS.install(|| {
-            completed_ranges
-                .par_iter()
-                .map(|(start_index, end_index)| {
-                    self.get_entries_in_data_block(slot, *start_index, *end_index, Some(&slot_meta))
-                        .unwrap_or_default()
-                })
-                .collect()
-        });
-        entries.into_iter().flatten().collect()
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
