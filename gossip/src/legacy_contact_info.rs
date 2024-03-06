@@ -328,24 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_client_facing() {
-        let mut ci = LegacyContactInfo::default();
-        assert_eq!(
-            ci.valid_client_facing_addr(Protocol::QUIC, &SocketAddrSpace::Unspecified),
-            None
-        );
-        ci.tpu = socketaddr!(Ipv4Addr::LOCALHOST, 123);
-        assert_eq!(
-            ci.valid_client_facing_addr(Protocol::QUIC, &SocketAddrSpace::Unspecified),
-            None
-        );
-        ci.rpc = socketaddr!(Ipv4Addr::LOCALHOST, 234);
-        assert!(ci
-            .valid_client_facing_addr(Protocol::QUIC, &SocketAddrSpace::Unspecified)
-            .is_some());
-    }
-
-    #[test]
     fn test_sanitize() {
         let mut ci = LegacyContactInfo::default();
         assert_eq!(ci.sanitize(), Ok(()));

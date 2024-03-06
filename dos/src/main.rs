@@ -47,8 +47,7 @@ use {
     rand::{thread_rng, Rng},
     solana_bench_tps::{bench::generate_and_fund_keypairs, bench_tps_client::BenchTpsClient},
     solana_client::{
-        connection_cache::ConnectionCache,
-        tpu_client::TpuClientWrapper,
+        connection_cache::ConnectionCache, tpu_client::TpuClientWrapper,
         tpu_connection::TpuConnection,
     },
     solana_core::repair::serve_repair::{RepairProtocol, RepairRequestHeader, ServeRepair},
@@ -830,6 +829,7 @@ pub mod test {
         solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
         solana_rpc::rpc::JsonRpcConfig,
         solana_sdk::timing::timestamp,
+        solana_tpu_client::tpu_client::TpuClientConfig,
     };
 
     const TEST_SEND_BATCH_SIZE: usize = 1;

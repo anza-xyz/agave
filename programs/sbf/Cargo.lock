@@ -5179,7 +5179,6 @@ dependencies = [
  "solana-metrics",
  "solana-net-utils",
  "solana-perf",
- "solana-quic-client",
  "solana-rayon-threadlimit",
  "solana-runtime",
  "solana-sdk",
