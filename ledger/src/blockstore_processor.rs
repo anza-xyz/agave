@@ -183,6 +183,49 @@ pub fn execute_batch(
         ..
     } = tx_results;
 
+    // collect transaction actual execution cost, apply to cost tracking;
+    // fail block if exceeds cost limits
+    /*
+    if bank
+        .feature_set
+        .is_active(&feature_set::apply_cost_tracker_during_replay::id())
+    // */
+    {
+        let tx_costs_with_actual_execution_units: Vec<_> =
+        execution_results
+            .iter()
+            .zip(batch.sanitized_transactions())
+            .filter_map(|(execution_result, tx)| {
+                if let Some(details) = execution_result.details() {
+                    let actual_cost = details.executed_units;
+                    let mut tx_cost = CostModel::calculate_cost(tx, &bank.feature_set);
+                    let estimated_programs_execution_costs = tx_cost.programs_execution_cost(); 
+                    if actual_cost != estimated_programs_execution_costs {
+                        match tx_cost {
+                            solana_cost_model::transaction_cost::TransactionCost::Transaction(ref mut usage_cost_details) => {
+                                usage_cost_details.programs_execution_cost = actual_cost;
+                            },
+                            _ => { 
+                                // Shouldn't need to adjust for sismple vote. Are there cases
+                                // during replay?
+                            },
+                        }
+                    }
+                    Some(tx_cost)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        for tx_cost in &tx_costs_with_actual_execution_units {
+            let result = cost_tracker
+                .try_add(tx_cost)
+                .map_err(TransactionError::from)?;
+        }
+    }
+
     let executed_transactions = execution_results
         .iter()
         .zip(batch.sanitized_transactions())
@@ -434,6 +477,7 @@ fn rebatch_and_execute_batches(
         })
         .collect::<Vec<_>>();
 
+    /* TAO TODO - revert original PR in fav of this implementation
     if bank
         .feature_set
         .is_active(&feature_set::apply_cost_tracker_during_replay::id())
@@ -445,6 +489,7 @@ fn rebatch_and_execute_batches(
                 .map_err(TransactionError::from)?;
         }
     }
+    // */
 
     let target_batch_count = get_thread_count() as u64;
 
