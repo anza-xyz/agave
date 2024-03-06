@@ -91,12 +91,13 @@ impl LogTransactionService {
         }
 
         let client = client.clone();
-        let log_writer = LogWriter::new(block_data_file, transaction_data_file);
+        let tx_log_writer = TransactionLogWriter::new(transaction_data_file);
+        let block_log_writer = BlockLogWriter::new(block_data_file);
 
         let thread_handler = Builder::new()
             .name("LogTransactionService".to_string())
             .spawn(move || {
-                Self::run(client, signature_receiver, log_writer);
+                Self::run(client, signature_receiver, tx_log_writer, block_log_writer);
             })
             .expect("LogTransactionService is up.");
         Self { thread_handler }
@@ -109,7 +110,8 @@ impl LogTransactionService {
     fn run<Client>(
         client: Arc<Client>,
         signature_receiver: SignatureBatchReceiver,
-        mut log_writer: LogWriter,
+        mut tx_log_writer: TransactionLogWriter,
+        mut block_log_writer: BlockLogWriter,
     ) where
         Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
@@ -145,7 +147,8 @@ impl LogTransactionService {
                         }
                         Err(e) => {
                             info!("Stop LogTransactionService, message received: {e}");
-                            log_writer.flush();
+                            tx_log_writer.flush();
+                            block_log_writer.flush();
                             break;
                         }
                     }
@@ -163,10 +166,10 @@ impl LogTransactionService {
                     }
                     start_block = *block_slots.last().unwrap() + 1;
                     let blocks = block_slots.iter().map(|slot| {
-                    client.get_block_with_config(
-                        *slot,
-                        rpc_block_config
-                    )
+                        client.get_block_with_config(
+                            *slot,
+                            rpc_block_config
+                        )
                     });
                     let num_blocks = blocks.len();
                     for (block, slot) in blocks.zip(&block_slots) {
@@ -177,15 +180,17 @@ impl LogTransactionService {
                             block,
                             &mut signature_to_tx_info,
                             *slot,
-                            &mut log_writer,
+                            &mut tx_log_writer,
+                            &mut block_log_writer
                         )
                     }
-                    Self::clean_transaction_map(&mut log_writer, &mut signature_to_tx_info);
+                    Self::clean_transaction_map(&mut tx_log_writer, &mut signature_to_tx_info);
                     measure_process_blocks.stop();
 
                     let time_send_us = measure_process_blocks.as_us();
                     info!("Time to process {num_blocks} blocks: {time_send_us}");
-                    log_writer.flush();
+                    tx_log_writer.flush();
+                    block_log_writer.flush();
                 },
             }
         }
@@ -195,7 +200,8 @@ impl LogTransactionService {
         block: UiConfirmedBlock,
         signature_to_tx_info: &mut MapSignatureToTxInfo,
         slot: u64,
-        log_writer: &mut LogWriter,
+        tx_log_writer: &mut TransactionLogWriter,
+        block_log_writer: &mut BlockLogWriter,
     ) {
         let rewards = block.rewards.as_ref().expect("Rewards are present.");
         let slot_leader = rewards
@@ -235,7 +241,7 @@ impl LogTransactionService {
                 num_bench_tps_transactions = num_bench_tps_transactions.saturating_add(1);
                 bench_tps_cu_consumed = bench_tps_cu_consumed.saturating_add(cu_consumed);
 
-                log_writer.write_to_transaction_log(
+                tx_log_writer.write(
                     signature,
                     Some(slot),
                     block.block_time,
@@ -248,7 +254,7 @@ impl LogTransactionService {
                 );
             }
         }
-        log_writer.write_to_block_log(
+        block_log_writer.write(
             block.blockhash.clone(),
             slot_leader,
             slot,
@@ -261,7 +267,7 @@ impl LogTransactionService {
     }
 
     fn clean_transaction_map(
-        log_writer: &mut LogWriter,
+        tx_log_writer: &mut TransactionLogWriter,
         signature_to_tx_info: &mut MapSignatureToTxInfo,
     ) {
         let now: DateTime<Utc> = Utc::now();
@@ -270,7 +276,7 @@ impl LogTransactionService {
             let is_not_timeout_tx =
                 duration_since_past_time.num_seconds() < REMOVE_TIMEOUT_TX_EVERY_SEC;
             if !is_not_timeout_tx {
-                log_writer.write_to_transaction_log(
+                tx_log_writer.write(
                     signature,
                     None,
                     None,
@@ -291,6 +297,8 @@ fn verify_data_files(block_data_file: Option<&str>, transaction_data_file: Optio
     block_data_file.is_some() || transaction_data_file.is_some()
 }
 
+type CsvFileWriter = csv::Writer<File>;
+
 #[derive(Clone, Serialize)]
 struct BlockData {
     pub block_hash: String,
@@ -301,6 +309,58 @@ struct BlockData {
     pub num_bench_tps_transactions: usize,
     pub total_cu_consumed: u64,
     pub bench_tps_cu_consumed: u64,
+}
+
+struct BlockLogWriter {
+    log_writer: Option<CsvFileWriter>,
+}
+
+impl BlockLogWriter {
+    fn new(block_data_file: Option<&str>) -> Self {
+        let block_log_writer = block_data_file.map(|block_data_file| {
+            CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
+        });
+        Self {
+            log_writer: block_log_writer,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write(
+        &mut self,
+        blockhash: String,
+        slot_leader: String,
+        slot: Slot,
+        block_time: Option<i64>,
+        num_bench_tps_transactions: usize,
+        total_num_transactions: usize,
+        bench_tps_cu_consumed: u64,
+        total_cu_consumed: u64,
+    ) {
+        if let Some(block_log_writer) = &mut self.log_writer {
+            let block_data = BlockData {
+                block_hash: blockhash,
+                block_leader: slot_leader,
+                block_slot: slot,
+                block_time: block_time.map(|time| {
+                    Utc.timestamp_opt(time, 0)
+                        .latest()
+                        .expect("valid timestamp")
+                }),
+                num_bench_tps_transactions,
+                total_num_transactions,
+                bench_tps_cu_consumed,
+                total_cu_consumed,
+            };
+            let _ = block_log_writer.serialize(block_data);
+        }
+    }
+
+    fn flush(&mut self) {
+        if let Some(block_log_writer) = &mut self.log_writer {
+            let _ = block_log_writer.flush();
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -317,30 +377,24 @@ struct TransactionData {
     pub compute_unit_price: u64,
 }
 
-type CsvFileWriter = csv::Writer<File>;
-struct LogWriter {
-    block_log_writer: Option<CsvFileWriter>,
-    transaction_log_writer: Option<CsvFileWriter>,
+struct TransactionLogWriter {
+    log_writer: Option<CsvFileWriter>,
 }
 
-impl LogWriter {
-    fn new(block_data_file: Option<&str>, transaction_data_file: Option<&str>) -> Self {
-        let block_log_writer = block_data_file.map(|block_data_file| {
-            CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
-        });
+impl TransactionLogWriter {
+    fn new(transaction_data_file: Option<&str>) -> Self {
         let transaction_log_writer = transaction_data_file.map(|transaction_data_file| {
             CsvFileWriter::from_writer(
                 File::create(transaction_data_file).expect("File can be created."),
             )
         });
         Self {
-            block_log_writer,
-            transaction_log_writer,
+            log_writer: transaction_log_writer,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write_to_transaction_log(
+    fn write(
         &mut self,
         signature: &Signature,
         confirmed_slot: Option<Slot>,
@@ -352,7 +406,7 @@ impl LogWriter {
         compute_unit_price: Option<u64>,
         timed_out: bool,
     ) {
-        if let Some(transaction_log_writer) = &mut self.transaction_log_writer {
+        if let Some(transaction_log_writer) = &mut self.log_writer {
             let tx_data = TransactionData {
                 signature: signature.to_string(),
                 confirmed_slot,
@@ -375,42 +429,8 @@ impl LogWriter {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn write_to_block_log(
-        &mut self,
-        blockhash: String,
-        slot_leader: String,
-        slot: Slot,
-        block_time: Option<i64>,
-        num_bench_tps_transactions: usize,
-        total_num_transactions: usize,
-        bench_tps_cu_consumed: u64,
-        total_cu_consumed: u64,
-    ) {
-        if let Some(block_log_writer) = &mut self.block_log_writer {
-            let block_data = BlockData {
-                block_hash: blockhash,
-                block_leader: slot_leader,
-                block_slot: slot,
-                block_time: block_time.map(|time| {
-                    Utc.timestamp_opt(time, 0)
-                        .latest()
-                        .expect("valid timestamp")
-                }),
-                num_bench_tps_transactions,
-                total_num_transactions,
-                bench_tps_cu_consumed,
-                total_cu_consumed,
-            };
-            let _ = block_log_writer.serialize(block_data);
-        }
-    }
-
     fn flush(&mut self) {
-        if let Some(block_log_writer) = &mut self.block_log_writer {
-            let _ = block_log_writer.flush();
-        }
-        if let Some(transaction_log_writer) = &mut self.transaction_log_writer {
+        if let Some(transaction_log_writer) = &mut self.log_writer {
             let _ = transaction_log_writer.flush();
         }
     }
