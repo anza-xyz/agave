@@ -36,6 +36,10 @@ update_spl_dependencies() {
     sed -i -e "s#\(spl-tlv-account-resolution = { version = \"\)[^\"]*\(\"\)#\1=$spl_tlv_account_resolution_verison\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-transfer-hook-interface = \"\)[^\"]*\(\"\)#\1=$spl_transfer_hook_interface_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-transfer-hook-interface = { version = \"\)[^\"]*\(\"\)#\1=$spl_transfer_hook_interface_version\2#g" "${tomls[@]}" || return $?
+
+    # patch ahash. This is super brittle; putting here for convenience, since we are already iterating through the tomls
+    ahash_minor_version="0.8"
+    sed -i -e "s#\(ahash = \"\)[^\"]*\(\"\)#\1$ahash_minor_version\2#g" "${tomls[@]}" || return $?
 }
 
 patch_crates_io() {
