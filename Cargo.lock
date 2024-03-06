@@ -205,7 +205,6 @@ dependencies = [
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-ipc-server",
- "jsonrpc-server-utils",
  "lazy_static",
  "libc",
  "libloading",
@@ -252,6 +251,7 @@ dependencies = [
  "symlink",
  "thiserror",
  "tikv-jemallocator",
+ "tokio",
 ]
 
 [[package]]
