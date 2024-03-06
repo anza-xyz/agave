@@ -18,6 +18,7 @@ pub enum TransactionCost {
 
 impl TransactionCost {
     pub fn sum(&self) -> u64 {
+        #![allow(clippy::assertions_on_constants)]
         match self {
             Self::SimpleVote { .. } => {
                 const _: () = assert!(
