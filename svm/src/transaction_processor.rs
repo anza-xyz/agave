@@ -820,6 +820,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             Some(account) => account,
         };
 
+        debug_assert!(solana_bpf_loader_program::check_loader_id(
+            program_account.owner()
+        ));
+
         if loader_v4::check_id(program_account.owner()) {
             return solana_loader_v4_program::get_state(program_account.data())
                 .ok()
@@ -831,10 +835,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     environments.program_runtime_v2.clone(),
                 ));
         }
-
-        debug_assert!(solana_bpf_loader_program::check_loader_id(
-            program_account.owner()
-        ));
 
         if !bpf_loader_upgradeable::check_id(program_account.owner()) {
             return ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account);
@@ -862,7 +862,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 );
             }
         }
-
         ProgramAccountLoadResult::InvalidAccountData(environments.program_runtime_v1.clone())
     }
 
