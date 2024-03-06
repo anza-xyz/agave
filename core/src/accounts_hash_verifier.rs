@@ -9,7 +9,6 @@ use {
             IncrementalAccountsHash,
         },
         sorted_storages::SortedStorages,
-        starting_snapshot_storages::StartingSnapshotStorages,
     },
     solana_measure::measure_us,
     solana_runtime::{
@@ -43,7 +42,6 @@ impl AccountsHashVerifier {
         accounts_package_sender: Sender<AccountsPackage>,
         accounts_package_receiver: Receiver<AccountsPackage>,
         snapshot_package_sender: Option<Sender<SnapshotPackage>>,
-        starting_snapshot_storages: StartingSnapshotStorages,
         exit: Arc<AtomicBool>,
         snapshot_config: SnapshotConfig,
     ) -> Self {
@@ -56,11 +54,7 @@ impl AccountsHashVerifier {
                 // To support fastboot, we must ensure the storages used in the latest POST snapshot are
                 // not recycled nor removed early.  Hold an Arc of their AppendVecs to prevent them from
                 // expiring.
-                let mut fastboot_storages = match starting_snapshot_storages {
-                    StartingSnapshotStorages::Genesis => None,
-                    StartingSnapshotStorages::Archive => None,
-                    StartingSnapshotStorages::Fastboot(storages) => Some(storages),
-                };
+                let mut fastboot_storages = None;
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
