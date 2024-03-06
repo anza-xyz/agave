@@ -69,7 +69,10 @@ anchor() {
   patch_spl_crates . Cargo.toml "$spl_dir"
 
   $cargo test
-  (cd spl && $cargo_build_sbf --features dex metadata stake)
+  # serum_dex and mpl-token-metadata are using caret versions of solana and SPL dependencies
+  # rather pull and patch those as well, ignore for now
+  # (cd spl && $cargo_build_sbf --features dex metadata stake)
+  (cd spl && $cargo_build_sbf --features stake)
   (cd client && $cargo test --all-features)
 
   anchor_dir=$PWD
