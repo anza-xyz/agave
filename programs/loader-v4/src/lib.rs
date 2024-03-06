@@ -406,8 +406,9 @@ pub fn process_instruction_deploy(
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
 
     let environments = invoke_context
-        .get_runtime_environments_for_slot(effective_slot)
+        .get_environments_for_slot(effective_slot)
         .map_err(|err| {
+            // This will never fail since the epoch schedule is already configured.
             ic_logger_msg!(log_collector, "Failed to get runtime environment {}", err);
             InstructionError::InvalidArgument
         })?;

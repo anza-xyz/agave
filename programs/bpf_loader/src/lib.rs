@@ -51,7 +51,7 @@ use {
         rc::Rc,
         sync::{atomic::Ordering, Arc},
     },
-    syscalls::{create_program_runtime_environment_v1, morph_program_runtime_environment_v1},
+    syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
 };
 
 pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
@@ -107,15 +107,15 @@ macro_rules! deploy_program {
         let mut load_program_metrics = LoadProgramMetrics::default();
         let mut register_syscalls_time = Measure::start("register_syscalls_time");
         let deployment_slot: Slot = $slot;
-        let environments = $invoke_context.get_runtime_environments_for_slot(
+        let environments = $invoke_context.get_environments_for_slot(
             deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
         ).map_err(|e| {
+            // This will never fail since the epoch schedule is already configured.
             ic_msg!($invoke_context, "Failed to get runtime environment: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
         })?;
-        let deployment_program_runtime_environment = morph_program_runtime_environment_v1(
+        let deployment_program_runtime_environment = morph_into_deployment_environment_v1(
             environments.program_runtime_v1.clone(),
-            true, /* deployment */
         ).map_err(|e| {
             ic_msg!($invoke_context, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure

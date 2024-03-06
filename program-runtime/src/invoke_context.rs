@@ -214,7 +214,7 @@ impl<'a> InvokeContext<'a> {
             .or_else(|| self.programs_loaded_for_tx_batch.find(pubkey))
     }
 
-    pub fn get_runtime_environments_for_slot(
+    pub fn get_environments_for_slot(
         &self,
         slot: Slot,
     ) -> Result<&ProgramRuntimeEnvironments, InstructionError> {

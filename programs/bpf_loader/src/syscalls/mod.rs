@@ -239,12 +239,11 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn morph_program_runtime_environment_v1(
+pub fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
-    reject_deployment_of_broken_elfs: bool,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
     let mut config = *from.get_config();
-    config.reject_broken_elfs = reject_deployment_of_broken_elfs;
+    config.reject_broken_elfs = true;
 
     let mut result = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
 

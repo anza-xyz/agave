@@ -618,11 +618,13 @@ pub struct LoadedProgramsForTxBatch {
     entries: HashMap<Pubkey, Arc<LoadedProgram>>,
     slot: Slot,
     pub environments: ProgramRuntimeEnvironments,
-    /// Anticipated replacement for `environments` at the next epoch
+    /// Anticipated replacement for `environments` at the next epoch.
     ///
     /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
     /// More precisely, it starts with the recompilation phase a few hundred slots before the epoch boundary,
     /// and it ends with the first rerooting after the epoch boundary.
+    /// Needed when a program is deployed at the last slot of an epoch, becomes effective in the next epoch.
+    /// So needs to be compiled with the environment for the next epoch.
     pub upcoming_environments: Option<ProgramRuntimeEnvironments>,
     /// The epoch of the last rerooting
     pub latest_root_epoch: Epoch,
