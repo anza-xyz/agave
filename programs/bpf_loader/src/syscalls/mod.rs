@@ -249,7 +249,10 @@ pub fn morph_program_runtime_environment_v1(
     let mut result = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
 
     for (key, (name, value)) in from.get_function_registry().iter() {
-        result.register_function(key, name, value)?;
+        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
+        if name != *b"sol_alloc_free_" {
+            result.register_function(key, name, value)?;
+        }
     }
 
     Ok(BuiltinProgram::new_loader(config, result))
