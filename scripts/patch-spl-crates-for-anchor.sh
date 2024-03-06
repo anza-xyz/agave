@@ -8,7 +8,7 @@ get_spl_versions() {
     declare spl_dir="$1"
     spl_memo_version=$(readCargoVariable version "$spl_dir/memo/program/Cargo.toml")
     spl_token_version=$(readCargoVariable version "$spl_dir/token/program/Cargo.toml")
-    spl_token_2022_version=$(readCargoVariable version "$spl_dir/token/program-2022/Cargo.toml")
+    spl_token_2022_version=$(readCargoVariable version "$spl_dir/token/program-2022/Cargo.toml"| head -c1) # only use the major version for convenience
     spl_tlv_account_resolution_verison=$(readCargoVariable version "$spl_dir/libraries/tlv-account-resolution/Cargo.toml")
     spl_transfer_hook_interface_version=$(readCargoVariable version "$spl_dir/token/transfer-hook/interface/Cargo.toml")
 }
