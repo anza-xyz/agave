@@ -61,12 +61,22 @@ impl<'a, 'b> TransactionBatch<'a, 'b> {
             .iter()
             .enumerate()
             .inspect(|(index, result)| {
+                // It's not valid to update a previously recorded lock error to
+                // become an "ok" result because this could lead to serious
+                // account lock violations where accounts are later unlocked
+                // when they were not currently locked.
                 assert!(!(result.is_ok() && self.lock_results[*index].is_err()))
             })
             .filter(|(index, result)| result.is_err() && self.lock_results[*index].is_ok())
             .map(|(index, _)| (&self.sanitized_txs[index], &self.lock_results[index]));
 
+        // Unlock the accounts for all transactions which will be updated to an
+        // lock error below.
         self.bank.unlock_accounts(txs_and_results);
+
+        // Record all new errors by overwriting lock results. Note that it's
+        // not valid to update from err -> ok and the assertion above enforces
+        // that validity constraint.
         self.lock_results = transaction_results;
     }
 }
