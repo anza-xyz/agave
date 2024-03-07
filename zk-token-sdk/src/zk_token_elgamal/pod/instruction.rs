@@ -7,7 +7,7 @@ use crate::{encryption::elgamal::ElGamalError, instruction::transfer as decoded}
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-pub struct TransferAmountCiphertext(pub GroupedElGamalCiphertext3Handles);
+pub struct TransferAmountCiphertext(pub(crate) GroupedElGamalCiphertext3Handles);
 
 #[cfg(not(target_os = "solana"))]
 impl From<decoded::TransferAmountCiphertext> for TransferAmountCiphertext {
@@ -27,7 +27,7 @@ impl TryFrom<TransferAmountCiphertext> for decoded::TransferAmountCiphertext {
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-pub struct FeeEncryption(pub GroupedElGamalCiphertext2Handles);
+pub struct FeeEncryption(pub(crate) GroupedElGamalCiphertext2Handles);
 
 #[cfg(not(target_os = "solana"))]
 impl From<decoded::FeeEncryption> for FeeEncryption {

@@ -36,7 +36,9 @@ const PUBKEY_VALIDITY_PROOF_LEN: usize = 64;
 /// The `CiphertextCommitmentEqualityProof` type as a `Pod`.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct CiphertextCommitmentEqualityProof(pub [u8; CIPHERTEXT_COMMITMENT_EQUALITY_PROOF_LEN]);
+pub struct CiphertextCommitmentEqualityProof(
+    pub(crate) [u8; CIPHERTEXT_COMMITMENT_EQUALITY_PROOF_LEN],
+);
 
 #[cfg(not(target_os = "solana"))]
 impl From<DecodedCiphertextCommitmentEqualityProof> for CiphertextCommitmentEqualityProof {
@@ -57,7 +59,9 @@ impl TryFrom<CiphertextCommitmentEqualityProof> for DecodedCiphertextCommitmentE
 /// The `CiphertextCiphertextEqualityProof` type as a `Pod`.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct CiphertextCiphertextEqualityProof(pub [u8; CIPHERTEXT_CIPHERTEXT_EQUALITY_PROOF_LEN]);
+pub struct CiphertextCiphertextEqualityProof(
+    pub(crate) [u8; CIPHERTEXT_CIPHERTEXT_EQUALITY_PROOF_LEN],
+);
 
 #[cfg(not(target_os = "solana"))]
 impl From<DecodedCiphertextCiphertextEqualityProof> for CiphertextCiphertextEqualityProof {
@@ -79,7 +83,7 @@ impl TryFrom<CiphertextCiphertextEqualityProof> for DecodedCiphertextCiphertextE
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct GroupedCiphertext2HandlesValidityProof(
-    pub [u8; GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_PROOF_LEN],
+    pub(crate) [u8; GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_PROOF_LEN],
 );
 
 #[cfg(not(target_os = "solana"))]
@@ -106,7 +110,7 @@ impl TryFrom<GroupedCiphertext2HandlesValidityProof>
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct BatchedGroupedCiphertext2HandlesValidityProof(
-    pub [u8; BATCHED_GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_PROOF_LEN],
+    pub(crate) [u8; BATCHED_GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_PROOF_LEN],
 );
 
 #[cfg(not(target_os = "solana"))]
@@ -134,7 +138,7 @@ impl TryFrom<BatchedGroupedCiphertext2HandlesValidityProof>
 /// The `ZeroBalanceProof` type as a `Pod`.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct ZeroBalanceProof(pub [u8; ZERO_BALANCE_PROOF_LEN]);
+pub struct ZeroBalanceProof(pub(crate) [u8; ZERO_BALANCE_PROOF_LEN]);
 
 #[cfg(not(target_os = "solana"))]
 impl From<DecodedZeroBalanceProof> for ZeroBalanceProof {
@@ -155,7 +159,7 @@ impl TryFrom<ZeroBalanceProof> for DecodedZeroBalanceProof {
 /// The `FeeSigmaProof` type as a `Pod`.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(transparent)]
-pub struct FeeSigmaProof(pub [u8; FEE_SIGMA_PROOF_LEN]);
+pub struct FeeSigmaProof(pub(crate) [u8; FEE_SIGMA_PROOF_LEN]);
 
 #[cfg(not(target_os = "solana"))]
 impl From<DecodedFeeSigmaProof> for FeeSigmaProof {
@@ -176,7 +180,7 @@ impl TryFrom<FeeSigmaProof> for DecodedFeeSigmaProof {
 /// The `PubkeyValidityProof` type as a `Pod`.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(transparent)]
-pub struct PubkeyValidityProof(pub [u8; PUBKEY_VALIDITY_PROOF_LEN]);
+pub struct PubkeyValidityProof(pub(crate) [u8; PUBKEY_VALIDITY_PROOF_LEN]);
 
 #[cfg(not(target_os = "solana"))]
 impl From<DecodedPubkeyValidityProof> for PubkeyValidityProof {

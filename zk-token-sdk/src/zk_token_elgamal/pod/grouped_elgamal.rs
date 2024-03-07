@@ -20,7 +20,7 @@ const GROUPED_ELGAMAL_CIPHERTEXT_3_HANDLES: usize =
 /// The `GroupedElGamalCiphertext` type with two decryption handles as a `Pod`
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct GroupedElGamalCiphertext2Handles(pub [u8; GROUPED_ELGAMAL_CIPHERTEXT_2_HANDLES]);
+pub struct GroupedElGamalCiphertext2Handles(pub(crate) [u8; GROUPED_ELGAMAL_CIPHERTEXT_2_HANDLES]);
 
 impl fmt::Debug for GroupedElGamalCiphertext2Handles {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -52,7 +52,7 @@ impl TryFrom<GroupedElGamalCiphertext2Handles> for GroupedElGamalCiphertext<2> {
 /// The `GroupedElGamalCiphertext` type with three decryption handles as a `Pod`
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct GroupedElGamalCiphertext3Handles(pub [u8; GROUPED_ELGAMAL_CIPHERTEXT_3_HANDLES]);
+pub struct GroupedElGamalCiphertext3Handles(pub(crate) [u8; GROUPED_ELGAMAL_CIPHERTEXT_3_HANDLES]);
 
 impl fmt::Debug for GroupedElGamalCiphertext3Handles {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

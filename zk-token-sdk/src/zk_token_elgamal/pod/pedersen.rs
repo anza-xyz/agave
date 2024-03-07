@@ -19,7 +19,7 @@ pub(crate) const PEDERSEN_COMMITMENT_LEN: usize = RISTRETTO_POINT_LEN;
 /// The `PedersenCommitment` type as a `Pod`.
 #[derive(Clone, Copy, Default, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct PedersenCommitment(pub [u8; PEDERSEN_COMMITMENT_LEN]);
+pub struct PedersenCommitment(pub(crate) [u8; PEDERSEN_COMMITMENT_LEN]);
 
 impl fmt::Debug for PedersenCommitment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

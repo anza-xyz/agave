@@ -26,7 +26,7 @@ const ELGAMAL_CIPHERTEXT_LEN: usize = PEDERSEN_COMMITMENT_LEN + DECRYPT_HANDLE_L
 /// The `ElGamalCiphertext` type as a `Pod`.
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ElGamalCiphertext(pub [u8; ELGAMAL_CIPHERTEXT_LEN]);
+pub struct ElGamalCiphertext(pub(crate) [u8; ELGAMAL_CIPHERTEXT_LEN]);
 
 impl fmt::Debug for ElGamalCiphertext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -65,7 +65,7 @@ impl TryFrom<ElGamalCiphertext> for decoded::ElGamalCiphertext {
 /// The `ElGamalPubkey` type as a `Pod`.
 #[derive(Clone, Copy, Default, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ElGamalPubkey(pub [u8; ELGAMAL_PUBKEY_LEN]);
+pub struct ElGamalPubkey(pub(crate) [u8; ELGAMAL_PUBKEY_LEN]);
 
 impl fmt::Debug for ElGamalPubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -98,7 +98,7 @@ impl TryFrom<ElGamalPubkey> for decoded::ElGamalPubkey {
 /// The `DecryptHandle` type as a `Pod`.
 #[derive(Clone, Copy, Default, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct DecryptHandle(pub [u8; DECRYPT_HANDLE_LEN]);
+pub struct DecryptHandle(pub(crate) [u8; DECRYPT_HANDLE_LEN]);
 
 impl fmt::Debug for DecryptHandle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

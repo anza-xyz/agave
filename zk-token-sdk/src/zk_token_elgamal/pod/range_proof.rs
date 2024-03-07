@@ -37,7 +37,7 @@ const RANGE_PROOF_U256_LEN: usize =
 /// The `RangeProof` type as a `Pod` restricted to proofs on 64-bit numbers.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct RangeProofU64(pub [u8; RANGE_PROOF_U64_LEN]);
+pub struct RangeProofU64(pub(crate) [u8; RANGE_PROOF_U64_LEN]);
 
 #[cfg(not(target_os = "solana"))]
 impl TryFrom<decoded::RangeProof> for RangeProofU64 {
@@ -68,7 +68,7 @@ impl TryFrom<RangeProofU64> for decoded::RangeProof {
 /// The `RangeProof` type as a `Pod` restricted to proofs on 128-bit numbers.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct RangeProofU128(pub [u8; RANGE_PROOF_U128_LEN]);
+pub struct RangeProofU128(pub(crate) [u8; RANGE_PROOF_U128_LEN]);
 
 #[cfg(not(target_os = "solana"))]
 impl TryFrom<decoded::RangeProof> for RangeProofU128 {
@@ -99,7 +99,7 @@ impl TryFrom<RangeProofU128> for decoded::RangeProof {
 /// The `RangeProof` type as a `Pod` restricted to proofs on 256-bit numbers.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct RangeProofU256(pub [u8; RANGE_PROOF_U256_LEN]);
+pub struct RangeProofU256(pub(crate) [u8; RANGE_PROOF_U256_LEN]);
 
 #[cfg(not(target_os = "solana"))]
 impl TryFrom<decoded::RangeProof> for RangeProofU256 {

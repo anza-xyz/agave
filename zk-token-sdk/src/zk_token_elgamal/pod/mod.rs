@@ -72,4 +72,4 @@ impl TryFrom<PodProofType> for ProofType {
 
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct CompressedRistretto(pub [u8; 32]);
+pub struct CompressedRistretto(pub(crate) [u8; 32]);
