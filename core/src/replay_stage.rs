@@ -3197,13 +3197,32 @@ impl ReplayStage {
             return false;
         }
 
-            let replay_result_vec = match replay_mode {
-                // Skip the overhead of the threadpool if there is only one bank to play
-                ForkReplayMode::Parallel(thread_pool) if num_active_banks > 1 => {
-                    Self::replay_active_banks_concurrently(
+        let replay_result_vec = match replay_mode {
+            // Skip the overhead of the threadpool if there is only one bank to play
+            ForkReplayMode::Parallel(thread_pool) if num_active_banks > 1 => {
+                Self::replay_active_banks_concurrently(
+                    blockstore,
+                    bank_forks,
+                    thread_pool,
+                    my_pubkey,
+                    vote_account,
+                    progress,
+                    transaction_status_sender,
+                    entry_notification_sender,
+                    verify_recyclers,
+                    replay_vote_sender,
+                    replay_timing,
+                    log_messages_bytes_limit,
+                    &active_bank_slots,
+                    prioritization_fee_cache,
+                )
+            }
+            ForkReplayMode::Serial | ForkReplayMode::Parallel(_) => active_bank_slots
+                .iter()
+                .map(|bank_slot| {
+                    Self::replay_active_bank(
                         blockstore,
                         bank_forks,
-                        thread_pool,
                         my_pubkey,
                         vote_account,
                         progress,
@@ -3213,55 +3232,36 @@ impl ReplayStage {
                         replay_vote_sender,
                         replay_timing,
                         log_messages_bytes_limit,
-                        &active_bank_slots,
+                        *bank_slot,
                         prioritization_fee_cache,
                     )
-                }
-                ForkReplayMode::Serial | ForkReplayMode::Parallel(_) => active_bank_slots
-                    .iter()
-                    .map(|bank_slot| {
-                        Self::replay_active_bank(
-                            blockstore,
-                            bank_forks,
-                            my_pubkey,
-                            vote_account,
-                            progress,
-                            transaction_status_sender,
-                            entry_notification_sender,
-                            verify_recyclers,
-                            replay_vote_sender,
-                            replay_timing,
-                            log_messages_bytes_limit,
-                            *bank_slot,
-                            prioritization_fee_cache,
-                        )
-                    })
-                    .collect(),
-            };
+                })
+                .collect(),
+        };
 
-            Self::process_replay_results(
-                blockstore,
-                bank_forks,
-                progress,
-                transaction_status_sender,
-                cache_block_meta_sender,
-                heaviest_subtree_fork_choice,
-                bank_notification_sender,
-                rewards_recorder_sender,
-                rpc_subscriptions,
-                duplicate_slots_tracker,
-                duplicate_confirmed_slots,
-                epoch_slots_frozen_slots,
-                unfrozen_gossip_verified_vote_hashes,
-                latest_validator_votes_for_frozen_banks,
-                cluster_slots_update_sender,
-                cost_update_sender,
-                duplicate_slots_to_repair,
-                ancestor_hashes_replay_update_sender,
-                block_metadata_notifier,
-                &replay_result_vec,
-                purge_repair_slot_counter,
-            )
+        Self::process_replay_results(
+            blockstore,
+            bank_forks,
+            progress,
+            transaction_status_sender,
+            cache_block_meta_sender,
+            heaviest_subtree_fork_choice,
+            bank_notification_sender,
+            rewards_recorder_sender,
+            rpc_subscriptions,
+            duplicate_slots_tracker,
+            duplicate_confirmed_slots,
+            epoch_slots_frozen_slots,
+            unfrozen_gossip_verified_vote_hashes,
+            latest_validator_votes_for_frozen_banks,
+            cluster_slots_update_sender,
+            cost_update_sender,
+            duplicate_slots_to_repair,
+            ancestor_hashes_replay_update_sender,
+            block_metadata_notifier,
+            &replay_result_vec,
+            purge_repair_slot_counter,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
