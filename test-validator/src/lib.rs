@@ -30,6 +30,7 @@ use {
     },
     solana_net_utils::PortRange,
     solana_program_runtime::compute_budget::ComputeBudget,
+    solana_program_test::program_library::all_spl_program_accounts,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_runtime::{
@@ -713,7 +714,7 @@ impl TestValidator {
         let mint_lamports = sol_to_lamports(500_000_000.);
 
         let mut accounts = config.accounts.clone();
-        for (address, account) in solana_program_test::programs::spl_programs(&config.rent) {
+        for (address, account) in all_spl_program_accounts(&config.rent) {
             accounts.entry(address).or_insert(account);
         }
         #[allow(deprecated)]
