@@ -9,12 +9,13 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
-rust-version = "1.72.0" # solana platform-tools rust version
+rust-version = "1.75.0" # solana platform-tools rust version
 
 [dependencies]
 bincode = { workspace = true }
 blake3 = { workspace = true, features = ["digest", "traits-preview"] }
 borsh = { workspace = true }
+borsh0-10 = { package = "borsh", version = "0.10.3" }
 borsh0-9 = { package = "borsh", version = "0.9.3" }
 bs58 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
@@ -65,6 +66,7 @@ wasm-bindgen = { workspace = true }
 zeroize = { workspace = true, features = ["default", "zeroize_derive"] }
 
 [target.'cfg(not(target_os = "solana"))'.dev-dependencies]
+arbitrary = { workspace = true, features = ["derive"] }
 solana-logger = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

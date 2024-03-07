@@ -19,7 +19,7 @@ use {
     },
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver},
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
@@ -31,10 +31,10 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
-    solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
+    solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        quic::{spawn_server, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
+        quic::{spawn_server, SpawnServerResult, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -111,7 +111,7 @@ impl Tpu {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
-    ) -> Self {
+    ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
         let TpuSockets {
             transactions: transactions_sockets,
             transaction_forwards: tpu_forwards_sockets,
@@ -148,15 +148,15 @@ impl Tpu {
 
         let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
 
-        let (_, tpu_quic_t) = spawn_server(
+        let SpawnServerResult {
+            endpoint: _,
+            thread: tpu_quic_t,
+            key_updater,
+        } = spawn_server(
+            "solQuicTpu",
             "quic_streamer_tpu",
             transactions_quic_sockets,
             keypair,
-            cluster_info
-                .my_contact_info()
-                .tpu(Protocol::QUIC)
-                .expect("Operator must spin up node with valid (QUIC) TPU address")
-                .ip(),
             packet_sender,
             exit.clone(),
             MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -168,15 +168,15 @@ impl Tpu {
         )
         .unwrap();
 
-        let (_, tpu_forwards_quic_t) = spawn_server(
+        let SpawnServerResult {
+            endpoint: _,
+            thread: tpu_forwards_quic_t,
+            key_updater: forwards_key_updater,
+        } = spawn_server(
+            "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
             keypair,
-            cluster_info
-                .my_contact_info()
-                .tpu_forwards(Protocol::QUIC)
-                .expect("Operator must spin up node with valid (QUIC) TPU-forwards address")
-                .ip(),
             forwarded_packet_sender,
             exit.clone(),
             MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -190,14 +190,19 @@ impl Tpu {
 
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(non_vote_sender);
-            SigVerifyStage::new(packet_receiver, verifier, "tpu-verifier")
+            SigVerifyStage::new(packet_receiver, verifier, "solSigVerTpu", "tpu-verifier")
         };
 
         let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
 
         let vote_sigverify_stage = {
             let verifier = TransactionSigVerifier::new_reject_non_vote(tpu_vote_sender);
-            SigVerifyStage::new(vote_packet_receiver, verifier, "tpu-vote-verifier")
+            SigVerifyStage::new(
+                vote_packet_receiver,
+                verifier,
+                "solSigVerTpuVot",
+                "tpu-vote-verifier",
+            )
         };
 
         let (gossip_vote_sender, gossip_vote_receiver) =
@@ -259,19 +264,22 @@ impl Tpu {
             turbine_quic_endpoint_sender,
         );
 
-        Self {
-            fetch_stage,
-            sigverify_stage,
-            vote_sigverify_stage,
-            banking_stage,
-            cluster_info_vote_listener,
-            broadcast_stage,
-            tpu_quic_t,
-            tpu_forwards_quic_t,
-            tpu_entry_notifier,
-            staked_nodes_updater_service,
-            tracer_thread_hdl,
-        }
+        (
+            Self {
+                fetch_stage,
+                sigverify_stage,
+                vote_sigverify_stage,
+                banking_stage,
+                cluster_info_vote_listener,
+                broadcast_stage,
+                tpu_quic_t,
+                tpu_forwards_quic_t,
+                tpu_entry_notifier,
+                staked_nodes_updater_service,
+                tracer_thread_hdl,
+            },
+            vec![key_updater, forwards_key_updater],
+        )
     }
 
     pub fn join(self) -> thread::Result<()> {

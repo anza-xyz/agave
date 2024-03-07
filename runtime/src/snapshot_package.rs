@@ -8,12 +8,14 @@ use {
     log::*,
     solana_accounts_db::{
         accounts::Accounts,
-        accounts_db::AccountStorageEntry,
+        accounts_db::{AccountStorageEntry, AccountsDb},
         accounts_hash::{AccountsHash, AccountsHashKind},
         epoch_accounts_hash::EpochAccountsHash,
-        rent_collector::RentCollector,
     },
-    solana_sdk::{clock::Slot, feature_set, sysvar::epoch_schedule::EpochSchedule},
+    solana_sdk::{
+        clock::Slot, feature_set, rent_collector::RentCollector,
+        sysvar::epoch_schedule::EpochSchedule,
+    },
     std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -148,7 +150,7 @@ impl AccountsPackage {
             expected_capitalization: bank.capitalization(),
             accounts_hash_for_testing,
             accounts: bank.accounts(),
-            epoch_schedule: *bank.epoch_schedule(),
+            epoch_schedule: bank.epoch_schedule().clone(),
             rent_collector: bank.rent_collector().clone(),
             is_incremental_accounts_hash_feature_enabled,
             snapshot_info,
@@ -159,6 +161,8 @@ impl AccountsPackage {
     /// Create a new Accounts Package where basically every field is defaulted.
     /// Only use for tests; many of the fields are invalid!
     pub fn default_for_tests() -> Self {
+        let accounts_db = AccountsDb::default_for_tests();
+        let accounts = Accounts::new(Arc::new(accounts_db));
         Self {
             package_kind: AccountsPackageKind::AccountsHashVerifier,
             slot: Slot::default(),
@@ -166,7 +170,7 @@ impl AccountsPackage {
             snapshot_storages: Vec::default(),
             expected_capitalization: u64::default(),
             accounts_hash_for_testing: Option::default(),
-            accounts: Arc::new(Accounts::default_for_tests()),
+            accounts: Arc::new(accounts),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),
             is_incremental_accounts_hash_feature_enabled: bool::default(),
@@ -329,16 +333,5 @@ impl SnapshotKind {
     }
     pub fn is_incremental_snapshot(&self) -> bool {
         matches!(self, SnapshotKind::IncrementalSnapshot(_))
-    }
-}
-
-/// Helper function to retain only max n of elements to the right of a vector,
-/// viz. remove v.len() - n elements from the left of the vector.
-#[inline(always)]
-pub fn retain_max_n_elements<T>(v: &mut Vec<T>, n: usize) {
-    if v.len() > n {
-        let to_truncate = v.len() - n;
-        v.rotate_left(to_truncate);
-        v.truncate(n);
     }
 }

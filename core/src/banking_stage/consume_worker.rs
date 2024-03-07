@@ -5,10 +5,10 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
-    solana_accounts_db::transaction_error_metrics::TransactionErrorMetrics,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
     solana_sdk::timing::AtomicInterval,
+    solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -212,6 +212,8 @@ impl ConsumeWorkerMetrics {
             retryable_transaction_indexes,
             execute_and_commit_timings,
             error_counters,
+            min_prioritization_fees,
+            max_prioritization_fees,
             ..
         }: &ExecuteAndCommitTransactionsOutput,
     ) {
@@ -227,7 +229,20 @@ impl ConsumeWorkerMetrics {
         self.count_metrics
             .retryable_transaction_count
             .fetch_add(retryable_transaction_indexes.len(), Ordering::Relaxed);
-
+        let min_prioritization_fees = self
+            .count_metrics
+            .min_prioritization_fees
+            .fetch_min(*min_prioritization_fees, Ordering::Relaxed);
+        let max_prioritization_fees = self
+            .count_metrics
+            .max_prioritization_fees
+            .fetch_max(*max_prioritization_fees, Ordering::Relaxed);
+        self.count_metrics
+            .min_prioritization_fees
+            .swap(min_prioritization_fees, Ordering::Relaxed);
+        self.count_metrics
+            .max_prioritization_fees
+            .swap(max_prioritization_fees, Ordering::Relaxed);
         self.update_on_execute_and_commit_timings(execute_and_commit_timings);
         self.update_on_error_counters(error_counters);
     }
@@ -238,6 +253,7 @@ impl ConsumeWorkerMetrics {
             collect_balances_us,
             load_execute_us,
             freeze_lock_us,
+            last_blockhash_us,
             record_us,
             commit_us,
             find_and_send_votes_us,
@@ -253,6 +269,9 @@ impl ConsumeWorkerMetrics {
         self.timing_metrics
             .freeze_lock_us
             .fetch_add(*freeze_lock_us, Ordering::Relaxed);
+        self.timing_metrics
+            .last_blockhash_us
+            .fetch_add(*last_blockhash_us, Ordering::Relaxed);
         self.timing_metrics
             .record_us
             .fetch_add(*record_us, Ordering::Relaxed);
@@ -364,7 +383,6 @@ impl ConsumeWorkerMetrics {
     }
 }
 
-#[derive(Default)]
 struct ConsumeWorkerCountMetrics {
     transactions_attempted_execution_count: AtomicUsize,
     executed_transactions_count: AtomicUsize,
@@ -372,6 +390,23 @@ struct ConsumeWorkerCountMetrics {
     retryable_transaction_count: AtomicUsize,
     retryable_expired_bank_count: AtomicUsize,
     cost_model_throttled_transactions_count: AtomicUsize,
+    min_prioritization_fees: AtomicU64,
+    max_prioritization_fees: AtomicU64,
+}
+
+impl Default for ConsumeWorkerCountMetrics {
+    fn default() -> Self {
+        Self {
+            transactions_attempted_execution_count: AtomicUsize::default(),
+            executed_transactions_count: AtomicUsize::default(),
+            executed_with_successful_result_count: AtomicUsize::default(),
+            retryable_transaction_count: AtomicUsize::default(),
+            retryable_expired_bank_count: AtomicUsize::default(),
+            cost_model_throttled_transactions_count: AtomicUsize::default(),
+            min_prioritization_fees: AtomicU64::new(u64::MAX),
+            max_prioritization_fees: AtomicU64::default(),
+        }
+    }
 }
 
 impl ConsumeWorkerCountMetrics {
@@ -412,6 +447,17 @@ impl ConsumeWorkerCountMetrics {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "min_prioritization_fees",
+                self.min_prioritization_fees
+                    .swap(u64::MAX, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "max_prioritization_fees",
+                self.max_prioritization_fees.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -422,6 +468,7 @@ struct ConsumeWorkerTimingMetrics {
     collect_balances_us: AtomicU64,
     load_execute_us: AtomicU64,
     freeze_lock_us: AtomicU64,
+    last_blockhash_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
@@ -450,6 +497,11 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "freeze_lock_us",
                 self.freeze_lock_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "last_blockhash_us",
+                self.last_blockhash_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             ("record_us", self.record_us.swap(0, Ordering::Relaxed), i64),
@@ -616,7 +668,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
-        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
+        solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
         solana_sdk::{
             genesis_config::GenesisConfig, poh_config::PohConfig, pubkey::Pubkey,
             signature::Keypair, system_transaction,
@@ -651,9 +703,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
-        let bank = bank_forks.read().unwrap().working_bank();
+        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())

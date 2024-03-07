@@ -2,13 +2,13 @@ use {
     crate::transaction_notifier_interface::TransactionNotifierArc,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::izip,
-    solana_accounts_db::transaction_results::{DurableNonceFee, TransactionExecutionDetails},
     solana_ledger::{
         blockstore::Blockstore,
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
+    solana_svm::transaction_results::{DurableNonceFee, TransactionExecutionDetails},
     solana_transaction_status::{
-        extract_and_fmt_memos, InnerInstruction, InnerInstructions, Reward, TransactionStatusMeta,
+        extract_and_fmt_memos, map_inner_instructions, Reward, TransactionStatusMeta,
     },
     std::{
         sync::{
@@ -121,21 +121,7 @@ impl TransactionStatusService {
                         let tx_account_locks = transaction.get_account_locks_unchecked();
 
                         let inner_instructions = inner_instructions.map(|inner_instructions| {
-                            inner_instructions
-                                .into_iter()
-                                .enumerate()
-                                .map(|(index, instructions)| InnerInstructions {
-                                    index: index as u8,
-                                    instructions: instructions
-                                        .into_iter()
-                                        .map(|info| InnerInstruction {
-                                            instruction: info.instruction,
-                                            stack_height: Some(u32::from(info.stack_height)),
-                                        })
-                                        .collect(),
-                                })
-                                .filter(|i| !i.instructions.is_empty())
-                                .collect()
+                            map_inner_instructions(inner_instructions).collect()
                         });
 
                         let pre_token_balances = Some(pre_token_balances);
@@ -226,10 +212,6 @@ pub(crate) mod tests {
         crossbeam_channel::unbounded,
         dashmap::DashMap,
         solana_account_decoder::parse_token::token_amount_to_ui_amount,
-        solana_accounts_db::{
-            nonce_info::{NonceFull, NoncePartial},
-            rent_debits::RentDebits,
-        },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::{Bank, TransactionBalancesSet},
         solana_sdk::{
@@ -240,7 +222,9 @@ pub(crate) mod tests {
             message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
             nonce::{self, state::DurableNonce},
             nonce_account,
+            nonce_info::{NonceFull, NoncePartial},
             pubkey::Pubkey,
+            rent_debits::RentDebits,
             signature::{Keypair, Signature, Signer},
             system_transaction,
             transaction::{
@@ -336,7 +320,7 @@ pub(crate) mod tests {
     #[test]
     fn test_notify_transaction() {
         let genesis_config = create_genesis_config(2).genesis_config;
-        let bank = Arc::new(Bank::new_no_wallclock_throttle_for_tests(&genesis_config));
+        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
 
         let (transaction_status_sender, transaction_status_receiver) = unbounded();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -379,7 +363,7 @@ pub(crate) mod tests {
             inner_instructions: None,
             durable_nonce_fee: Some(DurableNonceFee::from(
                 &NonceFull::from_partial(
-                    rollback_partial,
+                    &rollback_partial,
                     &SanitizedMessage::Legacy(LegacyMessage::new(message)),
                     &[(pubkey, nonce_account)],
                     &rent_debits,

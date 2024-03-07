@@ -160,6 +160,7 @@ impl AncestorHashesService {
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
         let (response_sender, response_receiver) = unbounded();
         let t_receiver = streamer::receiver(
+            "solRcvrAncHash".to_string(),
             ancestor_hashes_request_socket.clone(),
             exit.clone(),
             response_sender.clone(),
@@ -1294,6 +1295,7 @@ mod test {
 
             // Set up repair request receiver threads
             let t_request_receiver = streamer::receiver(
+                "solRcvrTest".to_string(),
                 Arc::new(responder_node.sockets.serve_repair),
                 exit.clone(),
                 requests_sender,
@@ -1347,7 +1349,12 @@ mod test {
         fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
             let ancestor_hashes_request_statuses = Arc::new(DashMap::new());
             let ancestor_hashes_request_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-            let epoch_schedule = *bank_forks.read().unwrap().root_bank().epoch_schedule();
+            let epoch_schedule = bank_forks
+                .read()
+                .unwrap()
+                .root_bank()
+                .epoch_schedule()
+                .clone();
             let keypair = Keypair::new();
             let requester_cluster_info = Arc::new(ClusterInfo::new(
                 Node::new_localhost_with_pubkey(&keypair.pubkey()).info,
@@ -1369,6 +1376,7 @@ mod test {
                 ancestor_duplicate_slots_sender,
                 repair_validators: None,
                 repair_whitelist,
+                wen_restart_repair_slots: None,
             };
 
             let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =

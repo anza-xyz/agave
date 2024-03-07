@@ -9,6 +9,7 @@ use {
         accounts_hash::CalcAccountsHashConfig,
         accounts_index::AccountSecondaryIndexes,
         epoch_accounts_hash::EpochAccountsHash,
+        starting_snapshot_storages::StartingSnapshotStorages,
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -20,10 +21,9 @@ use {
             AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService, DroppedSlotsReceiver,
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::{epoch_accounts_hash_utils, Bank, BankTestConfig},
+        bank::{epoch_accounts_hash_utils, Bank},
         bank_forks::BankForks,
         genesis_utils::{self, GenesisConfigInfo},
-        runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
@@ -32,7 +32,6 @@ use {
     solana_sdk::{
         clock::Slot,
         epoch_schedule::EpochSchedule,
-        feature_set,
         native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -40,6 +39,7 @@ use {
         timing::timestamp,
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_svm::runtime_config::RuntimeConfig,
     std::{
         mem::ManuallyDrop,
         sync::{
@@ -114,10 +114,8 @@ impl TestEnvironment {
             ..snapshot_config
         };
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests_with_config(
-            &genesis_config_info.genesis_config,
-            BankTestConfig::default(),
-        ));
+        let bank_forks =
+            BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config_info.genesis_config));
         bank_forks
             .write()
             .unwrap()
@@ -145,9 +143,6 @@ impl TestEnvironment {
             Arc::clone(&bank_forks),
         );
         let bank = bank_forks.read().unwrap().working_bank();
-        assert!(bank
-            .feature_set
-            .is_active(&feature_set::epoch_accounts_hash::id()));
         assert!(epoch_accounts_hash_utils::is_enabled_this_epoch(&bank));
 
         bank.set_startup_verification_complete();
@@ -202,9 +197,8 @@ impl BackgroundServices {
             accounts_package_sender.clone(),
             accounts_package_receiver,
             Some(snapshot_package_sender),
+            StartingSnapshotStorages::Genesis,
             exit.clone(),
-            cluster_info,
-            None,
             snapshot_config.clone(),
         );
 

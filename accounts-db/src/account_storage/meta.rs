@@ -128,7 +128,8 @@ impl<'storage> StoredAccountMeta<'storage> {
     pub fn hash(&self) -> &'storage AccountHash {
         match self {
             Self::AppendVec(av) => av.hash(),
-            Self::Hot(hot) => hot.hash().unwrap_or(&DEFAULT_ACCOUNT_HASH),
+            // tiered-storage has deprecated the use of AccountHash
+            Self::Hot(_) => &DEFAULT_ACCOUNT_HASH,
         }
     }
 
@@ -142,7 +143,7 @@ impl<'storage> StoredAccountMeta<'storage> {
     pub fn offset(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.offset(),
-            Self::Hot(hot) => hot.index(),
+            Self::Hot(hot) => hot.index().0 as usize,
         }
     }
 

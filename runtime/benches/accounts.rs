@@ -10,20 +10,21 @@ use {
     solana_accounts_db::{
         accounts::{AccountAddressFilter, Accounts},
         accounts_db::{
-            test_utils::create_test_accounts, AccountShrinkThreshold,
-            VerifyAccountsHashAndLamportsConfig,
+            test_utils::create_test_accounts, AccountShrinkThreshold, AccountsDb,
+            VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         },
         accounts_index::{AccountSecondaryIndexes, ScanConfig},
         ancestors::Ancestors,
-        rent_collector::RentCollector,
+        epoch_accounts_hash::EpochAccountsHash,
     },
     solana_runtime::bank::*,
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
+        account::{Account, AccountSharedData, ReadableAccount},
         genesis_config::{create_genesis_config, ClusterType},
         hash::Hash,
         lamports::LamportsError,
         pubkey::Pubkey,
+        rent_collector::RentCollector,
         sysvar::epoch_schedule::EpochSchedule,
     },
     std::{
@@ -34,6 +35,18 @@ use {
     },
     test::Bencher,
 };
+
+fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
+    AccountsDb::new_with_config(
+        account_paths,
+        &ClusterType::Development,
+        AccountSecondaryIndexes::default(),
+        AccountShrinkThreshold::default(),
+        Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
+        None,
+        Arc::default(),
+    )
+}
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<(), LamportsError> {
     for t in 0..num {
@@ -70,6 +83,15 @@ fn test_accounts_squash(bencher: &mut Bencher) {
     deposit_many(&prev_bank, &mut pubkeys, 250_000).unwrap();
     prev_bank.freeze();
 
+    // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during
+    // freeze when parent is in the EAH calculation window.
+    prev_bank
+        .rc
+        .accounts
+        .accounts_db
+        .epoch_accounts_hash_manager
+        .set_valid(EpochAccountsHash::new(Hash::new_unique()), 0);
+
     // Measures the performance of the squash operation.
     // This mainly consists of the freeze operation which calculates the
     // merkle hash of the account state and distribution of fees and rent
@@ -89,12 +111,8 @@ fn test_accounts_squash(bencher: &mut Bencher) {
 
 #[bench]
 fn test_accounts_hash_bank_hash(bencher: &mut Bencher) {
-    let accounts = Accounts::new_with_config_for_benches(
-        vec![PathBuf::from("bench_accounts_hash_internal")],
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    );
+    let accounts_db = new_accounts_db(vec![PathBuf::from("bench_accounts_hash_internal")]);
+    let accounts = Accounts::new(Arc::new(accounts_db));
     let mut pubkeys: Vec<Pubkey> = vec![];
     let num_accounts = 60_000;
     let slot = 0;
@@ -126,12 +144,8 @@ fn test_accounts_hash_bank_hash(bencher: &mut Bencher) {
 #[bench]
 fn test_update_accounts_hash(bencher: &mut Bencher) {
     solana_logger::setup();
-    let accounts = Accounts::new_with_config_for_benches(
-        vec![PathBuf::from("update_accounts_hash")],
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    );
+    let accounts_db = new_accounts_db(vec![PathBuf::from("update_accounts_hash")]);
+    let accounts = Accounts::new(Arc::new(accounts_db));
     let mut pubkeys: Vec<Pubkey> = vec![];
     create_test_accounts(&accounts, &mut pubkeys, 50_000, 0);
     let ancestors = Ancestors::from(vec![0]);
@@ -145,12 +159,8 @@ fn test_update_accounts_hash(bencher: &mut Bencher) {
 #[bench]
 fn test_accounts_delta_hash(bencher: &mut Bencher) {
     solana_logger::setup();
-    let accounts = Accounts::new_with_config_for_benches(
-        vec![PathBuf::from("accounts_delta_hash")],
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    );
+    let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delta_hash")]);
+    let accounts = Accounts::new(Arc::new(accounts_db));
     let mut pubkeys: Vec<Pubkey> = vec![];
     create_test_accounts(&accounts, &mut pubkeys, 100_000, 0);
     bencher.iter(|| {
@@ -161,12 +171,8 @@ fn test_accounts_delta_hash(bencher: &mut Bencher) {
 #[bench]
 fn bench_delete_dependencies(bencher: &mut Bencher) {
     solana_logger::setup();
-    let accounts = Accounts::new_with_config_for_benches(
-        vec![PathBuf::from("accounts_delete_deps")],
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    );
+    let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delete_deps")]);
+    let accounts = Accounts::new(Arc::new(accounts_db));
     let mut old_pubkey = Pubkey::default();
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     for i in 0..1000 {
@@ -190,34 +196,36 @@ fn store_accounts_with_possible_contention<F: 'static>(
     F: Fn(&Accounts, &[Pubkey]) + Send + Copy,
 {
     let num_readers = 5;
-    let accounts = Arc::new(Accounts::new_with_config_for_benches(
-        vec![
-            PathBuf::from(std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()))
-                .join(bench_name),
-        ],
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    ));
+    let accounts_db = new_accounts_db(vec![PathBuf::from(
+        std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()),
+    )
+    .join(bench_name)]);
+    let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
     let num_keys = 1000;
     let slot = 0;
-    accounts.add_root(slot);
-    let pubkeys: Arc<Vec<_>> = Arc::new(
-        (0..num_keys)
-            .map(|_| {
-                let pubkey = solana_sdk::pubkey::new_rand();
-                let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-                accounts.store_slow_uncached(slot, &pubkey, &account);
-                pubkey
-            })
-            .collect(),
-    );
 
-    for _ in 0..num_readers {
+    let pubkeys: Vec<_> = std::iter::repeat_with(solana_sdk::pubkey::new_rand)
+        .take(num_keys)
+        .collect();
+    let accounts_data: Vec<_> = std::iter::repeat(Account {
+        lamports: 1,
+        ..Default::default()
+    })
+    .take(num_keys)
+    .collect();
+    let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
+    accounts.store_accounts_cached((slot, storable_accounts.as_slice()));
+    accounts.add_root(slot);
+    accounts
+        .accounts_db
+        .flush_accounts_cache_slot_for_tests(slot);
+
+    let pubkeys = Arc::new(pubkeys);
+    for i in 0..num_readers {
         let accounts = accounts.clone();
         let pubkeys = pubkeys.clone();
         Builder::new()
-            .name("readers".to_string())
+            .name(format!("reader{i:02}"))
             .spawn(move || {
                 reader_f(&accounts, &pubkeys);
             })
@@ -225,21 +233,19 @@ fn store_accounts_with_possible_contention<F: 'static>(
     }
 
     let num_new_keys = 1000;
-    let new_accounts: Vec<_> = (0..num_new_keys)
-        .map(|_| AccountSharedData::new(1, 0, AccountSharedData::default().owner()))
-        .collect();
     bencher.iter(|| {
-        for account in &new_accounts {
-            // Write to a different slot than the one being read from. Because
-            // there's a new account pubkey being written to every time, will
-            // compete for the accounts index lock on every store
-            accounts.store_slow_uncached(slot + 1, &solana_sdk::pubkey::new_rand(), account);
-        }
-    })
+        let new_pubkeys: Vec<_> = std::iter::repeat_with(solana_sdk::pubkey::new_rand)
+            .take(num_new_keys)
+            .collect();
+        let new_storable_accounts: Vec<_> = new_pubkeys.iter().zip(accounts_data.iter()).collect();
+        // Write to a different slot than the one being read from. Because
+        // there's a new account pubkey being written to every time, will
+        // compete for the accounts index lock on every store
+        accounts.store_accounts_cached((slot + 1, new_storable_accounts.as_slice()));
+    });
 }
 
 #[bench]
-#[ignore]
 fn bench_concurrent_read_write(bencher: &mut Bencher) {
     store_accounts_with_possible_contention(
         "concurrent_read_write",
@@ -259,7 +265,6 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
 }
 
 #[bench]
-#[ignore]
 fn bench_concurrent_scan_write(bencher: &mut Bencher) {
     store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| loop {
         test::black_box(
@@ -326,15 +331,11 @@ fn bench_rwlock_hashmap_single_reader_with_n_writers(bencher: &mut Bencher) {
 }
 
 fn setup_bench_dashmap_iter() -> (Arc<Accounts>, DashMap<Pubkey, (AccountSharedData, Hash)>) {
-    let accounts = Arc::new(Accounts::new_with_config_for_benches(
-        vec![
-            PathBuf::from(std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()))
-                .join("bench_dashmap_par_iter"),
-        ],
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    ));
+    let accounts_db = new_accounts_db(vec![PathBuf::from(
+        std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string()),
+    )
+    .join("bench_dashmap_par_iter")]);
+    let accounts = Arc::new(Accounts::new(Arc::new(accounts_db)));
 
     let dashmap = DashMap::new();
     let num_keys = std::env::var("NUM_BENCH_KEYS")
@@ -383,12 +384,8 @@ fn bench_dashmap_iter(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_load_largest_accounts(b: &mut Bencher) {
-    let accounts = Accounts::new_with_config_for_benches(
-        Vec::new(),
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-    );
+    let accounts_db = new_accounts_db(Vec::new());
+    let accounts = Accounts::new(Arc::new(accounts_db));
     let mut rng = rand::thread_rng();
     for _ in 0..10_000 {
         let lamports = rng.gen();

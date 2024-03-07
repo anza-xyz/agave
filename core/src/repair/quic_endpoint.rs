@@ -9,20 +9,17 @@ use {
         EndpointConfig, IdleTimeout, ReadError, ReadToEndError, RecvStream, SendStream,
         ServerConfig, TokioRuntime, TransportConfig, VarInt, WriteError,
     },
-    rcgen::RcgenError,
     rustls::{Certificate, PrivateKey},
     serde_bytes::ByteBuf,
     solana_quic_client::nonblocking::quic_client::SkipServerVerification,
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Keypair},
-    solana_streamer::{
-        quic::SkipClientVerification, tls_certificates::new_self_signed_tls_certificate,
-    },
+    solana_streamer::{quic::SkipClientVerification, tls_certificates::new_dummy_x509_certificate},
     std::{
         cmp::Reverse,
         collections::{hash_map::Entry, HashMap},
         io::{Cursor, Error as IoError},
-        net::{IpAddr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
@@ -88,8 +85,6 @@ pub struct RemoteRequest {
 #[derive(Error, Debug)]
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum Error {
-    #[error(transparent)]
-    CertificateError(#[from] RcgenError),
     #[error("Channel Send Error")]
     ChannelSendError,
     #[error(transparent)]
@@ -123,11 +118,10 @@ pub(crate) fn new_quic_endpoint(
     runtime: &tokio::runtime::Handle,
     keypair: &Keypair,
     socket: UdpSocket,
-    address: IpAddr,
     remote_request_sender: Sender<RemoteRequest>,
     bank_forks: Arc<RwLock<BankForks>>,
 ) -> Result<(Endpoint, AsyncSender<LocalRequest>, AsyncTryJoinHandle), Error> {
-    let (cert, key) = new_self_signed_tls_certificate(keypair, address)?;
+    let (cert, key) = new_dummy_x509_certificate(keypair);
     let server_config = new_server_config(cert.clone(), key.clone())?;
     let client_config = new_client_config(cert, key)?;
     let mut endpoint = {
@@ -408,11 +402,16 @@ async fn handle_connection(
     ));
     match futures::future::try_join(send_requests_task, recv_requests_task).await {
         Err(err) => error!("handle_connection: {remote_pubkey}, {remote_address}, {err:?}"),
-        Ok(((), Err(err))) => {
-            debug!("recv_requests_task: {remote_pubkey}, {remote_address}, {err:?}");
-            record_error(&err, &stats);
+        Ok(out) => {
+            if let (Err(ref err), _) = out {
+                debug!("send_requests_task: {remote_pubkey}, {remote_address}, {err:?}");
+                record_error(err, &stats);
+            }
+            if let (_, Err(ref err)) = out {
+                debug!("recv_requests_task: {remote_pubkey}, {remote_address}, {err:?}");
+                record_error(err, &stats);
+            }
         }
-        Ok(((), Ok(()))) => (),
     }
     drop_connection(remote_pubkey, &connection, &cache).await;
     if let Entry::Occupied(entry) = router.write().await.entry(remote_address) {
@@ -513,15 +512,27 @@ async fn send_requests_task(
     connection: Connection,
     mut receiver: AsyncReceiver<LocalRequest>,
     stats: Arc<RepairQuicStats>,
-) {
-    while let Some(request) = receiver.recv().await {
-        tokio::task::spawn(send_request_task(
-            endpoint.clone(),
-            remote_address,
-            connection.clone(),
-            request,
-            stats.clone(),
-        ));
+) -> Result<(), Error> {
+    tokio::pin! {
+        let connection_closed = connection.closed();
+    }
+    loop {
+        tokio::select! {
+            biased;
+            request = receiver.recv() => {
+                match request {
+                    None => return Ok(()),
+                    Some(request) => tokio::task::spawn(send_request_task(
+                        endpoint.clone(),
+                        remote_address,
+                        connection.clone(),
+                        request,
+                        stats.clone(),
+                    )),
+                };
+            }
+            err = &mut connection_closed => return Err(Error::from(err)),
+        }
     }
 }
 
@@ -792,7 +803,6 @@ async fn report_metrics_task(name: &'static str, stats: Arc<RepairQuicStats>) {
 
 fn record_error(err: &Error, stats: &RepairQuicStats) {
     match err {
-        Error::CertificateError(_) => (),
         Error::ChannelSendError => (),
         Error::ConnectError(ConnectError::EndpointStopping) => {
             add_metric!(stats.connect_error_other)
@@ -1048,7 +1058,6 @@ mod tests {
                         runtime.handle(),
                         keypair,
                         socket,
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
                         remote_request_sender,
                         bank_forks.clone(),
                     )

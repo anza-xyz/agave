@@ -1,10 +1,6 @@
 use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
-    solana_accounts_db::{
-        accounts::TransactionLoadResult,
-        transaction_results::{TransactionExecutionResult, TransactionResults},
-    },
     solana_ledger::{
         blockstore_processor::TransactionStatusSender, token_balances::collect_token_balances,
     },
@@ -15,7 +11,11 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
     },
-    solana_sdk::{pubkey::Pubkey, saturating_add_assign},
+    solana_sdk::{hash::Hash, pubkey::Pubkey, saturating_add_assign},
+    solana_svm::{
+        account_loader::TransactionLoadResult,
+        transaction_results::{TransactionExecutionResult, TransactionResults},
+    },
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
     },
@@ -66,6 +66,8 @@ impl Committer {
         batch: &TransactionBatch,
         loaded_transactions: &mut [TransactionLoadResult],
         execution_results: Vec<TransactionExecutionResult>,
+        last_blockhash: Hash,
+        lamports_per_signature: u64,
         starting_transaction_index: Option<usize>,
         bank: &Arc<Bank>,
         pre_balance_info: &mut PreBalanceInfo,
@@ -75,9 +77,6 @@ impl Committer {
         executed_non_vote_transactions_count: usize,
         executed_with_successful_result_count: usize,
     ) -> (u64, Vec<CommitTransactionDetails>) {
-        let (last_blockhash, lamports_per_signature) =
-            bank.last_blockhash_and_lamports_per_signature();
-
         let executed_transactions = execution_results
             .iter()
             .zip(batch.sanitized_transactions())

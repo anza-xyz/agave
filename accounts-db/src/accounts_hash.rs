@@ -4,7 +4,6 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         pubkey_bins::PubkeyBinCalculator24,
-        rent_collector::RentCollector,
     },
     bytemuck::{Pod, Zeroable},
     log::*,
@@ -14,6 +13,7 @@ use {
     solana_sdk::{
         hash::{Hash, Hasher},
         pubkey::Pubkey,
+        rent_collector::RentCollector,
         slot_history::Slot,
         sysvar::epoch_schedule::EpochSchedule,
     },
@@ -1230,7 +1230,7 @@ pub enum ZeroLamportAccounts {
 pub struct AccountHash(pub Hash);
 
 // Ensure the newtype wrapper never changes size from the underlying Hash
-// This also ensures there are no padding bytes, which is requried to safely implement Pod
+// This also ensures there are no padding bytes, which is required to safely implement Pod
 const _: () = assert!(std::mem::size_of::<AccountHash>() == std::mem::size_of::<Hash>());
 
 /// Hash of accounts

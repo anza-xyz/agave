@@ -98,14 +98,6 @@ impl From<SanitizeError> for SanitizeMessageError {
     }
 }
 
-impl TryFrom<legacy::Message> for SanitizedMessage {
-    type Error = SanitizeMessageError;
-    fn try_from(message: legacy::Message) -> Result<Self, Self::Error> {
-        message.sanitize()?;
-        Ok(Self::Legacy(LegacyMessage::new(message)))
-    }
-}
-
 impl SanitizedMessage {
     /// Create a sanitized message from a sanitized versioned message.
     /// If the input message uses address tables, attempt to look up the
@@ -124,6 +116,12 @@ impl SanitizedMessage {
                 SanitizedMessage::V0(v0::LoadedMessage::new(message, loaded_addresses))
             }
         })
+    }
+
+    /// Create a sanitized legacy message
+    pub fn try_from_legacy_message(message: legacy::Message) -> Result<Self, SanitizeMessageError> {
+        message.sanitize()?;
+        Ok(Self::Legacy(LegacyMessage::new(message)))
     }
 
     /// Return true if this message contains duplicate account keys
@@ -360,6 +358,8 @@ impl SanitizedMessage {
         num_signatures
     }
 
+    /// Returns the number of requested write-locks in this message.
+    /// This does not consider if write-locks are demoted.
     pub fn num_write_locks(&self) -> u64 {
         self.account_keys()
             .len()
@@ -372,14 +372,14 @@ mod tests {
     use {super::*, crate::message::v0, std::collections::HashSet};
 
     #[test]
-    fn test_try_from_message() {
+    fn test_try_from_legacy_message() {
         let legacy_message_with_no_signers = legacy::Message {
             account_keys: vec![Pubkey::new_unique()],
             ..legacy::Message::default()
         };
 
         assert_eq!(
-            SanitizedMessage::try_from(legacy_message_with_no_signers).err(),
+            SanitizedMessage::try_from_legacy_message(legacy_message_with_no_signers).err(),
             Some(SanitizeMessageError::IndexOutOfBounds),
         );
     }
@@ -394,14 +394,16 @@ mod tests {
             CompiledInstruction::new(2, &(), vec![0, 1]),
         ];
 
-        let message = SanitizedMessage::try_from(legacy::Message::new_with_compiled_instructions(
-            1,
-            0,
-            2,
-            vec![key0, key1, loader_key],
-            Hash::default(),
-            instructions,
-        ))
+        let message = SanitizedMessage::try_from_legacy_message(
+            legacy::Message::new_with_compiled_instructions(
+                1,
+                0,
+                2,
+                vec![key0, key1, loader_key],
+                Hash::default(),
+                instructions,
+            ),
+        )
         .unwrap();
 
         assert!(message.is_non_loader_key(0));
@@ -418,7 +420,7 @@ mod tests {
         let key4 = Pubkey::new_unique();
         let key5 = Pubkey::new_unique();
 
-        let legacy_message = SanitizedMessage::try_from(legacy::Message {
+        let legacy_message = SanitizedMessage::try_from_legacy_message(legacy::Message {
             header: MessageHeader {
                 num_required_signatures: 2,
                 num_readonly_signed_accounts: 1,
@@ -462,14 +464,16 @@ mod tests {
             CompiledInstruction::new(3, &(), vec![0, 0]),
         ];
 
-        let message = SanitizedMessage::try_from(legacy::Message::new_with_compiled_instructions(
-            2,
-            1,
-            2,
-            vec![signer0, signer1, non_signer, loader_key],
-            Hash::default(),
-            instructions,
-        ))
+        let message = SanitizedMessage::try_from_legacy_message(
+            legacy::Message::new_with_compiled_instructions(
+                2,
+                1,
+                2,
+                vec![signer0, signer1, non_signer, loader_key],
+                Hash::default(),
+                instructions,
+            ),
+        )
         .unwrap();
 
         assert_eq!(
@@ -500,7 +504,7 @@ mod tests {
         let key4 = Pubkey::new_unique();
         let key5 = Pubkey::new_unique();
 
-        let legacy_message = SanitizedMessage::try_from(legacy::Message {
+        let legacy_message = SanitizedMessage::try_from_legacy_message(legacy::Message {
             header: MessageHeader {
                 num_required_signatures: 2,
                 num_readonly_signed_accounts: 1,

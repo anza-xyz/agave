@@ -2,10 +2,12 @@
 #![cfg(feature = "sbf_c")]
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::arithmetic_side_effects)]
+#![cfg_attr(not(target_arch = "x86_64"), allow(dead_code, unused_imports))]
 
 use {
     solana_rbpf::memory_region::MemoryState,
-    solana_sdk::feature_set::bpf_account_data_direct_mapping, std::slice,
+    solana_sdk::{feature_set::bpf_account_data_direct_mapping, signer::keypair::Keypair},
+    std::slice,
 };
 
 extern crate test;
@@ -26,14 +28,14 @@ use {
         bank::Bank,
         bank_client::BankClient,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        loader_utils::{load_program, load_program_from_file},
+        loader_utils::{load_program_from_file, load_upgradeable_program_and_advance_slot},
     },
     solana_sdk::{
         account::AccountSharedData,
         bpf_loader,
         client::SyncClient,
         entrypoint::SUCCESS,
-        feature_set::FeatureSet,
+        feature_set::{self, FeatureSet},
         instruction::{AccountMeta, Instruction},
         message::Message,
         native_loader,
@@ -101,6 +103,7 @@ fn bench_program_create_executable(bencher: &mut Bencher) {
 }
 
 #[bench]
+#[cfg(target_arch = "x86_64")]
 fn bench_program_alu(bencher: &mut Bencher) {
     let ns_per_s = 1000000000;
     let one_million = 1000000;
@@ -183,20 +186,30 @@ fn bench_program_alu(bencher: &mut Bencher) {
 #[bench]
 fn bench_program_execute_noop(bencher: &mut Bencher) {
     let GenesisConfigInfo {
-        genesis_config,
+        mut genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config(50);
+
+    genesis_config
+        .accounts
+        .remove(&feature_set::deprecate_executable_meta_update_in_bpf_loader::id());
+
     let bank = Bank::new_for_benches(&genesis_config);
-    let bank = Arc::new(bank);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
-    let invoke_program_id = load_program(&bank_client, &bpf_loader::id(), &mint_keypair, "noop");
-    let bank = bank_client
-        .advance_slot(1, &Pubkey::default())
-        .expect("Failed to advance the slot");
-
+    let authority_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
+
+    let (_, invoke_program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        bank_forks.as_ref(),
+        &mint_keypair,
+        &authority_keypair,
+        "noop",
+    );
+
     let account_metas = vec![AccountMeta::new(mint_pubkey, true)];
 
     let instruction =
@@ -244,7 +257,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        !direct_mapping, // copy_account_data
+        !direct_mapping, // copy_account_data,
+        &invoke_context.feature_set,
     )
     .unwrap();
 
@@ -279,6 +293,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .get_current_instruction_context()
             .unwrap(),
         !direct_mapping, // copy_account_data
+        &invoke_context.feature_set,
     )
     .unwrap();
 

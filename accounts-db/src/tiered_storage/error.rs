@@ -1,4 +1,4 @@
-use {std::path::PathBuf, thiserror::Error};
+use {super::footer::SanitizeFooterError, std::path::PathBuf, thiserror::Error};
 
 #[derive(Error, Debug)]
 pub enum TieredStorageError {
@@ -11,9 +11,24 @@ pub enum TieredStorageError {
     #[error("AttemptToUpdateReadOnly: attempted to update read-only file {0}")]
     AttemptToUpdateReadOnly(PathBuf),
 
-    #[error("UnknownFormat: the tiered storage format is unavailable for file {0}")]
+    #[error("UnknownFormat: the tiered storage format is unknown for file {0}")]
     UnknownFormat(PathBuf),
 
     #[error("Unsupported: the feature is not yet supported")]
     Unsupported(),
+
+    #[error("invalid footer size: {0}, expected: {1}")]
+    InvalidFooterSize(u64, u64),
+
+    #[error("invalid footer version: {0}")]
+    InvalidFooterVersion(u64),
+
+    #[error("footer is unsanitary: {0}")]
+    SanitizeFooter(#[from] SanitizeFooterError),
+
+    #[error("OffsetOutOfBounds: offset {0} is larger than the supported size {1}")]
+    OffsetOutOfBounds(usize, usize),
+
+    #[error("OffsetAlignmentError: offset {0} must be multiple of {1}")]
+    OffsetAlignmentError(usize, usize),
 }

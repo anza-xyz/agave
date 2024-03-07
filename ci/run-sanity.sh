@@ -31,7 +31,7 @@ while [[ $latest_slot -le $((snapshot_slot + 1)) ]]; do
   latest_slot=$($solana_cli --url http://localhost:8899 slot --commitment processed)
 done
 
-$solana_validator --ledger config/ledger exit --force || true
+$agave_validator --ledger config/ledger exit --force || true
 
 wait $pid
 
@@ -39,4 +39,5 @@ $solana_ledger_tool create-snapshot --ledger config/ledger "$snapshot_slot" conf
 cp config/ledger/genesis.tar.bz2 config/snapshot-ledger
 $solana_ledger_tool copy --ledger config/ledger \
   --target-db config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
-$solana_ledger_tool verify --ledger config/snapshot-ledger
+$solana_ledger_tool verify --ledger config/snapshot-ledger --block-verification-method blockstore-processor
+$solana_ledger_tool verify --ledger config/snapshot-ledger --block-verification-method unified-scheduler

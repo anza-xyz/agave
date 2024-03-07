@@ -7,7 +7,7 @@
 //!
 //! [`legacy`]: crate::message::legacy
 //! [`v0`]: crate::message::v0
-//! [future message format]: https://docs.solana.com/proposals/versioned-transactions
+//! [future message format]: https://docs.solanalabs.com/proposals/versioned-transactions
 
 use crate::{
     address_lookup_table_account::AddressLookupTableAccount,
@@ -334,9 +334,10 @@ impl Message {
             .any(|&key| key == bpf_loader_upgradeable::id())
     }
 
-    /// Returns true if the account at the specified index was requested as writable.
-    /// Before loading addresses, we can't demote write locks for dynamically loaded
-    /// addresses so this should not be used by the runtime.
+    /// Returns true if the account at the specified index was requested as
+    /// writable. Before loading addresses and without the reserved account keys
+    /// set, we can't demote write locks properly so this should not be used by
+    /// the runtime.
     pub fn is_maybe_writable(&self, key_index: usize) -> bool {
         self.is_writable_index(key_index)
             && !{

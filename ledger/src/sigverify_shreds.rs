@@ -1,6 +1,6 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred,
+    crate::shred::{self, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
     sha2::{Digest, Sha512},
@@ -18,13 +18,10 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
     },
-    static_assertions::const_assert_eq,
     std::{collections::HashMap, iter::repeat, mem::size_of, ops::Range, sync::Arc},
 };
 
 const SIGN_SHRED_GPU_MIN: usize = 256;
-const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
-const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
 
 #[must_use]
 pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<Slot, Pubkey>) -> bool {
@@ -742,7 +739,9 @@ mod tests {
                 .entries_to_shreds(
                     keypair,
                     &make_entries(rng, num_entries),
-                    rng.gen(),              // is_last_in_slot
+                    rng.gen(), // is_last_in_slot
+                    // chained_merkle_root
+                    rng.gen::<bool>().then(|| Hash::new_from_array(rng.gen())),
                     rng.gen_range(0..2671), // next_shred_index
                     rng.gen_range(0..2781), // next_code_index
                     rng.gen(),              // merkle_variant,

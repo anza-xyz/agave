@@ -965,7 +965,7 @@ impl ServeRepair {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
-            // Bypass ping/pong check for requests comming from QUIC endpoint.
+            // Bypass ping/pong check for requests coming from QUIC endpoint.
             if !matches!(&request, RepairProtocol::Pong(_)) && response_sender.is_none() {
                 let (check, ping_pkt) =
                     Self::check_ping_cache(ping_cache, &request, &from_addr, &identity_keypair);
@@ -1384,7 +1384,9 @@ pub(crate) fn get_repair_protocol(_: ClusterType) -> Protocol {
     Protocol::UDP
 }
 
-fn deserialize_request<T>(request: &RemoteRequest) -> std::result::Result<T, bincode::Error>
+pub(crate) fn deserialize_request<T>(
+    request: &RemoteRequest,
+) -> std::result::Result<T, bincode::Error>
 where
     T: serde::de::DeserializeOwned,
 {

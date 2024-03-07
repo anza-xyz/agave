@@ -4,9 +4,9 @@ use {
     crossbeam_channel::Receiver,
     log::*,
     solana_accounts_db::{
-        accounts_db::{create_accounts_run_and_snapshot_dirs, AccountsDbConfig},
-        accounts_index::AccountsIndexConfig,
+        accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
     solana_client::rpc_request::MAX_MULTIPLE_ACCOUNTS,
@@ -34,7 +34,7 @@ use {
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_runtime::{
         bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
-        runtime_config::RuntimeConfig, snapshot_config::SnapshotConfig,
+        snapshot_config::SnapshotConfig,
     },
     solana_sdk::{
         account::{Account, AccountSharedData},
@@ -54,6 +54,7 @@ use {
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_svm::runtime_config::RuntimeConfig,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
     },
@@ -777,12 +778,14 @@ impl TestValidator {
             validator_stake_lamports,
             validator_identity_lamports,
             config.fee_rate_governor.clone(),
-            config.rent,
+            config.rent.clone(),
             solana_sdk::genesis_config::ClusterType::Development,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config
             .epoch_schedule
+            .as_ref()
+            .cloned()
             .unwrap_or_else(EpochSchedule::without_warmup);
 
         if let Some(ticks_per_slot) = config.ticks_per_slot {

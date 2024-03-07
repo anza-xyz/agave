@@ -10,7 +10,10 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     log::*,
-    solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
+    solana_accounts_db::{
+        accounts_update_notifier_interface::AccountsUpdateNotifier,
+        starting_snapshot_storages::StartingSnapshotStorages,
+    },
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
         bank_forks::BankForks,
@@ -25,18 +28,51 @@ use {
     solana_sdk::genesis_config::GenesisConfig,
     std::{
         path::PathBuf,
-        process, result,
+        result,
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
+    thiserror::Error,
 };
+
+#[derive(Error, Debug)]
+pub enum BankForksUtilsError {
+    #[error("accounts path(s) not present when booting from snapshot")]
+    AccountPathsNotPresent,
+
+    #[error(
+        "failed to load bank: {source}, full snapshot archive: {full_snapshot_archive}, \
+        incremental snapshot archive: {incremental_snapshot_archive}"
+    )]
+    BankFromSnapshotsArchive {
+        source: snapshot_utils::SnapshotError,
+        full_snapshot_archive: String,
+        incremental_snapshot_archive: String,
+    },
+
+    #[error(
+        "there is no local state to startup from. \
+        Ensure --{flag} is NOT set to \"{value}\" and restart"
+    )]
+    NoBankSnapshotDirectory { flag: String, value: String },
+
+    #[error("failed to load bank: {source}, snapshot: {path}")]
+    BankFromSnapshotsDirectory {
+        source: snapshot_utils::SnapshotError,
+        path: PathBuf,
+    },
+
+    #[error("failed to process blockstore from root: {0}")]
+    ProcessBlockstoreFromRoot(#[source] BlockstoreProcessorError),
+}
 
 pub type LoadResult = result::Result<
     (
         Arc<RwLock<BankForks>>,
         LeaderScheduleCache,
         Option<StartingSnapshotHashes>,
+        StartingSnapshotStorages,
     ),
-    BlockstoreProcessorError,
+    BankForksUtilsError,
 >;
 
 /// Load the banks via genesis or a snapshot then processes all full blocks in blockstore
@@ -48,7 +84,6 @@ pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: Option<&SnapshotConfig>,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -57,19 +92,23 @@ pub fn load(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> LoadResult {
-    let (bank_forks, leader_schedule_cache, starting_snapshot_hashes, ..) = load_bank_forks(
+    let (
+        bank_forks,
+        leader_schedule_cache,
+        starting_snapshot_hashes,
+        starting_snapshot_storages,
+        ..,
+    ) = load_bank_forks(
         genesis_config,
         blockstore,
         account_paths,
-        shrink_paths,
         snapshot_config,
         &process_options,
         cache_block_meta_sender,
         entry_notification_sender,
         accounts_update_notifier,
         exit,
-    );
-
+    )?;
     blockstore_processor::process_blockstore_from_root(
         blockstore,
         &bank_forks,
@@ -80,7 +119,14 @@ pub fn load(
         entry_notification_sender,
         &AbsRequestSender::default(),
     )
-    .map(|_| (bank_forks, leader_schedule_cache, starting_snapshot_hashes))
+    .map_err(BankForksUtilsError::ProcessBlockstoreFromRoot)?;
+
+    Ok((
+        bank_forks,
+        leader_schedule_cache,
+        starting_snapshot_hashes,
+        starting_snapshot_storages,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -88,18 +134,13 @@ pub fn load_bank_forks(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: Option<&SnapshotConfig>,
     process_options: &ProcessOptions,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> (
-    Arc<RwLock<BankForks>>,
-    LeaderScheduleCache,
-    Option<StartingSnapshotHashes>,
-) {
+) -> LoadResult {
     fn get_snapshots_to_load(
         snapshot_config: Option<&SnapshotConfig>,
     ) -> Option<(
@@ -135,7 +176,7 @@ pub fn load_bank_forks(
         ))
     }
 
-    let (bank_forks, starting_snapshot_hashes) =
+    let (bank_forks, starting_snapshot_hashes, starting_snapshot_storages) =
         if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
             get_snapshots_to_load(snapshot_config)
         {
@@ -147,18 +188,22 @@ pub fn load_bank_forks(
             );
             std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
                 .expect("create bank snapshots dir");
-            let (bank_forks, starting_snapshot_hashes) = bank_forks_from_snapshot(
-                full_snapshot_archive_info,
-                incremental_snapshot_archive_info,
-                genesis_config,
-                account_paths,
-                shrink_paths,
-                snapshot_config,
-                process_options,
-                accounts_update_notifier,
-                exit,
-            );
-            (bank_forks, Some(starting_snapshot_hashes))
+            let (bank_forks, starting_snapshot_hashes, starting_snapshot_storages) =
+                bank_forks_from_snapshot(
+                    full_snapshot_archive_info,
+                    incremental_snapshot_archive_info,
+                    genesis_config,
+                    account_paths,
+                    snapshot_config,
+                    process_options,
+                    accounts_update_notifier,
+                    exit,
+                )?;
+            (
+                bank_forks,
+                Some(starting_snapshot_hashes),
+                starting_snapshot_storages,
+            )
         } else {
             info!("Processing ledger from genesis");
             let bank_forks = blockstore_processor::process_blockstore_for_bank_0(
@@ -177,7 +222,7 @@ pub fn load_bank_forks(
                 .root_bank()
                 .set_startup_verification_complete();
 
-            (bank_forks, None)
+            (bank_forks, None, StartingSnapshotStorages::Genesis)
         };
 
     let mut leader_schedule_cache =
@@ -193,7 +238,12 @@ pub fn load_bank_forks(
             .for_each(|hard_fork_slot| root_bank.register_hard_fork(*hard_fork_slot));
     }
 
-    (bank_forks, leader_schedule_cache, starting_snapshot_hashes)
+    Ok((
+        bank_forks,
+        leader_schedule_cache,
+        starting_snapshot_hashes,
+        starting_snapshot_storages,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -202,16 +252,21 @@ fn bank_forks_from_snapshot(
     incremental_snapshot_archive_info: Option<IncrementalSnapshotArchiveInfo>,
     genesis_config: &GenesisConfig,
     account_paths: Vec<PathBuf>,
-    shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> (Arc<RwLock<BankForks>>, StartingSnapshotHashes) {
+) -> Result<
+    (
+        Arc<RwLock<BankForks>>,
+        StartingSnapshotHashes,
+        StartingSnapshotStorages,
+    ),
+    BankForksUtilsError,
+> {
     // Fail hard here if snapshot fails to load, don't silently continue
     if account_paths.is_empty() {
-        error!("Account paths not present when booting from snapshot");
-        process::exit(1);
+        return Err(BankForksUtilsError::AccountPathsNotPresent);
     }
 
     let latest_snapshot_archive_slot = std::cmp::max(
@@ -234,12 +289,12 @@ fn bank_forks_from_snapshot(
             .unwrap_or(true),
     };
 
-    let bank = if will_startup_from_snapshot_archives {
+    let (bank, starting_snapshot_storages) = if will_startup_from_snapshot_archives {
         // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
         // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
         // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
         // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
-        snapshot_utils::purge_old_bank_snapshots(&snapshot_config.bank_snapshots_dir, 0, None);
+        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
         let (bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &account_paths,
@@ -261,29 +316,21 @@ fn bank_forks_from_snapshot(
             accounts_update_notifier,
             exit,
         )
-        .unwrap_or_else(|err| {
-            error!(
-                "Failed to load bank: {err} \
-                \nfull snapshot archive: {} \
-                \nincremental snapshot archive: {}",
-                full_snapshot_archive_info.path().display(),
-                incremental_snapshot_archive_info
-                    .as_ref()
-                    .map(|archive| archive.path().display().to_string())
-                    .unwrap_or("none".to_string()),
-            );
-            process::exit(1);
-        });
-        bank
+        .map_err(|err| BankForksUtilsError::BankFromSnapshotsArchive {
+            source: err,
+            full_snapshot_archive: full_snapshot_archive_info.path().display().to_string(),
+            incremental_snapshot_archive: incremental_snapshot_archive_info
+                .as_ref()
+                .map(|archive| archive.path().display().to_string())
+                .unwrap_or("none".to_string()),
+        })?;
+        (bank, StartingSnapshotStorages::Archive)
     } else {
-        let Some(bank_snapshot) = latest_bank_snapshot else {
-            error!(
-                "There is no local state to startup from. Ensure --{} is *not* set to \"{}\" and restart.",
-                use_snapshot_archives_at_startup::cli::LONG_ARG,
-                UseSnapshotArchivesAtStartup::Never.to_string(),
-            );
-            process::exit(1);
-        };
+        let bank_snapshot =
+            latest_bank_snapshot.ok_or_else(|| BankForksUtilsError::NoBankSnapshotDirectory {
+                flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
+                value: UseSnapshotArchivesAtStartup::Never.to_string(),
+            })?;
 
         // If a newer snapshot archive was downloaded, it is possible that its slot is
         // higher than the local bank we will load.  Did the user intend for this?
@@ -318,20 +365,22 @@ fn bank_forks_from_snapshot(
             accounts_update_notifier,
             exit,
         )
-        .unwrap_or_else(|err| {
-            error!(
-                "Failed to load bank: {err} \
-                \nsnapshot: {}",
-                bank_snapshot.snapshot_path().display(),
-            );
-            process::exit(1);
-        });
-        bank
-    };
+        .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
+            source: err,
+            path: bank_snapshot.snapshot_path(),
+        })?;
 
-    if let Some(shrink_paths) = shrink_paths {
-        bank.set_shrink_paths(shrink_paths);
-    }
+        // If the node crashes before taking the next bank snapshot, the next startup will attempt
+        // to load from the same bank snapshot again.  And if `shrink` has run, the account storage
+        // files that are hard linked in bank snapshot will be *different* than what the bank
+        // snapshot expects.  This would cause the node to crash again.  To prevent that, purge all
+        // the bank snapshots here.  In the above scenario, this will cause the node to load from a
+        // snapshot archive next time, which is safe.
+        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+
+        let storages = bank.get_snapshot_storages(None);
+        (bank, StartingSnapshotStorages::Fastboot(storages))
+    };
 
     let full_snapshot_hash = FullSnapshotHash((
         full_snapshot_archive_info.slot(),
@@ -349,5 +398,9 @@ fn bank_forks_from_snapshot(
         incremental: incremental_snapshot_hash,
     };
 
-    (BankForks::new_rw_arc(bank), starting_snapshot_hashes)
+    Ok((
+        BankForks::new_rw_arc(bank),
+        starting_snapshot_hashes,
+        starting_snapshot_storages,
+    ))
 }

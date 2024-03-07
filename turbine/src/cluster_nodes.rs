@@ -311,7 +311,7 @@ fn get_nodes(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Vec<N
 // fanout + k, 2*fanout + k, ..., fanout*fanout + k
 fn get_retransmit_peers<T: Copy>(
     fanout: usize,
-    index: usize, // Local node's index withing the nodes slice.
+    index: usize, // Local node's index within the nodes slice.
     nodes: &[T],
 ) -> impl Iterator<Item = T> + '_ {
     // Node's index within its neighborhood.
@@ -362,7 +362,8 @@ impl<T: 'static> ClusterNodesCache<T> {
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
     ) -> Arc<ClusterNodes<T>> {
-        let epoch = get_epoch(shred_slot, root_bank);
+        let epoch_schedule = root_bank.epoch_schedule();
+        let epoch = epoch_schedule.get_epoch(shred_slot);
         let entry = self.get_cache_entry(epoch);
         if let Some((_, nodes)) = entry
             .read()
@@ -382,8 +383,8 @@ impl<T: 'static> ClusterNodesCache<T> {
             .iter()
             .find_map(|bank| bank.epoch_staked_nodes(epoch));
         if epoch_staked_nodes.is_none() {
-            inc_new_counter_debug!("cluster_nodes-unknown_epoch_staked_nodes", 1);
-            if epoch != get_epoch(root_bank.slot(), root_bank) {
+            inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes", 1);
+            if epoch != epoch_schedule.get_epoch(root_bank.slot()) {
                 return self.get(root_bank.slot(), root_bank, working_bank, cluster_info);
             }
             inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes_root", 1);
@@ -394,18 +395,6 @@ impl<T: 'static> ClusterNodesCache<T> {
         ));
         *entry = Some((Instant::now(), Arc::clone(&nodes)));
         nodes
-    }
-}
-
-fn get_epoch(shred_slot: Slot, root_bank: &Bank) -> Epoch {
-    if check_feature_activation(
-        &feature_set::revise_turbine_epoch_stakes::id(),
-        shred_slot,
-        root_bank,
-    ) {
-        root_bank.epoch_schedule().get_epoch(shred_slot)
-    } else {
-        root_bank.get_leader_schedule_epoch(shred_slot)
     }
 }
 
@@ -513,7 +502,7 @@ fn enable_turbine_fanout_experiments(shred_slot: Slot, root_bank: &Bank) -> bool
 
 // Returns true if the feature is effective for the shred slot.
 #[must_use]
-fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &Bank) -> bool {
+pub fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &Bank) -> bool {
     match root_bank.feature_set.activated_slot(feature) {
         None => false,
         Some(feature_slot) => {

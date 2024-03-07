@@ -9,17 +9,18 @@ use {
         accounts::Accounts,
         accounts_db::{
             test_utils::{create_test_accounts, update_accounts_bench},
-            AccountShrinkThreshold, CalcAccountsHashDataSource,
+            AccountShrinkThreshold, AccountsDb, CalcAccountsHashDataSource,
+            ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         },
         accounts_index::AccountSecondaryIndexes,
         ancestors::Ancestors,
-        rent_collector::RentCollector,
     },
     solana_measure::measure::Measure,
     solana_sdk::{
-        genesis_config::ClusterType, pubkey::Pubkey, sysvar::epoch_schedule::EpochSchedule,
+        genesis_config::ClusterType, pubkey::Pubkey, rent_collector::RentCollector,
+        sysvar::epoch_schedule::EpochSchedule,
     },
-    std::{env, fs, path::PathBuf},
+    std::{env, fs, path::PathBuf, sync::Arc},
 };
 
 fn main() {
@@ -69,12 +70,16 @@ fn main() {
     if fs::remove_dir_all(path.clone()).is_err() {
         println!("Warning: Couldn't remove {path:?}");
     }
-    let accounts = Accounts::new_with_config_for_benches(
+    let accounts_db = AccountsDb::new_with_config(
         vec![path],
         &ClusterType::Testnet,
         AccountSecondaryIndexes::default(),
         AccountShrinkThreshold::default(),
+        Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
+        None,
+        Arc::default(),
     );
+    let accounts = Accounts::new(Arc::new(accounts_db));
     println!("Creating {num_accounts} accounts");
     let mut create_time = Measure::start("create accounts");
     let pubkeys: Vec<_> = (0..num_slots)

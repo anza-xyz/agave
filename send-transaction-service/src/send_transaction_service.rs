@@ -7,7 +7,6 @@ use {
         tpu_connection::TpuConnection,
     },
     solana_measure::measure::Measure,
-    solana_metrics::datapoint_warn,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         clock::Slot, hash::Hash, nonce_account, pubkey::Pubkey, saturating_add_assign,
@@ -28,8 +27,8 @@ use {
     },
 };
 
-/// Maximum size of the transaction queue
-const MAX_TRANSACTION_QUEUE_SIZE: usize = 10_000; // This seems like a lot but maybe it needs to be bigger one day
+/// Maximum size of the transaction retry pool
+const MAX_TRANSACTION_RETRY_POOL_SIZE: usize = 10_000; // This seems like a lot but maybe it needs to be bigger one day
 
 /// Default retry interval
 const DEFAULT_RETRY_RATE_MS: u64 = 2_000;
@@ -114,6 +113,8 @@ pub struct Config {
     pub batch_size: usize,
     /// How frequently batches are sent
     pub batch_send_rate_ms: u64,
+    /// When the retry pool exceeds this max size, new transactions are dropped after their first broadcast attempt
+    pub retry_pool_max_size: usize,
 }
 
 impl Default for Config {
@@ -125,6 +126,7 @@ impl Default for Config {
             service_max_retries: DEFAULT_SERVICE_MAX_RETRIES,
             batch_size: DEFAULT_TRANSACTION_BATCH_SIZE,
             batch_send_rate_ms: DEFAULT_BATCH_SEND_RATE_MS,
+            retry_pool_max_size: MAX_TRANSACTION_RETRY_POOL_SIZE,
         }
     }
 }
@@ -477,8 +479,7 @@ impl SendTransactionService {
                             let retry_len = retry_transactions.len();
                             let entry = retry_transactions.entry(signature);
                             if let Entry::Vacant(_) = entry {
-                                if retry_len >= MAX_TRANSACTION_QUEUE_SIZE {
-                                    datapoint_warn!("send_transaction_service-queue-overflow");
+                                if retry_len >= config.retry_pool_max_size {
                                     break;
                                 } else {
                                     transaction_info.last_sent_time = Some(last_sent_time);
@@ -891,29 +892,39 @@ mod test {
     fn process_transactions() {
         solana_logger::setup();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(4);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
+        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+        let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let tpu_address = "127.0.0.1:0".parse().unwrap();
         let config = Config {
             leader_forward_count: 1,
             ..Config::default()
         };
 
-        let root_bank = Arc::new(Bank::new_from_parent(
+        let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
             &Pubkey::default(),
             1,
-        ));
+        );
+        let root_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(root_bank)
+            .clone_without_scheduler();
+
         let rooted_signature = root_bank
             .transfer(1, &mint_keypair, &mint_keypair.pubkey())
             .unwrap();
 
-        let working_bank = Arc::new(Bank::new_from_parent(
-            root_bank.clone(),
-            &Pubkey::default(),
-            2,
-        ));
+        let working_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(
+                root_bank.clone(),
+                &Pubkey::default(),
+                2,
+            ))
+            .clone_without_scheduler();
 
         let non_rooted_signature = working_bank
             .transfer(2, &mint_keypair, &mint_keypair.pubkey())
@@ -1157,20 +1168,26 @@ mod test {
     fn test_retry_durable_nonce_transactions() {
         solana_logger::setup();
 
-        let (genesis_config, mint_keypair) = create_genesis_config(4);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let bank_forks = BankForks::new_rw_arc(bank);
+        let (mut genesis_config, mint_keypair) = create_genesis_config(4);
+        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+        let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let tpu_address = "127.0.0.1:0".parse().unwrap();
         let config = Config {
             leader_forward_count: 1,
             ..Config::default()
         };
 
-        let root_bank = Arc::new(Bank::new_from_parent(
+        let root_bank = Bank::new_from_parent(
             bank_forks.read().unwrap().working_bank(),
             &Pubkey::default(),
             1,
-        ));
+        );
+        let root_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(root_bank)
+            .clone_without_scheduler();
+
         let rooted_signature = root_bank
             .transfer(1, &mint_keypair, &mint_keypair.pubkey())
             .unwrap();
@@ -1184,11 +1201,15 @@ mod test {
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         root_bank.store_account(&nonce_address, &nonce_account);
 
-        let working_bank = Arc::new(Bank::new_from_parent(
-            root_bank.clone(),
-            &Pubkey::default(),
-            2,
-        ));
+        let working_bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(
+                root_bank.clone(),
+                &Pubkey::default(),
+                2,
+            ))
+            .clone_without_scheduler();
         let non_rooted_signature = working_bank
             .transfer(2, &mint_keypair, &mint_keypair.pubkey())
             .unwrap();

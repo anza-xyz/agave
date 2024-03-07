@@ -14,7 +14,10 @@ use {
         consensus::{tower_storage::TowerStorage, Tower},
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
-        repair::{quic_endpoint::LocalRequest, repair_service::RepairInfo},
+        repair::{
+            quic_endpoint::LocalRequest,
+            repair_service::{OutstandingShredRepairs, RepairInfo},
+        },
         replay_stage::{ReplayStage, ReplayStageConfig},
         rewards_recorder_service::RewardsRecorderSender,
         shred_fetch_stage::ShredFetchStage,
@@ -138,6 +141,9 @@ impl Tvu {
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_quic_endpoint_sender: AsyncSender<LocalRequest>,
+        outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+        cluster_slots: Arc<ClusterSlots>,
+        wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
     ) -> Result<Self, String> {
         let TvuSockets {
             repair: repair_socket,
@@ -188,7 +194,6 @@ impl Tvu {
             Some(rpc_subscriptions.clone()),
         );
 
-        let cluster_slots = Arc::new(ClusterSlots::default());
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
         let (duplicate_slots_sender, duplicate_slots_receiver) = unbounded();
         let (ancestor_hashes_replay_update_sender, ancestor_hashes_replay_update_receiver) =
@@ -196,7 +201,12 @@ impl Tvu {
         let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
         let (popular_pruned_forks_sender, popular_pruned_forks_receiver) = unbounded();
         let window_service = {
-            let epoch_schedule = *bank_forks.read().unwrap().working_bank().epoch_schedule();
+            let epoch_schedule = bank_forks
+                .read()
+                .unwrap()
+                .working_bank()
+                .epoch_schedule()
+                .clone();
             let repair_info = RepairInfo {
                 bank_forks: bank_forks.clone(),
                 epoch_schedule,
@@ -205,6 +215,7 @@ impl Tvu {
                 repair_whitelist: tvu_config.repair_whitelist,
                 cluster_info: cluster_info.clone(),
                 cluster_slots: cluster_slots.clone(),
+                wen_restart_repair_slots,
             };
             WindowService::new(
                 blockstore.clone(),
@@ -219,10 +230,11 @@ impl Tvu {
                 leader_schedule_cache.clone(),
                 verified_vote_receiver,
                 completed_data_sets_sender,
-                duplicate_slots_sender,
+                duplicate_slots_sender.clone(),
                 ancestor_hashes_replay_update_receiver,
                 dumped_slots_receiver,
                 popular_pruned_forks_sender,
+                outstanding_repair_requests,
             )
         };
 
@@ -236,14 +248,12 @@ impl Tvu {
             exit.clone(),
         );
 
-        let (blockstore_cleanup_slot_sender, blockstore_cleanup_slot_receiver) = unbounded();
         let replay_stage_config = ReplayStageConfig {
             vote_account: *vote_account,
             authorized_voter_keypairs,
             exit: exit.clone(),
             rpc_subscriptions: rpc_subscriptions.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
-            latest_root_senders: vec![blockstore_cleanup_slot_sender],
             accounts_background_request_sender,
             block_commitment_cache,
             transaction_status_sender,
@@ -312,12 +322,7 @@ impl Tvu {
         )?;
 
         let blockstore_cleanup_service = tvu_config.max_ledger_shreds.map(|max_ledger_shreds| {
-            BlockstoreCleanupService::new(
-                blockstore_cleanup_slot_receiver,
-                blockstore.clone(),
-                max_ledger_shreds,
-                exit.clone(),
-            )
+            BlockstoreCleanupService::new(blockstore.clone(), max_ledger_shreds, exit.clone())
         });
 
         let duplicate_shred_listener = DuplicateShredListener::new(
@@ -327,6 +332,7 @@ impl Tvu {
                 blockstore,
                 leader_schedule_cache.clone(),
                 bank_forks.clone(),
+                duplicate_slots_sender,
             ),
         );
 
@@ -437,6 +443,8 @@ pub mod tests {
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
+        let cluster_slots = Arc::new(ClusterSlots::default());
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
@@ -491,6 +499,9 @@ pub mod tests {
             turbine_quic_endpoint_sender,
             turbine_quic_endpoint_receiver,
             repair_quic_endpoint_sender,
+            outstanding_repair_requests,
+            cluster_slots,
+            None,
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);

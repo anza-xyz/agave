@@ -4,7 +4,6 @@ use {
     solana_sdk::{
         account::Account,
         client::{AsyncClient, Client, SyncClient},
-        clock,
         commitment_config::CommitmentConfig,
         epoch_info::EpochInfo,
         fee_calculator::{FeeCalculator, FeeRateGovernor},
@@ -20,13 +19,14 @@ use {
         transport::{Result, TransportError},
     },
     std::{
-        convert::TryFrom,
         io,
         sync::{Arc, Mutex},
         thread::{sleep, Builder},
         time::{Duration, Instant},
     },
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {crate::bank_forks::BankForks, solana_sdk::clock, std::sync::RwLock};
 
 pub struct BankClient {
     bank: Arc<Bank>,
@@ -285,7 +285,7 @@ impl SyncClient for BankClient {
     }
 
     fn get_fee_for_message(&self, message: &Message) -> Result<u64> {
-        SanitizedMessage::try_from(message.clone())
+        SanitizedMessage::try_from_legacy_message(message.clone())
             .ok()
             .and_then(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))
             .ok_or_else(|| {
@@ -330,12 +330,24 @@ impl BankClient {
         self.bank.set_sysvar_for_tests(sysvar);
     }
 
-    pub fn advance_slot(&mut self, by: u64, collector_id: &Pubkey) -> Option<Arc<Bank>> {
-        self.bank = Arc::new(Bank::new_from_parent(
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn advance_slot(
+        &mut self,
+        by: u64,
+        bank_forks: &RwLock<BankForks>,
+        collector_id: &Pubkey,
+    ) -> Option<Arc<Bank>> {
+        let new_bank = Bank::new_from_parent(
             self.bank.clone(),
             collector_id,
             self.bank.slot().checked_add(by)?,
-        ));
+        );
+        self.bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(new_bank)
+            .clone_without_scheduler();
+
         self.set_sysvar_for_tests(&clock::Clock {
             slot: self.bank.slot(),
             ..clock::Clock::default()

@@ -30,8 +30,8 @@ use {
 
 pub fn get_latest_blockhash<T: BenchTpsClient + ?Sized>(client: &T) -> Hash {
     loop {
-        match client.get_latest_blockhash_with_commitment(CommitmentConfig::processed()) {
-            Ok((blockhash, _)) => return blockhash,
+        match client.get_latest_blockhash() {
+            Ok(blockhash) => return blockhash,
             Err(err) => {
                 info!("Couldn't get last blockhash: {:?}", err);
                 sleep(Duration::from_secs(1));
@@ -248,9 +248,13 @@ where
     fn send<C: BenchTpsClient + ?Sized>(&self, client: &Arc<C>) {
         let mut send_txs = Measure::start("send_and_clone_txs");
         let batch: Vec<_> = self.iter().map(|(_keypair, tx)| tx.clone()).collect();
-        client.send_batch(batch).expect("transfer");
+        let result = client.send_batch(batch);
         send_txs.stop();
-        debug!("send {} {}", self.len(), send_txs);
+        if result.is_err() {
+            debug!("Failed to send batch {result:?}");
+        } else {
+            debug!("send {} {}", self.len(), send_txs);
+        }
     }
 
     fn verify<C: 'static + BenchTpsClient + Send + Sync + ?Sized>(

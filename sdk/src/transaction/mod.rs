@@ -43,7 +43,7 @@
 //! transactions.
 //!
 //! [`RpcClient::get_latest_blockhash`]: https://docs.rs/solana-rpc-client/latest/solana_rpc_client/rpc_client/struct.RpcClient.html#method.get_latest_blockhash
-//! [durable transaction nonce]: https://docs.solana.com/implemented-proposals/durable-tx-nonces
+//! [durable transaction nonce]: https://docs.solanalabs.com/implemented-proposals/durable-tx-nonces
 //!
 //! # Examples
 //!
@@ -147,7 +147,7 @@ pub enum TransactionVerificationMode {
 
 pub type Result<T> = result::Result<T, TransactionError>;
 
-/// An atomically-commited sequence of instructions.
+/// An atomically-committed sequence of instructions.
 ///
 /// While [`Instruction`]s are the basic unit of computation in Solana,
 /// they are submitted by clients in [`Transaction`]s containing one or
@@ -1074,6 +1074,7 @@ impl Transaction {
     }
 }
 
+/// Returns true if transaction begins with an advance nonce instruction.
 pub fn uses_durable_nonce(tx: &Transaction) -> Option<&CompiledInstruction> {
     let message = tx.message();
     message
@@ -1089,11 +1090,6 @@ pub fn uses_durable_nonce(tx: &Transaction) -> Option<&CompiledInstruction> {
             && matches!(
                 limited_deserialize(&instruction.data),
                 Ok(SystemInstruction::AdvanceNonceAccount)
-            )
-            // Nonce account is writable
-            && matches!(
-                instruction.accounts.first(),
-                Some(index) if message.is_writable(*index as usize)
             )
         })
 }
@@ -1119,7 +1115,7 @@ mod tests {
             hash::hash,
             instruction::AccountMeta,
             signature::{Keypair, Presigner, Signer},
-            system_instruction, sysvar,
+            system_instruction,
         },
         bincode::{deserialize, serialize, serialized_size},
         std::mem::size_of,
@@ -1580,32 +1576,6 @@ mod tests {
         ];
         let message = Message::new(&instructions, Some(&from_pubkey));
         let tx = Transaction::new(&[&from_keypair, &nonce_keypair], message, Hash::default());
-        assert!(uses_durable_nonce(&tx).is_none());
-    }
-
-    #[test]
-    fn tx_uses_ro_nonce_account() {
-        let from_keypair = Keypair::new();
-        let from_pubkey = from_keypair.pubkey();
-        let nonce_keypair = Keypair::new();
-        let nonce_pubkey = nonce_keypair.pubkey();
-        let account_metas = vec![
-            AccountMeta::new_readonly(nonce_pubkey, false),
-            #[allow(deprecated)]
-            AccountMeta::new_readonly(sysvar::recent_blockhashes::id(), false),
-            AccountMeta::new_readonly(nonce_pubkey, true),
-        ];
-        let nonce_instruction = Instruction::new_with_bincode(
-            system_program::id(),
-            &system_instruction::SystemInstruction::AdvanceNonceAccount,
-            account_metas,
-        );
-        let tx = Transaction::new_signed_with_payer(
-            &[nonce_instruction],
-            Some(&from_pubkey),
-            &[&from_keypair, &nonce_keypair],
-            Hash::default(),
-        );
         assert!(uses_durable_nonce(&tx).is_none());
     }
 
