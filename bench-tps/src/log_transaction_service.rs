@@ -115,9 +115,12 @@ impl LogTransactionService {
     ) where
         Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
+        let commitment: CommitmentConfig = CommitmentConfig {
+            commitment: CommitmentLevel::Confirmed,
+        };
         let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
 
-        let start_block = get_slot_with_retry(&client)
+        let start_block = get_slot_with_retry(&client, commitment)
             .expect("get_slot_with_retry succeed, cannot proceed without having slot. Must be a problem with RPC.");
 
         let mut signature_to_tx_info = MapSignatureToTxInfo::new();
@@ -146,7 +149,7 @@ impl LogTransactionService {
                 recv(block_processing_timer_receiver) -> _ => {
                     info!("sign_receiver queue len: {}", signature_receiver.len());
                     let mut measure_get_blocks = Measure::start("measure_get_blocks");
-                    let block_slots = get_blocks_with_retry(&client, start_block);
+                    let block_slots = get_blocks_with_retry(&client, start_block, commitment);
                     measure_get_blocks.stop();
                     let time_get_blocks_us = measure_get_blocks.as_us();
                     info!("Time to get_blocks : {time_get_blocks_us}us.");
@@ -162,7 +165,9 @@ impl LogTransactionService {
                         block_slots,
                         &mut signature_to_tx_info,
                         &mut tx_log_writer,
-                        &mut block_log_writer);
+                        &mut block_log_writer,
+                        commitment,
+                    );
                     Self::clean_transaction_map(&mut tx_log_writer, &mut signature_to_tx_info);
 
                     tx_log_writer.flush();
@@ -178,12 +183,10 @@ impl LogTransactionService {
         signature_to_tx_info: &mut MapSignatureToTxInfo,
         tx_log_writer: &mut TransactionLogWriter,
         block_log_writer: &mut BlockLogWriter,
+        commitment: CommitmentConfig,
     ) where
         Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
-        let commitment: CommitmentConfig = CommitmentConfig {
-            commitment: CommitmentLevel::Confirmed,
-        };
         let rpc_block_config = RpcBlockConfig {
             encoding: Some(UiTransactionEncoding::Base64),
             transaction_details: Some(TransactionDetails::Full),
@@ -480,19 +483,26 @@ where
     }
 }
 
-fn get_slot_with_retry<Client>(client: &Arc<Client>) -> Result<Slot>
-where
-    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
-{
-    call_rpc_with_retry(|| client.get_slot(), "Failed to get slot")
-}
-
-fn get_blocks_with_retry<Client>(client: &Arc<Client>, start_block: u64) -> Result<Vec<Slot>>
+fn get_slot_with_retry<Client>(client: &Arc<Client>, commitment: CommitmentConfig) -> Result<Slot>
 where
     Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
 {
     call_rpc_with_retry(
-        || client.get_blocks(start_block, None),
+        || client.get_slot_with_commitment(commitment),
+        "Failed to get slot",
+    )
+}
+
+fn get_blocks_with_retry<Client>(
+    client: &Arc<Client>,
+    start_block: u64,
+    commitment: CommitmentConfig,
+) -> Result<Vec<Slot>>
+where
+    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
+{
+    call_rpc_with_retry(
+        || client.get_blocks_with_commitment(start_block, None, commitment),
         "Failed to download blocks",
     )
 }
