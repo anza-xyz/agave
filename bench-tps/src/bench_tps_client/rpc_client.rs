@@ -108,12 +108,18 @@ impl BenchTpsClient for RpcClient {
         RpcClient::get_multiple_accounts(self, pubkeys).map_err(|err| err.into())
     }
 
-    fn get_slot(&self) -> Result<Slot> {
-        RpcClient::get_slot(self).map_err(|err| err.into())
+    fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig) -> Result<Slot> {
+        RpcClient::get_slot_with_commitment(self, commitment_config).map_err(|err| err.into())
     }
 
-    fn get_blocks(&self, start_slot: Slot, end_slot: Option<Slot>) -> Result<Vec<Slot>> {
-        RpcClient::get_blocks(self, start_slot, end_slot).map_err(|err| err.into())
+    fn get_blocks_with_commitment(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        commitment_config: CommitmentConfig,
+    ) -> Result<Vec<Slot>> {
+        RpcClient::get_blocks_with_commitment(self, start_slot, end_slot, commitment_config)
+            .map_err(|err| err.into())
     }
 
     fn get_block_with_config(

@@ -115,11 +115,16 @@ impl BenchTpsClient for BankClient {
         unimplemented!("BankClient doesn't support get_multiple_accounts");
     }
 
-    fn get_slot(&self) -> Result<Slot> {
-        SyncClient::get_slot(self).map_err(|err| err.into())
+    fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig) -> Result<Slot> {
+        SyncClient::get_slot_with_commitment(self, commitment_config).map_err(|err| err.into())
     }
 
-    fn get_blocks(&self, _start_slot: Slot, _end_slot: Option<Slot>) -> Result<Vec<Slot>> {
+    fn get_blocks_with_commitment(
+        &self,
+        _start_slot: Slot,
+        _end_slot: Option<Slot>,
+        _commitment_config: CommitmentConfig,
+    ) -> Result<Vec<Slot>> {
         unimplemented!("BankClient doesn't support get_blocks");
     }
 

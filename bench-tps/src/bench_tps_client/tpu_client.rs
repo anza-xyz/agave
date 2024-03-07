@@ -134,13 +134,20 @@ where
             .map_err(|err| err.into())
     }
 
-    fn get_slot(&self) -> Result<Slot> {
-        self.rpc_client().get_slot().map_err(|err| err.into())
+    fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig) -> Result<Slot> {
+        self.rpc_client()
+            .get_slot_with_commitment(commitment_config)
+            .map_err(|err| err.into())
     }
 
-    fn get_blocks(&self, start_slot: Slot, end_slot: Option<Slot>) -> Result<Vec<Slot>> {
+    fn get_blocks_with_commitment(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        commitment_config: CommitmentConfig,
+    ) -> Result<Vec<Slot>> {
         self.rpc_client()
-            .get_blocks(start_slot, end_slot)
+            .get_blocks_with_commitment(start_slot, end_slot, commitment_config)
             .map_err(|err| err.into())
     }
 

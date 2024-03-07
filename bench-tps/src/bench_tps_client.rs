@@ -95,9 +95,14 @@ pub trait BenchTpsClient {
 
     fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> Result<Vec<Option<Account>>>;
 
-    fn get_slot(&self) -> Result<Slot>;
+    fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig) -> Result<Slot>;
 
-    fn get_blocks(&self, start_slot: Slot, end_slot: Option<Slot>) -> Result<Vec<Slot>>;
+    fn get_blocks_with_commitment(
+        &self,
+        start_slot: Slot,
+        end_slot: Option<Slot>,
+        commitment_config: CommitmentConfig,
+    ) -> Result<Vec<Slot>>;
 
     fn get_block_with_config(
         &self,
