@@ -3217,7 +3217,7 @@ impl ReplayStage {
                         prioritization_fee_cache,
                     )
                 }
-                _ => active_bank_slots
+                ForkReplayMode::Serial | ForkReplayMode::Parallel(_) => active_bank_slots
                     .iter()
                     .map(|bank_slot| {
                         Self::replay_active_bank(
