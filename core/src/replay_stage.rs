@@ -3193,7 +3193,10 @@ impl ReplayStage {
             num_active_banks,
             active_bank_slots
         );
-        if num_active_banks > 0 {
+        if active_bank_slots.is_empty() {
+            return false;
+        }
+
             let replay_result_vec = match replay_mode {
                 // Skip the overhead of the threadpool if there is only one bank to play
                 ForkReplayMode::Parallel(thread_pool) if num_active_banks > 1 => {
@@ -3259,9 +3262,6 @@ impl ReplayStage {
                 &replay_result_vec,
                 purge_repair_slot_counter,
             )
-        } else {
-            false
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
