@@ -60,7 +60,9 @@ impl<'a, 'b> TransactionBatch<'a, 'b> {
         let txs_and_results = transaction_results
             .iter()
             .enumerate()
-            .inspect(|(index, result)| assert!(!(result.is_ok() && self.lock_results[index].is_err()))
+            .inspect(|(index, result)| {
+                assert!(!(result.is_ok() && self.lock_results[*index].is_err()))
+            })
             .filter(|(index, result)| result.is_err() && self.lock_results[*index].is_ok())
             .map(|(index, _)| (&self.sanitized_txs[index], &self.lock_results[index]));
 
