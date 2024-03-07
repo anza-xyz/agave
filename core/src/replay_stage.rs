@@ -124,7 +124,7 @@ pub enum HeaviestForkFailures {
 
 enum ForkReplayMode {
     Serial,
-    Parallel(ThreadPool)
+    Parallel(ThreadPool),
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -3196,26 +3196,25 @@ impl ReplayStage {
         if num_active_banks > 0 {
             let replay_result_vec = match replay_mode {
                 // Skip the overhead of the threadpool if there is only one bank to play
-                ForkReplayMode::Parallel(thread_pool) if num_active_banks > 1  => {
-                Self::replay_active_banks_concurrently(
-                    blockstore,
-                    bank_forks,
-                    thread_pool,
-                    my_pubkey,
-                    vote_account,
-                    progress,
-                    transaction_status_sender,
-                    entry_notification_sender,
-                    verify_recyclers,
-                    replay_vote_sender,
-                    replay_timing,
-                    log_messages_bytes_limit,
-                    &active_bank_slots,
-                    prioritization_fee_cache,
-                )
-                },
-                _ => {
-                active_bank_slots
+                ForkReplayMode::Parallel(thread_pool) if num_active_banks > 1 => {
+                    Self::replay_active_banks_concurrently(
+                        blockstore,
+                        bank_forks,
+                        thread_pool,
+                        my_pubkey,
+                        vote_account,
+                        progress,
+                        transaction_status_sender,
+                        entry_notification_sender,
+                        verify_recyclers,
+                        replay_vote_sender,
+                        replay_timing,
+                        log_messages_bytes_limit,
+                        &active_bank_slots,
+                        prioritization_fee_cache,
+                    )
+                }
+                _ => active_bank_slots
                     .iter()
                     .map(|bank_slot| {
                         Self::replay_active_bank(
@@ -3234,8 +3233,7 @@ impl ReplayStage {
                             prioritization_fee_cache,
                         )
                     })
-                    .collect()
-                }
+                    .collect(),
             };
 
             Self::process_replay_results(
