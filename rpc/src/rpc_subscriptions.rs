@@ -19,7 +19,6 @@ use {
     solana_account_decoder::{parse_token::is_known_spl_token_id, UiAccount, UiAccountEncoding},
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
     solana_measure::measure::Measure,
-    solana_rayon_threadlimit::get_thread_count,
     solana_rpc_client_api::response::{
         ProcessedSignatureResult, ReceivedSignatureResult, Response as RpcResponse, RpcBlockUpdate,
         RpcBlockUpdateError, RpcKeyedAccount, RpcLogsResponse, RpcResponseContext,
@@ -631,7 +630,7 @@ impl RpcSubscriptions {
                 config.queue_capacity_bytes,
             )),
         };
-        let notification_threads = config.notification_threads.unwrap_or_else(get_thread_count);
+        let notification_threads = config.notification_threads;
         let t_cleanup = if notification_threads == 0 {
             None
         } else {

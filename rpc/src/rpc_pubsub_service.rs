@@ -43,7 +43,7 @@ pub struct PubSubConfig {
     pub queue_capacity_items: usize,
     pub queue_capacity_bytes: usize,
     pub worker_threads: usize,
-    pub notification_threads: Option<usize>,
+    pub notification_threads: usize,
 }
 
 impl Default for PubSubConfig {
@@ -55,7 +55,7 @@ impl Default for PubSubConfig {
             queue_capacity_items: DEFAULT_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
-            notification_threads: None,
+            notification_threads: 0,
         }
     }
 }
@@ -69,7 +69,7 @@ impl PubSubConfig {
             queue_capacity_items: DEFAULT_TEST_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
-            notification_threads: Some(2),
+            notification_threads: 2,
         }
     }
 }
