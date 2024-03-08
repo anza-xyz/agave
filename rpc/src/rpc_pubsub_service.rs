@@ -16,6 +16,7 @@ use {
     std::{
         io,
         net::SocketAddr,
+        num::NonZeroUsize,
         str,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -43,7 +44,7 @@ pub struct PubSubConfig {
     pub queue_capacity_items: usize,
     pub queue_capacity_bytes: usize,
     pub worker_threads: usize,
-    pub notification_threads: usize,
+    pub notification_threads: Option<NonZeroUsize>,
 }
 
 impl Default for PubSubConfig {
@@ -55,7 +56,7 @@ impl Default for PubSubConfig {
             queue_capacity_items: DEFAULT_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
-            notification_threads: 0,
+            notification_threads: None,
         }
     }
 }
@@ -69,7 +70,7 @@ impl PubSubConfig {
             queue_capacity_items: DEFAULT_TEST_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
-            notification_threads: 2,
+            notification_threads: NonZeroUsize::new(2),
         }
     }
 }

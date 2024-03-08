@@ -630,17 +630,14 @@ impl RpcSubscriptions {
                 config.queue_capacity_bytes,
             )),
         };
-        let notification_threads = config.notification_threads;
-        let t_cleanup = if notification_threads == 0 {
-            None
-        } else {
+
+        let t_cleanup = config.notification_threads.map(|notification_threads| {
             let exit = exit.clone();
-            Some(
                 Builder::new()
                     .name("solRpcNotifier".to_string())
                     .spawn(move || {
                         let pool = rayon::ThreadPoolBuilder::new()
-                            .num_threads(notification_threads)
+                            .num_threads(notification_threads.get())
                             .thread_name(|i| format!("solRpcNotify{i:02}"))
                             .build()
                             .unwrap();
@@ -662,9 +659,8 @@ impl RpcSubscriptions {
                             )
                         });
                     })
-                    .unwrap(),
-            )
-        };
+                    .unwrap()
+                });
 
         let control = SubscriptionControl::new(
             config.max_active_subscriptions,
@@ -673,11 +669,7 @@ impl RpcSubscriptions {
         );
 
         Self {
-            notification_sender: if notification_threads == 0 {
-                None
-            } else {
-                Some(notification_sender)
-            },
+            notification_sender: config.notification_threads.map(|_| notification_sender),
             t_cleanup,
             exit,
             control,

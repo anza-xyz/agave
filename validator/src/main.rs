@@ -1383,9 +1383,13 @@ pub fn main() {
             ),
             worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
             notification_threads: if full_api {
-                value_t_or_exit!(matches, "rpc_pubsub_notification_threads", usize)
+                NonZeroUsize::new(value_t_or_exit!(
+                    matches,
+                    "rpc_pubsub_notification_threads",
+                    usize
+                ))
             } else {
-                0
+                None
             },
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
