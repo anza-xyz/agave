@@ -297,6 +297,11 @@ pub struct ReplayStageConfig {
     pub replay_slots_concurrently: bool,
 }
 
+struct ReplayStageState {
+    pub blockstore: Arc<Blockstore>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+}
+
 /// Timing information for the ReplayStage main processing loop
 #[derive(Default)]
 struct ReplayLoopTiming {
@@ -580,6 +585,13 @@ impl ReplayStage {
             replay_slots_concurrently,
         } = config;
 
+        // TODO: remove the clones when done, this just makes compiling
+        //       midway through the change possible
+        let state = ReplayStageState {
+            blockstore: blockstore.clone(),
+            bank_forks: bank_forks.clone(),
+        };
+
         trace!("replay stage");
         // Start the replay stage loop
         let (lockouts_sender, commitment_service) = AggregateCommitmentService::new(
@@ -674,8 +686,7 @@ impl ReplayStage {
                 let mut generate_new_bank_forks_time =
                     Measure::start("generate_new_bank_forks_time");
                 Self::generate_new_bank_forks(
-                    &blockstore,
-                    &bank_forks,
+                    &state,
                     &leader_schedule_cache,
                     &rpc_subscriptions,
                     &mut progress,
@@ -4151,8 +4162,7 @@ impl ReplayStage {
     }
 
     fn generate_new_bank_forks(
-        blockstore: &Blockstore,
-        bank_forks: &RwLock<BankForks>,
+        state: &ReplayStageState,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         progress: &mut ProgressMap,
@@ -4161,7 +4171,7 @@ impl ReplayStage {
         // Find the next slot that chains to the old slot
         let mut generate_new_bank_forks_read_lock =
             Measure::start("generate_new_bank_forks_read_lock");
-        let forks = bank_forks.read().unwrap();
+        let forks = state.bank_forks.read().unwrap();
         generate_new_bank_forks_read_lock.stop();
 
         let frozen_banks = forks.frozen_banks();
@@ -4172,7 +4182,7 @@ impl ReplayStage {
             .collect();
         let mut generate_new_bank_forks_get_slots_since =
             Measure::start("generate_new_bank_forks_get_slots_since");
-        let next_slots = blockstore
+        let next_slots = state.blockstore
             .get_slots_since(&frozen_bank_slots)
             .expect("Db error");
         generate_new_bank_forks_get_slots_since.stop();
@@ -4227,7 +4237,7 @@ impl ReplayStage {
 
         let mut generate_new_bank_forks_write_lock =
             Measure::start("generate_new_bank_forks_write_lock");
-        let mut forks = bank_forks.write().unwrap();
+        let mut forks = state.bank_forks.write().unwrap();
         for (_, bank) in new_banks {
             forks.insert(bank);
         }
