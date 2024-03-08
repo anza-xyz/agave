@@ -622,7 +622,7 @@ mod tests {
         let mock_secp256k1_instr = CompiledInstruction::new(3, &[1u8; 10], vec![]);
         let mock_ed25519_instr = CompiledInstruction::new(4, &[5u8; 10], vec![]);
 
-        let message = SanitizedMessage::try_from_legacy_message(
+        let message = SanitizedMessage::try_from(
             legacy::Message::new_with_compiled_instructions(
                 2,
                 1,

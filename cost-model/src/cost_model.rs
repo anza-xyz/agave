@@ -43,13 +43,8 @@ impl CostModel {
         } else {
             let mut tx_cost = UsageCostDetails::new_with_default_capacity();
 
-<<<<<<< HEAD
-            tx_cost.signature_cost = Self::get_signature_cost(transaction);
-            Self::get_write_lock_cost(&mut tx_cost, transaction);
-=======
             Self::get_signature_cost(&mut tx_cost, transaction);
-            Self::get_write_lock_cost(&mut tx_cost, transaction, feature_set);
->>>>>>> 9770cd9083 (add precompile signature metrics to cost tracker (#133))
+            Self::get_write_lock_cost(&mut tx_cost, transaction);
             Self::get_transaction_cost(&mut tx_cost, transaction, feature_set);
             tx_cost.account_data_size = Self::calculate_account_data_size(transaction);
 
@@ -58,7 +53,6 @@ impl CostModel {
         }
     }
 
-<<<<<<< HEAD
     // Calculate cost of loaded accounts size in the same way heap cost is charged at
     // rate of 8cu per 32K. Citing `program_runtime\src\compute_budget.rs`: "(cost of
     // heap is about) 0.5us per 32k at 15 units/us rounded up"
@@ -75,9 +69,6 @@ impl CostModel {
         )
     }
 
-    fn get_signature_cost(transaction: &SanitizedTransaction) -> u64 {
-        transaction.signatures().len() as u64 * SIGNATURE_COST
-=======
     fn get_signature_cost(tx_cost: &mut UsageCostDetails, transaction: &SanitizedTransaction) {
         let signatures_count_detail = transaction.message().get_signature_details();
         tx_cost.num_transaction_signatures = signatures_count_detail.num_transaction_signatures();
@@ -98,7 +89,6 @@ impl CostModel {
                     .num_ed25519_instruction_signatures()
                     .saturating_mul(ED25519_VERIFY_COST),
             );
->>>>>>> 9770cd9083 (add precompile signature metrics to cost tracker (#133))
     }
 
     fn get_writable_accounts(transaction: &SanitizedTransaction) -> Vec<Pubkey> {

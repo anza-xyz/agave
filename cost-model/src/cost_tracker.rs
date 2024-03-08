@@ -58,16 +58,13 @@ pub struct CostTracker {
     vote_cost: u64,
     transaction_count: u64,
     account_data_size: u64,
-<<<<<<< HEAD
 
     /// The amount of total account data size remaining.  If `Some`, then do not add transactions
     /// that would cause `account_data_size` to exceed this limit.
     account_data_size_limit: Option<u64>,
-=======
     transaction_signature_count: u64,
     secp256k1_instruction_signature_count: u64,
     ed25519_instruction_signature_count: u64,
->>>>>>> 9770cd9083 (add precompile signature metrics to cost tracker (#133))
 }
 
 impl Default for CostTracker {
@@ -87,13 +84,10 @@ impl Default for CostTracker {
             vote_cost: 0,
             transaction_count: 0,
             account_data_size: 0,
-<<<<<<< HEAD
             account_data_size_limit: None,
-=======
             transaction_signature_count: 0,
             secp256k1_instruction_signature_count: 0,
             ed25519_instruction_signature_count: 0,
->>>>>>> 9770cd9083 (add precompile signature metrics to cost tracker (#133))
         }
     }
 }
