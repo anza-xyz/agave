@@ -27,6 +27,12 @@ pub struct LastVotedForkSlotsAggregateResult {
     pub active_percent: f64, /* 0 ~ 100.0 */
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct LastVotedForkSlotsFinalResult {
+    pub slots_stake_map: HashMap<Slot, u64>,
+    pub total_active_stake: u64,
+}
+
 impl LastVotedForkSlotsAggregate {
     pub(crate) fn new(
         root_slot: Slot,
@@ -131,15 +137,25 @@ impl LastVotedForkSlotsAggregate {
         Some(record)
     }
 
-    pub(crate) fn get_aggregate_result(&self) -> LastVotedForkSlotsAggregateResult {
-        let total_stake = self.epoch_stakes.total_stake();
-        let total_active_stake = self.active_peers.iter().fold(0, |sum: u64, pubkey| {
+    fn total_active_stake(&self) -> u64 {
+        self.active_peers.iter().fold(0, |sum: u64, pubkey| {
             sum.saturating_add(Self::validator_stake(&self.epoch_stakes, pubkey))
-        });
-        let active_percent = total_active_stake as f64 / total_stake as f64 * 100.0;
+        })
+    }
+
+    pub(crate) fn get_aggregate_result(&self) -> LastVotedForkSlotsAggregateResult {
         LastVotedForkSlotsAggregateResult {
             slots_to_repair: self.slots_to_repair.iter().cloned().collect(),
-            active_percent,
+            active_percent: self.total_active_stake() as f64
+                / self.epoch_stakes.total_stake() as f64
+                * 100.0,
+        }
+    }
+
+    pub(crate) fn get_final_result(&self) -> LastVotedForkSlotsFinalResult {
+        LastVotedForkSlotsFinalResult {
+            slots_stake_map: self.slots_stake_map.clone(),
+            total_active_stake: self.total_active_stake(),
         }
     }
 }
