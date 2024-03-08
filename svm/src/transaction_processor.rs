@@ -4,7 +4,6 @@ use {
             load_accounts, LoadedTransaction, TransactionCheckResult, TransactionLoadResult,
         },
         account_overrides::AccountOverrides,
-        runtime_config::RuntimeConfig,
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_results::{
@@ -23,6 +22,7 @@ use {
         },
         log_collector::LogCollector,
         message_processor::MessageProcessor,
+        runtime_config::RuntimeConfig,
         sysvar_cache::SysvarCache,
         timings::{ExecuteDetailsTimings, ExecuteTimingType, ExecuteTimings},
     },
@@ -65,6 +65,24 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     pub execution_results: Vec<TransactionExecutionResult>,
 }
 
+/// Configuration of the recording capabilities for transaction execution
+#[derive(Copy, Clone)]
+pub struct ExecutionRecordingConfig {
+    pub enable_cpi_recording: bool,
+    pub enable_log_recording: bool,
+    pub enable_return_data_recording: bool,
+}
+
+impl ExecutionRecordingConfig {
+    pub fn new_single_setting(option: bool) -> Self {
+        ExecutionRecordingConfig {
+            enable_return_data_recording: option,
+            enable_log_recording: option,
+            enable_cpi_recording: option,
+        }
+    }
+}
+
 pub trait TransactionProcessingCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize>;
 
@@ -87,6 +105,7 @@ pub trait TransactionProcessingCallback {
     }
 }
 
+#[derive(Debug)]
 enum ProgramAccountLoadResult {
     AccountNotFound,
     InvalidAccountData(ProgramRuntimeEnvironment),
@@ -176,6 +195,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
+    /// Main entrypoint to the SVM.
     #[allow(clippy::too_many_arguments)]
     pub fn load_and_execute_sanitized_transactions<'a, CB: TransactionProcessingCallback>(
         &self,
@@ -183,9 +203,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         sanitized_txs: &[SanitizedTransaction],
         check_results: &mut [TransactionCheckResult],
         error_counters: &mut TransactionErrorMetrics,
-        enable_cpi_recording: bool,
-        enable_log_recording: bool,
-        enable_return_data_recording: bool,
+        recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         account_overrides: Option<&AccountOverrides>,
         builtin_programs: impl Iterator<Item = &'a Pubkey>,
@@ -265,9 +283,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         loaded_transaction,
                         compute_budget,
                         nonce.as_ref().map(DurableNonceFee::from),
-                        enable_cpi_recording,
-                        enable_log_recording,
-                        enable_return_data_recording,
+                        recording_config,
                         timings,
                         error_counters,
                         log_messages_bytes_limit,
@@ -362,314 +378,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         result
     }
 
-    fn replenish_program_cache<CB: TransactionProcessingCallback>(
-        &self,
-        callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
-        limit_to_load_programs: bool,
-    ) -> LoadedProgramsForTxBatch {
-        let mut missing_programs: Vec<(Pubkey, (LoadedProgramMatchCriteria, u64))> =
-            if self.check_program_modification_slot {
-                program_accounts_map
-                    .iter()
-                    .map(|(pubkey, (_, count))| {
-                        (
-                            *pubkey,
-                            (
-                                self.program_modification_slot(callback, pubkey)
-                                    .map_or(LoadedProgramMatchCriteria::Tombstone, |slot| {
-                                        LoadedProgramMatchCriteria::DeployedOnOrAfterSlot(slot)
-                                    }),
-                                *count,
-                            ),
-                        )
-                    })
-                    .collect()
-            } else {
-                program_accounts_map
-                    .iter()
-                    .map(|(pubkey, (_, count))| {
-                        (*pubkey, (LoadedProgramMatchCriteria::NoCriteria, *count))
-                    })
-                    .collect()
-            };
-
-        let mut loaded_programs_for_txs = None;
-        let mut program_to_store = None;
-        loop {
-            let (program_to_load, task_cookie, task_waiter) = {
-                // Lock the global cache.
-                let mut loaded_programs_cache = self.loaded_programs_cache.write().unwrap();
-                // Initialize our local cache.
-                let is_first_round = loaded_programs_for_txs.is_none();
-                if is_first_round {
-                    loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new(
-                        self.slot,
-                        loaded_programs_cache
-                            .get_environments_for_epoch(self.epoch)
-                            .clone(),
-                    ));
-                }
-                // Submit our last completed loading task.
-                if let Some((key, program)) = program_to_store.take() {
-                    if loaded_programs_cache
-                        .finish_cooperative_loading_task(self.slot, key, program)
-                        && limit_to_load_programs
-                    {
-                        let mut ret = LoadedProgramsForTxBatch::new(
-                            self.slot,
-                            loaded_programs_cache
-                                .get_environments_for_epoch(self.epoch)
-                                .clone(),
-                        );
-                        ret.hit_max_limit = true;
-                        return ret;
-                    }
-                }
-                // Figure out which program needs to be loaded next.
-                let program_to_load = loaded_programs_cache.extract(
-                    &mut missing_programs,
-                    loaded_programs_for_txs.as_mut().unwrap(),
-                    is_first_round,
-                );
-                let task_waiter = Arc::clone(&loaded_programs_cache.loading_task_waiter);
-                (program_to_load, task_waiter.cookie(), task_waiter)
-                // Unlock the global cache again.
-            };
-
-            if let Some((key, count)) = program_to_load {
-                // Load, verify and compile one program.
-                let program = self.load_program(callback, &key, false, self.epoch);
-                program.tx_usage_counter.store(count, Ordering::Relaxed);
-                program_to_store = Some((key, program));
-            } else if missing_programs.is_empty() {
-                break;
-            } else {
-                // Sleep until the next finish_cooperative_loading_task() call.
-                // Once a task completes we'll wake up and try to load the
-                // missing programs inside the tx batch again.
-                let _new_cookie = task_waiter.wait(task_cookie);
-            }
-        }
-
-        loaded_programs_for_txs.unwrap()
-    }
-
-    /// Execute a transaction using the provided loaded accounts and update
-    /// the executors cache if the transaction was successful.
-    #[allow(clippy::too_many_arguments)]
-    fn execute_loaded_transaction<CB: TransactionProcessingCallback>(
-        &self,
-        callback: &CB,
-        tx: &SanitizedTransaction,
-        loaded_transaction: &mut LoadedTransaction,
-        compute_budget: ComputeBudget,
-        durable_nonce_fee: Option<DurableNonceFee>,
-        enable_cpi_recording: bool,
-        enable_log_recording: bool,
-        enable_return_data_recording: bool,
-        timings: &mut ExecuteTimings,
-        error_counters: &mut TransactionErrorMetrics,
-        log_messages_bytes_limit: Option<usize>,
-        programs_loaded_for_tx_batch: &LoadedProgramsForTxBatch,
-    ) -> TransactionExecutionResult {
-        let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
-
-        fn transaction_accounts_lamports_sum(
-            accounts: &[(Pubkey, AccountSharedData)],
-            message: &SanitizedMessage,
-        ) -> Option<u128> {
-            let mut lamports_sum = 0u128;
-            for i in 0..message.account_keys().len() {
-                let (_, account) = accounts.get(i)?;
-                lamports_sum = lamports_sum.checked_add(u128::from(account.lamports()))?;
-            }
-            Some(lamports_sum)
-        }
-
-        let lamports_before_tx =
-            transaction_accounts_lamports_sum(&transaction_accounts, tx.message()).unwrap_or(0);
-
-        let mut transaction_context = TransactionContext::new(
-            transaction_accounts,
-            callback.get_rent_collector().rent.clone(),
-            compute_budget.max_invoke_stack_height,
-            compute_budget.max_instruction_trace_length,
-        );
-        #[cfg(debug_assertions)]
-        transaction_context.set_signature(tx.signature());
-
-        let pre_account_state_info = TransactionAccountStateInfo::new(
-            &callback.get_rent_collector().rent,
-            &transaction_context,
-            tx.message(),
-        );
-
-        let log_collector = if enable_log_recording {
-            match log_messages_bytes_limit {
-                None => Some(LogCollector::new_ref()),
-                Some(log_messages_bytes_limit) => Some(LogCollector::new_ref_with_limit(Some(
-                    log_messages_bytes_limit,
-                ))),
-            }
-        } else {
-            None
-        };
-
-        let (blockhash, lamports_per_signature) =
-            callback.get_last_blockhash_and_lamports_per_signature();
-
-        let mut executed_units = 0u64;
-        let mut programs_modified_by_tx = LoadedProgramsForTxBatch::new(
-            self.slot,
-            programs_loaded_for_tx_batch.environments.clone(),
-        );
-        let mut process_message_time = Measure::start("process_message_time");
-        let process_result = MessageProcessor::process_message(
-            tx.message(),
-            &loaded_transaction.program_indices,
-            &mut transaction_context,
-            log_collector.clone(),
-            programs_loaded_for_tx_batch,
-            &mut programs_modified_by_tx,
-            callback.get_feature_set(),
-            compute_budget,
-            timings,
-            &self.sysvar_cache.read().unwrap(),
-            blockhash,
-            lamports_per_signature,
-            &mut executed_units,
-        );
-        process_message_time.stop();
-
-        saturating_add_assign!(
-            timings.execute_accessories.process_message_us,
-            process_message_time.as_us()
-        );
-
-        let mut status = process_result
-            .and_then(|info| {
-                let post_account_state_info = TransactionAccountStateInfo::new(
-                    &callback.get_rent_collector().rent,
-                    &transaction_context,
-                    tx.message(),
-                );
-                TransactionAccountStateInfo::verify_changes(
-                    &pre_account_state_info,
-                    &post_account_state_info,
-                    &transaction_context,
-                )
-                .map(|_| info)
-            })
-            .map_err(|err| {
-                match err {
-                    TransactionError::InvalidRentPayingAccount
-                    | TransactionError::InsufficientFundsForRent { .. } => {
-                        error_counters.invalid_rent_paying_account += 1;
-                    }
-                    TransactionError::InvalidAccountIndex => {
-                        error_counters.invalid_account_index += 1;
-                    }
-                    _ => {
-                        error_counters.instruction_error += 1;
-                    }
-                }
-                err
-            });
-
-        let log_messages: Option<TransactionLogMessages> =
-            log_collector.and_then(|log_collector| {
-                Rc::try_unwrap(log_collector)
-                    .map(|log_collector| log_collector.into_inner().into_messages())
-                    .ok()
-            });
-
-        let inner_instructions = if enable_cpi_recording {
-            Some(Self::inner_instructions_list_from_instruction_trace(
-                &transaction_context,
-            ))
-        } else {
-            None
-        };
-
-        let ExecutionRecord {
-            accounts,
-            return_data,
-            touched_account_count,
-            accounts_resize_delta: accounts_data_len_delta,
-        } = transaction_context.into();
-
-        if status.is_ok()
-            && transaction_accounts_lamports_sum(&accounts, tx.message())
-                .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
-                .is_none()
-        {
-            status = Err(TransactionError::UnbalancedTransaction);
-        }
-        let status = status.map(|_| ());
-
-        loaded_transaction.accounts = accounts;
-        saturating_add_assign!(
-            timings.details.total_account_count,
-            loaded_transaction.accounts.len() as u64
-        );
-        saturating_add_assign!(timings.details.changed_account_count, touched_account_count);
-
-        let return_data = if enable_return_data_recording && !return_data.data.is_empty() {
-            Some(return_data)
-        } else {
-            None
-        };
-
-        TransactionExecutionResult::Executed {
-            details: TransactionExecutionDetails {
-                status,
-                log_messages,
-                inner_instructions,
-                durable_nonce_fee,
-                return_data,
-                executed_units,
-                accounts_data_len_delta,
-            },
-            programs_modified_by_tx: Box::new(programs_modified_by_tx),
-        }
-    }
-
-    fn program_modification_slot<CB: TransactionProcessingCallback>(
-        &self,
-        callbacks: &CB,
-        pubkey: &Pubkey,
-    ) -> transaction::Result<Slot> {
-        let program = callbacks
-            .get_account_shared_data(pubkey)
-            .ok_or(TransactionError::ProgramAccountNotFound)?;
-        if bpf_loader_upgradeable::check_id(program.owner()) {
-            if let Ok(UpgradeableLoaderState::Program {
-                programdata_address,
-            }) = program.state()
-            {
-                let programdata = callbacks
-                    .get_account_shared_data(&programdata_address)
-                    .ok_or(TransactionError::ProgramAccountNotFound)?;
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot,
-                    upgrade_authority_address: _,
-                }) = programdata.state()
-                {
-                    return Ok(slot);
-                }
-            }
-            Err(TransactionError::ProgramAccountNotFound)
-        } else if loader_v4::check_id(program.owner()) {
-            let state = solana_loader_v4_program::get_state(program.data())
-                .map_err(|_| TransactionError::ProgramAccountNotFound)?;
-            Ok(state.slot)
-        } else {
-            Ok(0)
-        }
-    }
-
-    pub fn load_program<CB: TransactionProcessingCallback>(
+    /// Load program with a specific pubkey from loaded programs
+    /// cache, and update the program's access slot as a side-effect.
+    pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
         pubkey: &Pubkey,
@@ -771,6 +482,312 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
         loaded_program.update_access_slot(self.slot);
         Arc::new(loaded_program)
+    }
+
+    fn replenish_program_cache<CB: TransactionProcessingCallback>(
+        &self,
+        callback: &CB,
+        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
+        limit_to_load_programs: bool,
+    ) -> LoadedProgramsForTxBatch {
+        let mut missing_programs: Vec<(Pubkey, (LoadedProgramMatchCriteria, u64))> =
+            if self.check_program_modification_slot {
+                program_accounts_map
+                    .iter()
+                    .map(|(pubkey, (_, count))| {
+                        (
+                            *pubkey,
+                            (
+                                self.program_modification_slot(callback, pubkey)
+                                    .map_or(LoadedProgramMatchCriteria::Tombstone, |slot| {
+                                        LoadedProgramMatchCriteria::DeployedOnOrAfterSlot(slot)
+                                    }),
+                                *count,
+                            ),
+                        )
+                    })
+                    .collect()
+            } else {
+                program_accounts_map
+                    .iter()
+                    .map(|(pubkey, (_, count))| {
+                        (*pubkey, (LoadedProgramMatchCriteria::NoCriteria, *count))
+                    })
+                    .collect()
+            };
+
+        let mut loaded_programs_for_txs = None;
+        let mut program_to_store = None;
+        loop {
+            let (program_to_load, task_cookie, task_waiter) = {
+                // Lock the global cache.
+                let mut loaded_programs_cache = self.loaded_programs_cache.write().unwrap();
+                // Initialize our local cache.
+                let is_first_round = loaded_programs_for_txs.is_none();
+                if is_first_round {
+                    loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new(
+                        self.slot,
+                        loaded_programs_cache
+                            .get_environments_for_epoch(self.epoch)
+                            .clone(),
+                    ));
+                }
+                // Submit our last completed loading task.
+                if let Some((key, program)) = program_to_store.take() {
+                    if loaded_programs_cache
+                        .finish_cooperative_loading_task(self.slot, key, program)
+                        && limit_to_load_programs
+                    {
+                        let mut ret = LoadedProgramsForTxBatch::new(
+                            self.slot,
+                            loaded_programs_cache
+                                .get_environments_for_epoch(self.epoch)
+                                .clone(),
+                        );
+                        ret.hit_max_limit = true;
+                        return ret;
+                    }
+                }
+                // Figure out which program needs to be loaded next.
+                let program_to_load = loaded_programs_cache.extract(
+                    &mut missing_programs,
+                    loaded_programs_for_txs.as_mut().unwrap(),
+                    is_first_round,
+                );
+                let task_waiter = Arc::clone(&loaded_programs_cache.loading_task_waiter);
+                (program_to_load, task_waiter.cookie(), task_waiter)
+                // Unlock the global cache again.
+            };
+
+            if let Some((key, count)) = program_to_load {
+                // Load, verify and compile one program.
+                let program = self.load_program_with_pubkey(callback, &key, false, self.epoch);
+                program.tx_usage_counter.store(count, Ordering::Relaxed);
+                program_to_store = Some((key, program));
+            } else if missing_programs.is_empty() {
+                break;
+            } else {
+                // Sleep until the next finish_cooperative_loading_task() call.
+                // Once a task completes we'll wake up and try to load the
+                // missing programs inside the tx batch again.
+                let _new_cookie = task_waiter.wait(task_cookie);
+            }
+        }
+
+        loaded_programs_for_txs.unwrap()
+    }
+
+    /// Execute a transaction using the provided loaded accounts and update
+    /// the executors cache if the transaction was successful.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_loaded_transaction<CB: TransactionProcessingCallback>(
+        &self,
+        callback: &CB,
+        tx: &SanitizedTransaction,
+        loaded_transaction: &mut LoadedTransaction,
+        compute_budget: ComputeBudget,
+        durable_nonce_fee: Option<DurableNonceFee>,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        error_counters: &mut TransactionErrorMetrics,
+        log_messages_bytes_limit: Option<usize>,
+        programs_loaded_for_tx_batch: &LoadedProgramsForTxBatch,
+    ) -> TransactionExecutionResult {
+        let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
+
+        fn transaction_accounts_lamports_sum(
+            accounts: &[(Pubkey, AccountSharedData)],
+            message: &SanitizedMessage,
+        ) -> Option<u128> {
+            let mut lamports_sum = 0u128;
+            for i in 0..message.account_keys().len() {
+                let (_, account) = accounts.get(i)?;
+                lamports_sum = lamports_sum.checked_add(u128::from(account.lamports()))?;
+            }
+            Some(lamports_sum)
+        }
+
+        let lamports_before_tx =
+            transaction_accounts_lamports_sum(&transaction_accounts, tx.message()).unwrap_or(0);
+
+        let mut transaction_context = TransactionContext::new(
+            transaction_accounts,
+            callback.get_rent_collector().rent.clone(),
+            compute_budget.max_invoke_stack_height,
+            compute_budget.max_instruction_trace_length,
+        );
+        #[cfg(debug_assertions)]
+        transaction_context.set_signature(tx.signature());
+
+        let pre_account_state_info = TransactionAccountStateInfo::new(
+            &callback.get_rent_collector().rent,
+            &transaction_context,
+            tx.message(),
+        );
+
+        let log_collector = if recording_config.enable_log_recording {
+            match log_messages_bytes_limit {
+                None => Some(LogCollector::new_ref()),
+                Some(log_messages_bytes_limit) => Some(LogCollector::new_ref_with_limit(Some(
+                    log_messages_bytes_limit,
+                ))),
+            }
+        } else {
+            None
+        };
+
+        let (blockhash, lamports_per_signature) =
+            callback.get_last_blockhash_and_lamports_per_signature();
+
+        let mut executed_units = 0u64;
+        let mut programs_modified_by_tx = LoadedProgramsForTxBatch::new(
+            self.slot,
+            programs_loaded_for_tx_batch.environments.clone(),
+        );
+        let mut process_message_time = Measure::start("process_message_time");
+        let process_result = MessageProcessor::process_message(
+            tx.message(),
+            &loaded_transaction.program_indices,
+            &mut transaction_context,
+            log_collector.clone(),
+            programs_loaded_for_tx_batch,
+            &mut programs_modified_by_tx,
+            callback.get_feature_set(),
+            compute_budget,
+            timings,
+            &self.sysvar_cache.read().unwrap(),
+            blockhash,
+            lamports_per_signature,
+            &mut executed_units,
+        );
+        process_message_time.stop();
+
+        saturating_add_assign!(
+            timings.execute_accessories.process_message_us,
+            process_message_time.as_us()
+        );
+
+        let mut status = process_result
+            .and_then(|info| {
+                let post_account_state_info = TransactionAccountStateInfo::new(
+                    &callback.get_rent_collector().rent,
+                    &transaction_context,
+                    tx.message(),
+                );
+                TransactionAccountStateInfo::verify_changes(
+                    &pre_account_state_info,
+                    &post_account_state_info,
+                    &transaction_context,
+                )
+                .map(|_| info)
+            })
+            .map_err(|err| {
+                match err {
+                    TransactionError::InvalidRentPayingAccount
+                    | TransactionError::InsufficientFundsForRent { .. } => {
+                        error_counters.invalid_rent_paying_account += 1;
+                    }
+                    TransactionError::InvalidAccountIndex => {
+                        error_counters.invalid_account_index += 1;
+                    }
+                    _ => {
+                        error_counters.instruction_error += 1;
+                    }
+                }
+                err
+            });
+
+        let log_messages: Option<TransactionLogMessages> =
+            log_collector.and_then(|log_collector| {
+                Rc::try_unwrap(log_collector)
+                    .map(|log_collector| log_collector.into_inner().into_messages())
+                    .ok()
+            });
+
+        let inner_instructions = if recording_config.enable_cpi_recording {
+            Some(Self::inner_instructions_list_from_instruction_trace(
+                &transaction_context,
+            ))
+        } else {
+            None
+        };
+
+        let ExecutionRecord {
+            accounts,
+            return_data,
+            touched_account_count,
+            accounts_resize_delta: accounts_data_len_delta,
+        } = transaction_context.into();
+
+        if status.is_ok()
+            && transaction_accounts_lamports_sum(&accounts, tx.message())
+                .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
+                .is_none()
+        {
+            status = Err(TransactionError::UnbalancedTransaction);
+        }
+        let status = status.map(|_| ());
+
+        loaded_transaction.accounts = accounts;
+        saturating_add_assign!(
+            timings.details.total_account_count,
+            loaded_transaction.accounts.len() as u64
+        );
+        saturating_add_assign!(timings.details.changed_account_count, touched_account_count);
+
+        let return_data =
+            if recording_config.enable_return_data_recording && !return_data.data.is_empty() {
+                Some(return_data)
+            } else {
+                None
+            };
+
+        TransactionExecutionResult::Executed {
+            details: TransactionExecutionDetails {
+                status,
+                log_messages,
+                inner_instructions,
+                durable_nonce_fee,
+                return_data,
+                executed_units,
+                accounts_data_len_delta,
+            },
+            programs_modified_by_tx: Box::new(programs_modified_by_tx),
+        }
+    }
+
+    fn program_modification_slot<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        pubkey: &Pubkey,
+    ) -> transaction::Result<Slot> {
+        let program = callbacks
+            .get_account_shared_data(pubkey)
+            .ok_or(TransactionError::ProgramAccountNotFound)?;
+        if bpf_loader_upgradeable::check_id(program.owner()) {
+            if let Ok(UpgradeableLoaderState::Program {
+                programdata_address,
+            }) = program.state()
+            {
+                let programdata = callbacks
+                    .get_account_shared_data(&programdata_address)
+                    .ok_or(TransactionError::ProgramAccountNotFound)?;
+                if let Ok(UpgradeableLoaderState::ProgramData {
+                    slot,
+                    upgrade_authority_address: _,
+                }) = programdata.state()
+                {
+                    return Ok(slot);
+                }
+            }
+            Err(TransactionError::ProgramAccountNotFound)
+        } else if loader_v4::check_id(program.owner()) {
+            let state = solana_loader_v4_program::get_state(program.data())
+                .map_err(|_| TransactionError::ProgramAccountNotFound)?;
+            Ok(state.slot)
+        } else {
+            Ok(0)
+        }
     }
 
     fn load_program_from_bytes(
@@ -921,8 +938,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 mod tests {
     use {
         super::*,
-        solana_program_runtime::loaded_programs::BlockRelation,
-        solana_sdk::{sysvar::rent::Rent, transaction_context::TransactionContext},
+        solana_program_runtime::{
+            loaded_programs::BlockRelation, solana_rbpf::program::BuiltinProgram,
+        },
+        solana_sdk::{
+            account::WritableAccount, bpf_loader, sysvar::rent::Rent,
+            transaction_context::TransactionContext,
+        },
+        std::{
+            env,
+            fs::{self, File},
+            io::Read,
+        },
     };
 
     struct TestForkGraph {}
@@ -930,6 +957,43 @@ mod tests {
     impl ForkGraph for TestForkGraph {
         fn relationship(&self, _a: Slot, _b: Slot) -> BlockRelation {
             BlockRelation::Unknown
+        }
+    }
+
+    #[derive(Default)]
+    pub struct MockBankCallback {
+        rent_collector: RentCollector,
+        feature_set: Arc<FeatureSet>,
+        pub account_shared_data: HashMap<Pubkey, AccountSharedData>,
+    }
+
+    impl TransactionProcessingCallback for MockBankCallback {
+        fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
+            if let Some(data) = self.account_shared_data.get(account) {
+                if data.lamports() == 0 {
+                    None
+                } else {
+                    owners.iter().position(|entry| data.owner() == entry)
+                }
+            } else {
+                None
+            }
+        }
+
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+            self.account_shared_data.get(pubkey).cloned()
+        }
+
+        fn get_last_blockhash_and_lamports_per_signature(&self) -> (Hash, u64) {
+            todo!()
+        }
+
+        fn get_rent_collector(&self) -> &RentCollector {
+            &self.rent_collector
+        }
+
+        fn get_feature_set(&self) -> Arc<FeatureSet> {
+            self.feature_set.clone()
         }
     }
 
@@ -979,5 +1043,482 @@ mod tests {
                 ]
             ]
         );
+    }
+
+    #[test]
+    fn test_load_program_accounts_account_not_found() {
+        let mut mock_bank = MockBankCallback::default();
+        let key = Pubkey::new_unique();
+        let environment = ProgramRuntimeEnvironments::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+
+        assert!(matches!(result, ProgramAccountLoadResult::AccountNotFound));
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(bpf_loader_upgradeable::id());
+        let state = UpgradeableLoaderState::Program {
+            programdata_address: Pubkey::new_unique(),
+        };
+        account_data.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        assert!(matches!(result, ProgramAccountLoadResult::AccountNotFound));
+
+        account_data.set_data(Vec::new());
+        mock_bank.account_shared_data.insert(key, account_data);
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+
+        assert!(matches!(
+            result,
+            ProgramAccountLoadResult::InvalidAccountData(_)
+        ));
+    }
+
+    #[test]
+    fn test_load_program_accounts_loader_v4() {
+        let key = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(loader_v4::id());
+        let environment = ProgramRuntimeEnvironments::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        assert!(matches!(
+            result,
+            ProgramAccountLoadResult::InvalidAccountData(_)
+        ));
+
+        account_data.set_data(vec![0; 64]);
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        assert!(matches!(
+            result,
+            ProgramAccountLoadResult::InvalidAccountData(_)
+        ));
+
+        let loader_data = LoaderV4State {
+            slot: 25,
+            authority_address: Pubkey::new_unique(),
+            status: LoaderV4Status::Deployed,
+        };
+        let encoded = unsafe {
+            std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
+                &loader_data,
+            )
+        };
+        account_data.set_data(encoded.to_vec());
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+
+        match result {
+            ProgramAccountLoadResult::ProgramOfLoaderV4(data, slot) => {
+                assert_eq!(data, account_data);
+                assert_eq!(slot, 25);
+            }
+
+            _ => panic!("Invalid result"),
+        }
+    }
+
+    #[test]
+    fn test_load_program_accounts_loader_v1_or_v2() {
+        let key = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(bpf_loader::id());
+        let environment = ProgramRuntimeEnvironments::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        match result {
+            ProgramAccountLoadResult::ProgramOfLoaderV1orV2(data) => {
+                assert_eq!(data, account_data);
+            }
+            _ => panic!("Invalid result"),
+        }
+    }
+
+    #[test]
+    fn test_load_program_accounts_success() {
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let environment = ProgramRuntimeEnvironments::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(bpf_loader_upgradeable::id());
+
+        let state = UpgradeableLoaderState::Program {
+            programdata_address: key2,
+        };
+        account_data.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .insert(key1, account_data.clone());
+
+        let state = UpgradeableLoaderState::ProgramData {
+            slot: 25,
+            upgrade_authority_address: None,
+        };
+        let mut account_data2 = AccountSharedData::default();
+        account_data2.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .insert(key2, account_data2.clone());
+
+        let result = batch_processor.load_program_accounts(&mock_bank, &key1, &environment);
+
+        match result {
+            ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, slot) => {
+                assert_eq!(data1, account_data);
+                assert_eq!(data2, account_data2);
+                assert_eq!(slot, 25);
+            }
+
+            _ => panic!("Invalid result"),
+        }
+    }
+
+    #[test]
+    fn test_load_program_from_bytes() {
+        let mut dir = env::current_dir().unwrap();
+        dir.push("tests");
+        dir.push("test_program.so");
+        let mut file = File::open(dir.clone()).expect("file not found");
+        let metadata = fs::metadata(dir).expect("Unable to read metadata");
+        let mut buffer = vec![0; metadata.len() as usize];
+        file.read_exact(&mut buffer).expect("Buffer overflow");
+
+        let mut metrics = LoadProgramMetrics::default();
+        let loader = bpf_loader_upgradeable::id();
+        let size = metadata.len() as usize;
+        let slot = 2;
+        let environment = ProgramRuntimeEnvironment::new(BuiltinProgram::new_mock());
+
+        let result = TransactionBatchProcessor::<TestForkGraph>::load_program_from_bytes(
+            &mut metrics,
+            &buffer,
+            &loader,
+            size,
+            slot,
+            environment.clone(),
+            false,
+        );
+
+        assert!(result.is_ok());
+
+        let result = TransactionBatchProcessor::<TestForkGraph>::load_program_from_bytes(
+            &mut metrics,
+            &buffer,
+            &loader,
+            size,
+            slot,
+            environment,
+            true,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_program_not_found() {
+        let mock_bank = MockBankCallback::default();
+        let key = Pubkey::new_unique();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 50);
+
+        let loaded_program = LoadedProgram::new_tombstone(0, LoadedProgramType::Closed);
+        assert_eq!(result, Arc::new(loaded_program));
+    }
+
+    #[test]
+    fn test_load_program_invalid_account_data() {
+        let key = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(loader_v4::id());
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 20);
+
+        let loaded_program = LoadedProgram::new_tombstone(
+            0,
+            LoadedProgramType::FailedVerification(
+                batch_processor
+                    .loaded_programs_cache
+                    .read()
+                    .unwrap()
+                    .get_environments_for_epoch(20)
+                    .clone()
+                    .program_runtime_v1,
+            ),
+        );
+        assert_eq!(result, Arc::new(loaded_program));
+    }
+
+    #[test]
+    fn test_load_program_program_loader_v1_or_v2() {
+        let key = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(bpf_loader::id());
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        // This should return an error
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 20);
+        let loaded_program = LoadedProgram::new_tombstone(
+            0,
+            LoadedProgramType::FailedVerification(
+                batch_processor
+                    .loaded_programs_cache
+                    .read()
+                    .unwrap()
+                    .get_environments_for_epoch(20)
+                    .clone()
+                    .program_runtime_v1,
+            ),
+        );
+        assert_eq!(result, Arc::new(loaded_program));
+
+        let mut dir = env::current_dir().unwrap();
+        dir.push("tests");
+        dir.push("test_program.so");
+        let mut file = File::open(dir.clone()).expect("file not found");
+        let metadata = fs::metadata(dir).expect("Unable to read metadata");
+        let mut buffer = vec![0; metadata.len() as usize];
+        file.read_exact(&mut buffer).expect("buffer overflow");
+        account_data.set_data(buffer);
+
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 20);
+
+        let environments = ProgramRuntimeEnvironments::default();
+        let expected = TransactionBatchProcessor::<TestForkGraph>::load_program_from_bytes(
+            &mut LoadProgramMetrics::default(),
+            account_data.data(),
+            account_data.owner(),
+            account_data.data().len(),
+            0,
+            environments.program_runtime_v1.clone(),
+            false,
+        );
+
+        assert_eq!(result, Arc::new(expected.unwrap()));
+    }
+
+    #[test]
+    fn test_load_program_program_loader_v3() {
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(bpf_loader_upgradeable::id());
+
+        let state = UpgradeableLoaderState::Program {
+            programdata_address: key2,
+        };
+        account_data.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .insert(key1, account_data.clone());
+
+        let state = UpgradeableLoaderState::ProgramData {
+            slot: 0,
+            upgrade_authority_address: None,
+        };
+        let mut account_data2 = AccountSharedData::default();
+        account_data2.set_data(bincode::serialize(&state).unwrap());
+        mock_bank
+            .account_shared_data
+            .insert(key2, account_data2.clone());
+
+        // This should return an error
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key1, false, 0);
+        let loaded_program = LoadedProgram::new_tombstone(
+            0,
+            LoadedProgramType::FailedVerification(
+                batch_processor
+                    .loaded_programs_cache
+                    .read()
+                    .unwrap()
+                    .get_environments_for_epoch(0)
+                    .clone()
+                    .program_runtime_v1,
+            ),
+        );
+        assert_eq!(result, Arc::new(loaded_program));
+
+        let mut dir = env::current_dir().unwrap();
+        dir.push("tests");
+        dir.push("test_program.so");
+        let mut file = File::open(dir.clone()).expect("file not found");
+        let metadata = fs::metadata(dir).expect("Unable to read metadata");
+        let mut buffer = vec![0; metadata.len() as usize];
+        file.read_exact(&mut buffer).expect("buffer overflow");
+        let mut header = bincode::serialize(&state).unwrap();
+        let mut complement = vec![
+            0;
+            std::cmp::max(
+                0,
+                UpgradeableLoaderState::size_of_programdata_metadata() - header.len()
+            )
+        ];
+        header.append(&mut complement);
+        header.append(&mut buffer);
+        account_data.set_data(header);
+
+        mock_bank
+            .account_shared_data
+            .insert(key2, account_data.clone());
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key1, false, 20);
+
+        let data = account_data.data();
+        account_data
+            .set_data(data[UpgradeableLoaderState::size_of_programdata_metadata()..].to_vec());
+
+        let environments = ProgramRuntimeEnvironments::default();
+        let expected = TransactionBatchProcessor::<TestForkGraph>::load_program_from_bytes(
+            &mut LoadProgramMetrics::default(),
+            account_data.data(),
+            account_data.owner(),
+            account_data.data().len(),
+            0,
+            environments.program_runtime_v1.clone(),
+            false,
+        );
+        assert_eq!(result, Arc::new(expected.unwrap()));
+    }
+
+    #[test]
+    fn test_load_program_of_loader_v4() {
+        let key = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(loader_v4::id());
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+
+        let loader_data = LoaderV4State {
+            slot: 0,
+            authority_address: Pubkey::new_unique(),
+            status: LoaderV4Status::Deployed,
+        };
+        let encoded = unsafe {
+            std::mem::transmute::<&LoaderV4State, &[u8; LoaderV4State::program_data_offset()]>(
+                &loader_data,
+            )
+        };
+        account_data.set_data(encoded.to_vec());
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 0);
+        let loaded_program = LoadedProgram::new_tombstone(
+            0,
+            LoadedProgramType::FailedVerification(
+                batch_processor
+                    .loaded_programs_cache
+                    .read()
+                    .unwrap()
+                    .get_environments_for_epoch(0)
+                    .clone()
+                    .program_runtime_v1,
+            ),
+        );
+        assert_eq!(result, Arc::new(loaded_program));
+
+        let mut header = account_data.data().to_vec();
+        let mut complement =
+            vec![0; std::cmp::max(0, LoaderV4State::program_data_offset() - header.len())];
+        header.append(&mut complement);
+
+        let mut dir = env::current_dir().unwrap();
+        dir.push("tests");
+        dir.push("test_program.so");
+        let mut file = File::open(dir.clone()).expect("file not found");
+        let metadata = fs::metadata(dir).expect("Unable to read metadata");
+        let mut buffer = vec![0; metadata.len() as usize];
+        file.read_exact(&mut buffer).expect("buffer overflow");
+        header.append(&mut buffer);
+
+        account_data.set_data(header);
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 20);
+
+        let data = account_data.data()[LoaderV4State::program_data_offset()..].to_vec();
+        account_data.set_data(data);
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let environments = ProgramRuntimeEnvironments::default();
+        let expected = TransactionBatchProcessor::<TestForkGraph>::load_program_from_bytes(
+            &mut LoadProgramMetrics::default(),
+            account_data.data(),
+            account_data.owner(),
+            account_data.data().len(),
+            0,
+            environments.program_runtime_v1.clone(),
+            false,
+        );
+        assert_eq!(result, Arc::new(expected.unwrap()));
+    }
+
+    #[test]
+    fn test_load_program_effective_slot() {
+        let key = Pubkey::new_unique();
+        let mut mock_bank = MockBankCallback::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(loader_v4::id());
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+
+        batch_processor
+            .loaded_programs_cache
+            .write()
+            .unwrap()
+            .upcoming_environments = Some(ProgramRuntimeEnvironments::default());
+        mock_bank
+            .account_shared_data
+            .insert(key, account_data.clone());
+
+        let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 20);
+
+        let slot = batch_processor.epoch_schedule.get_first_slot_in_epoch(20);
+        assert_eq!(result.effective_slot, slot);
     }
 }

@@ -27,7 +27,10 @@ use {
     },
     solana_measure::{measure, measure::Measure},
     solana_metrics::datapoint_error,
-    solana_program_runtime::timings::{ExecuteTimingType, ExecuteTimings, ThreadExecuteTimings},
+    solana_program_runtime::{
+        runtime_config::RuntimeConfig,
+        timings::{ExecuteTimingType, ExecuteTimings, ThreadExecuteTimings},
+    },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -55,7 +58,7 @@ use {
         },
     },
     solana_svm::{
-        runtime_config::RuntimeConfig,
+        transaction_processor::ExecutionRecordingConfig,
         transaction_results::{
             TransactionExecutionDetails, TransactionExecutionResult, TransactionResults,
         },
@@ -163,9 +166,7 @@ pub fn execute_batch(
         batch,
         MAX_PROCESSING_AGE,
         transaction_status_sender.is_some(),
-        transaction_status_sender.is_some(),
-        transaction_status_sender.is_some(),
-        transaction_status_sender.is_some(),
+        ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
     );
@@ -1972,6 +1973,7 @@ pub mod tests {
             system_transaction,
             transaction::{Transaction, TransactionError},
         },
+        solana_svm::transaction_processor::ExecutionRecordingConfig,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
             self,
@@ -3962,9 +3964,7 @@ pub mod tests {
             &batch,
             MAX_PROCESSING_AGE,
             false,
-            false,
-            false,
-            false,
+            ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
         );

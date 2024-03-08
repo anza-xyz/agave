@@ -99,6 +99,7 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{LoadedProgram, LoadedProgramType, LoadedPrograms},
+        runtime_config::RuntimeConfig,
         timings::{ExecuteTimingType, ExecuteTimings},
     },
     solana_sdk::{
@@ -163,7 +164,6 @@ use {
     solana_svm::{
         account_loader::{TransactionCheckResult, TransactionLoadResult},
         account_overrides::AccountOverrides,
-        runtime_config::RuntimeConfig,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processor::{
             TransactionBatchProcessor, TransactionLogMessages, TransactionProcessingCallback,
@@ -269,6 +269,7 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
+use solana_svm::transaction_processor::ExecutionRecordingConfig;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -1483,7 +1484,10 @@ impl Bank {
         let epoch = self.epoch();
         let slot = self.slot();
         let (thread_pool, thread_pool_time) = measure!(
-            ThreadPoolBuilder::new().build().unwrap(),
+            ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solBnkNewEpch{i:02}"))
+                .build()
+                .expect("new rayon threadpool"),
             "thread_pool_creation",
         );
 
@@ -4294,9 +4298,11 @@ impl Bank {
             // for processing. During forwarding, the transaction could expire if the
             // delay is not accounted for.
             MAX_PROCESSING_AGE - MAX_TRANSACTION_FORWARDING_DELAY,
-            enable_cpi_recording,
-            true,
-            true,
+            ExecutionRecordingConfig {
+                enable_cpi_recording,
+                enable_log_recording: true,
+                enable_return_data_recording: true,
+            },
             &mut timings,
             Some(&account_overrides),
             None,
@@ -4376,13 +4382,11 @@ impl Bank {
         account_overrides
     }
 
-    pub fn unlock_accounts(&self, batch: &mut TransactionBatch) {
-        if batch.needs_unlock() {
-            batch.set_needs_unlock(false);
-            self.rc
-                .accounts
-                .unlock_accounts(batch.sanitized_transactions().iter(), batch.lock_results())
-        }
+    pub fn unlock_accounts<'a>(
+        &self,
+        txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)>,
+    ) {
+        self.rc.accounts.unlock_accounts(txs_and_results)
     }
 
     pub fn remove_unrooted_slots(&self, slots: &[(Slot, BankId)]) {
@@ -4547,9 +4551,7 @@ impl Bank {
         &self,
         batch: &TransactionBatch,
         max_age: usize,
-        enable_cpi_recording: bool,
-        enable_log_recording: bool,
-        enable_return_data_recording: bool,
+        recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         account_overrides: Option<&AccountOverrides>,
         log_messages_bytes_limit: Option<usize>,
@@ -4613,9 +4615,7 @@ impl Bank {
                 sanitized_txs,
                 &mut check_results,
                 &mut error_counters,
-                enable_cpi_recording,
-                enable_log_recording,
-                enable_return_data_recording,
+                recording_config,
                 timings,
                 account_overrides,
                 self.builtin_programs.iter(),
@@ -5641,9 +5641,7 @@ impl Bank {
         batch: &TransactionBatch,
         max_age: usize,
         collect_balances: bool,
-        enable_cpi_recording: bool,
-        enable_log_recording: bool,
-        enable_return_data_recording: bool,
+        recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
     ) -> (TransactionResults, TransactionBalancesSet) {
@@ -5664,9 +5662,7 @@ impl Bank {
         } = self.load_and_execute_transactions(
             batch,
             max_age,
-            enable_cpi_recording,
-            enable_log_recording,
-            enable_return_data_recording,
+            recording_config,
             timings,
             None,
             log_messages_bytes_limit,
@@ -5734,9 +5730,11 @@ impl Bank {
             &batch,
             MAX_PROCESSING_AGE,
             false, // collect_balances
-            false, // enable_cpi_recording
-            true,  // enable_log_recording
-            true,  // enable_return_data_recording
+            ExecutionRecordingConfig {
+                enable_cpi_recording: false,
+                enable_log_recording: true,
+                enable_return_data_recording: true,
+            },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
         );
@@ -5772,9 +5770,7 @@ impl Bank {
             batch,
             MAX_PROCESSING_AGE,
             false,
-            false,
-            false,
-            false,
+            ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
         )
@@ -7503,7 +7499,7 @@ impl Bank {
         effective_epoch: Epoch,
     ) -> Arc<LoadedProgram> {
         self.transaction_processor
-            .load_program(self, pubkey, reload, effective_epoch)
+            .load_program_with_pubkey(self, pubkey, reload, effective_epoch)
     }
 }
 

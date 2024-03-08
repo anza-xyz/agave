@@ -177,7 +177,6 @@ dependencies = [
  "solana-stake-program",
  "solana-storage-bigtable",
  "solana-streamer",
- "solana-svm",
  "solana-transaction-status",
  "solana-unified-scheduler-pool",
  "solana-version",
@@ -205,7 +204,6 @@ dependencies = [
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-ipc-server",
- "jsonrpc-server-utils",
  "lazy_static",
  "libc",
  "libloading",
@@ -234,6 +232,7 @@ dependencies = [
  "solana-net-utils",
  "solana-perf",
  "solana-poh",
+ "solana-program-runtime",
  "solana-rpc",
  "solana-rpc-client",
  "solana-rpc-client-api",
@@ -242,7 +241,6 @@ dependencies = [
  "solana-send-transaction-service",
  "solana-storage-bigtable",
  "solana-streamer",
- "solana-svm",
  "solana-test-validator",
  "solana-tpu-client",
  "solana-unified-scheduler-pool",
@@ -252,6 +250,7 @@ dependencies = [
  "symlink",
  "thiserror",
  "tikv-jemallocator",
+ "tokio",
 ]
 
 [[package]]
@@ -1232,9 +1231,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.0.83"
+version = "1.0.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1174fb0b6ec23863f8b971027804a42614e347eafb0a95bf0b12cdae21fc4d0"
+checksum = "a0ba8f7aaa012f30d5b2861462f6708eccd49c3c39863fe083a308035f63d723"
 dependencies = [
  "jobserver",
  "libc",
@@ -5591,6 +5590,7 @@ dependencies = [
  "solana-test-validator",
  "solana-thin-client",
  "solana-tpu-client",
+ "solana-transaction-status",
  "solana-version",
  "spl-instruction-padding",
  "tempfile",
@@ -6232,7 +6232,6 @@ dependencies = [
  "crossbeam-channel",
  "json5",
  "jsonrpc-core",
- "jsonrpc-server-utils",
  "libloading",
  "log",
  "serde_json",
@@ -6246,6 +6245,7 @@ dependencies = [
  "solana-sdk",
  "solana-transaction-status",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -7288,6 +7288,7 @@ dependencies = [
 name = "solana-svm"
 version = "1.19.0"
 dependencies = [
+ "bincode",
  "itertools",
  "log",
  "percentage",
@@ -7344,7 +7345,6 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",
- "solana-svm",
  "solana-tpu-client",
  "tokio",
 ]
@@ -7500,6 +7500,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",
+ "test-case",
  "thiserror",
  "tokio",
 ]
