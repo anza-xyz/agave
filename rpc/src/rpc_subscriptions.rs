@@ -633,34 +633,34 @@ impl RpcSubscriptions {
 
         let t_cleanup = config.notification_threads.map(|notification_threads| {
             let exit = exit.clone();
-                Builder::new()
-                    .name("solRpcNotifier".to_string())
-                    .spawn(move || {
-                        let pool = rayon::ThreadPoolBuilder::new()
-                            .num_threads(notification_threads.get())
-                            .thread_name(|i| format!("solRpcNotify{i:02}"))
-                            .build()
-                            .unwrap();
-                        pool.install(|| {
-                            if let Some(rpc_notifier_ready) = rpc_notifier_ready {
-                                rpc_notifier_ready.fetch_or(true, Ordering::Relaxed);
-                            }
-                            Self::process_notifications(
-                                exit,
-                                max_complete_transaction_status_slot,
-                                max_complete_rewards_slot,
-                                blockstore,
-                                notifier,
-                                notification_receiver,
-                                subscriptions,
-                                bank_forks,
-                                block_commitment_cache,
-                                optimistically_confirmed_bank,
-                            )
-                        });
-                    })
-                    .unwrap()
-                });
+            Builder::new()
+                .name("solRpcNotifier".to_string())
+                .spawn(move || {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(notification_threads.get())
+                        .thread_name(|i| format!("solRpcNotify{i:02}"))
+                        .build()
+                        .unwrap();
+                    pool.install(|| {
+                        if let Some(rpc_notifier_ready) = rpc_notifier_ready {
+                            rpc_notifier_ready.fetch_or(true, Ordering::Relaxed);
+                        }
+                        Self::process_notifications(
+                            exit,
+                            max_complete_transaction_status_slot,
+                            max_complete_rewards_slot,
+                            blockstore,
+                            notifier,
+                            notification_receiver,
+                            subscriptions,
+                            bank_forks,
+                            block_commitment_cache,
+                            optimistically_confirmed_bank,
+                        )
+                    });
+                })
+                .unwrap()
+        });
 
         let control = SubscriptionControl::new(
             config.max_active_subscriptions,
