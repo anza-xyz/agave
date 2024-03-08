@@ -624,27 +624,25 @@ mod tests {
         let mock_secp256k1_instr = CompiledInstruction::new(3, &[1u8; 10], vec![]);
         let mock_ed25519_instr = CompiledInstruction::new(4, &[5u8; 10], vec![]);
 
-        let message = SanitizedMessage::try_from(
-            legacy::Message::new_with_compiled_instructions(
-                2,
-                1,
-                2,
-                vec![
-                    key0,
-                    key1,
-                    loader_key,
-                    secp256k1_program::id(),
-                    ed25519_program::id(),
-                ],
-                Hash::default(),
-                vec![
-                    loader_instr,
-                    mock_secp256k1_instr.clone(),
-                    mock_ed25519_instr,
-                    mock_secp256k1_instr,
-                ],
-            ),
-        )
+        let message = SanitizedMessage::try_from(legacy::Message::new_with_compiled_instructions(
+            2,
+            1,
+            2,
+            vec![
+                key0,
+                key1,
+                loader_key,
+                secp256k1_program::id(),
+                ed25519_program::id(),
+            ],
+            Hash::default(),
+            vec![
+                loader_instr,
+                mock_secp256k1_instr.clone(),
+                mock_ed25519_instr,
+                mock_secp256k1_instr,
+            ],
+        ))
         .unwrap();
 
         let signature_details = message.get_signature_details();
