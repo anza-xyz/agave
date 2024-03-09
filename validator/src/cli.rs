@@ -1076,7 +1076,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .arg(
             Arg::with_name("rpc_pubsub_notification_threads")
                 .long("rpc-pubsub-notification-threads")
-                .requires("full_rpc_api")
                 .takes_value(true)
                 .value_name("NUM_THREADS")
                 .validator(is_parsable::<usize>)
