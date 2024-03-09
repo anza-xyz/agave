@@ -93,7 +93,7 @@ pub enum ProgramCliCommand {
         allow_excessive_balance: bool,
         skip_fee_check: bool,
         max_retries: Option<usize>,
-        tx_priority_fee: Option<u64>,
+        compute_unit_price: Option<u64>,
     },
     Upgrade {
         fee_payer_signer_index: SignerIndex,
@@ -113,7 +113,7 @@ pub enum ProgramCliCommand {
         max_len: Option<usize>,
         skip_fee_check: bool,
         max_retries: Option<usize>,
-        tx_priority_fee: Option<u64>,
+        compute_unit_price: Option<u64>,
     },
     SetBufferAuthority {
         buffer_pubkey: Pubkey,
@@ -244,8 +244,8 @@ impl ProgramSubCommands for App<'_, '_> {
                                 ),
                         )
                         .arg(
-                            Arg::with_name("tx_priority_fee")
-                                .long("tx-priority-fee")
+                            Arg::with_name("compute_unit_price")
+                                .long("compute-unit-price")
                                 .takes_value(true)
                                 .help(
                                     "Add priotity fee to boost transactions resulting in faster execution speed \
@@ -626,7 +626,7 @@ pub fn parse_program_subcommand(
 
             let max_retries = value_of(matches, "max_retries");
 
-            let tx_priority_fee = value_of(matches, "tx_priority_fee");
+            let compute_unit_price = value_of(matches, "compute_unit_price");
 
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Deploy {
@@ -644,7 +644,7 @@ pub fn parse_program_subcommand(
                     allow_excessive_balance: matches.is_present("allow_excessive_balance"),
                     skip_fee_check,
                     max_retries,
-                    tx_priority_fee,
+                    compute_unit_price,
                 }),
                 signers: signer_info.signers,
             }
@@ -717,7 +717,7 @@ pub fn parse_program_subcommand(
                 default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
 
             let max_retries = value_of(matches, "max_retries");
-            let tx_priority_fee = value_of(matches, "tx_priority_fee");
+            let compute_unit_price = value_of(matches, "compute_unit_price");
 
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::WriteBuffer {
@@ -731,7 +731,7 @@ pub fn parse_program_subcommand(
                     max_len,
                     skip_fee_check,
                     max_retries,
-                    tx_priority_fee,
+                    compute_unit_price,
                 }),
                 signers: signer_info.signers,
             }
@@ -934,7 +934,7 @@ pub fn process_program_subcommand(
             allow_excessive_balance,
             skip_fee_check,
             max_retries,
-            tx_priority_fee,
+            compute_unit_price,
         } => process_program_deploy(
             rpc_client,
             config,
@@ -950,7 +950,7 @@ pub fn process_program_subcommand(
             *allow_excessive_balance,
             *skip_fee_check,
             *max_retries,
-            *tx_priority_fee,
+            *compute_unit_price,
         ),
         ProgramCliCommand::Upgrade {
             fee_payer_signer_index,
@@ -980,7 +980,7 @@ pub fn process_program_subcommand(
             max_len,
             skip_fee_check,
             max_retries,
-            tx_priority_fee,
+            compute_unit_price,
         } => process_write_buffer(
             rpc_client,
             config,
@@ -992,7 +992,7 @@ pub fn process_program_subcommand(
             *max_len,
             *skip_fee_check,
             *max_retries,
-            *tx_priority_fee,
+            *compute_unit_price,
         ),
         ProgramCliCommand::SetBufferAuthority {
             buffer_pubkey,
@@ -1134,7 +1134,7 @@ fn process_program_deploy(
     allow_excessive_balance: bool,
     skip_fee_check: bool,
     max_retries: Option<usize>,
-    tx_priority_fee: Option<u64>,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
     let upgrade_authority_signer = config.signers[upgrade_authority_signer_index];
@@ -1275,7 +1275,7 @@ fn process_program_deploy(
             allow_excessive_balance,
             skip_fee_check,
             max_retries,
-            tx_priority_fee,
+            compute_unit_price,
         )
     } else {
         do_process_program_upgrade(
@@ -1291,7 +1291,7 @@ fn process_program_deploy(
             buffer_signer,
             skip_fee_check,
             max_retries,
-            tx_priority_fee,
+            compute_unit_price,
         )
     };
     if result.is_ok() && is_final {
@@ -1440,7 +1440,7 @@ fn process_write_buffer(
     max_len: Option<usize>,
     skip_fee_check: bool,
     max_retries: Option<usize>,
-    tx_priority_fee: Option<u64>,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
     let buffer_authority = config.signers[buffer_authority_signer_index];
@@ -1507,7 +1507,7 @@ fn process_write_buffer(
         true,
         skip_fee_check,
         max_retries,
-        tx_priority_fee,
+        compute_unit_price,
     );
     if result.is_err() && buffer_signer_index.is_none() && buffer_signer.is_some() {
         report_ephemeral_mnemonic(words, mnemonic);
@@ -2262,15 +2262,15 @@ fn do_process_program_write_and_deploy(
     allow_excessive_balance: bool,
     skip_fee_check: bool,
     max_retries: Option<usize>,
-    tx_priority_fee: Option<u64>,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
     let mut initial_instructions: Vec<Instruction> = Vec::new();
 
     // Set compute unit price
-    if let Some(tx_priority_fee) = tx_priority_fee {
+    if let Some(compute_unit_price) = compute_unit_price {
         initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-            tx_priority_fee.mul((10 as u64).pow(6)),
+            compute_unit_price.mul((10 as u64).pow(6)),
         ));
     }
 
@@ -2430,7 +2430,7 @@ fn do_process_program_upgrade(
     buffer_signer: Option<&dyn Signer>,
     skip_fee_check: bool,
     max_retries: Option<usize>,
-    tx_priority_fee: Option<u64>,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
 
@@ -2439,9 +2439,9 @@ fn do_process_program_upgrade(
             let mut initial_instructions: Vec<Instruction> = Vec::new();
 
             // Set compute unit price
-            if let Some(tx_priority_fee) = tx_priority_fee {
+            if let Some(compute_unit_price) = compute_unit_price {
                 initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-                    tx_priority_fee.mul((10 as u64).pow(6)),
+                    compute_unit_price.mul((10 as u64).pow(6)),
                 ));
             }
             // Check Buffer account to see if partial initialization has occurred
@@ -2877,7 +2877,7 @@ mod tests {
                     allow_excessive_balance: false,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -2907,7 +2907,7 @@ mod tests {
                     allow_excessive_balance: false,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -2939,7 +2939,7 @@ mod tests {
                     allow_excessive_balance: false,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -2973,7 +2973,7 @@ mod tests {
                     allow_excessive_balance: false,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3006,7 +3006,7 @@ mod tests {
                     allow_excessive_balance: false,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3042,7 +3042,7 @@ mod tests {
                     allow_excessive_balance: false,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3074,7 +3074,7 @@ mod tests {
                     skip_fee_check: false,
                     allow_excessive_balance: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3110,7 +3110,7 @@ mod tests {
                     max_len: None,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3137,7 +3137,7 @@ mod tests {
                     max_len: Some(42),
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3167,7 +3167,7 @@ mod tests {
                     max_len: None,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3200,7 +3200,7 @@ mod tests {
                     max_len: None,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3238,7 +3238,7 @@ mod tests {
                     max_len: None,
                     skip_fee_check: false,
                     max_retries: None,
-                    tx_priority_fee: None
+                    compute_unit_price: None
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3798,7 +3798,7 @@ mod tests {
                 allow_excessive_balance: false,
                 skip_fee_check: false,
                 max_retries: None,
-                tx_priority_fee: None,
+                compute_unit_price: None,
             }),
             signers: vec![&default_keypair],
             output_format: OutputFormat::JsonCompact,
