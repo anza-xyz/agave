@@ -248,7 +248,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .long("compute-unit-price")
                                 .takes_value(true)
                                 .help(
-                                    "Add priotity fee to boost transactions resulting in faster execution speed \
+                                    "Set computeUnitPrice (tx priotity fee) to boost transactions resulting in faster execution speed \
                                     [Note: priority fee is added in LAMPORTS, so enter priority fee in terms of LAMPORTS]",
                                 ),
                         ).
