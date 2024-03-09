@@ -12,6 +12,7 @@ use {
     jsonrpc_core::IoHandler,
     soketto::handshake::{server, Server},
     solana_metrics::TokenCounter,
+    solana_rayon_threadlimit::get_thread_count,
     solana_sdk::timing::AtomicInterval,
     std::{
         io,
@@ -56,7 +57,7 @@ impl Default for PubSubConfig {
             queue_capacity_items: DEFAULT_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_QUEUE_CAPACITY_BYTES,
             worker_threads: DEFAULT_WORKER_THREADS,
-            notification_threads: None,
+            notification_threads: NonZeroUsize::new(get_thread_count()),
         }
     }
 }
