@@ -46,7 +46,7 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
 }
 
 #[bench]
-fn test_accounts_hash_bank_hash(bencher: &mut Bencher) {
+fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
     let accounts_db = new_accounts_db(vec![PathBuf::from("bench_accounts_hash_internal")]);
     let accounts = Accounts::new(Arc::new(accounts_db));
     let mut pubkeys: Vec<Pubkey> = vec![];
@@ -78,7 +78,7 @@ fn test_accounts_hash_bank_hash(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn test_update_accounts_hash(bencher: &mut Bencher) {
+fn bench_update_accounts_hash(bencher: &mut Bencher) {
     solana_logger::setup();
     let accounts_db = new_accounts_db(vec![PathBuf::from("update_accounts_hash")]);
     let accounts = Accounts::new(Arc::new(accounts_db));
@@ -93,7 +93,7 @@ fn test_update_accounts_hash(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn test_accounts_delta_hash(bencher: &mut Bencher) {
+fn bench_accounts_delta_hash(bencher: &mut Bencher) {
     solana_logger::setup();
     let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delta_hash")]);
     let accounts = Accounts::new(Arc::new(accounts_db));
