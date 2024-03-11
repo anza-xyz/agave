@@ -63,6 +63,7 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     // Vector of results indicating whether a transaction was executed or could not
     // be executed. Note executed transactions can still have failed!
     pub execution_results: Vec<TransactionExecutionResult>,
+    pub preexecution_account_states: Option<HashMap<Pubkey, AccountSharedData>>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -209,6 +210,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         builtin_programs: impl Iterator<Item = &'a Pubkey>,
         log_messages_bytes_limit: Option<usize>,
         limit_to_load_programs: bool,
+        preexecution_account_states_enabled: bool,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
         let mut program_accounts_map = Self::filter_executable_program_accounts(
             callbacks,
@@ -231,6 +233,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             return LoadAndExecuteSanitizedTransactionsOutput {
                 loaded_transactions: vec![],
                 execution_results: vec![],
+                preexecution_account_states: None,
             };
         }
 
@@ -246,6 +249,32 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &programs_loaded_for_tx_batch.borrow(),
         );
         load_time.stop();
+
+        let preexecution_account_states: Option<HashMap<Pubkey, AccountSharedData>> =
+            preexecution_account_states_enabled.then(|| {
+                // filter all the writable accounts so that we can notify geyser preexecution account states
+                // this will enable us to track changes in the accounts via geyser
+                // this feature is only enabled if a geyser plugin return true for `enable_pre_trasaction_execution_accounts_data`
+                loaded_transactions
+                    .iter()
+                    .zip(sanitized_txs.iter())
+                    .filter_map(|(transactions, sanitized_transaction)| {
+                        transactions.0.as_ref().ok().map(|transaction| {
+                            transaction.accounts.iter().enumerate().filter_map(
+                                |(account_index, account)| {
+                                    if sanitized_transaction.message().is_writable(account_index) {
+                                        Some(account)
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )
+                        })
+                    })
+                    .flatten()
+                    .cloned()
+                    .collect()
+            });
 
         let mut execution_time = Measure::start("execution_time");
 
@@ -333,6 +362,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         LoadAndExecuteSanitizedTransactionsOutput {
             loaded_transactions,
             execution_results,
+            preexecution_account_states,
         }
     }
 

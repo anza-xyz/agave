@@ -311,6 +311,7 @@ pub struct LoadAndExecuteTransactionsOutput {
     pub executed_with_successful_result_count: usize,
     pub signature_count: u64,
     pub error_counters: TransactionErrorMetrics,
+    pub preexecution_account_states: Option<HashMap<Pubkey, AccountSharedData>>,
 }
 
 pub struct TransactionSimulationResult {
@@ -4608,6 +4609,10 @@ impl Bank {
         debug!("check: {}us", check_time.as_us());
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_time.as_us());
 
+        let preexecution_account_states_enabled = self
+            .accounts()
+            .enable_preexecution_account_states_notification();
+
         let sanitized_output = self
             .transaction_processor
             .load_and_execute_sanitized_transactions(
@@ -4621,6 +4626,7 @@ impl Bank {
                 self.builtin_programs.iter(),
                 log_messages_bytes_limit,
                 limit_to_load_programs,
+                preexecution_account_states_enabled,
             );
 
         let mut signature_count = 0;
@@ -4747,6 +4753,7 @@ impl Bank {
             executed_with_successful_result_count,
             signature_count,
             error_counters,
+            preexecution_account_states: sanitized_output.preexecution_account_states,
         }
     }
 
@@ -4884,6 +4891,7 @@ impl Bank {
         lamports_per_signature: u64,
         counts: CommitTransactionCounts,
         timings: &mut ExecuteTimings,
+        preexecution_account_states: Option<HashMap<Pubkey, AccountSharedData>>,
     ) -> TransactionResults {
         assert!(
             !self.freeze_started(),
@@ -4925,6 +4933,7 @@ impl Bank {
             loaded_txs,
             &durable_nonce,
             lamports_per_signature,
+            preexecution_account_states,
         );
         let rent_debits = self.collect_rent(&execution_results, loaded_txs);
 
@@ -5658,6 +5667,7 @@ impl Bank {
             executed_non_vote_transactions_count,
             executed_with_successful_result_count,
             signature_count,
+            preexecution_account_states,
             ..
         } = self.load_and_execute_transactions(
             batch,
@@ -5686,6 +5696,7 @@ impl Bank {
                 signature_count,
             },
             timings,
+            preexecution_account_states,
         );
         let post_balances = if collect_balances {
             self.collect_balances(batch)
