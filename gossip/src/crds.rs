@@ -127,8 +127,8 @@ pub struct VersionedCrdsValue {
     pub(crate) local_timestamp: u64,
     /// value hash
     pub(crate) value_hash: Hash,
-    /// Number of times duplicates of this value are recevied from gossip push.
-    num_push_dups: u8,
+    /// Number of times this value is recevied from gossip push.
+    num_push_recv: u8,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -147,20 +147,14 @@ impl Cursor {
 }
 
 impl VersionedCrdsValue {
-    fn new(value: CrdsValue, cursor: Cursor, local_timestamp: u64, route: GossipRoute) -> Self {
+    fn new(value: CrdsValue, cursor: Cursor, local_timestamp: u64) -> Self {
         let value_hash = hash(&serialize(&value).unwrap());
-        let num_push_dups = match route {
-            // set num_push_dups to 2^8 to indicate PullResponse
-            // unlikely a node receives the exact same message via push 2^8 times
-            GossipRoute::PullResponse => u8::MAX,
-            _ => 0u8,
-        };
         VersionedCrdsValue {
             ordinal: cursor.ordinal(),
             value,
             local_timestamp,
             value_hash,
-            num_push_dups,
+            num_push_recv: 1u8,
         }
     }
 }
@@ -228,7 +222,7 @@ impl Crds {
     ) -> Result<(), CrdsError> {
         let label = value.label();
         let pubkey = value.pubkey();
-        let value = VersionedCrdsValue::new(value, self.cursor, now, route);
+        let value = VersionedCrdsValue::new(value, self.cursor, now);
         match self.table.entry(label) {
             Entry::Vacant(entry) => {
                 self.stats.lock().unwrap().record_insert(&value, route);
@@ -309,27 +303,8 @@ impl Crds {
                     Err(CrdsError::InsertFailed)
                 } else if matches!(route, GossipRoute::PushMessage(_)) {
                     let entry = entry.get_mut();
-                    if entry.num_push_dups == u8::MAX {
-                        datapoint_info!(
-                            "gossip_crds_redundant_pull",
-                            (
-                                "origin",
-                                value.value.pubkey().to_string().get(..8),
-                                Option<String>
-                            ),
-                            (
-                                "signature",
-                                value.value.signature.to_string().get(..8),
-                                Option<String>
-                            )
-                        );
-                        // now that we've recorded redundant pull,
-                        // we can set num_push_dups to 0. It will get
-                        // incremented to 1 right after as it should
-                        entry.num_push_dups = 0;
-                    }
-                    entry.num_push_dups = entry.num_push_dups.saturating_add(1);
-                    Err(CrdsError::DuplicatePush(entry.num_push_dups))
+                    entry.num_push_recv = entry.num_push_recv.saturating_add(1);
+                    Err(CrdsError::DuplicatePush(entry.num_push_recv))
                 } else {
                     Err(CrdsError::InsertFailed)
                 }
@@ -1476,8 +1451,8 @@ mod tests {
     fn test_equal() {
         let val = CrdsValue::new_unsigned(CrdsData::LegacyContactInfo(ContactInfo::default()));
         let v1 =
-            VersionedCrdsValue::new(val.clone(), Cursor::default(), 1, GossipRoute::LocalMessage);
-        let v2 = VersionedCrdsValue::new(val, Cursor::default(), 1, GossipRoute::LocalMessage);
+            VersionedCrdsValue::new(val.clone(), Cursor::default(), 1);
+        let v2 = VersionedCrdsValue::new(val, Cursor::default(), 1);
         assert_eq!(v1, v2);
         assert!(!(v1 != v2));
         assert!(!overrides(&v1.value, &v2));
@@ -1493,7 +1468,6 @@ mod tests {
             ))),
             Cursor::default(),
             1, // local_timestamp
-            GossipRoute::LocalMessage,
         );
         let v2 = VersionedCrdsValue::new(
             {
@@ -1503,7 +1477,6 @@ mod tests {
             },
             Cursor::default(),
             1, // local_timestamp
-            GossipRoute::LocalMessage,
         );
 
         assert_eq!(v1.value.label(), v2.value.label());
@@ -1529,7 +1502,6 @@ mod tests {
             ))),
             Cursor::default(),
             1, // local_timestamp
-            GossipRoute::LocalMessage,
         );
         let v2 = VersionedCrdsValue::new(
             CrdsValue::new_unsigned(CrdsData::LegacyContactInfo(ContactInfo::new_localhost(
@@ -1538,7 +1510,6 @@ mod tests {
             ))),
             Cursor::default(),
             1, // local_timestamp
-            GossipRoute::LocalMessage,
         );
         assert_eq!(v1.value.label(), v2.value.label());
         assert!(overrides(&v1.value, &v2));
@@ -1557,7 +1528,6 @@ mod tests {
             ))),
             Cursor::default(),
             1, // local_timestamp
-            GossipRoute::LocalMessage,
         );
         let v2 = VersionedCrdsValue::new(
             CrdsValue::new_unsigned(CrdsData::LegacyContactInfo(ContactInfo::new_localhost(
@@ -1566,7 +1536,6 @@ mod tests {
             ))),
             Cursor::default(),
             1, // local_timestamp
-            GossipRoute::LocalMessage,
         );
         assert_ne!(v1, v2);
         assert!(!(v1 == v2));
