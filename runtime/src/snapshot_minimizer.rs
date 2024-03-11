@@ -9,9 +9,7 @@ use {
         prelude::ParallelSlice,
     },
     solana_accounts_db::{
-        accounts_db::{
-            AccountStorageEntry, AccountsDb, GetUniqueAccountsResult, PurgeStats, StoreReclaims,
-        },
+        accounts_db::{AccountStorageEntry, AccountsDb, GetUniqueAccountsResult, StoreReclaims},
         accounts_partition,
     },
     solana_measure::measure,
@@ -395,9 +393,8 @@ impl<'a> SnapshotMinimizer<'a> {
 
     /// Purge dead slots from storage and cache
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
-        let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats, false);
+            .purge_slots_from_cache_and_store_without_stats(dead_slots.iter(), false);
     }
 
     /// Convenience function for getting accounts_db
