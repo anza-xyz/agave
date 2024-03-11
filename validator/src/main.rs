@@ -1389,6 +1389,13 @@ pub fn main() {
                     usize
                 ))
             } else {
+                // Due to a CLAP bug, we can't use .requires("full_rpc_api") directly on
+                // the rpc_pubsub_notification_threads argument. Do the check manually here,
+                // and remove this when we get past 2.xy of CLAP
+                if matches.occurrences_of("rpc_pubsub_notification_threads") > 0 {
+                    eprintln!("Use of --rpc_pubsub_notification_threads requires --full-rpc-api");
+                    exit(1);
+                }
                 None
             },
         },
