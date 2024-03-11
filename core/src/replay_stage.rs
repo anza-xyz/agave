@@ -659,7 +659,7 @@ impl ReplayStage {
             } else {
                 let pool = rayon::ThreadPoolBuilder::new()
                     .num_threads(MAX_CONCURRENT_FORKS_TO_REPLAY)
-                    .thread_name(|i| format!("solReplay{i:02}"))
+                    .thread_name(|i| format!("solReplayFork{i:02}"))
                     .build()
                     .expect("new rayon threadpool");
                 ForkReplayMode::Parallel(pool)
