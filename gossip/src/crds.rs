@@ -93,6 +93,7 @@ pub enum CrdsError {
     DuplicatePush(/*num dups:*/ u8),
     InsertFailed,
     UnknownStakes,
+    RedundantPull,
 }
 
 #[derive(Clone, Copy)]
@@ -151,7 +152,8 @@ impl VersionedCrdsValue {
     fn new(value: CrdsValue, cursor: Cursor, local_timestamp: u64, route: GossipRoute) -> Self {
         let value_hash = hash(&serialize(&value).unwrap());
         let num_push_recv = match route {
-            // Set PushMessage count to 1
+            // If we received a PushMessage, set
+            // num_push_recv <- 1
             GossipRoute::PushMessage(_) => 1u8,
             _ => 0u8,
         };
@@ -309,14 +311,21 @@ impl Crds {
                     Err(CrdsError::InsertFailed)
                 } else if matches!(route, GossipRoute::PushMessage(_)) {
                     let entry = entry.get_mut();
-                    // This is a duplicate entry. If num_push_recv == 0, we
-                    // know this data was first received via PullResponse
-                    // This is a redundant pull.
+                    // If num_push_recv == 0, we know this data was first received
+                    // via PullResponse. This is a redundant pull, meaning we received
+                    // a PushMessage after we had already received the same message
+                    // first via PullResponse
                     if entry.num_push_recv == 0 {
+                        entry.num_push_recv = entry.num_push_recv.saturating_add(1);
                         self.stats.lock().unwrap().record_redundant_pull();
+                        return Err(CrdsError::RedundantPull);
                     }
                     entry.num_push_recv = entry.num_push_recv.saturating_add(1);
-                    Err(CrdsError::DuplicatePush(entry.num_push_recv))
+                    // num_push_recv tracks number of received push messages, but we return
+                    // duplicate push message count. so we need to subtract 1
+                    Err(CrdsError::DuplicatePush(
+                        entry.num_push_recv.saturating_sub(1),
+                    ))
                 } else {
                     Err(CrdsError::InsertFailed)
                 }
