@@ -991,6 +991,7 @@ fn verify_ticks(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
@@ -3718,7 +3719,15 @@ pub mod tests {
         };
         let recyclers = VerifyRecyclers::default();
         let replay_tx_thread_pool = create_thread_pool();
-        process_bank_0(&bank0, &blockstore, &replay_tx_thread_pool, &opts, &recyclers, None, None);
+        process_bank_0(
+            &bank0,
+            &blockstore,
+            &replay_tx_thread_pool,
+            &opts,
+            &recyclers,
+            None,
+            None,
+        );
         let bank0_last_blockhash = bank0.last_blockhash();
         let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
             bank0.clone_without_scheduler(),
