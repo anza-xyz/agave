@@ -115,6 +115,8 @@ pub struct Config {
     pub batch_send_rate_ms: u64,
     /// When the retry pool exceeds this max size, new transactions are dropped after their first broadcast attempt
     pub retry_pool_max_size: usize,
+    pub tpu_peers: Option<Vec<SocketAddr>>,
+    pub also_leader: bool,
 }
 
 impl Default for Config {
@@ -127,6 +129,8 @@ impl Default for Config {
             batch_size: DEFAULT_TRANSACTION_BATCH_SIZE,
             batch_send_rate_ms: DEFAULT_BATCH_SEND_RATE_MS,
             retry_pool_max_size: MAX_TRANSACTION_RETRY_POOL_SIZE,
+            tpu_peers: None,
+            also_leader: false,
         }
     }
 }
