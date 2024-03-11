@@ -5053,7 +5053,7 @@ pub(crate) mod tests {
             let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
             let exit = Arc::new(AtomicBool::new(false));
             let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(4)
+                .num_threads(1)
                 .thread_name(|i| format!("solReplayTest{i:02}"))
                 .build()
                 .expect("new rayon threadpool");

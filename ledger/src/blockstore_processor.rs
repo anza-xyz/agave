@@ -129,9 +129,9 @@ fn get_first_error(
     first_err
 }
 
-fn create_thread_pool() -> ThreadPool {
+fn create_thread_pool(num_threads: usize) -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(get_max_thread_count())
+        .num_threads(num_threads)
         .thread_name(|i| format!("solReplayTx{i:02}"))
         .build()
         .expect("new rayon threadpool")
@@ -509,7 +509,7 @@ pub fn process_entries_for_tests(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
 ) -> Result<()> {
-    let replay_tx_thread_pool = create_thread_pool();
+    let replay_tx_thread_pool = create_thread_pool(1);
     let verify_transaction = {
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction| -> Result<SanitizedTransaction> {
@@ -814,7 +814,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     let bank_forks = BankForks::new_rw_arc(bank0);
 
     info!("Processing ledger for slot 0...");
-    let replay_tx_thread_pool = create_thread_pool();
+    let replay_tx_thread_pool = create_thread_pool(get_max_thread_count());
     process_bank_0(
         &bank_forks
             .read()
@@ -882,7 +882,7 @@ pub fn process_blockstore_from_root(
         .meta(start_slot)
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
-        let replay_tx_thread_pool = create_thread_pool();
+        let replay_tx_thread_pool = create_thread_pool(get_max_thread_count());
         load_frozen_forks(
             bank_forks,
             &start_slot_meta,
@@ -3718,7 +3718,7 @@ pub mod tests {
             ..ProcessOptions::default()
         };
         let recyclers = VerifyRecyclers::default();
-        let replay_tx_thread_pool = create_thread_pool();
+        let replay_tx_thread_pool = create_thread_pool(1);
         process_bank_0(
             &bank0,
             &blockstore,
@@ -4378,7 +4378,7 @@ pub mod tests {
         slot_full: bool,
         prev_entry_hash: Hash,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        let replay_tx_thread_pool = create_thread_pool();
+        let replay_tx_thread_pool = create_thread_pool(1);
         confirm_slot_entries(
             &BankWithScheduler::new_without_scheduler(bank.clone()),
             &replay_tx_thread_pool,
@@ -4438,7 +4438,7 @@ pub mod tests {
         let bank = BankWithScheduler::new_without_scheduler(
             Bank::new_with_bank_forks_for_tests(&genesis_config).0,
         );
-        let replay_tx_thread_pool = create_thread_pool();
+        let replay_tx_thread_pool = create_thread_pool(1);
         let mut timing = ConfirmationTiming::default();
         let mut progress = ConfirmationProgress::new(genesis_hash);
         let amount = genesis_config.rent.minimum_balance(0);
@@ -4633,7 +4633,7 @@ pub mod tests {
             transaction_indexes: (0..txs.len()).collect(),
         };
 
-        let replay_tx_thread_pool = create_thread_pool();
+        let replay_tx_thread_pool = create_thread_pool(1);
         let mut batch_execution_timing = BatchExecutionTiming::default();
         let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
         assert!(process_batches(
