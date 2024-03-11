@@ -1171,9 +1171,10 @@ impl JsonRpcRequestProcessor {
         &self,
         start_slot: Slot,
         end_slot: Option<Slot>,
-        commitment: Option<CommitmentConfig>,
+        config: Option<RpcContextConfig>,
     ) -> Result<Vec<Slot>> {
-        let commitment = commitment.unwrap_or_default();
+        let config = config.unwrap_or_default();
+        let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
         let highest_super_majority_root = self
@@ -3353,8 +3354,8 @@ pub mod rpc_full {
             &self,
             meta: Self::Metadata,
             start_slot: Slot,
-            config: Option<RpcBlocksConfigWrapper>,
-            commitment: Option<CommitmentConfig>,
+            wrapper: Option<RpcBlocksConfigWrapper>,
+            config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>>;
 
         #[rpc(meta, name = "getBlocksWithLimit")]
@@ -3855,17 +3856,17 @@ pub mod rpc_full {
             &self,
             meta: Self::Metadata,
             start_slot: Slot,
-            config: Option<RpcBlocksConfigWrapper>,
-            commitment: Option<CommitmentConfig>,
+            wrapper: Option<RpcBlocksConfigWrapper>,
+            config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>> {
-            let (end_slot, maybe_commitment) =
-                config.map(|config| config.unzip()).unwrap_or_default();
+            let (end_slot, maybe_config) =
+                wrapper.map(|wrapper| wrapper.unzip()).unwrap_or_default();
             debug!(
                 "get_blocks rpc request received: {}-{:?}",
                 start_slot, end_slot
             );
             Box::pin(async move {
-                meta.get_blocks(start_slot, end_slot, commitment.or(maybe_commitment))
+                meta.get_blocks(start_slot, end_slot, config.or(maybe_config))
                     .await
             })
         }
@@ -4293,8 +4294,15 @@ pub mod rpc_deprecated_v1_7 {
                 start_slot, end_slot
             );
             Box::pin(async move {
-                meta.get_blocks(start_slot, end_slot, commitment.or(maybe_commitment))
-                    .await
+                meta.get_blocks(
+                    start_slot,
+                    end_slot,
+                    Some(RpcContextConfig {
+                        commitment: commitment.or(maybe_commitment),
+                        min_context_slot: None,
+                    }),
+                )
+                .await
             })
         }
 
