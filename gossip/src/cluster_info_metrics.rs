@@ -639,6 +639,7 @@ pub(crate) fn submit_gossip_stats(
         ),
         ("RestartHeaviestFork-push", crds_stats.push.counts[13], i64),
         ("RestartHeaviestFork-pull", crds_stats.pull.counts[13], i64),
+        ("RedundantPull", crds_stats.redundant_pull, i64),
         (
             "all-push",
             crds_stats.push.counts.iter().sum::<usize>(),
