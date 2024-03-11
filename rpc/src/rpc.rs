@@ -1289,6 +1289,16 @@ impl JsonRpcRequestProcessor {
             .unwrap()
             .highest_super_majority_root();
 
+        if commitment.is_finalized() {
+            let min_context_slot = config.min_context_slot.unwrap_or_default();
+            if highest_super_majority_root < min_context_slot {
+                return Err(RpcCustomError::MinContextSlotNotReached {
+                    context_slot: highest_super_majority_root,
+                }
+                .into());
+            }
+        }
+
         // Finalized blocks
         let mut blocks: Vec<_> = self
             .blockstore
@@ -1299,19 +1309,21 @@ impl JsonRpcRequestProcessor {
             .collect();
 
         // Maybe add confirmed blocks
-        if commitment.is_confirmed() && blocks.len() < limit {
-            let last_element = blocks
-                .last()
-                .cloned()
-                .unwrap_or_else(|| start_slot.saturating_sub(1));
-            let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-            let mut confirmed_blocks = confirmed_bank
-                .status_cache_ancestors()
-                .into_iter()
-                .filter(|&slot| slot > last_element)
-                .collect();
-            blocks.append(&mut confirmed_blocks);
-            blocks.truncate(limit);
+        if commitment.is_confirmed() {
+            let confirmed_bank = self.get_bank_with_config(config)?;
+            if blocks.len() < limit {
+                let last_element = blocks
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| start_slot.saturating_sub(1));
+                let mut confirmed_blocks = confirmed_bank
+                    .status_cache_ancestors()
+                    .into_iter()
+                    .filter(|&slot| slot > last_element)
+                    .collect();
+                blocks.append(&mut confirmed_blocks);
+                blocks.truncate(limit);
+            }
         }
 
         Ok(blocks)
