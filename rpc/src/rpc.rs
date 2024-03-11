@@ -527,13 +527,14 @@ impl JsonRpcRequestProcessor {
         let config = config.unwrap_or_default();
         let epoch_schedule = self.get_epoch_schedule();
         let first_available_block = self.get_first_available_block().await;
+        let context_config = RpcContextConfig {
+            commitment: config.commitment,
+            min_context_slot: config.min_context_slot,
+        };
         let epoch = match config.epoch {
             Some(epoch) => epoch,
             None => epoch_schedule
-                .get_epoch(self.get_slot(RpcContextConfig {
-                    commitment: config.commitment,
-                    min_context_slot: config.min_context_slot,
-                })?)
+                .get_epoch(self.get_slot(context_config)?)
                 .saturating_sub(1),
         };
 
@@ -555,7 +556,7 @@ impl JsonRpcRequestProcessor {
         }
 
         let first_confirmed_block_in_epoch = *self
-            .get_blocks_with_limit(first_slot_in_epoch, 1, config.commitment)
+            .get_blocks_with_limit(first_slot_in_epoch, 1, Some(context_config))
             .await?
             .first()
             .ok_or(RpcCustomError::BlockNotAvailable {
@@ -1253,9 +1254,10 @@ impl JsonRpcRequestProcessor {
         &self,
         start_slot: Slot,
         limit: usize,
-        commitment: Option<CommitmentConfig>,
+        config: Option<RpcContextConfig>,
     ) -> Result<Vec<Slot>> {
-        let commitment = commitment.unwrap_or_default();
+        let config = config.unwrap_or_default();
+        let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
         if limit > MAX_GET_CONFIRMED_BLOCKS_RANGE as usize {
@@ -3349,7 +3351,7 @@ pub mod rpc_full {
             meta: Self::Metadata,
             start_slot: Slot,
             limit: usize,
-            commitment: Option<CommitmentConfig>,
+            config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>>;
 
         #[rpc(meta, name = "getTransaction")]
@@ -3861,16 +3863,13 @@ pub mod rpc_full {
             meta: Self::Metadata,
             start_slot: Slot,
             limit: usize,
-            commitment: Option<CommitmentConfig>,
+            config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>> {
             debug!(
                 "get_blocks_with_limit rpc request received: {}-{}",
                 start_slot, limit,
             );
-            Box::pin(async move {
-                meta.get_blocks_with_limit(start_slot, limit, commitment)
-                    .await
-            })
+            Box::pin(async move { meta.get_blocks_with_limit(start_slot, limit, config).await })
         }
 
         fn get_block_time(
@@ -4299,8 +4298,15 @@ pub mod rpc_deprecated_v1_7 {
                 start_slot, limit,
             );
             Box::pin(async move {
-                meta.get_blocks_with_limit(start_slot, limit, commitment)
-                    .await
+                meta.get_blocks_with_limit(
+                    start_slot,
+                    limit,
+                    Some(RpcContextConfig {
+                        commitment,
+                        min_context_slot: None,
+                    }),
+                )
+                .await
             })
         }
 
