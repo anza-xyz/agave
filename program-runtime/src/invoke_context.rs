@@ -216,10 +216,10 @@ impl<'a> InvokeContext<'a> {
 
     pub fn get_environments_for_slot(
         &self,
-        slot: Slot,
+        effective_slot: Slot,
     ) -> Result<&ProgramRuntimeEnvironments, InstructionError> {
         let epoch_schedule = self.sysvar_cache.get_epoch_schedule()?;
-        let epoch = epoch_schedule.get_epoch(slot);
+        let epoch = epoch_schedule.get_epoch(effective_slot);
         Ok(self
             .programs_loaded_for_tx_batch
             .get_environments_for_epoch(epoch))
