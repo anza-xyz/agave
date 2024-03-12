@@ -119,21 +119,20 @@ impl StakeHistoryGetEntry for StakeHistory {
 
 impl StakeHistoryGetEntry for StakeHistorySyscall {
     fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
+        // HANA im gonna be honest i dont understand why we cast to a u8 pointer
         let mut var = None;
         let var_addr = &mut var as *mut _ as *mut u8;
 
         #[cfg(target_os = "solana")]
-        msg!("HANA running on solana");
-        #[cfg(target_os = "solana")]
         let result = unsafe { crate::syscalls::sol_stake_history_get_entry(var_addr, epoch) };
 
         #[cfg(not(target_os = "solana"))]
-        let result = unimplemented!(); // XXX crate::program_stubs::sol_stake_history_get_entry(var_addr, epoch);
+        let result = crate::program_stubs::sol_stake_history_get_entry(var_addr, epoch);
 
         // HANA i dislike how this swallows errors but im not sure we really want to return Result<Option<_>, _>
         match result {
             crate::entrypoint::SUCCESS => var,
-            e => None,
+            _ => None,
         }
     }
 }
