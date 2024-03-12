@@ -104,7 +104,7 @@ mod tests {
                 ..StakeHistoryEntry::default()
             });
 
-            assert_eq!(stake_history.get_entry(i), expected.as_ref());
+            assert_eq!(stake_history.get_entry(i), expected);
         }
     }
 }

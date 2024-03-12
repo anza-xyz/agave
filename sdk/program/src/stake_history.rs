@@ -90,9 +90,9 @@ impl Deref for StakeHistory {
     }
 }
 
+// XXX remove
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct StakeHistoryData<'a>(&'a [u8]);
-
 impl<'a> StakeHistoryData<'a> {
     pub fn take_account_info(account_info: &AccountInfo<'a>) -> Result<Self, ProgramError> {
         if *account_info.unsigned_key() != StakeHistory::id() {
@@ -102,41 +102,49 @@ impl<'a> StakeHistoryData<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Default, Clone)]
+pub struct StakeHistorySyscall(());
+
 pub trait StakeHistoryGetEntry {
-    fn get_entry(&self, epoch: Epoch) -> Option<&StakeHistoryEntry>;
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry>;
 }
 
 impl StakeHistoryGetEntry for StakeHistory {
-    fn get_entry(&self, epoch: Epoch) -> Option<&StakeHistoryEntry> {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
         self.binary_search_by(|probe| epoch.cmp(&probe.0))
             .ok()
-            .map(|index| &self[index].1)
+            .map(|index| self[index].1)
     }
 }
 
-// this is only required for SysvarCache
-// we dont impl for Deref directly because it would prevent a matching impl for StakeHistoryData
+impl StakeHistoryGetEntry for StakeHistorySyscall {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
+        unimplemented!()
+    }
+}
+
+// required for SysvarCache
 impl StakeHistoryGetEntry for Arc<StakeHistory> {
-    fn get_entry(&self, epoch: Epoch) -> Option<&StakeHistoryEntry> {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
         self.deref().get_entry(epoch)
     }
 }
 
+// XXX remove
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Pod, Zeroable)]
 struct StakeHistoryEpochEntry {
     epoch: Epoch,
     entry: StakeHistoryEntry,
 }
-
 impl StakeHistoryGetEntry for StakeHistoryData<'_> {
-    fn get_entry(&self, epoch: Epoch) -> Option<&StakeHistoryEntry> {
+    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
         let data = self.0;
         if let Ok(history) = bytemuck::try_cast_slice::<u8, StakeHistoryEpochEntry>(&data[8..]) {
             history
                 .binary_search_by(|probe| epoch.cmp(&probe.epoch))
                 .ok()
-                .map(|index| &history[index].entry)
+                .map(|index| history[index].entry)
         } else {
             None
         }
@@ -195,8 +203,8 @@ mod tests {
                 ..StakeHistoryEntry::default()
             });
 
-            assert_eq!(stake_history.get_entry(i), expected.as_ref());
-            assert_eq!(stake_history_data.get_entry(i), expected.as_ref());
+            assert_eq!(stake_history.get_entry(i), expected);
+            assert_eq!(stake_history_data.get_entry(i), expected);
         }
     }
 }
