@@ -1,6 +1,6 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred::{self, SIZE_OF_MERKLE_ROOT},
+    crate::shred::{self, SignedData, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
     sha2::{Digest, Sha512},
@@ -18,13 +18,25 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
     },
-    std::{collections::HashMap, iter::repeat, mem::size_of, ops::Range, sync::Arc},
+    std::{
+        collections::HashMap,
+        iter::repeat,
+        mem::size_of,
+        ops::Range,
+        sync::{Arc, RwLock},
+    },
 };
 
 const SIGN_SHRED_GPU_MIN: usize = 256;
 
+pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
+
 #[must_use]
-pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<Slot, Pubkey>) -> bool {
+pub fn verify_shred_cpu(
+    packet: &Packet,
+    slot_leaders: &HashMap<Slot, Pubkey>,
+    cache: &RwLock<LruCache>,
+) -> bool {
     if packet.meta().discard() {
         return false;
     }
@@ -45,13 +57,27 @@ pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<Slot, Pubkey>) -
     let Some(data) = shred::layout::get_signed_data(shred) else {
         return false;
     };
-    signature.verify(pubkey.as_ref(), data.as_ref())
+    match data {
+        SignedData::Chunk(chunk) => signature.verify(pubkey.as_ref(), chunk),
+        SignedData::MerkleRoot(root) => {
+            let key = (signature, *pubkey, root);
+            if cache.read().unwrap().get(&key).is_some() {
+                true
+            } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
+                cache.write().unwrap().put(key, ());
+                true
+            } else {
+                false
+            }
+        }
+    }
 }
 
 fn verify_shreds_cpu(
     thread_pool: &ThreadPool,
     batches: &[PacketBatch],
     slot_leaders: &HashMap<Slot, Pubkey>,
+    cache: &RwLock<LruCache>,
 ) -> Vec<Vec<u8>> {
     let packet_count = count_packets_in_batches(batches);
     debug!("CPU SHRED ECDSA for {}", packet_count);
@@ -61,7 +87,7 @@ fn verify_shreds_cpu(
             .map(|batch| {
                 batch
                     .par_iter()
-                    .map(|packet| u8::from(verify_shred_cpu(packet, slot_leaders)))
+                    .map(|packet| u8::from(verify_shred_cpu(packet, slot_leaders, cache)))
                     .collect()
             })
             .collect()
@@ -240,9 +266,10 @@ pub fn verify_shreds_gpu(
     batches: &[PacketBatch],
     slot_leaders: &HashMap<Slot, Pubkey>,
     recycler_cache: &RecyclerCache,
+    cache: &RwLock<LruCache>,
 ) -> Vec<Vec<u8>> {
     let Some(api) = perf_libs::api() else {
-        return verify_shreds_cpu(thread_pool, batches, slot_leaders);
+        return verify_shreds_cpu(thread_pool, batches, slot_leaders, cache);
     };
     let (pubkeys, pubkey_offsets) =
         slot_key_data_for_gpu(thread_pool, batches, slot_leaders, recycler_cache);
@@ -479,6 +506,7 @@ mod tests {
     fn run_test_sigverify_shred_cpu(slot: Slot) {
         solana_logger::setup();
         let mut packet = Packet::default();
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let mut shred = Shred::new_from_data(
             slot,
             0xc0de,
@@ -497,14 +525,14 @@ mod tests {
         packet.meta_mut().size = shred.payload().len();
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        assert!(verify_shred_cpu(&packet, &leader_slots));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
         let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
-        assert!(!verify_shred_cpu(&packet, &leader_slots));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let leader_slots = HashMap::new();
-        assert!(!verify_shred_cpu(&packet, &leader_slots));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
     }
 
     #[test]
@@ -515,6 +543,7 @@ mod tests {
     fn run_test_sigverify_shreds_cpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
         let mut batches = [PacketBatch::default()];
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let mut shred = Shred::new_from_data(
             slot,
             0xc0de,
@@ -532,21 +561,21 @@ mod tests {
         batches[0][0].meta_mut().size = shred.payload().len();
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![1]]);
 
         let wrong_keypair = Keypair::new();
         let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
-        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![0]]);
 
         let leader_slots = HashMap::new();
-        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![0]]);
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
         batches[0][0].meta_mut().size = 0;
-        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![0]]);
     }
 
@@ -559,6 +588,7 @@ mod tests {
     fn run_test_sigverify_shreds_gpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
         let recycler_cache = RecyclerCache::default();
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
 
         let mut batches = [PacketBatch::default()];
         let mut shred = Shred::new_from_data(
@@ -579,7 +609,13 @@ mod tests {
 
         let leader_slots =
             HashMap::from([(std::u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
-        let rv = verify_shreds_gpu(thread_pool, &batches, &leader_slots, &recycler_cache);
+        let rv = verify_shreds_gpu(
+            thread_pool,
+            &batches,
+            &leader_slots,
+            &recycler_cache,
+            &cache,
+        );
         assert_eq!(rv, vec![vec![1]]);
 
         let wrong_keypair = Keypair::new();
@@ -587,17 +623,35 @@ mod tests {
             (std::u64::MAX, Pubkey::default()),
             (slot, wrong_keypair.pubkey()),
         ]);
-        let rv = verify_shreds_gpu(thread_pool, &batches, &leader_slots, &recycler_cache);
+        let rv = verify_shreds_gpu(
+            thread_pool,
+            &batches,
+            &leader_slots,
+            &recycler_cache,
+            &cache,
+        );
         assert_eq!(rv, vec![vec![0]]);
 
         let leader_slots = HashMap::from([(std::u64::MAX, Pubkey::default())]);
-        let rv = verify_shreds_gpu(thread_pool, &batches, &leader_slots, &recycler_cache);
+        let rv = verify_shreds_gpu(
+            thread_pool,
+            &batches,
+            &leader_slots,
+            &recycler_cache,
+            &cache,
+        );
         assert_eq!(rv, vec![vec![0]]);
 
         batches[0][0].meta_mut().size = 0;
         let leader_slots =
             HashMap::from([(std::u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
-        let rv = verify_shreds_gpu(thread_pool, &batches, &leader_slots, &recycler_cache);
+        let rv = verify_shreds_gpu(
+            thread_pool,
+            &batches,
+            &leader_slots,
+            &recycler_cache,
+            &cache,
+        );
         assert_eq!(rv, vec![vec![0]]);
     }
 
@@ -610,6 +664,7 @@ mod tests {
     fn run_test_sigverify_shreds_sign_gpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
         let recycler_cache = RecyclerCache::default();
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
 
         let num_packets = 32;
         let num_batches = 100;
@@ -635,7 +690,7 @@ mod tests {
         let pinned_keypair = Some(Arc::new(pinned_keypair));
         let pubkeys = HashMap::from([(std::u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
         //unsigned
-        let rv = verify_shreds_gpu(thread_pool, &batches, &pubkeys, &recycler_cache);
+        let rv = verify_shreds_gpu(thread_pool, &batches, &pubkeys, &recycler_cache, &cache);
         assert_eq!(rv, vec![vec![0; num_packets]; num_batches]);
         //signed
         sign_shreds_gpu(
@@ -645,10 +700,10 @@ mod tests {
             &mut batches,
             &recycler_cache,
         );
-        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
         assert_eq!(rv, vec![vec![1; num_packets]; num_batches]);
 
-        let rv = verify_shreds_gpu(thread_pool, &batches, &pubkeys, &recycler_cache);
+        let rv = verify_shreds_gpu(thread_pool, &batches, &pubkeys, &recycler_cache, &cache);
         assert_eq!(rv, vec![vec![1; num_packets]; num_batches]);
     }
 
@@ -662,6 +717,7 @@ mod tests {
         solana_logger::setup();
 
         let mut batches = [PacketBatch::default()];
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let keypair = Keypair::new();
         let shred = Shred::new_from_data(
             slot,
@@ -679,11 +735,11 @@ mod tests {
 
         let pubkeys = HashMap::from([(slot, keypair.pubkey()), (std::u64::MAX, Pubkey::default())]);
         //unsigned
-        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
         assert_eq!(rv, vec![vec![0]]);
         //signed
         sign_shreds_cpu(thread_pool, &keypair, &mut batches);
-        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys);
+        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
         assert_eq!(rv, vec![vec![1]]);
     }
 
@@ -799,6 +855,7 @@ mod tests {
     #[test]
     fn test_verify_shreds_fuzz() {
         let mut rng = rand::thread_rng();
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let recycler_cache = RecyclerCache::default();
         let keypairs = repeat_with(|| rng.gen_range(169_367_809..169_906_789))
@@ -813,7 +870,7 @@ mod tests {
             .collect();
         let mut packets = make_packets(&mut rng, &shreds);
         assert_eq!(
-            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache),
+            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
             packets
                 .iter()
                 .map(|batch| vec![1u8; batch.len()])
@@ -836,7 +893,7 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache),
+            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
             out
         );
     }
@@ -844,6 +901,7 @@ mod tests {
     #[test]
     fn test_sign_shreds_gpu() {
         let mut rng = rand::thread_rng();
+        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let recycler_cache = RecyclerCache::default();
         let shreds = {
@@ -866,7 +924,7 @@ mod tests {
         let mut packets = make_packets(&mut rng, &shreds);
         // Assert that initially all signatrues are invalid.
         assert_eq!(
-            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache),
+            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
             packets
                 .iter()
                 .map(|batch| vec![0u8; batch.len()])
@@ -883,7 +941,7 @@ mod tests {
             &recycler_cache,
         );
         assert_eq!(
-            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache),
+            verify_shreds_gpu(&thread_pool, &packets, &pubkeys, &recycler_cache, &cache),
             packets
                 .iter()
                 .map(|batch| vec![1u8; batch.len()])
