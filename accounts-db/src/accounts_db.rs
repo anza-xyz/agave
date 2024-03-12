@@ -7555,6 +7555,52 @@ impl AccountsDb {
         Ok(())
     }
 
+    /// A generic function to collect `interested` account data from a `slot`
+    /// into a vector for future processing.
+    ///
+    /// Returns the result vector, accounts-db scan time in microseconds, and a
+    /// start `Measure`` when we began accumulating.
+    fn collect_from_slot_into_vec<R, B>(
+        &self,
+        slot: Slot,
+        extract_cache_value: impl Fn(LoadedAccount) -> Option<R> + Sync,
+        extract_storage_value: impl Fn(LoadedAccount) -> B + Sync,
+        flatten_storage_value: impl Fn(Pubkey, B) -> R,
+    ) -> (Vec<R>, u64, Measure)
+    where
+        R: Send,
+        B: Send + Default + Sync,
+    {
+        type ScanResult<R, B> = ScanStorageResult<R, DashMap<Pubkey, B>>;
+        let mut scan = Measure::start("scan");
+        let scan_result: ScanResult<R, B> = self.scan_account_storage(
+            slot,
+            |loaded_account: LoadedAccount| {
+                // Cache only has one version per key, don't need to worry about versioning
+                extract_cache_value(loaded_account)
+            },
+            |accum: &DashMap<Pubkey, B>, loaded_account: LoadedAccount| {
+                // Storage may have duplicates so only keep the latest version for each key
+                accum.insert(
+                    *loaded_account.pubkey(),
+                    extract_storage_value(loaded_account),
+                );
+            },
+        );
+        scan.stop();
+
+        let accumulate = Measure::start("accumulate");
+        let result: Vec<_> = match scan_result {
+            ScanStorageResult::Cached(cached_result) => cached_result,
+            ScanStorageResult::Stored(stored_result) => stored_result
+                .into_iter()
+                .map(|(pubkey, storage_val)| flatten_storage_value(pubkey, storage_val))
+                .collect(),
+        };
+
+        (result, scan.as_us(), accumulate)
+    }
+
     /// helper to return
     /// 1. pubkey, hash pairs for the slot
     /// 2. us spent scanning
@@ -7563,65 +7609,37 @@ impl AccountsDb {
         &self,
         slot: Slot,
     ) -> (Vec<(Pubkey, AccountHash)>, u64, Measure) {
-        let mut scan = Measure::start("scan");
-        let scan_result: ScanStorageResult<(Pubkey, AccountHash), DashMap<Pubkey, AccountHash>> =
-            self.scan_account_storage(
-                slot,
-                |loaded_account: LoadedAccount| {
-                    // Cache only has one version per key, don't need to worry about versioning
-                    Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
-                },
-                |accum: &DashMap<Pubkey, AccountHash>, loaded_account: LoadedAccount| {
-                    let loaded_hash = loaded_account.loaded_hash();
-                    accum.insert(*loaded_account.pubkey(), loaded_hash);
-                },
-            );
-        scan.stop();
-
-        let accumulate = Measure::start("accumulate");
-        let hashes: Vec<_> = match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
-        };
-
-        (hashes, scan.as_us(), accumulate)
-    }
-
-    /// Return all of the accounts for a given slot
-    pub fn get_pubkey_hash_account_for_slot(&self, slot: Slot) -> Vec<PubkeyHashAccount> {
-        type ScanResult =
-            ScanStorageResult<PubkeyHashAccount, DashMap<Pubkey, (AccountHash, AccountSharedData)>>;
-        let scan_result: ScanResult = self.scan_account_storage(
+        self.collect_from_slot_into_vec(
             slot,
             |loaded_account: LoadedAccount| {
                 // Cache only has one version per key, don't need to worry about versioning
+                Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
+            },
+            |loaded_account: LoadedAccount| loaded_account.loaded_hash(),
+            |pubkey, hash| (pubkey, hash),
+        )
+    }
+
+    pub fn get_pubkey_hash_account_for_slot(&self, slot: Slot) -> Vec<PubkeyHashAccount> {
+        self.collect_from_slot_into_vec(
+            slot,
+            |loaded_account: LoadedAccount| {
                 Some(PubkeyHashAccount {
                     pubkey: *loaded_account.pubkey(),
                     hash: loaded_account.loaded_hash(),
                     account: loaded_account.take_account(),
                 })
             },
-            |accum: &DashMap<Pubkey, (AccountHash, AccountSharedData)>,
-             loaded_account: LoadedAccount| {
-                // Storage may have duplicates so only keep the latest version for each key
-                accum.insert(
-                    *loaded_account.pubkey(),
-                    (loaded_account.loaded_hash(), loaded_account.take_account()),
-                );
+            |loaded_account: LoadedAccount| {
+                (loaded_account.loaded_hash(), loaded_account.take_account())
             },
-        );
-
-        match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result
-                .into_iter()
-                .map(|(pubkey, (hash, account))| PubkeyHashAccount {
-                    pubkey,
-                    hash,
-                    account,
-                })
-                .collect(),
-        }
+            |pubkey, hash_account| PubkeyHashAccount {
+                pubkey,
+                hash: hash_account.0,
+                account: hash_account.1,
+            },
+        )
+        .0
     }
 
     /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
