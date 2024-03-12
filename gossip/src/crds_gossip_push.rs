@@ -157,12 +157,6 @@ impl CrdsGossipPush {
                         received_cache.record(origin, from, /*num_dups:*/ usize::MAX);
                         self.num_old.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(CrdsError::RedundantPull) => {
-                        // rewarded for being after Pull but first Push??
-                        received_cache.record(origin, from, /*num_dups:*/ 0);
-                        // still track that it is old message
-                        self.num_old.fetch_add(1, Ordering::Relaxed);
-                    }
                 }
             }
         }

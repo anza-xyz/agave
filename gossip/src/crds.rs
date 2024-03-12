@@ -75,7 +75,7 @@ pub struct Crds {
     votes: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of EpochSlots keyed by insert order.
     epoch_slots: BTreeMap<u64 /*insert order*/, usize /*index*/>,
-    // Indices of DuplicateShred keyed by insert order.
+    // Indice of DuplicateShred keyed by insert order.
     duplicate_shreds: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of all crds values associated with a node.
     records: HashMap<Pubkey, IndexSet<usize>>,
@@ -93,7 +93,6 @@ pub enum CrdsError {
     DuplicatePush(/*num dups:*/ u8),
     InsertFailed,
     UnknownStakes,
-    RedundantPull,
 }
 
 #[derive(Clone, Copy)]
@@ -119,6 +118,34 @@ pub(crate) struct CrdsStats {
     pub(crate) redundant_pull: i64,
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+struct NumPushRecv {
+    pub count: u8,
+    pub received_first_via_pull_response: bool,
+}
+
+impl NumPushRecv {
+    fn new(route: GossipRoute) -> Self {
+        let (count, received_first_via_pull_response) = match route {
+            GossipRoute::PullRequest => (0, true),
+            GossipRoute::PushMessage(_) => (1, false),
+            _ => (0, false),
+        };
+        Self {
+            count,
+            received_first_via_pull_response,
+        }
+    }
+
+    // If first time message was received via PullResponse and count == 0,
+    // we know this data was first received via PullResponse.
+    // This is a redundant pull, meaning we received a PushMessage
+    // after we had already received the same message first via PullResponse
+    fn is_redundant_pull(&self) -> bool {
+        self.received_first_via_pull_response && self.count == 0
+    }
+}
+
 /// This structure stores some local metadata associated with the CrdsValue
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct VersionedCrdsValue {
@@ -129,8 +156,9 @@ pub struct VersionedCrdsValue {
     pub(crate) local_timestamp: u64,
     /// value hash
     pub(crate) value_hash: Hash,
-    /// Number of times this value is recevied from gossip push.
-    num_push_recv: u8,
+    /// Tracks number of times this value is recevied from gossip push.
+    /// And if this value was first entered into crds via redundant pull
+    num_push_recv: NumPushRecv,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -151,12 +179,7 @@ impl Cursor {
 impl VersionedCrdsValue {
     fn new(value: CrdsValue, cursor: Cursor, local_timestamp: u64, route: GossipRoute) -> Self {
         let value_hash = hash(&serialize(&value).unwrap());
-        let num_push_recv = match route {
-            // If we received a PushMessage, set
-            // num_push_recv <- 1
-            GossipRoute::PushMessage(_) => 1u8,
-            _ => 0u8,
-        };
+        let num_push_recv = NumPushRecv::new(route);
         VersionedCrdsValue {
             ordinal: cursor.ordinal(),
             value,
@@ -311,20 +334,14 @@ impl Crds {
                     Err(CrdsError::InsertFailed)
                 } else if matches!(route, GossipRoute::PushMessage(_)) {
                     let entry = entry.get_mut();
-                    // If num_push_recv == 0, we know this data was first received
-                    // via PullResponse. This is a redundant pull, meaning we received
-                    // a PushMessage after we had already received the same message
-                    // first via PullResponse
-                    if entry.num_push_recv == 0 {
-                        entry.num_push_recv = entry.num_push_recv.saturating_add(1);
-                        self.stats.lock().unwrap().record_redundant_pull();
-                        return Err(CrdsError::RedundantPull);
+                    if entry.num_push_recv.is_redundant_pull() {
+                        self.stats.lock().unwrap().redundant_pull += 1;
                     }
-                    entry.num_push_recv = entry.num_push_recv.saturating_add(1);
-                    // num_push_recv tracks number of received push messages, but we return
+                    entry.num_push_recv.count = entry.num_push_recv.count.saturating_add(1);
+                    // num_push_recv.count tracks number of received push messages, but we return
                     // duplicate push message count. so we need to subtract 1
                     Err(CrdsError::DuplicatePush(
-                        entry.num_push_recv.saturating_sub(1),
+                        entry.num_push_recv.count.saturating_sub(1),
                     ))
                 } else {
                     Err(CrdsError::InsertFailed)
@@ -766,10 +783,6 @@ impl CrdsStats {
             GossipRoute::PushMessage(_) => self.push.record_fail(entry),
             GossipRoute::PullResponse => self.pull.record_fail(entry),
         }
-    }
-
-    fn record_redundant_pull(&mut self) {
-        self.redundant_pull += 1;
     }
 }
 
