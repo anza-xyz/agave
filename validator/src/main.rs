@@ -1382,22 +1382,9 @@ pub fn main() {
                 usize
             ),
             worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
-            notification_threads: if full_api {
-                NonZeroUsize::new(value_t_or_exit!(
-                    matches,
-                    "rpc_pubsub_notification_threads",
-                    usize
-                ))
-            } else {
-                // Due to a CLAP bug, we can't use .requires("full_rpc_api") directly on
-                // the rpc_pubsub_notification_threads argument. Do the check manually here,
-                // and remove this when we get past 2.xy of CLAP
-                if matches.occurrences_of("rpc_pubsub_notification_threads") > 0 {
-                    eprintln!("Use of --rpc_pubsub_notification_threads requires --full-rpc-api");
-                    exit(1);
-                }
-                None
-            },
+            notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
+                .ok()
+                .and_then(NonZeroUsize::new),
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),

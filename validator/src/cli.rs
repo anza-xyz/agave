@@ -1076,10 +1076,15 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .arg(
             Arg::with_name("rpc_pubsub_notification_threads")
                 .long("rpc-pubsub-notification-threads")
+                .requires("full_rpc_api")
                 .takes_value(true)
                 .value_name("NUM_THREADS")
                 .validator(is_parsable::<usize>)
-                .default_value(&default_args.rpc_pubsub_notification_threads)
+                .default_value_if(
+                    "full_rpc_api",
+                    None,
+                    &default_args.rpc_pubsub_notification_threads,
+                )
                 .help(
                     "The maximum number of threads that RPC PubSub will use for generating \
                      notifications. 0 will disable RPC PubSub notifications",
