@@ -7,18 +7,11 @@
 //! [`sysvar::stake_history`]: crate::sysvar::stake_history
 
 pub use crate::clock::Epoch;
-use {
-    crate::{account_info::AccountInfo, program_error::ProgramError, sysvar::SysvarId},
-    bytemuck::{Pod, Zeroable},
-    std::{ops::Deref, sync::Arc},
-};
+use std::{ops::Deref, sync::Arc};
 
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
 
-#[repr(C)]
-#[derive(
-    Debug, Serialize, Deserialize, PartialEq, Eq, Default, Copy, Clone, Pod, Zeroable, AbiExample,
-)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, Copy, AbiExample)]
 pub struct StakeHistoryEntry {
     pub effective: u64,    // effective stake at this epoch
     pub activating: u64,   // sum of portion of stakes not fully warmed up
@@ -90,18 +83,6 @@ impl Deref for StakeHistory {
     }
 }
 
-// XXX remove
-#[derive(Debug, PartialEq, Eq, Default, Clone)]
-pub struct StakeHistoryData<'a>(&'a [u8]);
-impl<'a> StakeHistoryData<'a> {
-    pub fn take_account_info(account_info: &AccountInfo<'a>) -> Result<Self, ProgramError> {
-        if *account_info.unsigned_key() != StakeHistory::id() {
-            return Err(ProgramError::InvalidArgument);
-        }
-        Ok(StakeHistoryData(account_info.data.take()))
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub struct StakeHistorySyscall(());
 
@@ -144,36 +125,9 @@ impl StakeHistoryGetEntry for Arc<StakeHistory> {
     }
 }
 
-// XXX remove
-#[repr(C)]
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Pod, Zeroable)]
-struct StakeHistoryEpochEntry {
-    epoch: Epoch,
-    entry: StakeHistoryEntry,
-}
-impl StakeHistoryGetEntry for StakeHistoryData<'_> {
-    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
-        let data = self.0;
-        if let Ok(history) = bytemuck::try_cast_slice::<u8, StakeHistoryEpochEntry>(&data[8..]) {
-            history
-                .binary_search_by(|probe| epoch.cmp(&probe.epoch))
-                .ok()
-                .map(|index| history[index].entry)
-        } else {
-            None
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{
-            pubkey::Pubkey,
-            sysvar::{Sysvar, SysvarId},
-        },
-    };
+    use super::*;
 
     #[test]
     fn test_stake_history() {
@@ -188,37 +142,15 @@ mod tests {
                 },
             );
         }
-
         assert_eq!(stake_history.len(), MAX_ENTRIES);
         assert_eq!(stake_history.iter().map(|entry| entry.0).min().unwrap(), 1);
-
-        let id = StakeHistory::id();
-        let mut lamports = 0;
-        let mut data = vec![0; StakeHistory::size_of()];
-        let owner = Pubkey::default();
-        let mut account_info = AccountInfo::new(
-            &id,
-            false,
-            false,
-            &mut lamports,
-            &mut data,
-            &owner,
-            false,
-            0,
-        );
-        stake_history.to_account_info(&mut account_info).unwrap();
-        let stake_history_data = StakeHistoryData::take_account_info(&account_info).unwrap();
-
-        assert_eq!(stake_history.get_entry(0), None);
-        assert_eq!(stake_history_data.get_entry(0), None);
-        for i in 1..MAX_ENTRIES as u64 + 1 {
-            let expected = Some(StakeHistoryEntry {
-                activating: i,
+        assert_eq!(stake_history.get(0), None);
+        assert_eq!(
+            stake_history.get(1),
+            Some(&StakeHistoryEntry {
+                activating: 1,
                 ..StakeHistoryEntry::default()
-            });
-
-            assert_eq!(stake_history.get_entry(i), expected);
-            assert_eq!(stake_history_data.get_entry(i), expected);
-        }
+            })
+        );
     }
 }
