@@ -57,7 +57,11 @@ esac
 
 case $TAG in
 edge|beta)
+<<<<<<< HEAD
   DOWNLOAD_URL=https://release.anza.xyz/"$TAG"/solana-release-$TARGET.tar.bz2
+=======
+  DOWNLOAD_URL=https://release.agave.xyz/"$TAG"/solana-release-$TARGET.tar.bz2
+>>>>>>> 2078153aa1 ([anza migration]: fix download path for cluster test (#204))
   ;;
 *)
   DOWNLOAD_URL=https://github.com/anza-xyz/agave/releases/download/"$TAG"/solana-release-$TARGET.tar.bz2
