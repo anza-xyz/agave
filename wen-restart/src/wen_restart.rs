@@ -240,23 +240,19 @@ pub(crate) fn find_heaviest_fork(
     bank_forks: Arc<RwLock<BankForks>>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Slot, Hash)> {
-    // Under normal cases without duplicate blocks, we should have a single chain of
-    // blocks from the root to the newest block with > (67% - 5% -  (100% - X%)) of stake.
+    // Under normal cases, we should have a single chain of blocks from the root to the
+    // newest block with > (67% - 5% -  (100% - X%)) of stake.
     // 1. If X% of the validators joined the restart (X > 80%), then there can't be two
     //    kids B and C of the same parent A with more than (67% - 5% -  (100% - X%)) of
     //    the stake each. Assume B and C exists, their combined stake is more than
     //    2 * (67% - 5% - (100% - X%)) = 134% - 10% - 2 * (100% - X%) = 2*X% - 76% > X%.
     //    Since we can only have X% of the stake, this is a contradiction.
-    // 2. If there are no duplicate blocks and a child got Y% of the stake, then its
-    //    parent should at least have Y% of the stake.
+    // 2. If a child got Y% of the stake, then its parent should at least have Y% of the stake.
     // So, we can start from the latest block with > (67% - 5% -  (100% - X%)) = X% - 38%
     // of the stake and go up until we find the root.
     //
     // If somehow we find a block on slot D has Y% of the stake but its parent has less than Y%,
-    // that means block on D is a duplicate block and unfortunately we hold the wrong version.
-    // If the correct version of D got confirmed before the outage, 67% of the cluster holds
-    // the correct version and they should vote for it. We will see how many people have the
-    // correct snapshot in the final stage and those with wrong version can download snapshot.
+    // something is wrong.
     //
     // It is also a problem if we find a happy chain which doesn't chain to our root.
     //
@@ -308,8 +304,8 @@ pub(crate) fn find_heaviest_fork(
                 .slots_stake_map
                 .get(&slot)
                 .unwrap_or(&0);
-            // When we find a block with less stake than its parent, this is most likely a duplicate block
-            // and we have the wrong version. We don't care how much stake root has, so we don't check it.
+            // When we find a block with less stake than its parent, something is seriously
+            // wrong. We don't care how much stake root has, so we don't check it.
             if current_bank.slot() != root_slot && new_stake > current_stake {
                 return Err(WenRestartError::ChildStakeLargerThanParent(
                     slot,
