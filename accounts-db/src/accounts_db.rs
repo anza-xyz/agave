@@ -7569,7 +7569,7 @@ impl AccountsDb {
     ) -> (Vec<R>, u64, Measure)
     where
         R: Send,
-        B: Send + Default + Sync,
+        B: Send + Sync,
     {
         type ScanResult<R, B> = ScanStorageResult<R, DashMap<Pubkey, B>>;
         let mut scan = Measure::start("scan");
