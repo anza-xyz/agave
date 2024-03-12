@@ -11,7 +11,7 @@ use std::{ops::Deref, sync::Arc};
 
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, Copy, AbiExample)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, AbiExample)]
 pub struct StakeHistoryEntry {
     pub effective: u64,    // effective stake at this epoch
     pub activating: u64,   // sum of portion of stakes not fully warmed up
@@ -94,7 +94,7 @@ impl StakeHistoryGetEntry for StakeHistory {
     fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
         self.binary_search_by(|probe| epoch.cmp(&probe.0))
             .ok()
-            .map(|index| self[index].1)
+            .map(|index| self[index].1.clone())
     }
 }
 
@@ -144,10 +144,10 @@ mod tests {
         }
         assert_eq!(stake_history.len(), MAX_ENTRIES);
         assert_eq!(stake_history.iter().map(|entry| entry.0).min().unwrap(), 1);
-        assert_eq!(stake_history.get(0), None);
+        assert_eq!(stake_history.get_entry(0), None);
         assert_eq!(
-            stake_history.get(1),
-            Some(&StakeHistoryEntry {
+            stake_history.get_entry(1),
+            Some(StakeHistoryEntry {
                 activating: 1,
                 ..StakeHistoryEntry::default()
             })
