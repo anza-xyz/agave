@@ -152,8 +152,9 @@ use {
         sysvar::{self, last_restart_slot::LastRestartSlot, Sysvar, SysvarId},
         timing::years_as_slots,
         transaction::{
-            self, MessageHash, Result, SanitizedTransaction, Transaction, TransactionError,
-            TransactionVerificationMode, VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
+            self, BankingTransactionResultNotifier, MessageHash, Result, SanitizedTransaction,
+            Transaction, TransactionError, TransactionVerificationMode, VersionedTransaction,
+            MAX_TX_ACCOUNT_LOCKS,
         },
         transaction_context::{TransactionAccount, TransactionReturnData},
     },
@@ -548,6 +549,7 @@ impl PartialEq for Bank {
             loaded_programs_cache: _,
             epoch_reward_status: _,
             transaction_processor: _,
+            banking_transaction_result_notifier: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -808,6 +810,8 @@ pub struct Bank {
     epoch_reward_status: EpochRewardStatus,
 
     transaction_processor: TransactionBatchProcessor<BankForks>,
+    /// geyser plugin to notify transaction results
+    banking_transaction_result_notifier: Option<BankingTransactionResultNotifier>,
 }
 
 struct VoteWithStakeDelegations {
@@ -994,6 +998,7 @@ impl Bank {
             ))),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
+            banking_transaction_result_notifier: None,
         };
 
         bank.transaction_processor = TransactionBatchProcessor::new(
@@ -1312,6 +1317,7 @@ impl Bank {
             loaded_programs_cache: parent.loaded_programs_cache.clone(),
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor: TransactionBatchProcessor::default(),
+            banking_transaction_result_notifier: None,
         };
 
         new.transaction_processor = TransactionBatchProcessor::new(
@@ -1832,6 +1838,7 @@ impl Bank {
             ))),
             epoch_reward_status: fields.epoch_reward_status,
             transaction_processor: TransactionBatchProcessor::default(),
+            banking_transaction_result_notifier: None,
         };
 
         bank.transaction_processor = TransactionBatchProcessor::new(
@@ -4087,6 +4094,9 @@ impl Bank {
         let mut status_cache = self.status_cache.write().unwrap();
         assert_eq!(sanitized_txs.len(), execution_results.len());
         for (tx, execution_result) in sanitized_txs.iter().zip(execution_results) {
+            if let TransactionExecutionResult::NotExecuted(err) = execution_result {
+                self.notify_transaction_error(tx, Some(err.clone()));
+            }
             if let Some(details) = execution_result.details() {
                 // Add the message hash to the status cache to ensure that this message
                 // won't be processed again with a different signature.
@@ -4443,6 +4453,7 @@ impl Bank {
             (Ok(()), Some(nonce), lamports_per_signature)
         } else {
             error_counters.blockhash_not_found += 1;
+            self.notify_transaction_error(tx, Some(TransactionError::BlockhashNotFound));
             (Err(TransactionError::BlockhashNotFound), None, None)
         }
     }
@@ -4475,6 +4486,10 @@ impl Bank {
                     && self.is_transaction_already_processed(sanitized_tx, &rcache)
                 {
                     error_counters.already_processed += 1;
+                    self.notify_transaction_error(
+                        sanitized_tx,
+                        Some(TransactionError::AlreadyProcessed),
+                    );
                     return (Err(TransactionError::AlreadyProcessed), None, None);
                 }
 
@@ -4546,6 +4561,23 @@ impl Bank {
         balances
     }
 
+    pub fn notify_transaction_error(
+        &self,
+        transaction: &SanitizedTransaction,
+        result: Option<TransactionError>,
+    ) {
+        if let Some(transaction_result_notifier_lock) = &self.banking_transaction_result_notifier {
+            let transaction_error_notifier = transaction_result_notifier_lock.lock.read();
+            if let Ok(transaction_error_notifier) = transaction_error_notifier {
+                transaction_error_notifier.notify_banking_transaction_result(
+                    transaction,
+                    result,
+                    self.slot,
+                );
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn load_and_execute_transactions(
         &self,
@@ -4596,6 +4628,23 @@ impl Bank {
                 Ok(_) => None,
             })
             .collect();
+
+        if let Some(transaction_result_notifier_lock) = &self.banking_transaction_result_notifier {
+            let transaction_error_notifier = transaction_result_notifier_lock.lock.read();
+            if let Ok(transaction_error_notifier) = transaction_error_notifier {
+                batch
+                    .sanitized_transactions()
+                    .iter()
+                    .zip(batch.lock_results())
+                    .for_each(|(transaction, result)| {
+                        transaction_error_notifier.notify_banking_transaction_result(
+                            transaction,
+                            result.clone().err(),
+                            self.slot,
+                        );
+                    });
+            }
+        }
 
         let mut check_time = Measure::start("check_transactions");
         let mut check_results = self.check_transactions(
@@ -7496,6 +7545,17 @@ impl Bank {
     ) -> Arc<LoadedProgram> {
         self.transaction_processor
             .load_program_with_pubkey(self, pubkey, reload, effective_epoch)
+    }
+
+    pub fn set_banking_transaction_results_notifier(
+        &mut self,
+        banking_transaction_result_notifier: Option<BankingTransactionResultNotifier>,
+    ) {
+        self.banking_transaction_result_notifier = banking_transaction_result_notifier;
+    }
+
+    pub fn has_banking_transaction_results_notifier(&self) -> bool {
+        self.banking_transaction_result_notifier.is_some()
     }
 }
 

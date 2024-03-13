@@ -3,8 +3,14 @@ use {
         instruction::InstructionError,
         message::{AddressLoaderError, SanitizeMessageError},
         sanitize::SanitizeError,
+        slot_history::Slot,
+        transaction::SanitizedTransaction,
     },
     serde::Serialize,
+    std::{
+        fmt::Debug,
+        sync::{Arc, RwLock},
+    },
     thiserror::Error,
 };
 
@@ -195,6 +201,45 @@ impl From<AddressLoaderError> for TransactionError {
             AddressLoaderError::InvalidAccountOwner => Self::InvalidAddressLookupTableOwner,
             AddressLoaderError::InvalidAccountData => Self::InvalidAddressLookupTableData,
             AddressLoaderError::InvalidLookupIndex => Self::InvalidAddressLookupTableIndex,
+        }
+    }
+}
+
+pub trait TransactionResultNotifier: Debug {
+    fn notify_banking_transaction_result(
+        &self,
+        transaction: &SanitizedTransaction,
+        error: Option<TransactionError>,
+        slot: Slot,
+    );
+}
+
+#[derive(Clone, Debug)]
+pub struct BankingTransactionResultNotifier {
+    pub lock: Arc<RwLock<dyn TransactionResultNotifier + Sync + Send>>,
+}
+
+#[cfg(RUSTC_WITH_SPECIALIZATION)]
+#[derive(Debug)]
+struct DummyTransactionResultNotifier {}
+
+#[cfg(RUSTC_WITH_SPECIALIZATION)]
+impl TransactionResultNotifier for DummyTransactionResultNotifier {
+    fn notify_banking_transaction_result(
+        &self,
+        _: &SanitizedTransaction,
+        _: Option<TransactionError>,
+        _: Slot,
+    ) {
+    }
+}
+
+#[cfg(RUSTC_WITH_SPECIALIZATION)]
+impl solana_frozen_abi::abi_example::AbiExample for BankingTransactionResultNotifier {
+    fn example() -> Self {
+        // BankingTransactionResultNotifier isn't serializable by definition.
+        BankingTransactionResultNotifier {
+            lock: Arc::new(RwLock::new(DummyTransactionResultNotifier {})),
         }
     }
 }

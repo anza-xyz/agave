@@ -47,7 +47,10 @@ use {
         accounts_background_service::AbsRequestSender, bank_forks::BankForks,
         commitment::BlockCommitmentCache, prioritization_fee_cache::PrioritizationFeeCache,
     },
-    solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
+    solana_sdk::{
+        clock::Slot, pubkey::Pubkey, signature::Keypair,
+        transaction::BankingTransactionResultNotifier,
+    },
     solana_turbine::retransmit_stage::RetransmitStage,
     solana_vote::vote_sender_types::ReplayVoteSender,
     std::{
@@ -144,6 +147,7 @@ impl Tvu {
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
+        banking_transaction_result_notifier: Option<BankingTransactionResultNotifier>,
     ) -> Result<Self, String> {
         let TvuSockets {
             repair: repair_socket,
@@ -266,6 +270,7 @@ impl Tvu {
             tower_storage: tower_storage.clone(),
             wait_to_vote_slot,
             replay_slots_concurrently: tvu_config.replay_slots_concurrently,
+            banking_transaction_result_notifier,
         };
 
         let (voting_sender, voting_receiver) = unbounded();
