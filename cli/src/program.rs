@@ -250,14 +250,6 @@ impl ProgramSubCommands for App<'_, '_> {
                                     [Note: priority fee is added in LAMPORTS, so enter priority fee in terms of LAMPORTS]",
                                 ),
                         ).
-                        arg(
-                            Arg::with_name("max_retires")
-                                .long("max-retries")
-                                .takes_value(true)
-                                .help(
-                                    "Specifies the max retry count for failed transactions",
-                                ),
-                        ),
                 )
                 .subcommand(
                     SubCommand::with_name("upgrade")
