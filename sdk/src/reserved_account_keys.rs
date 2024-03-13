@@ -14,7 +14,7 @@ use {
         secp256k1_program, stake, system_program, sysvar, vote,
     },
     lazy_static::lazy_static,
-    std::collections::HashSet,
+    std::collections::{HashMap, HashSet},
 };
 
 // Inline zk token program id since it isn't available in the sdk
@@ -22,52 +22,100 @@ mod zk_token_proof_program {
     solana_sdk::declare_id!("ZkTokenProof1111111111111111111111111111111");
 }
 
-pub struct ReservedAccountKeys;
+/// `ReservedAccountKeys` holds the set of currently active/inactive
+/// account keys that are reserved by the protocol and may not be write-locked
+/// during transaction processing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReservedAccountKeys {
+    /// Set of currently active reserved account keys
+    pub active: HashSet<Pubkey>,
+    /// Set of currently inactive reserved account keys that will be moved to the
+    /// active set when their feature id is activated
+    inactive: HashMap<Pubkey, Pubkey>,
+}
+
+impl Default for ReservedAccountKeys {
+    fn default() -> Self {
+        Self::new(&RESERVED_ACCOUNTS)
+    }
+}
+
 impl ReservedAccountKeys {
-    /// Compute the active set of reserved keys based on activated features
-    pub fn active(feature_set: &FeatureSet) -> HashSet<Pubkey> {
-        Self::compute_active(&RESERVED_ACCOUNT_KEYS, feature_set)
+    /// Compute a set of active / inactive reserved account keys from a list of
+    /// keys with a designated feature id. If a reserved account key doesn't
+    /// designate a feature id, it's already activated and should be inserted
+    /// into the active set. If it does have a feature id, insert the key and
+    /// its feature id into the inactive map.
+    fn new(reserved_accounts: &[ReservedAccount]) -> Self {
+        Self {
+            active: reserved_accounts
+                .iter()
+                .filter(|reserved| reserved.feature_id.is_none())
+                .map(|reserved| reserved.key)
+                .collect(),
+            inactive: reserved_accounts
+                .iter()
+                .filter_map(|ReservedAccount { key, feature_id }| {
+                    feature_id.as_ref().map(|feature_id| (*key, *feature_id))
+                })
+                .collect(),
+        }
     }
 
-    // Method only exists for unit testing
-    fn compute_active(
-        account_keys: &[ReservedAccountKey],
-        feature_set: &FeatureSet,
-    ) -> HashSet<Pubkey> {
-        account_keys
+    /// Compute a set with all reserved keys active, regardless of whether their
+    /// feature was activated. This is not to be used by the runtime. Useful for
+    /// off-chain utilities that need to filter out reserved accounts.
+    pub fn new_all_activated() -> Self {
+        Self {
+            active: Self::all_keys_iter().copied().collect(),
+            inactive: HashMap::default(),
+        }
+    }
+
+    /// Returns whether the specified key is reserved
+    pub fn is_reserved(&self, key: &Pubkey) -> bool {
+        self.active.contains(key)
+    }
+
+    /// Move inactive reserved account keys to the active set if their feature
+    /// is active.
+    pub fn update_active_set(&mut self, feature_set: &FeatureSet) {
+        self.inactive.retain(|reserved_key, feature_id| {
+            if feature_set.is_active(feature_id) {
+                self.active.insert(*reserved_key);
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Return an iterator over all active / inactive reserved keys. This is not
+    /// to be used by the runtime. Useful for off-chain utilities that need to
+    /// filter out reserved accounts.
+    pub fn all_keys_iter() -> impl Iterator<Item = &'static Pubkey> {
+        RESERVED_ACCOUNTS
             .iter()
-            .filter(|reserved_key| reserved_key.is_active(feature_set))
-            .map(|reserved_key| reserved_key.key)
-            .collect()
+            .map(|reserved_key| &reserved_key.key)
     }
 
-    /// Compute a set of all reserved keys, regardless of if they are active or not.
-    /// Since this method doesn't take into account which reserved keys are active,
-    /// it should not be used by the runtime.
-    pub fn active_and_inactive() -> HashSet<Pubkey> {
-        RESERVED_ACCOUNT_KEYS
-            .iter()
-            .map(|reserved_key| reserved_key.key)
-            .collect()
-    }
-
-    /// Return an empty list of reserved keys for visibility when using in
-    /// places where the dynamic reserved key set is not available
-    pub fn empty() -> HashSet<Pubkey> {
+    /// Return an empty set of reserved keys for visibility when using in
+    /// tests where the dynamic reserved key set is not available
+    pub fn empty_key_set() -> HashSet<Pubkey> {
         HashSet::default()
     }
 }
 
-/// `ReservedAccountKey` represents a reserved account key that will not be
-/// write-lockable by transactions. If a feature id is set, the account key will
+/// `ReservedAccount` represents a reserved account that will not be
+/// write-lockable by transactions. If a feature id is set, the account will
 /// become read-only only after the feature has been activated.
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct ReservedAccountKey {
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct ReservedAccount {
     key: Pubkey,
     feature_id: Option<Pubkey>,
 }
 
-impl ReservedAccountKey {
+impl ReservedAccount {
     fn new_pending(key: Pubkey, feature_id: Pubkey) -> Self {
         Self {
             key,
@@ -81,56 +129,50 @@ impl ReservedAccountKey {
             feature_id: None,
         }
     }
-
-    /// Returns true if no feature id is set or if the feature id is activated
-    /// in the feature set.
-    fn is_active(&self, feature_set: &FeatureSet) -> bool {
-        self.feature_id
-            .map_or(true, |feature_id| feature_set.is_active(&feature_id))
-    }
 }
 
-// New reserved account keys should be added in alphabetical order and must
-// specify a feature id for activation.
+// New reserved accounts should be added in alphabetical order and must specify
+// a feature id for activation. Reserved accounts cannot be removed from this
+// list without breaking consensus.
 lazy_static! {
-    static ref RESERVED_ACCOUNT_KEYS: Vec<ReservedAccountKey> = [
+    static ref RESERVED_ACCOUNTS: Vec<ReservedAccount> = [
         // builtin programs
-        ReservedAccountKey::new_pending(address_lookup_table::program::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccountKey::new_active(bpf_loader::id()),
-        ReservedAccountKey::new_active(bpf_loader_deprecated::id()),
-        ReservedAccountKey::new_active(bpf_loader_upgradeable::id()),
-        ReservedAccountKey::new_pending(compute_budget::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccountKey::new_active(config::program::id()),
-        ReservedAccountKey::new_pending(ed25519_program::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccountKey::new_active(feature::id()),
-        ReservedAccountKey::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccountKey::new_pending(secp256k1_program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_pending(address_lookup_table::program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(bpf_loader::id()),
+        ReservedAccount::new_active(bpf_loader_deprecated::id()),
+        ReservedAccount::new_active(bpf_loader_upgradeable::id()),
+        ReservedAccount::new_pending(compute_budget::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(config::program::id()),
+        ReservedAccount::new_pending(ed25519_program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(feature::id()),
+        ReservedAccount::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_pending(secp256k1_program::id(), feature_set::add_new_reserved_account_keys::id()),
         #[allow(deprecated)]
-        ReservedAccountKey::new_active(stake::config::id()),
-        ReservedAccountKey::new_active(stake::program::id()),
-        ReservedAccountKey::new_active(system_program::id()),
-        ReservedAccountKey::new_active(vote::program::id()),
-        ReservedAccountKey::new_pending(zk_token_proof_program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(stake::config::id()),
+        ReservedAccount::new_active(stake::program::id()),
+        ReservedAccount::new_active(system_program::id()),
+        ReservedAccount::new_active(vote::program::id()),
+        ReservedAccount::new_pending(zk_token_proof_program::id(), feature_set::add_new_reserved_account_keys::id()),
 
         // sysvars
-        ReservedAccountKey::new_active(sysvar::clock::id()),
-        ReservedAccountKey::new_pending(sysvar::epoch_rewards::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccountKey::new_active(sysvar::epoch_schedule::id()),
+        ReservedAccount::new_active(sysvar::clock::id()),
+        ReservedAccount::new_pending(sysvar::epoch_rewards::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(sysvar::epoch_schedule::id()),
         #[allow(deprecated)]
-        ReservedAccountKey::new_active(sysvar::fees::id()),
-        ReservedAccountKey::new_active(sysvar::instructions::id()),
-        ReservedAccountKey::new_pending(sysvar::last_restart_slot::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(sysvar::fees::id()),
+        ReservedAccount::new_active(sysvar::instructions::id()),
+        ReservedAccount::new_pending(sysvar::last_restart_slot::id(), feature_set::add_new_reserved_account_keys::id()),
         #[allow(deprecated)]
-        ReservedAccountKey::new_active(sysvar::recent_blockhashes::id()),
-        ReservedAccountKey::new_active(sysvar::rent::id()),
-        ReservedAccountKey::new_active(sysvar::rewards::id()),
-        ReservedAccountKey::new_active(sysvar::slot_hashes::id()),
-        ReservedAccountKey::new_active(sysvar::slot_history::id()),
-        ReservedAccountKey::new_active(sysvar::stake_history::id()),
+        ReservedAccount::new_active(sysvar::recent_blockhashes::id()),
+        ReservedAccount::new_active(sysvar::rent::id()),
+        ReservedAccount::new_active(sysvar::rewards::id()),
+        ReservedAccount::new_active(sysvar::slot_hashes::id()),
+        ReservedAccount::new_active(sysvar::slot_history::id()),
+        ReservedAccount::new_active(sysvar::stake_history::id()),
 
         // other
-        ReservedAccountKey::new_active(native_loader::id()),
-        ReservedAccountKey::new_pending(sysvar::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_active(native_loader::id()),
+        ReservedAccount::new_pending(sysvar::id(), feature_set::add_new_reserved_account_keys::id()),
     ].to_vec();
 }
 
@@ -142,53 +184,63 @@ mod tests {
     };
 
     #[test]
-    fn test_reserved_account_key_is_active() {
+    fn test_is_reserved() {
         let feature_id = Pubkey::new_unique();
-        let old_reserved_account_key = ReservedAccountKey::new_active(Pubkey::new_unique());
-        let new_reserved_account_key =
-            ReservedAccountKey::new_pending(Pubkey::new_unique(), feature_id);
+        let active_reserved_account = ReservedAccount::new_active(Pubkey::new_unique());
+        let pending_reserved_account =
+            ReservedAccount::new_pending(Pubkey::new_unique(), feature_id);
+        let reserved_account_keys =
+            ReservedAccountKeys::new(&[active_reserved_account, pending_reserved_account]);
 
-        let mut feature_set = FeatureSet::default();
         assert!(
-            old_reserved_account_key.is_active(&feature_set),
-            "if not feature id is set, the key should be active"
+            reserved_account_keys.is_reserved(&active_reserved_account.key),
+            "active reserved accounts should be inserted into the active set"
         );
         assert!(
-            !new_reserved_account_key.is_active(&feature_set),
-            "if feature id is set but not in the feature set, the key should not be active"
-        );
-
-        feature_set.active.insert(feature_id, 0);
-        assert!(
-            new_reserved_account_key.is_active(&feature_set),
-            "if feature id is set and is in the feature set, the key should be active"
+            !reserved_account_keys.is_reserved(&pending_reserved_account.key),
+            "pending reserved accounts should NOT be inserted into the active set"
         );
     }
 
     #[test]
-    fn test_reserved_account_keys_compute_active() {
-        let feature_id = Pubkey::new_unique();
-        let key0 = Pubkey::new_unique();
-        let key1 = Pubkey::new_unique();
-        let test_account_keys = vec![
-            ReservedAccountKey::new_active(key0),
-            ReservedAccountKey::new_pending(key1, feature_id),
-            ReservedAccountKey::new_pending(Pubkey::new_unique(), Pubkey::new_unique()),
+    fn test_update_active_set() {
+        let feature_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let active_reserved_key = Pubkey::new_unique();
+        let pending_reserved_keys = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let reserved_accounts = vec![
+            ReservedAccount::new_active(active_reserved_key),
+            ReservedAccount::new_pending(pending_reserved_keys[0], feature_ids[0]),
+            ReservedAccount::new_pending(pending_reserved_keys[1], feature_ids[1]),
         ];
 
-        let mut feature_set = FeatureSet::default();
-        assert_eq!(
-            HashSet::from_iter([key0].into_iter()),
-            ReservedAccountKeys::compute_active(&test_account_keys, &feature_set),
-            "should only contain keys without feature ids"
-        );
+        let mut reserved_account_keys = ReservedAccountKeys::new(&reserved_accounts);
+        assert!(reserved_account_keys.is_reserved(&active_reserved_key));
+        assert!(!reserved_account_keys.is_reserved(&pending_reserved_keys[0]));
+        assert!(!reserved_account_keys.is_reserved(&pending_reserved_keys[1]));
 
-        feature_set.active.insert(feature_id, 0);
-        assert_eq!(
-            HashSet::from_iter([key0, key1].into_iter()),
-            ReservedAccountKeys::compute_active(&test_account_keys, &feature_set),
-            "should only contain keys without feature ids or with active feature ids"
-        );
+        // Updating the active set with a default feature set should be a no-op
+        let previous_reserved_account_keys = reserved_account_keys.clone();
+        let mut feature_set = FeatureSet::default();
+        reserved_account_keys.update_active_set(&feature_set);
+        assert_eq!(reserved_account_keys, previous_reserved_account_keys);
+
+        // Updating the active set with an activated feature should also activate
+        // the corresponding reserved key from inactive to active
+        feature_set.active.insert(feature_ids[0], 0);
+        reserved_account_keys.update_active_set(&feature_set);
+
+        assert!(reserved_account_keys.is_reserved(&active_reserved_key));
+        assert!(reserved_account_keys.is_reserved(&pending_reserved_keys[0]));
+        assert!(!reserved_account_keys.is_reserved(&pending_reserved_keys[1]));
+
+        // Update the active set again to ensure that the inactive map is
+        // properly retained
+        feature_set.active.insert(feature_ids[1], 0);
+        reserved_account_keys.update_active_set(&feature_set);
+
+        assert!(reserved_account_keys.is_reserved(&active_reserved_key));
+        assert!(reserved_account_keys.is_reserved(&pending_reserved_keys[0]));
+        assert!(reserved_account_keys.is_reserved(&pending_reserved_keys[1]));
     }
 
     #[test]
@@ -197,8 +249,8 @@ mod tests {
         static_set.extend(ALL_IDS.iter().cloned());
         static_set.extend(BUILTIN_PROGRAMS_KEYS.iter().cloned());
 
-        let initial_dynamic_set = ReservedAccountKeys::active(&FeatureSet::default());
+        let initial_active_set = ReservedAccountKeys::default().active;
 
-        assert_eq!(initial_dynamic_set, static_set);
+        assert_eq!(initial_active_set, static_set);
     }
 }
