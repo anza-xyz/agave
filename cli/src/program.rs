@@ -249,7 +249,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                     "Set computeUnitPrice (tx priotity fee) to boost transactions resulting in faster execution speed \
                                     [Note: priority fee is added in LAMPORTS, so enter priority fee in terms of LAMPORTS]",
                                 ),
-                        ).
+                        )
                 )
                 .subcommand(
                     SubCommand::with_name("upgrade")
@@ -2240,14 +2240,6 @@ fn do_process_program_write_and_deploy(
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
-    let mut initial_instructions: Vec<Instruction> = Vec::new();
-
-    // Set compute unit price
-    if let Some(compute_unit_price) = compute_unit_price {
-        initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-            compute_unit_price.mul((10 as u64).pow(6)),
-        ));
-    }
 
     // Initialize buffer account or complete if already partially initialized
     let (ixs, balance_needed) = if let Some(account) = rpc_client
@@ -2291,6 +2283,18 @@ fn do_process_program_write_and_deploy(
         )
     };
 
+    let mut initial_instructions: Vec<Instruction> = Vec::new();
+
+    // Set compute limit and unit price
+    if let Some(compute_unit_price) = compute_unit_price {
+        let compute_units = (ixs.len() + 2) as u32 * 200_000u32;
+        initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(
+            compute_units,
+        ));
+        initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
+            compute_unit_price.mul((10 as u64).pow(6)),
+        ));
+    }
     initial_instructions.extend(ixs);
     let initial_message = if !initial_instructions.is_empty() {
         Some(Message::new_with_blockhash(
@@ -2409,14 +2413,6 @@ fn do_process_program_upgrade(
 
     let (initial_message, write_messages, balance_needed) =
         if let Some(buffer_signer) = buffer_signer {
-            let mut initial_instructions: Vec<Instruction> = Vec::new();
-
-            // Set compute unit price
-            if let Some(compute_unit_price) = compute_unit_price {
-                initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-                    compute_unit_price.mul((10 as u64).pow(6)),
-                ));
-            }
             // Check Buffer account to see if partial initialization has occurred
             let (ixs, balance_needed) = if let Some(account) = rpc_client
                 .get_account_with_commitment(&buffer_signer.pubkey(), config.commitment)?
@@ -2443,6 +2439,18 @@ fn do_process_program_upgrade(
                     min_rent_exempt_program_data_balance,
                 )
             };
+            let mut initial_instructions: Vec<Instruction> = Vec::new();
+
+            // Set compute limit and unit price
+            if let Some(compute_unit_price) = compute_unit_price {
+                let compute_units = (ixs.len() + 2) as u32 * 200_000u32;
+                initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                    compute_units,
+                ));
+                initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
+                    compute_unit_price.mul((10 as u64).pow(6)),
+                ));
+            }
             initial_instructions.extend(ixs);
             let initial_message = if !initial_instructions.is_empty() {
                 Some(Message::new_with_blockhash(

@@ -21,7 +21,6 @@ use {
         feature_set::FeatureSet,
         pubkey::Pubkey,
         signature::{Keypair, NullSigner, Signer},
-        signer::EncodableKey,
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
@@ -31,7 +30,6 @@ use {
         io::Read,
         path::{Path, PathBuf},
         str::FromStr,
-        time::Instant,
     },
     test_case::test_case,
 };
