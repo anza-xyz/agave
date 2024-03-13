@@ -57,7 +57,11 @@ esac
 
 case $TAG in
 edge|beta)
+<<<<<<< HEAD
   DOWNLOAD_URL=https://release.solana.com/"$TAG"/solana-release-$TARGET.tar.bz2
+=======
+  DOWNLOAD_URL=https://release.anza.xyz/"$TAG"/solana-release-$TARGET.tar.bz2
+>>>>>>> e682fec28e ([anza migration]: fix download link for net scripts (#219))
   ;;
 *)
   DOWNLOAD_URL=https://github.com/solana-labs/solana/releases/download/"$TAG"/solana-release-$TARGET.tar.bz2
