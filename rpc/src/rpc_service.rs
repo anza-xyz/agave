@@ -527,7 +527,7 @@ impl JsonRpcService {
                     io,
                     move |req: &hyper::Request<hyper::Body>| {
                         let xbigtable = req.headers().get("x-bigtable");
-                        if xbigtable.map(|v| v == "disabled").unwrap_or(false) {
+                        if xbigtable.is_some_and(|v| v == "disabled") {
                             request_processor.clone_without_bigtable()
                         } else {
                             request_processor.clone()
