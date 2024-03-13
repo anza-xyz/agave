@@ -26,7 +26,7 @@ if [[ -z $URL || -z $TAG ]]; then
 fi
 
 if [[ ! -f update_manifest_keypair.json ]]; then
-  "$SOLANA_ROOT"/scripts/solana-install-update-manifest-keypair.sh "$OS"
+  "$SOLANA_ROOT"/scripts/agave-install-update-manifest-keypair.sh "$OS"
 fi
 
 case "$OS" in
@@ -57,10 +57,10 @@ esac
 
 case $TAG in
 edge|beta)
-  DOWNLOAD_URL=https://release.solana.com/"$TAG"/solana-release-$TARGET.tar.bz2
+  DOWNLOAD_URL=https://release.anza.xyz/"$TAG"/solana-release-$TARGET.tar.bz2
   ;;
 *)
-  DOWNLOAD_URL=https://github.com/solana-labs/solana/releases/download/"$TAG"/solana-release-$TARGET.tar.bz2
+  DOWNLOAD_URL=https://github.com/anza-xyz/agave/releases/download/"$TAG"/solana-release-$TARGET.tar.bz2
   ;;
 esac
 
@@ -76,4 +76,4 @@ if [[ $balance = "0 lamports" ]]; then
 fi
 
 # shellcheck disable=SC2086 # Don't want to double quote $maybeKeypair
-solana-install deploy $maybeKeypair --url "$URL" "$DOWNLOAD_URL" update_manifest_keypair.json
+agave-install deploy $maybeKeypair --url "$URL" "$DOWNLOAD_URL" update_manifest_keypair.json

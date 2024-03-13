@@ -1,7 +1,7 @@
 [package]
-name = "solana-ledger-tool"
+name = "agave-ledger-tool"
 description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana-ledger-tool"
+documentation = "https://docs.rs/agave-ledger-tool"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -44,7 +44,6 @@ solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
-solana-svm = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }

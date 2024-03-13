@@ -51,10 +51,6 @@ impl AccountsHashVerifier {
             .name("solAcctHashVer".to_string())
             .spawn(move || {
                 info!("AccountsHashVerifier has started");
-                // To support fastboot, we must ensure the storages used in the latest POST snapshot are
-                // not recycled nor removed early.  Hold an Arc of their AppendVecs to prevent them from
-                // expiring.
-                let mut fastboot_storages = None;
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
@@ -75,39 +71,12 @@ impl AccountsHashVerifier {
                     info!("handling accounts package: {accounts_package:?}");
                     let enqueued_time = accounts_package.enqueued.elapsed();
 
-                    // If this accounts package is for a snapshot, then clone the storages to
-                    // save for fastboot.
-                    let snapshot_storages_for_fastboot = accounts_package
-                        .snapshot_info
-                        .is_some()
-                        .then(|| accounts_package.snapshot_storages.clone());
-
-                    let slot = accounts_package.slot;
                     let (_, handling_time_us) = measure_us!(Self::process_accounts_package(
                         accounts_package,
                         snapshot_package_sender.as_ref(),
                         &snapshot_config,
                         &exit,
                     ));
-
-                    if let Some(snapshot_storages_for_fastboot) = snapshot_storages_for_fastboot {
-                        // Get the number of storages that are being kept alive for fastboot.
-                        // Looking at the storage Arc's strong reference count, we know that one
-                        // ref is for fastboot, and one ref is for snapshot packaging.  If there
-                        // are no others, then the storage will be kept alive because of fastboot.
-                        let num_storages_kept_alive = snapshot_storages_for_fastboot
-                            .iter()
-                            .filter(|storage| Arc::strong_count(storage) == 2)
-                            .count();
-                        let num_storages_total = snapshot_storages_for_fastboot.len();
-                        fastboot_storages = Some(snapshot_storages_for_fastboot);
-                        datapoint_info!(
-                            "fastboot",
-                            ("slot", slot, i64),
-                            ("num_storages_total", num_storages_total, i64),
-                            ("num_storages_kept_alive", num_storages_kept_alive, i64),
-                        );
-                    }
 
                     datapoint_info!(
                         "accounts_hash_verifier",
@@ -126,13 +95,6 @@ impl AccountsHashVerifier {
                     );
                 }
                 info!("AccountsHashVerifier has stopped");
-                debug!(
-                    "Number of storages kept alive for fastboot: {}",
-                    fastboot_storages
-                        .as_ref()
-                        .map(|storages| storages.len())
-                        .unwrap_or(0)
-                );
             })
             .unwrap();
         Self {
@@ -297,11 +259,26 @@ impl AccountsHashVerifier {
                 else {
                     panic!("Calculating incremental accounts hash requires a base slot");
                 };
-                let (base_accounts_hash, base_capitalization) = accounts_package
-                    .accounts
-                    .accounts_db
-                    .get_accounts_hash(base_slot)
-                    .expect("incremental snapshot requires accounts hash and capitalization from the full snapshot it is based on");
+                let accounts_db = &accounts_package.accounts.accounts_db;
+                let Some((base_accounts_hash, base_capitalization)) =
+                    accounts_db.get_accounts_hash(base_slot)
+                else {
+                    panic!(
+                        "incremental snapshot requires accounts hash and capitalization \
+                         from the full snapshot it is based on \n\
+                         package: {accounts_package:?} \n\
+                         accounts hashes: {:?} \n\
+                         incremental accounts hashes: {:?} \n\
+                         full snapshot archives: {:?} \n\
+                         bank snapshots: {:?}",
+                        accounts_db.get_accounts_hashes(),
+                        accounts_db.get_incremental_accounts_hashes(),
+                        snapshot_utils::get_full_snapshot_archives(
+                            &snapshot_config.full_snapshot_archives_dir,
+                        ),
+                        snapshot_utils::get_bank_snapshots(&snapshot_config.bank_snapshots_dir),
+                    );
+                };
                 let (incremental_accounts_hash, incremental_capitalization) =
                     Self::_calculate_incremental_accounts_hash(accounts_package, base_slot);
                 let bank_incremental_snapshot_persistence = BankIncrementalSnapshotPersistence {

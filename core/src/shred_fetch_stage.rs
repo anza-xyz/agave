@@ -147,6 +147,8 @@ impl ShredFetchStage {
 
     #[allow(clippy::too_many_arguments)]
     fn packet_modifier(
+        receiver_thread_name: &'static str,
+        modifier_thread_name: &'static str,
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: Sender<PacketBatch>,
@@ -161,9 +163,11 @@ impl ShredFetchStage {
         let (packet_sender, packet_receiver) = unbounded();
         let streamers = sockets
             .into_iter()
-            .map(|s| {
+            .enumerate()
+            .map(|(i, socket)| {
                 streamer::receiver(
-                    s,
+                    format!("{receiver_thread_name}{i:02}"),
+                    socket,
                     exit.clone(),
                     packet_sender.clone(),
                     recycler.clone(),
@@ -175,7 +179,7 @@ impl ShredFetchStage {
             })
             .collect();
         let modifier_hdl = Builder::new()
-            .name("solTvuFetchPMod".to_string())
+            .name(modifier_thread_name.to_string())
             .spawn(move || {
                 let repair_context = repair_context
                     .as_ref()
@@ -211,6 +215,8 @@ impl ShredFetchStage {
         let recycler = PacketBatchRecycler::warmed(100, 1024);
 
         let (mut tvu_threads, tvu_filter) = Self::packet_modifier(
+            "solRcvrShred",
+            "solTvuPktMod",
             sockets,
             exit.clone(),
             sender.clone(),
@@ -224,6 +230,8 @@ impl ShredFetchStage {
         );
 
         let (repair_receiver, repair_handler) = Self::packet_modifier(
+            "solRcvrShredRep",
+            "solTvuRepPktMod",
             vec![repair_socket.clone()],
             exit.clone(),
             sender.clone(),

@@ -73,6 +73,7 @@ use {
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
     },
+    solana_program_runtime::runtime_config::RuntimeConfig,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -115,7 +116,6 @@ use {
     },
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
-    solana_svm::runtime_config::RuntimeConfig,
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
@@ -138,6 +138,11 @@ use {
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
+// Right now since we reuse the wait for supermajority code, the
+// following threshold should always greater than or equal to
+// WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT.
+const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
+    WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT;
 
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
@@ -262,6 +267,7 @@ pub struct ValidatorConfig {
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub wen_restart_proto_path: Option<PathBuf>,
+    pub unified_scheduler_handler_threads: Option<usize>,
 }
 
 impl Default for ValidatorConfig {
@@ -329,6 +335,7 @@ impl Default for ValidatorConfig {
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
+            unified_scheduler_handler_threads: None,
         }
     }
 }
@@ -813,9 +820,16 @@ impl Validator {
         match &config.block_verification_method {
             BlockVerificationMethod::BlockstoreProcessor => {
                 info!("no scheduler pool is installed for block verification...");
+                if let Some(count) = config.unified_scheduler_handler_threads {
+                    warn!(
+                        "--unified-scheduler-handler-threads={count} is ignored because unified \
+                         scheduler isn't enabled"
+                    );
+                }
             }
             BlockVerificationMethod::UnifiedScheduler => {
                 let scheduler_pool = DefaultSchedulerPool::new_dyn(
+                    config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
                     Some(replay_vote_sender.clone()),
@@ -1227,6 +1241,11 @@ impl Validator {
             };
 
         let in_wen_restart = config.wen_restart_proto_path.is_some() && !waited_for_supermajority;
+        let wen_restart_repair_slots = if in_wen_restart {
+            Some(Arc::new(RwLock::new(Vec::new())))
+        } else {
+            None
+        };
         let tower = match process_blockstore.process_to_create_tower() {
             Ok(tower) => {
                 info!("Tower state: {:?}", tower);
@@ -1301,6 +1320,7 @@ impl Validator {
             repair_quic_endpoint_sender,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
+            wen_restart_repair_slots.clone(),
         )?;
 
         if in_wen_restart {
@@ -1310,6 +1330,10 @@ impl Validator {
                 last_vote,
                 blockstore.clone(),
                 cluster_info.clone(),
+                bank_forks.clone(),
+                wen_restart_repair_slots.clone(),
+                WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
+                exit.clone(),
             ) {
                 Ok(()) => {
                     return Err("wen_restart phase one completedy".to_string());

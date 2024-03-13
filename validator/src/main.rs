@@ -2,6 +2,15 @@
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
 use {
+    agave_validator::{
+        admin_rpc_service,
+        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
+        bootstrap,
+        cli::{app, warn_for_deprecated_arguments, DefaultArgs},
+        dashboard::Dashboard,
+        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
+        redirect_stderr_to_file,
+    },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     console::style,
     crossbeam_channel::unbounded,
@@ -38,6 +47,7 @@ use {
     },
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
+    solana_program_runtime::runtime_config::RuntimeConfig,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
@@ -58,17 +68,7 @@ use {
     },
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::socket::SocketAddrSpace,
-    solana_svm::runtime_config::RuntimeConfig,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-    solana_validator::{
-        admin_rpc_service,
-        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
-        bootstrap,
-        cli::{app, warn_for_deprecated_arguments, DefaultArgs},
-        dashboard::Dashboard,
-        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
-        redirect_stderr_to_file,
-    },
     std::{
         collections::{HashSet, VecDeque},
         env,
@@ -917,7 +917,7 @@ pub fn main() {
         let logfile = matches
             .value_of("logfile")
             .map(|s| s.into())
-            .unwrap_or_else(|| format!("solana-validator-{}.log", identity_keypair.pubkey()));
+            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
 
         if logfile == "-" {
             None
@@ -1382,11 +1382,9 @@ pub fn main() {
                 usize
             ),
             worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
-            notification_threads: if full_api {
-                value_of(&matches, "rpc_pubsub_notification_threads")
-            } else {
-                Some(0)
-            },
+            notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
+                .ok()
+                .and_then(NonZeroUsize::new),
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
@@ -1671,6 +1669,8 @@ pub fn main() {
         BlockProductionMethod
     )
     .unwrap_or_default();
+    validator_config.unified_scheduler_handler_threads =
+        value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
 
     validator_config.ledger_column_options = LedgerColumnOptions {
         compression_type: match matches.value_of("rocksdb_ledger_compression") {

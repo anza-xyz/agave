@@ -15,7 +15,10 @@ use {
             create_executable_meta, is_builtin, is_executable, Account, AccountSharedData,
             ReadableAccount, WritableAccount,
         },
-        feature_set::{self, include_loaded_accounts_data_size_in_fee_calculation},
+        feature_set::{
+            self, include_loaded_accounts_data_size_in_fee_calculation,
+            remove_rounding_in_fee_calculation,
+        },
         fee::FeeStructure,
         message::SanitizedMessage,
         native_loader,
@@ -35,8 +38,11 @@ use {
 };
 
 // for the load instructions
-pub type TransactionRent = u64;
-pub type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
+pub(crate) type TransactionRent = u64;
+pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
+pub type TransactionCheckResult = (transaction::Result<()>, Option<NoncePartial>, Option<u64>);
+pub type TransactionLoadResult = (Result<LoadedTransaction>, Option<NonceFull>);
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
@@ -45,10 +51,66 @@ pub struct LoadedTransaction {
     pub rent_debits: RentDebits,
 }
 
-pub type TransactionLoadResult = (Result<LoadedTransaction>, Option<NonceFull>);
-pub type TransactionCheckResult = (transaction::Result<()>, Option<NoncePartial>, Option<u64>);
+/// Check whether the payer_account is capable of paying the fee. The
+/// side effect is to subtract the fee amount from the payer_account
+/// balance of lamports. If the payer_acount is not able to pay the
+/// fee, the error_counters is incremented, and a specific error is
+/// returned.
+pub fn validate_fee_payer(
+    payer_address: &Pubkey,
+    payer_account: &mut AccountSharedData,
+    payer_index: IndexOfAccount,
+    error_counters: &mut TransactionErrorMetrics,
+    rent_collector: &RentCollector,
+    fee: u64,
+) -> Result<()> {
+    if payer_account.lamports() == 0 {
+        error_counters.account_not_found += 1;
+        return Err(TransactionError::AccountNotFound);
+    }
+    let system_account_kind = get_system_account_kind(payer_account).ok_or_else(|| {
+        error_counters.invalid_account_for_fee += 1;
+        TransactionError::InvalidAccountForFee
+    })?;
+    let min_balance = match system_account_kind {
+        SystemAccountKind::System => 0,
+        SystemAccountKind::Nonce => {
+            // Should we ever allow a fees charge to zero a nonce account's
+            // balance. The state MUST be set to uninitialized in that case
+            rent_collector.rent.minimum_balance(NonceState::size())
+        }
+    };
 
-pub fn load_accounts<CB: TransactionProcessingCallback>(
+    payer_account
+        .lamports()
+        .checked_sub(min_balance)
+        .and_then(|v| v.checked_sub(fee))
+        .ok_or_else(|| {
+            error_counters.insufficient_funds += 1;
+            TransactionError::InsufficientFundsForFee
+        })?;
+
+    let payer_pre_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
+    payer_account
+        .checked_sub_lamports(fee)
+        .map_err(|_| TransactionError::InsufficientFundsForFee)?;
+
+    let payer_post_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
+    RentState::check_rent_state_with_account(
+        &payer_pre_rent_state,
+        &payer_post_rent_state,
+        payer_address,
+        payer_account,
+        payer_index,
+    )
+}
+
+/// Collect information about accounts used in txs transactions and
+/// return vector of tuples, one for each transaction in the
+/// batch. Each tuple contains struct of information about accounts as
+/// its first element and an optional transaction nonce info as its
+/// second element.
+pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[SanitizedTransaction],
     lock_results: &[TransactionCheckResult],
@@ -63,17 +125,17 @@ pub fn load_accounts<CB: TransactionProcessingCallback>(
         .zip(lock_results)
         .map(|etx| match etx {
             (tx, (Ok(()), nonce, lamports_per_signature)) => {
+                let message = tx.message();
                 let fee = if let Some(lamports_per_signature) = lamports_per_signature {
                     fee_structure.calculate_fee(
-                        tx.message(),
+                        message,
                         *lamports_per_signature,
-                        &process_compute_budget_instructions(
-                            tx.message().program_instructions_iter(),
-                        )
-                        .unwrap_or_default()
-                        .into(),
+                        &process_compute_budget_instructions(message.program_instructions_iter())
+                            .unwrap_or_default()
+                            .into(),
                         feature_set
                             .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+                        feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
                     )
                 } else {
                     return (Err(TransactionError::BlockhashNotFound), None);
@@ -82,7 +144,7 @@ pub fn load_accounts<CB: TransactionProcessingCallback>(
                 // load transactions
                 let loaded_transaction = match load_transaction_accounts(
                     callbacks,
-                    tx,
+                    message,
                     fee,
                     error_counters,
                     account_overrides,
@@ -97,11 +159,13 @@ pub fn load_accounts<CB: TransactionProcessingCallback>(
                 let nonce = if let Some(nonce) = nonce {
                     match NonceFull::from_partial(
                         nonce,
-                        tx.message(),
+                        message,
                         &loaded_transaction.accounts,
                         &loaded_transaction.rent_debits,
                     ) {
                         Ok(nonce) => Some(nonce),
+                        // This error branch is never reached, because `load_transaction_accounts`
+                        // already validates the fee payer account.
                         Err(e) => return (Err(e), None),
                     }
                 } else {
@@ -117,33 +181,26 @@ pub fn load_accounts<CB: TransactionProcessingCallback>(
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    tx: &SanitizedTransaction,
+    message: &SanitizedMessage,
     fee: u64,
     error_counters: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &LoadedProgramsForTxBatch,
 ) -> Result<LoadedTransaction> {
-    // NOTE: this check will never fail because `tx` is sanitized
-    if tx.signatures().is_empty() && fee != 0 {
-        return Err(TransactionError::MissingSignatureForFee);
-    }
-
     let feature_set = callbacks.get_feature_set();
 
     // There is no way to predict what program will execute without an error
     // If a fee can pay for execution then the program will be scheduled
     let mut validated_fee_payer = false;
     let mut tx_rent: TransactionRent = 0;
-    let message = tx.message();
     let account_keys = message.account_keys();
     let mut accounts_found = Vec::with_capacity(account_keys.len());
-    let mut account_deps = Vec::with_capacity(account_keys.len());
     let mut rent_debits = RentDebits::default();
     let rent_collector = callbacks.get_rent_collector();
 
     let requested_loaded_accounts_data_size_limit =
-        get_requested_loaded_accounts_data_size_limit(tx)?;
+        get_requested_loaded_accounts_data_size_limit(message)?;
     let mut accumulated_accounts_data_size: usize = 0;
 
     let instruction_accounts = message
@@ -225,7 +282,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 
                 if !validated_fee_payer && message.is_non_loader_key(i) {
                     if i != 0 {
-                        warn!("Payer index should be 0! {:?}", tx);
+                        warn!("Payer index should be 0! {:?}", message);
                     }
 
                     validate_fee_payer(
@@ -240,7 +297,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     validated_fee_payer = true;
                 }
 
-                callbacks.check_account_access(tx, i, &account, error_counters)?;
+                callbacks.check_account_access(message, i, &account, error_counters)?;
 
                 tx_rent += rent;
                 rent_debits.insert(key, rent, account.lamports());
@@ -258,13 +315,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         return Err(TransactionError::AccountNotFound);
     }
 
-    // Appends the account_deps at the end of the accounts,
-    // this way they can be accessed in a uniform way.
-    // At places where only the accounts are needed,
-    // the account_deps are truncated using e.g:
-    // accounts.iter().take(message.account_keys.len())
-    accounts.append(&mut account_deps);
-
     let builtins_start_index = accounts.len();
     let program_indices = message
         .instructions()
@@ -272,6 +322,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         .map(|instruction| {
             let mut account_indices = Vec::new();
             let mut program_index = instruction.program_id_index as usize;
+            // This command may never return error, because the transaction is sanitized
             let (program_id, program_account) = accounts
                 .get(program_index)
                 .ok_or(TransactionError::ProgramAccountNotFound)?;
@@ -344,10 +395,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 ///     user requested loaded accounts size.
 ///     Note, requesting zero bytes will result transaction error
 fn get_requested_loaded_accounts_data_size_limit(
-    tx: &SanitizedTransaction,
+    sanitized_message: &SanitizedMessage,
 ) -> Result<Option<NonZeroUsize>> {
     let compute_budget_limits =
-        process_compute_budget_instructions(tx.message().program_instructions_iter())
+        process_compute_budget_instructions(sanitized_message.program_instructions_iter())
             .unwrap_or_default();
     // sanitize against setting size limit to zero
     NonZeroUsize::new(
@@ -399,56 +450,7 @@ fn accumulate_and_check_loaded_account_data_size(
     }
 }
 
-pub fn validate_fee_payer(
-    payer_address: &Pubkey,
-    payer_account: &mut AccountSharedData,
-    payer_index: IndexOfAccount,
-    error_counters: &mut TransactionErrorMetrics,
-    rent_collector: &RentCollector,
-    fee: u64,
-) -> Result<()> {
-    if payer_account.lamports() == 0 {
-        error_counters.account_not_found += 1;
-        return Err(TransactionError::AccountNotFound);
-    }
-    let system_account_kind = get_system_account_kind(payer_account).ok_or_else(|| {
-        error_counters.invalid_account_for_fee += 1;
-        TransactionError::InvalidAccountForFee
-    })?;
-    let min_balance = match system_account_kind {
-        SystemAccountKind::System => 0,
-        SystemAccountKind::Nonce => {
-            // Should we ever allow a fees charge to zero a nonce account's
-            // balance. The state MUST be set to uninitialized in that case
-            rent_collector.rent.minimum_balance(NonceState::size())
-        }
-    };
-
-    payer_account
-        .lamports()
-        .checked_sub(min_balance)
-        .and_then(|v| v.checked_sub(fee))
-        .ok_or_else(|| {
-            error_counters.insufficient_funds += 1;
-            TransactionError::InsufficientFundsForFee
-        })?;
-
-    let payer_pre_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
-    payer_account
-        .checked_sub_lamports(fee)
-        .map_err(|_| TransactionError::InsufficientFundsForFee)?;
-
-    let payer_post_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
-    RentState::check_rent_state_with_account(
-        &payer_pre_rent_state,
-        &payer_post_rent_state,
-        payer_address,
-        payer_account,
-        payer_index,
-    )
-}
-
-pub fn construct_instructions_account(message: &SanitizedMessage) -> AccountSharedData {
+fn construct_instructions_account(message: &SanitizedMessage) -> AccountSharedData {
     AccountSharedData::from(Account {
         data: construct_instructions_data(&message.decompile_instructions()),
         owner: sysvar::id(),
@@ -460,31 +462,47 @@ pub fn construct_instructions_account(message: &SanitizedMessage) -> AccountShar
 mod tests {
     use {
         super::*,
+        crate::{
+            transaction_account_state_info::TransactionAccountStateInfo,
+            transaction_processor::TransactionProcessingCallback,
+        },
         nonce::state::Versions as NonceVersions,
         solana_program_runtime::{
+            compute_budget::ComputeBudget,
             compute_budget_processor,
+            loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch},
             prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         },
         solana_sdk::{
-            account::{AccountSharedData, WritableAccount},
+            account::{AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
             feature_set::FeatureSet,
+            fee::FeeStructure,
             hash::Hash,
             instruction::CompiledInstruction,
-            message::{Message, SanitizedMessage},
+            message::{
+                v0::{LoadedAddresses, LoadedMessage},
+                LegacyMessage, Message, MessageHeader, SanitizedMessage,
+            },
+            native_loader,
+            native_token::sol_to_lamports,
             nonce,
+            nonce_info::{NonceFull, NoncePartial},
+            pubkey::Pubkey,
             rent::Rent,
-            rent_collector::RentCollector,
-            signature::{Keypair, Signer},
-            system_program, sysvar,
-            transaction::{Result, Transaction, TransactionError},
-            transaction_context::TransactionAccount,
+            rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+            rent_debits::RentDebits,
+            signature::{Keypair, Signature, Signer},
+            system_program, system_transaction, sysvar,
+            transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
+            transaction_context::{TransactionAccount, TransactionContext},
         },
-        std::{convert::TryFrom, sync::Arc},
+        std::{borrow::Cow, collections::HashMap, convert::TryFrom, sync::Arc},
     };
 
+    #[derive(Default)]
     struct TestCallbacks {
         accounts_map: HashMap<Pubkey, AccountSharedData>,
         rent_collector: RentCollector,
@@ -674,7 +692,7 @@ mod tests {
             instructions,
         );
 
-        let message = SanitizedMessage::try_from(tx.message().clone()).unwrap();
+        let message = SanitizedMessage::try_from_legacy_message(tx.message().clone()).unwrap();
         let fee = FeeStructure::default().calculate_fee(
             &message,
             lamports_per_signature,
@@ -682,6 +700,7 @@ mod tests {
                 .unwrap_or_default()
                 .into(),
             false,
+            true,
         );
         assert_eq!(fee, lamports_per_signature);
 
@@ -1134,7 +1153,7 @@ mod tests {
             ));
             assert_eq!(
                 *expected_result,
-                get_requested_loaded_accounts_data_size_limit(&tx)
+                get_requested_loaded_accounts_data_size_limit(tx.message())
             );
         }
 
@@ -1202,7 +1221,7 @@ mod tests {
             Hash::default(),
         );
 
-        let message = SanitizedMessage::try_from(tx.message().clone()).unwrap();
+        let message = SanitizedMessage::try_from_legacy_message(tx.message().clone()).unwrap();
         let fee = FeeStructure::default().calculate_fee(
             &message,
             lamports_per_signature,
@@ -1210,6 +1229,7 @@ mod tests {
                 .unwrap_or_default()
                 .into(),
             false,
+            true,
         );
         assert_eq!(fee, lamports_per_signature + prioritization_fee);
 
@@ -1372,6 +1392,884 @@ mod tests {
                 payer_post_balance: u64::MAX,
             },
             &rent_collector,
+        );
+    }
+
+    #[test]
+    fn test_construct_instructions_account() {
+        let loaded_message = LoadedMessage {
+            message: Cow::Owned(solana_sdk::message::v0::Message::default()),
+            loaded_addresses: Cow::Owned(LoadedAddresses::default()),
+            is_writable_account_cache: vec![false],
+        };
+        let message = SanitizedMessage::V0(loaded_message);
+        let shared_data = construct_instructions_account(&message);
+        let expected = AccountSharedData::from(Account {
+            data: construct_instructions_data(&message.decompile_instructions()),
+            owner: sysvar::id(),
+            ..Account::default()
+        });
+        assert_eq!(shared_data, expected);
+    }
+
+    #[test]
+    fn test_account_shared_data_from_program() {
+        let key = Keypair::new().pubkey();
+        let other_key = Keypair::new().pubkey();
+
+        let mut accounts: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
+
+        let result = account_shared_data_from_program(&key, &accounts);
+        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+
+        accounts.insert(key, (&other_key, 32));
+
+        let result = account_shared_data_from_program(&key, &accounts);
+        let mut expected = AccountSharedData::default();
+        expected.set_owner(other_key);
+        expected.set_executable(true);
+        expected.set_data_from_slice(create_executable_meta(&other_key));
+
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_fail_to_validate_fee_payer() {
+        let message = Message {
+            account_keys: vec![Pubkey::new_from_array([0; 32])],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mock_bank = TestCallbacks::default();
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+
+        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_native_loader() {
+        let key1 = Keypair::new();
+        let message = Message {
+            account_keys: vec![key1.pubkey(), native_loader::id()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        mock_bank
+            .accounts_map
+            .insert(native_loader::id(), AccountSharedData::default());
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+        mock_bank
+            .accounts_map
+            .get_mut(&key1.pubkey())
+            .unwrap()
+            .set_lamports(200 - 32);
+
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransaction {
+                accounts: vec![
+                    (
+                        key1.pubkey(),
+                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                    ),
+                    (
+                        native_loader::id(),
+                        mock_bank.accounts_map[&native_loader::id()].clone()
+                    )
+                ],
+                program_indices: vec![vec![]],
+                rent: 0,
+                rent_debits: RentDebits::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_account_not_found_but_loaded() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key1.pubkey(), key2.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let mut loaded_programs = LoadedProgramsForTxBatch::default();
+        loaded_programs.replenish(key2.pubkey(), Arc::new(LoadedProgram::default()));
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+
+        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_account_no_data() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key1.pubkey(), key2.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0, 1],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+
+        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_invalid_program_for_execution() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key1.pubkey(), key2.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![0, 1],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+
+        assert_eq!(
+            result.err(),
+            Some(TransactionError::InvalidProgramForExecution)
+        );
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_native_loader_owner() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key2.pubkey(), key1.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(native_loader::id());
+        account_data.set_executable(true);
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+        mock_bank
+            .accounts_map
+            .get_mut(&key2.pubkey())
+            .unwrap()
+            .set_lamports(200 - 32);
+
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransaction {
+                accounts: vec![
+                    (
+                        key2.pubkey(),
+                        mock_bank.accounts_map[&key2.pubkey()].clone()
+                    ),
+                    (
+                        key1.pubkey(),
+                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                    ),
+                ],
+                program_indices: vec![vec![1]],
+                rent: 0,
+                rent_debits: RentDebits::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_account_not_found_after_all_checks() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key2.pubkey(), key1.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+        mock_bank
+            .accounts_map
+            .get_mut(&key2.pubkey())
+            .unwrap()
+            .set_lamports(200 - 32);
+
+        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_account_invalid_program_for_execution_last_check() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key2.pubkey(), key1.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(key3.pubkey());
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+
+        mock_bank
+            .accounts_map
+            .insert(key3.pubkey(), AccountSharedData::default());
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+        mock_bank
+            .accounts_map
+            .get_mut(&key2.pubkey())
+            .unwrap()
+            .set_lamports(200 - 32);
+
+        assert_eq!(
+            result.err(),
+            Some(TransactionError::InvalidProgramForExecution)
+        );
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_success_complete() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key2.pubkey(), key1.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(key3.pubkey());
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(native_loader::id());
+        mock_bank.accounts_map.insert(key3.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+        mock_bank
+            .accounts_map
+            .get_mut(&key2.pubkey())
+            .unwrap()
+            .set_lamports(200 - 32);
+
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransaction {
+                accounts: vec![
+                    (
+                        key2.pubkey(),
+                        mock_bank.accounts_map[&key2.pubkey()].clone()
+                    ),
+                    (
+                        key1.pubkey(),
+                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                    ),
+                    (
+                        key3.pubkey(),
+                        mock_bank.accounts_map[&key3.pubkey()].clone()
+                    ),
+                ],
+                program_indices: vec![vec![2, 1]],
+                rent: 0,
+                rent_debits: RentDebits::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_builtin_saturating_add() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+        let key4 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key2.pubkey(), key1.pubkey(), key4.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![
+                CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![0],
+                    data: vec![],
+                },
+                CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![2],
+                    data: vec![],
+                },
+            ],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(key3.pubkey());
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(native_loader::id());
+        mock_bank.accounts_map.insert(key3.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            32,
+            &mut error_counter,
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+        mock_bank
+            .accounts_map
+            .get_mut(&key2.pubkey())
+            .unwrap()
+            .set_lamports(200 - 32);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransaction {
+                accounts: vec![
+                    (
+                        key2.pubkey(),
+                        mock_bank.accounts_map[&key2.pubkey()].clone()
+                    ),
+                    (
+                        key1.pubkey(),
+                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                    ),
+                    (key4.pubkey(), account_data),
+                    (
+                        key3.pubkey(),
+                        mock_bank.accounts_map[&key3.pubkey()].clone()
+                    ),
+                ],
+                program_indices: vec![vec![3, 1], vec![3, 1]],
+                rent: 0,
+                rent_debits: RentDebits::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_rent_state_list_len() {
+        let mint_keypair = Keypair::new();
+        let mut bank = TestCallbacks::default();
+        let recipient = Pubkey::new_unique();
+        let last_block_hash = Hash::new_unique();
+
+        let mut system_data = AccountSharedData::default();
+        system_data.set_executable(true);
+        system_data.set_owner(native_loader::id());
+        bank.accounts_map
+            .insert(Pubkey::new_from_array([0u8; 32]), system_data);
+
+        let mut mint_data = AccountSharedData::default();
+        mint_data.set_lamports(2);
+        bank.accounts_map.insert(mint_keypair.pubkey(), mint_data);
+
+        bank.accounts_map
+            .insert(recipient, AccountSharedData::default());
+
+        let tx = system_transaction::transfer(
+            &mint_keypair,
+            &recipient,
+            sol_to_lamports(1.),
+            last_block_hash,
+        );
+        let num_accounts = tx.message().account_keys.len();
+        let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
+        let mut error_counters = TransactionErrorMetrics::default();
+        let loaded_txs = load_accounts(
+            &bank,
+            &[sanitized_tx.clone()],
+            &[(Ok(()), None, Some(0))],
+            &mut error_counters,
+            &FeeStructure::default(),
+            None,
+            &HashMap::new(),
+            &LoadedProgramsForTxBatch::default(),
+        );
+
+        let compute_budget = ComputeBudget::new(u64::from(
+            compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+        ));
+        let transaction_context = TransactionContext::new(
+            loaded_txs[0].0.as_ref().unwrap().accounts.clone(),
+            Rent::default(),
+            compute_budget.max_invoke_stack_height,
+            compute_budget.max_instruction_trace_length,
+        );
+
+        assert_eq!(
+            TransactionAccountStateInfo::new(
+                &Rent::default(),
+                &transaction_context,
+                sanitized_tx.message()
+            )
+            .len(),
+            num_accounts,
+        );
+    }
+
+    #[test]
+    fn test_load_accounts_success() {
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+        let key4 = Keypair::new();
+
+        let message = Message {
+            account_keys: vec![key2.pubkey(), key1.pubkey(), key4.pubkey()],
+            header: MessageHeader::default(),
+            instructions: vec![
+                CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![0],
+                    data: vec![],
+                },
+                CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![2],
+                    data: vec![],
+                },
+            ],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let mut mock_bank = TestCallbacks::default();
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(key3.pubkey());
+        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank.accounts_map.insert(key2.pubkey(), account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_owner(native_loader::id());
+        mock_bank.accounts_map.insert(key3.pubkey(), account_data);
+
+        let mut error_counter = TransactionErrorMetrics::default();
+        let loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let lock_results =
+            (Ok(()), Some(NoncePartial::default()), Some(20u64)) as TransactionCheckResult;
+
+        let results = load_accounts(
+            &mock_bank,
+            &[sanitized_transaction],
+            &[lock_results],
+            &mut error_counter,
+            &FeeStructure::default(),
+            None,
+            &HashMap::new(),
+            &loaded_programs,
+        );
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+
+        assert_eq!(results.len(), 1);
+        let (loaded_result, nonce) = results[0].clone();
+        assert_eq!(
+            loaded_result.unwrap(),
+            LoadedTransaction {
+                accounts: vec![
+                    (
+                        key2.pubkey(),
+                        mock_bank.accounts_map[&key2.pubkey()].clone()
+                    ),
+                    (
+                        key1.pubkey(),
+                        mock_bank.accounts_map[&key1.pubkey()].clone()
+                    ),
+                    (key4.pubkey(), account_data),
+                    (
+                        key3.pubkey(),
+                        mock_bank.accounts_map[&key3.pubkey()].clone()
+                    ),
+                ],
+                program_indices: vec![vec![3, 1], vec![3, 1]],
+                rent: 0,
+                rent_debits: RentDebits::default()
+            }
+        );
+
+        assert_eq!(
+            nonce.unwrap(),
+            NonceFull::new(
+                Pubkey::from([0; 32]),
+                AccountSharedData::default(),
+                Some(mock_bank.accounts_map[&key2.pubkey()].clone())
+            )
+        );
+    }
+
+    #[test]
+    fn test_load_accounts_error() {
+        let mock_bank = TestCallbacks::default();
+        let message = Message {
+            account_keys: vec![Pubkey::new_from_array([0; 32])],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+
+        let lock_results = (Ok(()), Some(NoncePartial::default()), None) as TransactionCheckResult;
+        let fee_structure = FeeStructure::default();
+
+        let result = load_accounts(
+            &mock_bank,
+            &[sanitized_transaction.clone()],
+            &[lock_results],
+            &mut TransactionErrorMetrics::default(),
+            &fee_structure,
+            None,
+            &HashMap::new(),
+            &LoadedProgramsForTxBatch::default(),
+        );
+
+        assert_eq!(
+            result,
+            vec![(Err(TransactionError::BlockhashNotFound), None)]
+        );
+
+        let lock_results =
+            (Ok(()), Some(NoncePartial::default()), Some(20u64)) as TransactionCheckResult;
+
+        let result = load_accounts(
+            &mock_bank,
+            &[sanitized_transaction.clone()],
+            &[lock_results.clone()],
+            &mut TransactionErrorMetrics::default(),
+            &fee_structure,
+            None,
+            &HashMap::new(),
+            &LoadedProgramsForTxBatch::default(),
+        );
+
+        assert_eq!(result, vec![(Err(TransactionError::AccountNotFound), None)]);
+
+        let lock_results = (
+            Err(TransactionError::InvalidWritableAccount),
+            Some(NoncePartial::default()),
+            Some(20u64),
+        ) as TransactionCheckResult;
+
+        let result = load_accounts(
+            &mock_bank,
+            &[sanitized_transaction.clone()],
+            &[lock_results],
+            &mut TransactionErrorMetrics::default(),
+            &fee_structure,
+            None,
+            &HashMap::new(),
+            &LoadedProgramsForTxBatch::default(),
+        );
+
+        assert_eq!(
+            result,
+            vec![(Err(TransactionError::InvalidWritableAccount), None)]
         );
     }
 }
