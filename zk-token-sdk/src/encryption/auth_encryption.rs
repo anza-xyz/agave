@@ -32,7 +32,7 @@ use {
 };
 
 /// Byte length of an authenticated encryption secret key
-const AE_KEY_LEN: usize = 16;
+pub const AE_KEY_LEN: usize = 16;
 
 /// Byte length of an authenticated encryption nonce component
 const NONCE_LEN: usize = 12;
