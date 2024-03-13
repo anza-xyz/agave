@@ -26,6 +26,7 @@ use {
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_ledger::use_snapshot_archives_at_startup,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
+    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
@@ -745,6 +746,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
             Arg::with_name("wait_for_supermajority")
                 .long("wait-for-supermajority")
                 .requires("expected_bank_hash")
+                .requires("expected_shred_version")
                 .value_name("SLOT")
                 .validator(is_slot)
                 .help(
@@ -1078,6 +1080,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .value_name("NUM_THREADS")
                 .validator(is_parsable::<usize>)
+                .default_value_if(
+                    "full_rpc_api",
+                    None,
+                    &default_args.rpc_pubsub_notification_threads,
+                )
                 .help(
                     "The maximum number of threads that RPC PubSub will use for generating \
                      notifications. 0 will disable RPC PubSub notifications",
@@ -1171,44 +1178,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .validator(is_parsable::<usize>)
                 .default_value(&default_args.rpc_max_request_body_size)
                 .help("The maximum request body size accepted by rpc service"),
-        )
-        .arg(
-            Arg::with_name("enable_accountsdb_repl")
-                .long("enable-accountsdb-repl")
-                .takes_value(false)
-                .hidden(hidden_unless_forced())
-                .help("Enable AccountsDb Replication"),
-        )
-        .arg(
-            Arg::with_name("accountsdb_repl_bind_address")
-                .long("accountsdb-repl-bind-address")
-                .value_name("HOST")
-                .takes_value(true)
-                .validator(solana_net_utils::is_host)
-                .hidden(hidden_unless_forced())
-                .help(
-                    "IP address to bind the AccountsDb Replication port [default: use \
-                     --bind-address]",
-                ),
-        )
-        .arg(
-            Arg::with_name("accountsdb_repl_port")
-                .long("accountsdb-repl-port")
-                .value_name("PORT")
-                .takes_value(true)
-                .validator(port_validator)
-                .hidden(hidden_unless_forced())
-                .help("Enable AccountsDb Replication Service on this port"),
-        )
-        .arg(
-            Arg::with_name("accountsdb_repl_threads")
-                .long("accountsdb-repl-threads")
-                .value_name("NUMBER")
-                .validator(is_parsable::<usize>)
-                .takes_value(true)
-                .default_value(&default_args.accountsdb_repl_threads)
-                .hidden(hidden_unless_forced())
-                .help("Number of threads to use for servicing AccountsDb Replication requests"),
         )
         .arg(
             Arg::with_name("geyser_plugin_config")
@@ -1989,6 +1958,27 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
                 Ok(())
             }
         }));
+    add_arg!(Arg::with_name("accountsdb_repl_bind_address")
+        .long("accountsdb-repl-bind-address")
+        .value_name("HOST")
+        .takes_value(true)
+        .validator(solana_net_utils::is_host)
+        .help(
+            "IP address to bind the AccountsDb Replication port [default: use \
+                     --bind-address]",
+        ));
+    add_arg!(Arg::with_name("accountsdb_repl_port")
+        .long("accountsdb-repl-port")
+        .value_name("PORT")
+        .takes_value(true)
+        .validator(port_validator)
+        .help("Enable AccountsDb Replication Service on this port"));
+    add_arg!(Arg::with_name("accountsdb_repl_threads")
+        .long("accountsdb-repl-threads")
+        .value_name("NUMBER")
+        .validator(is_parsable::<usize>)
+        .takes_value(true)
+        .help("Number of threads to use for servicing AccountsDb Replication requests"));
     add_arg!(Arg::with_name("disable_accounts_disk_index")
         .long("disable-accounts-disk-index")
         .help("Disable the disk-based accounts index if it is enabled by default.")
@@ -1999,6 +1989,10 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .takes_value(false),
         usage_warning: "The quic server cannot be disabled.",
     );
+    add_arg!(Arg::with_name("enable_accountsdb_repl")
+        .long("enable-accountsdb-repl")
+        .takes_value(false)
+        .help("Enable AccountsDb Replication"));
     add_arg!(
         Arg::with_name("enable_cpi_and_log_storage")
             .long("enable-cpi-and-log-storage")
@@ -2150,6 +2144,7 @@ pub struct DefaultArgs {
     pub rpc_bigtable_max_message_size: String,
     pub rpc_max_request_body_size: String,
     pub rpc_pubsub_worker_threads: String,
+    pub rpc_pubsub_notification_threads: String,
 
     pub maximum_local_snapshot_age: String,
     pub maximum_full_snapshot_archives_to_retain: String,
@@ -2161,8 +2156,6 @@ pub struct DefaultArgs {
     pub max_snapshot_download_abort: String,
 
     pub contact_debug_interval: String,
-
-    pub accountsdb_repl_threads: String,
 
     pub snapshot_version: SnapshotVersion,
     pub snapshot_archive_format: String,
@@ -2239,7 +2232,7 @@ impl DefaultArgs {
             rpc_bigtable_max_message_size: solana_storage_bigtable::DEFAULT_MAX_MESSAGE_SIZE
                 .to_string(),
             rpc_pubsub_worker_threads: "4".to_string(),
-            accountsdb_repl_threads: num_cpus::get().to_string(),
+            rpc_pubsub_notification_threads: get_thread_count().to_string(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                 .to_string(),
             maximum_incremental_snapshot_archives_to_retain:
