@@ -10,6 +10,7 @@ use {
     },
     dashmap::DashMap,
     log::*,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         account_utils::StateMut,
@@ -23,7 +24,7 @@ use {
         nonce_info::{NonceFull, NonceInfo},
         pubkey::Pubkey,
         slot_hashes::SlotHashes,
-        transaction::{Result, SanitizedTransaction, TransactionAccountLocks, TransactionError},
+        transaction::{Result, TransactionAccountLocks, TransactionError},
         transaction_context::TransactionAccount,
     },
     solana_svm::{
@@ -31,10 +32,7 @@ use {
     },
     std::{
         cmp::Reverse,
-        collections::{
-            hash_map::{self},
-            BinaryHeap, HashMap, HashSet,
-        },
+        collections::{hash_map, BinaryHeap, HashMap, HashSet},
         ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -577,7 +575,7 @@ impl Accounts {
     #[allow(clippy::needless_collect)]
     pub fn lock_accounts<'a>(
         &self,
-        txs: impl Iterator<Item = &'a SanitizedTransaction>,
+        txs: impl Iterator<Item = &'a ExtendedSanitizedTransaction>,
         tx_account_lock_limit: usize,
     ) -> Vec<Result<()>> {
         let tx_account_locks_results: Vec<Result<_>> = txs
@@ -590,7 +588,7 @@ impl Accounts {
     #[allow(clippy::needless_collect)]
     pub fn lock_accounts_with_results<'a>(
         &self,
-        txs: impl Iterator<Item = &'a SanitizedTransaction>,
+        txs: impl Iterator<Item = &'a ExtendedSanitizedTransaction>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limit: usize,
     ) -> Vec<Result<()>> {
@@ -627,7 +625,7 @@ impl Accounts {
     #[allow(clippy::needless_collect)]
     pub fn unlock_accounts<'a>(
         &self,
-        txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)>,
+        txs_and_results: impl Iterator<Item = (&'a ExtendedSanitizedTransaction, &'a Result<()>)>,
     ) {
         let keys: Vec<_> = txs_and_results
             .filter(|(_, res)| res.is_ok())
@@ -650,7 +648,7 @@ impl Accounts {
     pub fn store_cached(
         &self,
         slot: Slot,
-        txs: &[SanitizedTransaction],
+        txs: &[ExtendedSanitizedTransaction],
         res: &[TransactionExecutionResult],
         loaded: &mut [TransactionLoadResult],
         durable_nonce: &DurableNonce,
@@ -677,14 +675,14 @@ impl Accounts {
     #[allow(clippy::too_many_arguments)]
     fn collect_accounts_to_store<'a>(
         &self,
-        txs: &'a [SanitizedTransaction],
+        txs: &'a [ExtendedSanitizedTransaction],
         execution_results: &'a [TransactionExecutionResult],
         load_results: &'a mut [TransactionLoadResult],
         durable_nonce: &DurableNonce,
         lamports_per_signature: u64,
     ) -> (
         Vec<(&'a Pubkey, &'a AccountSharedData)>,
-        Vec<Option<&'a SanitizedTransaction>>,
+        Vec<Option<&'a ExtendedSanitizedTransaction>>,
     ) {
         let mut accounts = Vec::with_capacity(load_results.len());
         let mut transactions = Vec::with_capacity(load_results.len());
@@ -815,7 +813,7 @@ mod tests {
             rent_debits::RentDebits,
             signature::{keypair_from_seed, signers::Signers, Keypair, Signer},
             system_instruction, system_program,
-            transaction::{Transaction, MAX_TX_ACCOUNT_LOCKS},
+            transaction::{SanitizedTransaction, Transaction, MAX_TX_ACCOUNT_LOCKS},
         },
         solana_svm::{
             account_loader::LoadedTransaction,
@@ -1082,7 +1080,7 @@ mod tests {
         };
 
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
-        let results = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results = accounts.lock_accounts([tx.into()].iter(), MAX_TX_ACCOUNT_LOCKS);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
     }
 
@@ -1109,7 +1107,7 @@ mod tests {
                 ..Message::default()
             };
 
-            let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
+            let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default()).into()];
             let results = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
             assert_eq!(results, vec![Ok(())]);
             accounts.unlock_accounts(txs.iter().zip(&results));
@@ -1131,7 +1129,7 @@ mod tests {
                 ..Message::default()
             };
 
-            let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
+            let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default()).into()];
             let results = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
             assert_eq!(results[0], Err(TransactionError::TooManyAccountLocks));
         }
@@ -1166,7 +1164,7 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results0 = accounts.lock_accounts([tx.clone().into()].iter(), MAX_TX_ACCOUNT_LOCKS);
 
         assert_eq!(results0, vec![Ok(())]);
         assert_eq!(
@@ -1200,7 +1198,7 @@ mod tests {
             instructions,
         );
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let txs = vec![tx0, tx1];
+        let txs = vec![tx0.into(), tx1.into()];
         let results1 = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
         assert_eq!(
             results1,
@@ -1220,7 +1218,7 @@ mod tests {
             2
         );
 
-        accounts.unlock_accounts(iter::once(&tx).zip(&results0));
+        accounts.unlock_accounts(iter::once(&tx.into()).zip(&results0));
         accounts.unlock_accounts(txs.iter().zip(&results1));
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -1232,7 +1230,7 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let results2 = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results2 = accounts.lock_accounts([tx.into()].iter(), MAX_TX_ACCOUNT_LOCKS);
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -1295,7 +1293,7 @@ mod tests {
         let accounts_clone = accounts_arc.clone();
         let exit_clone = exit.clone();
         thread::spawn(move || loop {
-            let txs = vec![writable_tx.clone()];
+            let txs = vec![writable_tx.clone().into()];
             let results = accounts_clone
                 .clone()
                 .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
@@ -1311,7 +1309,7 @@ mod tests {
         });
         let counter_clone = counter;
         for _ in 0..5 {
-            let txs = vec![readonly_tx.clone()];
+            let txs = vec![readonly_tx.clone().into()];
             let results = accounts_arc
                 .clone()
                 .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
@@ -1355,7 +1353,7 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results0 = accounts.lock_accounts([tx.into()].iter(), MAX_TX_ACCOUNT_LOCKS);
 
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
@@ -1447,7 +1445,7 @@ mod tests {
             instructions,
         );
         let tx2 = new_sanitized_tx(&[&keypair3], message, Hash::default());
-        let txs = vec![tx0, tx1, tx2];
+        let txs = vec![tx0.into(), tx1.into(), tx2.into()];
 
         let qos_results = vec![
             Ok(()),
@@ -1577,7 +1575,7 @@ mod tests {
                 .unwrap()
                 .insert_new_readonly(&pubkey);
         }
-        let txs = vec![tx0.clone(), tx1.clone()];
+        let txs = vec![tx0.clone().into(), tx1.clone().into()];
         let execution_results = vec![new_execution_result(Ok(()), None); 2];
         let (collected_accounts, transactions) = accounts.collect_accounts_to_store(
             &txs,
@@ -1595,8 +1593,12 @@ mod tests {
             .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey()));
 
         assert_eq!(transactions.len(), 2);
-        assert!(transactions.iter().any(|txn| txn.unwrap().eq(&tx0)));
-        assert!(transactions.iter().any(|txn| txn.unwrap().eq(&tx1)));
+        assert!(transactions
+            .iter()
+            .any(|txn| txn.unwrap().eq(&tx0.clone().into())));
+        assert!(transactions
+            .iter()
+            .any(|txn| txn.unwrap().eq(&tx1.clone().into())));
 
         // Ensure readonly_lock reflects lock
         assert_eq!(
@@ -1949,7 +1951,7 @@ mod tests {
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
-        let txs = vec![tx];
+        let txs = vec![tx.into()];
         let execution_results = vec![new_execution_result(
             Err(TransactionError::InstructionError(
                 1,
@@ -2055,7 +2057,7 @@ mod tests {
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
-        let txs = vec![tx];
+        let txs = vec![tx.into()];
         let execution_results = vec![new_execution_result(
             Err(TransactionError::InstructionError(
                 1,

@@ -1,5 +1,6 @@
 use {
     solana_program_runtime::compute_budget_processor::process_compute_budget_instructions,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         instruction::CompiledInstruction,
         pubkey::Pubkey,
@@ -52,6 +53,16 @@ impl GetComputeBudgetDetails for SanitizedTransaction {
             self.message().program_instructions_iter(),
             round_compute_unit_price_enabled,
         )
+    }
+}
+
+impl GetComputeBudgetDetails for ExtendedSanitizedTransaction {
+    fn get_compute_budget_details(
+        &self,
+        round_compute_unit_price_enabled: bool,
+    ) -> Option<ComputeBudgetDetails> {
+        self.transaction()
+            .get_compute_budget_details(round_compute_unit_price_enabled)
     }
 }
 

@@ -8,11 +8,12 @@ use {
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         clock::Slot,
         feature_set::FeatureSet,
         saturating_add_assign,
-        transaction::{self, SanitizedTransaction, TransactionError},
+        transaction::{self, TransactionError},
     },
     std::sync::atomic::{AtomicU64, Ordering},
 };
@@ -40,7 +41,7 @@ impl QosService {
     pub fn select_and_accumulate_transaction_costs(
         &self,
         bank: &Bank,
-        transactions: &[SanitizedTransaction],
+        transactions: &[ExtendedSanitizedTransaction],
         pre_results: impl Iterator<Item = transaction::Result<()>>,
     ) -> (Vec<transaction::Result<TransactionCost>>, usize) {
         let transaction_costs =
@@ -67,13 +68,15 @@ impl QosService {
     fn compute_transaction_costs<'a>(
         &self,
         feature_set: &FeatureSet,
-        transactions: impl Iterator<Item = &'a SanitizedTransaction>,
+        transactions: impl Iterator<Item = &'a ExtendedSanitizedTransaction>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
     ) -> Vec<transaction::Result<TransactionCost>> {
         let mut compute_cost_time = Measure::start("compute_cost_time");
         let txs_costs: Vec<_> = transactions
             .zip(pre_results)
-            .map(|(tx, pre_result)| pre_result.map(|()| CostModel::calculate_cost(tx, feature_set)))
+            .map(|(tx, pre_result)| {
+                pre_result.map(|()| CostModel::calculate_cost(tx.transaction(), feature_set))
+            })
             .collect();
         compute_cost_time.stop();
         self.metrics
@@ -92,7 +95,7 @@ impl QosService {
     /// and a count of the number of transactions that would fit in the block
     fn select_transactions_per_cost<'a>(
         &self,
-        transactions: impl Iterator<Item = &'a SanitizedTransaction>,
+        transactions: impl Iterator<Item = &'a ExtendedSanitizedTransaction>,
         transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost>>,
         bank: &Bank,
     ) -> (Vec<transaction::Result<TransactionCost>>, usize) {
@@ -579,6 +582,7 @@ mod tests {
             hash::Hash,
             signature::{Keypair, Signer},
             system_transaction,
+            transaction::SanitizedTransaction,
         },
         solana_vote_program::vote_transaction,
         std::sync::Arc,
@@ -590,20 +594,27 @@ mod tests {
 
         // make a vec of txs
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
-        );
-        let vote_tx = SanitizedTransaction::from_transaction_for_tests(
-            vote_transaction::new_vote_transaction(
-                vec![42],
+        let transfer_tx: ExtendedSanitizedTransaction =
+            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &keypair,
+                &keypair.pubkey(),
+                1,
                 Hash::default(),
-                Hash::default(),
-                &keypair,
-                &keypair,
-                &keypair,
-                None,
-            ),
-        );
+            ))
+            .into();
+        let vote_tx: ExtendedSanitizedTransaction =
+            SanitizedTransaction::from_transaction_for_tests(
+                vote_transaction::new_vote_transaction(
+                    vec![42],
+                    Hash::default(),
+                    Hash::default(),
+                    &keypair,
+                    &keypair,
+                    &keypair,
+                    None,
+                ),
+            )
+            .into();
         let txs = vec![transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
 
         let qos_service = QosService::new(1);
@@ -621,7 +632,8 @@ mod tests {
             .map(|(index, cost)| {
                 assert_eq!(
                     cost.as_ref().unwrap().sum(),
-                    CostModel::calculate_cost(&txs[index], &FeatureSet::all_enabled()).sum()
+                    CostModel::calculate_cost(txs[index].transaction(), &FeatureSet::all_enabled())
+                        .sum()
                 );
             })
             .collect_vec();
@@ -653,7 +665,12 @@ mod tests {
         let vote_tx_cost = CostModel::calculate_cost(&vote_tx, &FeatureSet::all_enabled()).sum();
 
         // make a vec of txs
-        let txs = vec![transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
+        let txs = vec![
+            transfer_tx.clone().into(),
+            vote_tx.clone().into(),
+            transfer_tx.into(),
+            vote_tx.into(),
+        ];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
@@ -692,8 +709,8 @@ mod tests {
         let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
             system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
         );
-        let txs: Vec<SanitizedTransaction> = (0..transaction_count)
-            .map(|_| transfer_tx.clone())
+        let txs: Vec<ExtendedSanitizedTransaction> = (0..transaction_count)
+            .map(|_| transfer_tx.clone().into())
             .collect();
         let execute_units_adjustment = 10u64;
 
@@ -758,10 +775,15 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
-        );
-        let txs: Vec<SanitizedTransaction> = (0..transaction_count)
+        let transfer_tx: ExtendedSanitizedTransaction =
+            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &keypair,
+                &keypair.pubkey(),
+                1,
+                Hash::default(),
+            ))
+            .into();
+        let txs: Vec<ExtendedSanitizedTransaction> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();
 
@@ -811,10 +833,15 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
-        );
-        let txs: Vec<SanitizedTransaction> = (0..transaction_count)
+        let transfer_tx: ExtendedSanitizedTransaction =
+            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &keypair,
+                &keypair.pubkey(),
+                1,
+                Hash::default(),
+            ))
+            .into();
+        let txs: Vec<ExtendedSanitizedTransaction> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();
         let execute_units_adjustment = 10u64;

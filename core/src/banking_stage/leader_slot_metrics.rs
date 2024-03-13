@@ -936,6 +936,19 @@ impl LeaderSlotMetricsTracker {
             );
         }
     }
+
+    pub(crate) fn get_transaction_perf_track_metrics_ref(
+        &mut self,
+    ) -> Option<&mut histogram::Histogram> {
+        self.leader_slot_metrics
+            .as_mut()
+            .map(|leader_slot_metrics| {
+                &mut leader_slot_metrics
+                    .timing_metrics
+                    .process_packets_timings
+                    .process_sampled_packets_us_hist
+            })
+    }
 }
 
 #[cfg(test)]

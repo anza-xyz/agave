@@ -2903,7 +2903,7 @@ fn test_filter_program_errors_and_collect_fee() {
     ];
     let initial_balance = bank.get_balance(&leader);
 
-    let results = bank.filter_program_errors_and_collect_fee(&[tx1, tx2], &results);
+    let results = bank.filter_program_errors_and_collect_fee(&[tx1.into(), tx2.into()], &results);
     bank.freeze();
     assert_eq!(
         bank.get_balance(&leader),
@@ -2954,7 +2954,7 @@ fn test_filter_program_errors_and_collect_compute_unit_fee() {
     ];
     let initial_balance = bank.get_balance(&leader);
 
-    let results = bank.filter_program_errors_and_collect_fee(&[tx1, tx2], &results);
+    let results = bank.filter_program_errors_and_collect_fee(&[tx1.into(), tx2.into()], &results);
     bank.freeze();
     assert_eq!(
         bank.get_balance(&leader),
@@ -3104,6 +3104,7 @@ fn test_interleaving_locks() {
             false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         )
         .0
@@ -5928,6 +5929,7 @@ fn test_pre_post_transaction_balances() {
             true,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         );
 
@@ -9213,6 +9215,7 @@ fn test_tx_log_order() {
             },
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0
         .execution_results;
@@ -9322,6 +9325,7 @@ fn test_tx_return_data() {
                     enable_return_data_recording: true,
                 },
                 &mut ExecuteTimings::default(),
+                None,
                 None,
             )
             .0
@@ -13790,7 +13794,7 @@ fn test_failed_simulation_compute_units() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction).into();
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
 }

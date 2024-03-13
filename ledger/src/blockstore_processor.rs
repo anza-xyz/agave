@@ -42,6 +42,7 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
     },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
         feature_set,
@@ -53,8 +54,7 @@ use {
         signature::{Keypair, Signature},
         timing,
         transaction::{
-            Result, SanitizedTransaction, TransactionError, TransactionVerificationMode,
-            VersionedTransaction,
+            Result, TransactionError, TransactionVerificationMode, VersionedTransaction,
         },
     },
     solana_svm::{
@@ -167,6 +167,7 @@ pub fn execute_batch(
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
+        None,
     );
 
     bank_utils::find_and_send_votes(
@@ -380,7 +381,7 @@ fn schedule_batches_for_execution(
 fn rebatch_transactions<'a>(
     lock_results: &'a [Result<()>],
     bank: &'a Arc<Bank>,
-    sanitized_txs: &'a [SanitizedTransaction],
+    sanitized_txs: &'a [ExtendedSanitizedTransaction],
     start: usize,
     end: usize,
     transaction_indexes: &'a [usize],
@@ -429,7 +430,7 @@ fn rebatch_and_execute_batches(
     let tx_costs = sanitized_txs
         .iter()
         .map(|tx| {
-            let tx_cost = CostModel::calculate_cost(tx, &bank.feature_set);
+            let tx_cost = CostModel::calculate_cost(tx.transaction(), &bank.feature_set);
             let cost = tx_cost.sum();
             minimal_tx_cost = std::cmp::min(minimal_tx_cost, cost);
             total_cost = total_cost.saturating_add(cost);
@@ -512,7 +513,7 @@ pub fn process_entries_for_tests(
     let replay_tx_thread_pool = create_thread_pool(1);
     let verify_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction| -> Result<SanitizedTransaction> {
+        move |versioned_tx: VersionedTransaction| -> Result<ExtendedSanitizedTransaction> {
             bank.verify_transaction(versioned_tx, TransactionVerificationMode::FullVerification)
         }
     };
@@ -1306,7 +1307,7 @@ fn confirm_slot_entries(
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction,
               verification_mode: TransactionVerificationMode|
-              -> Result<SanitizedTransaction> {
+              -> Result<ExtendedSanitizedTransaction> {
             bank.verify_transaction(versioned_tx, verification_mode)
         }
     };
@@ -1860,7 +1861,7 @@ pub enum TransactionStatusMessage {
 
 pub struct TransactionStatusBatch {
     pub bank: Arc<Bank>,
-    pub transactions: Vec<SanitizedTransaction>,
+    pub transactions: Vec<ExtendedSanitizedTransaction>,
     pub execution_results: Vec<Option<TransactionExecutionDetails>>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
@@ -1877,7 +1878,7 @@ impl TransactionStatusSender {
     pub fn send_transaction_status_batch(
         &self,
         bank: Arc<Bank>,
-        transactions: Vec<SanitizedTransaction>,
+        transactions: Vec<ExtendedSanitizedTransaction>,
         execution_results: Vec<TransactionExecutionResult>,
         balances: TransactionBalancesSet,
         token_balances: TransactionTokenBalancesSet,
@@ -1997,7 +1998,7 @@ pub mod tests {
             signature::{Keypair, Signer},
             system_instruction::SystemError,
             system_transaction,
-            transaction::{Transaction, TransactionError},
+            transaction::{SanitizedTransaction, Transaction, TransactionError},
         },
         solana_svm::transaction_processor::ExecutionRecordingConfig,
         solana_vote::vote_account::VoteAccount,
@@ -4003,6 +4004,7 @@ pub mod tests {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None,
         );
         let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
         assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
@@ -4398,7 +4400,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<SanitizedTransaction> {
+    ) -> Vec<ExtendedSanitizedTransaction> {
         let pubkey = solana_sdk::pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_sdk::pubkey::new_rand();
@@ -4411,19 +4413,22 @@ pub mod tests {
                 &pubkey,
                 1,
                 *genesis_hash,
-            )),
+            ))
+            .into(),
             SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &keypair2,
                 &pubkey2,
                 1,
                 *genesis_hash,
-            )),
+            ))
+            .into(),
             SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &keypair3,
                 &pubkey3,
                 1,
                 *genesis_hash,
-            )),
+            ))
+            .into(),
         ]
     }
 

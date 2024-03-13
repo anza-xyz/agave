@@ -6,7 +6,8 @@ use {
         cost_tracker::{CostTracker, CostTrackerError},
     },
     solana_perf::packet::Packet,
-    solana_sdk::{feature_set::FeatureSet, transaction::SanitizedTransaction},
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
+    solana_sdk::feature_set::FeatureSet,
     std::sync::Arc,
 };
 
@@ -58,11 +59,11 @@ impl ForwardBatch {
 
     fn try_add(
         &mut self,
-        sanitized_transaction: &SanitizedTransaction,
+        sanitized_transaction: &ExtendedSanitizedTransaction,
         immutable_packet: Arc<ImmutableDeserializedPacket>,
         feature_set: &FeatureSet,
     ) -> Result<u64, CostTrackerError> {
-        let tx_cost = CostModel::calculate_cost(sanitized_transaction, feature_set);
+        let tx_cost = CostModel::calculate_cost(sanitized_transaction.transaction(), feature_set);
         let res = self.cost_tracker.try_add(&tx_cost);
         if res.is_ok() {
             self.forwardable_packets.push(immutable_packet);
@@ -112,7 +113,7 @@ impl ForwardPacketBatchesByAccounts {
     /// packets are filled into first available 'batch' that have space to fit it.
     pub fn try_add_packet(
         &mut self,
-        sanitized_transaction: &SanitizedTransaction,
+        sanitized_transaction: &ExtendedSanitizedTransaction,
         immutable_packet: Arc<ImmutableDeserializedPacket>,
         feature_set: &FeatureSet,
     ) -> bool {
@@ -138,8 +139,12 @@ mod tests {
         super::*,
         crate::banking_stage::unprocessed_packet_batches::DeserializedPacket,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, feature_set::FeatureSet, message::Message,
-            pubkey::Pubkey, system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            feature_set::FeatureSet,
+            message::Message,
+            pubkey::Pubkey,
+            system_instruction,
+            transaction::{SanitizedTransaction, Transaction},
         },
     };
 
@@ -148,7 +153,7 @@ mod tests {
     fn build_test_transaction_and_packet(
         priority: u64,
         write_to_account: &Pubkey,
-    ) -> (SanitizedTransaction, DeserializedPacket, u32) {
+    ) -> (ExtendedSanitizedTransaction, DeserializedPacket, u32) {
         let from_account = solana_sdk::pubkey::new_rand();
 
         let transaction = Transaction::new_unsigned(Message::new(
@@ -168,7 +173,11 @@ mod tests {
         // set limit ratio so each batch can only have one test transaction
         let limit_ratio: u32 =
             ((block_cost_limits::MAX_WRITABLE_ACCOUNT_UNITS - cost + 1) / cost) as u32;
-        (sanitized_transaction, deserialized_packet, limit_ratio)
+        (
+            sanitized_transaction.into(),
+            deserialized_packet,
+            limit_ratio,
+        )
     }
 
     #[test]

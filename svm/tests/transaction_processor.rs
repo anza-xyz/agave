@@ -95,7 +95,7 @@ fn test_filter_executable_program_accounts() {
     let owners = &[program1_pubkey, program2_pubkey];
     let programs = TransactionBatchProcessor::<MockForkGraph>::filter_executable_program_accounts(
         &bank,
-        &[sanitized_tx1, sanitized_tx2],
+        &[sanitized_tx1.into(), sanitized_tx2.into()],
         &mut [(Ok(()), None, Some(0)), (Ok(()), None, Some(0))],
         owners,
     );
@@ -189,7 +189,7 @@ fn test_filter_executable_program_accounts_invalid_blockhash() {
     let mut lock_results = vec![(Ok(()), None, Some(0)), (Ok(()), None, None)];
     let programs = TransactionBatchProcessor::<MockForkGraph>::filter_executable_program_accounts(
         &bank,
-        &[sanitized_tx1, sanitized_tx2],
+        &[sanitized_tx1.into(), sanitized_tx2.into()],
         &mut lock_results,
         owners,
     );

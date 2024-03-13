@@ -16,10 +16,8 @@ use {
     itertools::izip,
     prio_graph::{AccessKind, PrioGraph},
     solana_measure::measure_us,
-    solana_sdk::{
-        pubkey::Pubkey, saturating_add_assign, slot_history::Slot,
-        transaction::SanitizedTransaction,
-    },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
+    solana_sdk::{pubkey::Pubkey, saturating_add_assign, slot_history::Slot},
 };
 
 pub(crate) struct PrioGraphScheduler {
@@ -64,8 +62,8 @@ impl PrioGraphScheduler {
     pub(crate) fn schedule(
         &mut self,
         container: &mut TransactionStateContainer,
-        pre_graph_filter: impl Fn(&[&SanitizedTransaction], &mut [bool]),
-        pre_lock_filter: impl Fn(&SanitizedTransaction) -> bool,
+        pre_graph_filter: impl Fn(&[&ExtendedSanitizedTransaction], &mut [bool]),
+        pre_lock_filter: impl Fn(&ExtendedSanitizedTransaction) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
         let mut batches = Batches::new(num_threads);
@@ -329,7 +327,7 @@ impl PrioGraphScheduler {
     fn complete_batch(
         &mut self,
         batch_id: TransactionBatchId,
-        transactions: &[SanitizedTransaction],
+        transactions: &[ExtendedSanitizedTransaction],
     ) {
         let thread_id = self.in_flight_tracker.complete_batch(batch_id);
         for transaction in transactions {
@@ -392,7 +390,7 @@ impl PrioGraphScheduler {
     /// on `ThreadAwareAccountLocks::try_lock_accounts`.
     fn select_thread(
         thread_set: ThreadSet,
-        batches_per_thread: &[Vec<SanitizedTransaction>],
+        batches_per_thread: &[Vec<ExtendedSanitizedTransaction>],
         in_flight_per_thread: &[usize],
     ) -> ThreadId {
         thread_set
@@ -442,7 +440,7 @@ pub(crate) struct SchedulingSummary {
 
 struct Batches {
     ids: Vec<Vec<TransactionId>>,
-    transactions: Vec<Vec<SanitizedTransaction>>,
+    transactions: Vec<Vec<ExtendedSanitizedTransaction>>,
     max_age_slots: Vec<Vec<Slot>>,
     total_cus: Vec<u64>,
 }
@@ -462,7 +460,7 @@ impl Batches {
         thread_id: ThreadId,
     ) -> (
         Vec<TransactionId>,
-        Vec<SanitizedTransaction>,
+        Vec<ExtendedSanitizedTransaction>,
         Vec<Slot>,
         u64,
     ) {
@@ -492,8 +490,14 @@ mod tests {
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, pubkey::Pubkey,
-            signature::Keypair, signer::Signer, system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            hash::Hash,
+            message::Message,
+            pubkey::Pubkey,
+            signature::Keypair,
+            signer::Signer,
+            system_instruction,
+            transaction::{SanitizedTransaction, Transaction},
         },
         std::borrow::Borrow,
     };
@@ -569,7 +573,8 @@ mod tests {
                 to_pubkeys,
                 lamports,
                 compute_unit_price,
-            );
+            )
+            .into();
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age_slot: Slot::MAX,
@@ -598,11 +603,11 @@ mod tests {
             .unzip()
     }
 
-    fn test_pre_graph_filter(_txs: &[&SanitizedTransaction], results: &mut [bool]) {
+    fn test_pre_graph_filter(_txs: &[&ExtendedSanitizedTransaction], results: &mut [bool]) {
         results.fill(true);
     }
 
-    fn test_pre_lock_filter(_tx: &SanitizedTransaction) -> bool {
+    fn test_pre_lock_filter(_tx: &ExtendedSanitizedTransaction) -> bool {
         true
     }
 
@@ -778,7 +783,7 @@ mod tests {
 
         // 2nd transaction should be filtered out and dropped before locking.
         let pre_lock_filter =
-            |tx: &SanitizedTransaction| tx.message().fee_payer() != &keypair.pubkey();
+            |tx: &ExtendedSanitizedTransaction| tx.message().fee_payer() != &keypair.pubkey();
         let scheduling_summary = scheduler
             .schedule(&mut container, test_pre_graph_filter, pre_lock_filter)
             .unwrap();

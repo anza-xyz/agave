@@ -1,14 +1,14 @@
 use {
     crate::bank::Bank,
-    solana_sdk::transaction::{Result, SanitizedTransaction},
-    std::borrow::Cow,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
+    solana_sdk::transaction::Result, std::borrow::Cow,
 };
 
 // Represents the results of trying to lock a set of accounts
 pub struct TransactionBatch<'a, 'b> {
     lock_results: Vec<Result<()>>,
     bank: &'a Bank,
-    sanitized_txs: Cow<'b, [SanitizedTransaction]>,
+    sanitized_txs: Cow<'b, [ExtendedSanitizedTransaction]>,
     needs_unlock: bool,
 }
 
@@ -16,7 +16,7 @@ impl<'a, 'b> TransactionBatch<'a, 'b> {
     pub fn new(
         lock_results: Vec<Result<()>>,
         bank: &'a Bank,
-        sanitized_txs: Cow<'b, [SanitizedTransaction]>,
+        sanitized_txs: Cow<'b, [ExtendedSanitizedTransaction]>,
     ) -> Self {
         assert_eq!(lock_results.len(), sanitized_txs.len());
         Self {
@@ -31,7 +31,7 @@ impl<'a, 'b> TransactionBatch<'a, 'b> {
         &self.lock_results
     }
 
-    pub fn sanitized_transactions(&self) -> &[SanitizedTransaction] {
+    pub fn sanitized_transactions(&self) -> &[ExtendedSanitizedTransaction] {
         &self.sanitized_txs
     }
 
@@ -100,7 +100,11 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
-        solana_sdk::{signature::Keypair, system_transaction, transaction::TransactionError},
+        solana_sdk::{
+            signature::Keypair,
+            system_transaction,
+            transaction::{SanitizedTransaction, TransactionError},
+        },
     };
 
     #[test]
@@ -172,7 +176,7 @@ mod tests {
         );
     }
 
-    fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<SanitizedTransaction>) {
+    fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<ExtendedSanitizedTransaction>) {
         let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
@@ -185,18 +189,36 @@ mod tests {
         let keypair2 = Keypair::new();
         let pubkey2 = solana_sdk::pubkey::new_rand();
 
-        let mut txs = vec![SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
-        )];
+        let mut txs =
+            vec![
+                SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &pubkey,
+                    1,
+                    genesis_config.hash(),
+                ))
+                .into(),
+            ];
         if insert_conflicting_tx {
-            txs.push(SanitizedTransaction::from_transaction_for_tests(
-                system_transaction::transfer(&mint_keypair, &pubkey2, 1, genesis_config.hash()),
-            ));
+            txs.push(
+                SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &pubkey2,
+                    1,
+                    genesis_config.hash(),
+                ))
+                .into(),
+            );
         }
-        txs.push(SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair2, &pubkey2, 1, genesis_config.hash()),
-        ));
-
+        txs.push(
+            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &keypair2,
+                &pubkey2,
+                1,
+                genesis_config.hash(),
+            ))
+            .into(),
+        );
         (bank, txs)
     }
 }

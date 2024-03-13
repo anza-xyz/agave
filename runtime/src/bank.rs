@@ -102,6 +102,7 @@ use {
         runtime_config::RuntimeConfig,
         timings::{ExecuteTimingType, ExecuteTimings},
     },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::{
             create_account_shared_data_with_fields as create_account, create_executable_meta,
@@ -4081,7 +4082,7 @@ impl Bank {
 
     fn update_transaction_statuses(
         &self,
-        sanitized_txs: &[SanitizedTransaction],
+        sanitized_txs: &[ExtendedSanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) {
         let mut status_cache = self.status_cache.write().unwrap();
@@ -4202,7 +4203,10 @@ impl Bank {
     pub fn prepare_entry_batch(&self, txs: Vec<VersionedTransaction>) -> Result<TransactionBatch> {
         let sanitized_txs = txs
             .into_iter()
-            .map(|tx| SanitizedTransaction::try_create(tx, MessageHash::Compute, None, self))
+            .map(|tx| {
+                SanitizedTransaction::try_create(tx, MessageHash::Compute, None, self)
+                    .map(|txn| txn.into())
+            })
             .collect::<Result<Vec<_>>>()?;
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let lock_results = self
@@ -4219,7 +4223,7 @@ impl Bank {
     /// Prepare a locked transaction batch from a list of sanitized transactions.
     pub fn prepare_sanitized_batch<'a, 'b>(
         &'a self,
-        txs: &'b [SanitizedTransaction],
+        txs: &'b [ExtendedSanitizedTransaction],
     ) -> TransactionBatch<'a, 'b> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let lock_results = self
@@ -4233,7 +4237,7 @@ impl Bank {
     /// limited packing status
     pub fn prepare_sanitized_batch_with_results<'a, 'b>(
         &'a self,
-        transactions: &'b [SanitizedTransaction],
+        transactions: &'b [ExtendedSanitizedTransaction],
         transaction_results: impl Iterator<Item = Result<()>>,
     ) -> TransactionBatch<'a, 'b> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
@@ -4249,7 +4253,7 @@ impl Bank {
     /// Prepare a transaction batch from a single transaction without locking accounts
     pub fn prepare_unlocked_batch_from_single_tx<'a>(
         &'a self,
-        transaction: &'a SanitizedTransaction,
+        transaction: &'a ExtendedSanitizedTransaction,
     ) -> TransactionBatch<'_, '_> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let lock_result = transaction
@@ -4267,7 +4271,7 @@ impl Bank {
     /// Run transactions against a frozen bank without committing the results
     pub fn simulate_transaction(
         &self,
-        transaction: &SanitizedTransaction,
+        transaction: &ExtendedSanitizedTransaction,
         enable_cpi_recording: bool,
     ) -> TransactionSimulationResult {
         assert!(self.is_frozen(), "simulation bank must be frozen");
@@ -4279,7 +4283,7 @@ impl Bank {
     /// is frozen, enabling use in single-Bank test frameworks
     pub fn simulate_transaction_unchecked(
         &self,
-        transaction: &SanitizedTransaction,
+        transaction: &ExtendedSanitizedTransaction,
         enable_cpi_recording: bool,
     ) -> TransactionSimulationResult {
         let account_keys = transaction.message().account_keys();
@@ -4307,6 +4311,7 @@ impl Bank {
             Some(&account_overrides),
             None,
             true,
+            &mut None,
         );
 
         let post_simulation_accounts = loaded_transactions
@@ -4384,7 +4389,7 @@ impl Bank {
 
     pub fn unlock_accounts<'a>(
         &self,
-        txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)>,
+        txs_and_results: impl Iterator<Item = (&'a ExtendedSanitizedTransaction, &'a Result<()>)>,
     ) {
         self.rc.accounts.unlock_accounts(txs_and_results)
     }
@@ -4395,7 +4400,7 @@ impl Bank {
 
     fn check_age(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<ExtendedSanitizedTransaction>],
         lock_results: &[Result<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -4409,7 +4414,7 @@ impl Bank {
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => self.check_transaction_age(
-                    tx.borrow(),
+                    tx.borrow().transaction(),
                     max_age,
                     &next_durable_nonce,
                     &hash_queue,
@@ -4461,7 +4466,7 @@ impl Bank {
 
     fn check_status_cache(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<ExtendedSanitizedTransaction>],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
@@ -4472,7 +4477,7 @@ impl Bank {
             .map(|(sanitized_tx, (lock_result, nonce, lamports))| {
                 let sanitized_tx = sanitized_tx.borrow();
                 if lock_result.is_ok()
-                    && self.is_transaction_already_processed(sanitized_tx, &rcache)
+                    && self.is_transaction_already_processed(sanitized_tx.transaction(), &rcache)
                 {
                     error_counters.already_processed += 1;
                     return (Err(TransactionError::AlreadyProcessed), None, None);
@@ -4525,7 +4530,7 @@ impl Bank {
 
     pub fn check_transactions(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<ExtendedSanitizedTransaction>],
         lock_results: &[Result<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -4556,6 +4561,7 @@ impl Bank {
         account_overrides: Option<&AccountOverrides>,
         log_messages_bytes_limit: Option<usize>,
         limit_to_load_programs: bool,
+        perf_track_metrics: &mut Option<&mut histogram::Histogram>,
     ) -> LoadAndExecuteTransactionsOutput {
         let sanitized_txs = batch.sanitized_transactions();
         debug!("processing transactions: {}", sanitized_txs.len());
@@ -4616,6 +4622,7 @@ impl Bank {
                 &mut check_results,
                 &mut error_counters,
                 recording_config,
+                perf_track_metrics,
                 timings,
                 account_overrides,
                 self.builtin_programs.iter(),
@@ -4817,7 +4824,7 @@ impl Bank {
 
     fn filter_program_errors_and_collect_fee(
         &self,
-        txs: &[SanitizedTransaction],
+        txs: &[ExtendedSanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
         let hash_queue = self.blockhash_queue.read().unwrap();
@@ -4877,7 +4884,7 @@ impl Bank {
     /// a failure result.
     pub fn commit_transactions(
         &self,
-        sanitized_txs: &[SanitizedTransaction],
+        sanitized_txs: &[ExtendedSanitizedTransaction],
         loaded_txs: &mut [TransactionLoadResult],
         execution_results: Vec<TransactionExecutionResult>,
         last_blockhash: Hash,
@@ -5636,6 +5643,7 @@ impl Bank {
 
     /// Process a batch of transactions.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn load_execute_and_commit_transactions(
         &self,
         batch: &TransactionBatch,
@@ -5644,6 +5652,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
+        mut perf_track_metrics: Option<&mut histogram::Histogram>,
     ) -> (TransactionResults, TransactionBalancesSet) {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
@@ -5667,6 +5676,7 @@ impl Bank {
             None,
             log_messages_bytes_limit,
             false,
+            &mut perf_track_metrics,
         );
 
         let (last_blockhash, lamports_per_signature) =
@@ -5737,6 +5747,7 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
+            None,
         );
 
         execution_results.remove(0)
@@ -5772,6 +5783,7 @@ impl Bank {
             false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         )
         .0
@@ -6542,7 +6554,7 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
-    ) -> Result<SanitizedTransaction> {
+    ) -> Result<ExtendedSanitizedTransaction> {
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -6565,13 +6577,13 @@ impl Bank {
             sanitized_tx.verify_precompiles(&self.feature_set)?;
         }
 
-        Ok(sanitized_tx)
+        Ok(ExtendedSanitizedTransaction::from(sanitized_tx))
     }
 
     pub fn fully_verify_transaction(
         &self,
         tx: VersionedTransaction,
-    ) -> Result<SanitizedTransaction> {
+    ) -> Result<ExtendedSanitizedTransaction> {
         self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
     }
 
@@ -6913,7 +6925,7 @@ impl Bank {
     /// a bank-level cache of vote accounts and stake delegation info
     fn update_stakes_cache(
         &self,
-        txs: &[SanitizedTransaction],
+        txs: &[ExtendedSanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
         loaded_txs: &[TransactionLoadResult],
     ) {
@@ -7446,7 +7458,7 @@ impl Bank {
     /// Checks a batch of sanitized transactions again bank for age and status
     pub fn check_transactions_with_forwarding_delay(
         &self,
-        transactions: &[SanitizedTransaction],
+        transactions: &[ExtendedSanitizedTransaction],
         filter: &[transaction::Result<()>],
         forward_transactions_to_leader_at_slot_offset: u64,
     ) -> Vec<TransactionCheckResult> {
@@ -7669,7 +7681,7 @@ impl Bank {
         let transaction_account_lock_limit = self.get_transaction_account_lock_limit();
         let sanitized_txs = txs
             .into_iter()
-            .map(SanitizedTransaction::from_transaction_for_tests)
+            .map(|txn| SanitizedTransaction::from_transaction_for_tests(txn).into())
             .collect::<Vec<_>>();
         let lock_results = self
             .rc

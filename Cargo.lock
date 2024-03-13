@@ -5433,6 +5433,7 @@ dependencies = [
  "solana-nohash-hasher",
  "solana-program-runtime",
  "solana-rayon-threadlimit",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-stake-program",
  "solana-svm",
@@ -5537,6 +5538,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-client",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-send-transaction-service",
  "solana-svm",
@@ -6005,12 +6007,14 @@ dependencies = [
  "solana-rpc",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-send-transaction-service",
  "solana-stake-program",
  "solana-streamer",
  "solana-svm",
  "solana-tpu-client",
+ "solana-transaction-metrics-tracker",
  "solana-transaction-status",
  "solana-turbine",
  "solana-unified-scheduler-pool",
@@ -6128,6 +6132,7 @@ dependencies = [
  "solana-metrics",
  "solana-perf",
  "solana-rayon-threadlimit",
+ "solana-runtime-transaction",
  "solana-sdk",
 ]
 
@@ -6364,6 +6369,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-rayon-threadlimit",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-stake-program",
  "solana-storage-bigtable",
@@ -6859,6 +6865,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-send-transaction-service",
  "solana-stake-program",
@@ -6993,6 +7000,7 @@ dependencies = [
  "ed25519-dalek",
  "flate2",
  "fnv",
+ "histogram",
  "im",
  "index_list",
  "itertools",
@@ -7036,6 +7044,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-rayon-threadlimit",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-stake-program",
  "solana-svm",
@@ -7276,9 +7285,11 @@ dependencies = [
  "rand 0.8.5",
  "rustls",
  "solana-logger",
+ "solana-measure",
  "solana-metrics",
  "solana-perf",
  "solana-sdk",
+ "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
  "x509-parser",
@@ -7289,6 +7300,7 @@ name = "solana-svm"
 version = "2.0.0"
 dependencies = [
  "bincode",
+ "histogram",
  "itertools",
  "log",
  "percentage",
@@ -7301,6 +7313,7 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-program-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-system-program",
 ]
@@ -7446,6 +7459,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-transaction-metrics-tracker"
+version = "2.0.0"
+dependencies = [
+ "Inflector",
+ "base64 0.21.7",
+ "bincode",
+ "lazy_static",
+ "log",
+ "rand 0.8.5",
+ "solana-perf",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-transaction-status"
 version = "2.0.0"
 dependencies = [
@@ -7522,6 +7549,7 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "2.0.0"
 dependencies = [
+ "solana-runtime-transaction",
  "solana-sdk",
 ]
 
@@ -7537,6 +7565,7 @@ dependencies = [
  "solana-logger",
  "solana-program-runtime",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-unified-scheduler-logic",
  "solana-vote",

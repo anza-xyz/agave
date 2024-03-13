@@ -24,11 +24,8 @@ use {
     crate::bank::Bank,
     log::*,
     solana_program_runtime::timings::ExecuteTimings,
-    solana_sdk::{
-        hash::Hash,
-        slot_history::Slot,
-        transaction::{Result, SanitizedTransaction},
-    },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
+    solana_sdk::{hash::Hash, slot_history::Slot, transaction::Result},
     std::{
         fmt::Debug,
         ops::Deref,
@@ -104,7 +101,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     // Calling this is illegal as soon as wait_for_termination is called.
     fn schedule_execution<'a>(
         &'a self,
-        transaction_with_index: &'a (&'a SanitizedTransaction, usize),
+        transaction_with_index: &'a (&'a ExtendedSanitizedTransaction, usize),
     );
 
     /// Wait for a scheduler to terminate after processing.
@@ -289,7 +286,9 @@ impl BankWithScheduler {
     // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
     pub fn schedule_transaction_executions<'a>(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a usize)>,
+        transactions_with_indexes: impl ExactSizeIterator<
+            Item = (&'a ExtendedSanitizedTransaction, &'a usize),
+        >,
     ) {
         trace!(
             "schedule_transaction_executions(): {} txs",
@@ -428,7 +427,7 @@ mod tests {
         },
         assert_matches::assert_matches,
         mockall::Sequence,
-        solana_sdk::system_transaction,
+        solana_sdk::{system_transaction, transaction::SanitizedTransaction},
         std::sync::Mutex,
     };
 
@@ -575,6 +574,6 @@ mod tests {
         );
 
         let bank = BankWithScheduler::new(bank, Some(mocked_scheduler));
-        bank.schedule_transaction_executions([(&tx0, &0)].into_iter());
+        bank.schedule_transaction_executions([(&tx0.into(), &0)].into_iter());
     }
 }

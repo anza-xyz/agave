@@ -3277,6 +3277,7 @@ pub mod rpc_accounts_scan {
 pub mod rpc_full {
     use {
         super::*,
+        solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
         solana_sdk::message::{SanitizedVersionedMessage, VersionedMessage},
         solana_transaction_status::UiInnerInstructions,
     };
@@ -3690,7 +3691,8 @@ pub mod rpc_full {
                     units_consumed,
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
-                } = preflight_bank.simulate_transaction(&transaction, false)
+                } = preflight_bank
+                    .simulate_transaction(&ExtendedSanitizedTransaction::from(transaction), false)
                 {
                     match err {
                         TransactionError::BlockhashNotFound => {
@@ -3766,8 +3768,9 @@ pub mod rpc_full {
             }
 
             let transaction = sanitize_transaction(unsanitized_tx, bank)?;
+            let transaction = ExtendedSanitizedTransaction::from(transaction);
             if sig_verify {
-                verify_transaction(&transaction, &bank.feature_set)?;
+                verify_transaction(transaction.transaction(), &bank.feature_set)?;
             }
 
             let TransactionSimulationResult {
@@ -5114,7 +5117,7 @@ pub mod tests {
             let prioritization_fee_cache = &self.meta.prioritization_fee_cache;
             let transactions: Vec<_> = transactions
                 .into_iter()
-                .map(SanitizedTransaction::from_transaction_for_tests)
+                .map(|t| SanitizedTransaction::from_transaction_for_tests(t).into())
                 .collect();
             prioritization_fee_cache.update(&bank, transactions.iter());
         }

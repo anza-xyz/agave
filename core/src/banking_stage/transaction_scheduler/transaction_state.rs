@@ -1,8 +1,11 @@
-use solana_sdk::{clock::Slot, transaction::SanitizedTransaction};
+use {
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
+    solana_sdk::clock::Slot,
+};
 
 /// Simple wrapper type to tie a sanitized transaction to max age slot.
 pub(crate) struct SanitizedTransactionTTL {
-    pub(crate) transaction: SanitizedTransaction,
+    pub(crate) transaction: ExtendedSanitizedTransaction,
     pub(crate) max_age_slot: Slot,
 }
 
@@ -138,8 +141,13 @@ mod tests {
     use {
         super::*,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message,
-            signature::Keypair, signer::Signer, system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            hash::Hash,
+            message::Message,
+            signature::Keypair,
+            signer::Signer,
+            system_instruction,
+            transaction::{SanitizedTransaction, Transaction},
         },
     };
 
@@ -157,7 +165,7 @@ mod tests {
         let tx = Transaction::new(&[&from_keypair], message, Hash::default());
 
         let transaction_ttl = SanitizedTransactionTTL {
-            transaction: SanitizedTransaction::from_transaction_for_tests(tx),
+            transaction: SanitizedTransaction::from_transaction_for_tests(tx).into(),
             max_age_slot: Slot::MAX,
         };
         const TEST_TRANSACTION_COST: u64 = 5000;

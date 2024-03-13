@@ -10,6 +10,7 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         loaded_programs::LoadedProgramsForTxBatch,
     },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::{
             create_executable_meta, is_builtin, is_executable, Account, AccountSharedData,
@@ -30,7 +31,7 @@ use {
         rent_debits::RentDebits,
         saturating_add_assign,
         sysvar::{self, instructions::construct_instructions_data},
-        transaction::{self, Result, SanitizedTransaction, TransactionError},
+        transaction::{self, Result, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
@@ -112,7 +113,7 @@ pub fn validate_fee_payer(
 /// second element.
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    txs: &[SanitizedTransaction],
+    txs: &[ExtendedSanitizedTransaction],
     lock_results: &[TransactionCheckResult],
     error_counters: &mut TransactionErrorMetrics,
     fee_structure: &FeeStructure,
@@ -541,7 +542,7 @@ mod tests {
         fee_structure: &FeeStructure,
     ) -> Vec<TransactionLoadResult> {
         feature_set.deactivate(&feature_set::disable_rent_fees_collection::id());
-        let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
+        let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx).into();
         let mut accounts_map = HashMap::new();
         for (pubkey, account) in ka {
             accounts_map.insert(*pubkey, account.clone());
@@ -1017,7 +1018,7 @@ mod tests {
         tx: Transaction,
         account_overrides: Option<&AccountOverrides>,
     ) -> Vec<TransactionLoadResult> {
-        let tx = SanitizedTransaction::from_transaction_for_tests(tx);
+        let tx = SanitizedTransaction::from_transaction_for_tests(tx).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let mut accounts_map = HashMap::new();
@@ -2060,7 +2061,7 @@ mod tests {
         let mut error_counters = TransactionErrorMetrics::default();
         let loaded_txs = load_accounts(
             &bank,
-            &[sanitized_tx.clone()],
+            &[sanitized_tx.clone().into()],
             &[(Ok(()), None, Some(0))],
             &mut error_counters,
             &FeeStructure::default(),
@@ -2145,7 +2146,7 @@ mod tests {
 
         let results = load_accounts(
             &mock_bank,
-            &[sanitized_transaction],
+            &[sanitized_transaction.into()],
             &[lock_results],
             &mut error_counter,
             &FeeStructure::default(),
@@ -2220,7 +2221,7 @@ mod tests {
 
         let result = load_accounts(
             &mock_bank,
-            &[sanitized_transaction.clone()],
+            &[sanitized_transaction.clone().into()],
             &[lock_results],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
@@ -2239,7 +2240,7 @@ mod tests {
 
         let result = load_accounts(
             &mock_bank,
-            &[sanitized_transaction.clone()],
+            &[sanitized_transaction.clone().into()],
             &[lock_results.clone()],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
@@ -2258,7 +2259,7 @@ mod tests {
 
         let result = load_accounts(
             &mock_bank,
-            &[sanitized_transaction.clone()],
+            &[sanitized_transaction.clone().into()],
             &[lock_results],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,

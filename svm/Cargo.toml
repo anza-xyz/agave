@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+histogram = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
@@ -20,6 +21,7 @@ solana-loader-v4-program = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
 solana-system-program = { workspace = true }
 

@@ -55,6 +55,7 @@ fn bench_process_transactions_single_slot(bencher: &mut Bencher) {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
             )
+            .into()
         })
         .collect();
 
@@ -82,6 +83,7 @@ fn process_transactions_multiple_slots(banks: &[Arc<Bank>], num_slots: usize, nu
                         &Pubkey::new_unique(),
                         &Pubkey::new_unique(),
                     )
+                    .into()
                 })
                 .collect();
 

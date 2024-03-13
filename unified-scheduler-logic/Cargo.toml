@@ -10,4 +10,5 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }

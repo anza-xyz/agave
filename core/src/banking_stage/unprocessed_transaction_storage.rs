@@ -19,6 +19,7 @@ use {
     min_max_heap::MinMaxHeap,
     solana_measure::{measure, measure_us},
     solana_runtime::bank::Bank,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, feature_set::FeatureSet, hash::Hash,
         saturating_add_assign, transaction::SanitizedTransaction,
@@ -135,7 +136,7 @@ fn filter_processed_packets<'a, F>(
 pub struct ConsumeScannerPayload<'a> {
     pub reached_end_of_slot: bool,
     pub account_locks: ReadWriteAccountSet,
-    pub sanitized_transactions: Vec<SanitizedTransaction>,
+    pub sanitized_transactions: Vec<ExtendedSanitizedTransaction>,
     pub slot_metrics_tracker: &'a mut LeaderSlotMetricsTracker,
     pub message_hash_to_transaction: &'a mut HashMap<Hash, DeserializedPacket>,
     pub error_counters: TransactionErrorMetrics,
@@ -208,7 +209,12 @@ fn consume_scan_should_process_packet(
             return ProcessingDecision::Later;
         }
 
-        payload.sanitized_transactions.push(sanitized_transaction);
+        payload
+            .sanitized_transactions
+            .push(ExtendedSanitizedTransaction::new(
+                sanitized_transaction,
+                *packet.start_time(),
+            ));
         ProcessingDecision::Now
     } else {
         payload
@@ -635,7 +641,7 @@ impl ThreadLocalUnprocessedPackets {
                                 (sanitized_transactions, transaction_to_packet_indexes),
                                 packet_conversion_time,
                             ): (
-                                (Vec<SanitizedTransaction>, Vec<usize>),
+                                (Vec<ExtendedSanitizedTransaction>, Vec<usize>),
                                 _,
                             ) = measure!(
                                 self.sanitize_unforwarded_packets(
@@ -762,18 +768,25 @@ impl ThreadLocalUnprocessedPackets {
         packets_to_process: &[Arc<ImmutableDeserializedPacket>],
         bank: &Bank,
         total_dropped_packets: &mut usize,
-    ) -> (Vec<SanitizedTransaction>, Vec<usize>) {
+    ) -> (Vec<ExtendedSanitizedTransaction>, Vec<usize>) {
         // Get ref of ImmutableDeserializedPacket
         let deserialized_packets = packets_to_process.iter().map(|p| &**p);
-        let (transactions, transaction_to_packet_indexes): (Vec<SanitizedTransaction>, Vec<usize>) =
-            deserialized_packets
-                .enumerate()
-                .filter_map(|(packet_index, deserialized_packet)| {
-                    deserialized_packet
-                        .build_sanitized_transaction(&bank.feature_set, bank.vote_only_bank(), bank)
-                        .map(|transaction| (transaction, packet_index))
-                })
-                .unzip();
+        let (transactions, transaction_to_packet_indexes): (
+            Vec<ExtendedSanitizedTransaction>,
+            Vec<usize>,
+        ) = deserialized_packets
+            .enumerate()
+            .filter_map(|(packet_index, deserialized_packet)| {
+                deserialized_packet
+                    .build_sanitized_transaction(&bank.feature_set, bank.vote_only_bank(), bank)
+                    .map(|transaction| {
+                        (
+                            ExtendedSanitizedTransaction::from(transaction),
+                            packet_index,
+                        )
+                    })
+            })
+            .unzip();
 
         let filtered_count = packets_to_process.len().saturating_sub(transactions.len());
         saturating_add_assign!(*total_dropped_packets, filtered_count);
@@ -783,7 +796,7 @@ impl ThreadLocalUnprocessedPackets {
 
     /// Checks sanitized transactions against bank, returns valid transaction indexes
     fn filter_invalid_transactions(
-        transactions: &[SanitizedTransaction],
+        transactions: &[ExtendedSanitizedTransaction],
         bank: &Bank,
         total_dropped_packets: &mut usize,
     ) -> Vec<usize> {
@@ -821,7 +834,7 @@ impl ThreadLocalUnprocessedPackets {
     fn add_filtered_packets_to_forward_buffer(
         forward_buffer: &mut ForwardPacketBatchesByAccounts,
         packets_to_process: &[Arc<ImmutableDeserializedPacket>],
-        transactions: &[SanitizedTransaction],
+        transactions: &[ExtendedSanitizedTransaction],
         transaction_to_packet_indexes: &[usize],
         forwardable_transaction_indexes: &[usize],
         total_dropped_packets: &mut usize,
@@ -924,6 +937,7 @@ impl ThreadLocalUnprocessedPackets {
                 .iter()
                 .map(|p| (*p).clone())
                 .collect_vec();
+
             let retryable_packets = if let Some(retryable_transaction_indexes) =
                 processing_function(&packets_to_process, payload)
             {

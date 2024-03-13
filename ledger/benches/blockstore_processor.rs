@@ -15,6 +15,7 @@ use {
         bank::Bank, prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
     },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::Account, feature_set::apply_cost_tracker_during_replay, signature::Keypair,
         signer::Signer, stake_history::Epoch, system_program, system_transaction,
@@ -53,7 +54,7 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
     accounts
 }
 
-fn create_transactions(bank: &Bank, num: usize) -> Vec<SanitizedTransaction> {
+fn create_transactions(bank: &Bank, num: usize) -> Vec<ExtendedSanitizedTransaction> {
     let funded_accounts = create_funded_accounts(bank, 2 * num);
     funded_accounts
         .into_par_iter()
@@ -63,7 +64,7 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<SanitizedTransaction> {
             let to = &chunk[1];
             system_transaction::transfer(from, &to.pubkey(), 1, bank.last_blockhash())
         })
-        .map(SanitizedTransaction::from_transaction_for_tests)
+        .map(|t| SanitizedTransaction::from_transaction_for_tests(t).into())
         .collect()
 }
 

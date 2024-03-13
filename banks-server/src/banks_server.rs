@@ -13,6 +13,7 @@ use {
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
     },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::Account,
         clock::Slot,
@@ -194,7 +195,10 @@ fn simulate_transaction(
         units_consumed,
         return_data,
         inner_instructions,
-    } = bank.simulate_transaction_unchecked(&sanitized_transaction, false);
+    } = bank.simulate_transaction_unchecked(
+        &ExtendedSanitizedTransaction::from(sanitized_transaction),
+        false,
+    );
 
     let simulation_details = TransactionSimulationDetails {
         logs,

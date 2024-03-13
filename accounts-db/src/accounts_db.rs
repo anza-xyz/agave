@@ -83,6 +83,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{IntMap, IntSet},
     solana_rayon_threadlimit::get_thread_count,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         clock::{BankId, Epoch, Slot},
@@ -93,7 +94,6 @@ use {
         rent_collector::RentCollector,
         saturating_add_assign,
         timing::AtomicInterval,
-        transaction::SanitizedTransaction,
     },
     std::{
         borrow::{Borrow, Cow},
@@ -6373,7 +6373,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b, T>,
-        txn_iter: Box<dyn std::iter::Iterator<Item = &Option<&SanitizedTransaction>> + 'a>,
+        txn_iter: Box<dyn std::iter::Iterator<Item = &Option<&ExtendedSanitizedTransaction>> + 'a>,
         mut write_version_producer: P,
     ) -> Vec<AccountInfo>
     where
@@ -6391,7 +6391,7 @@ impl AccountsDb {
                 self.notify_account_at_accounts_update(
                     slot,
                     &account,
-                    txn,
+                    &txn.map(|txn| txn.transaction()),
                     accounts_and_meta_to_store.pubkey(i),
                     &mut write_version_producer,
                 );
@@ -6423,7 +6423,7 @@ impl AccountsDb {
         hashes: Option<Vec<impl Borrow<AccountHash>>>,
         mut write_version_producer: P,
         store_to: &StoreTo,
-        transactions: Option<&[Option<&'a SanitizedTransaction>]>,
+        transactions: Option<&[Option<&'a ExtendedSanitizedTransaction>]>,
     ) -> Vec<AccountInfo> {
         let mut calc_stored_meta_time = Measure::start("calc_stored_meta");
         let slot = accounts.target_slot();
@@ -6438,14 +6438,15 @@ impl AccountsDb {
 
         match store_to {
             StoreTo::Cache => {
-                let txn_iter: Box<dyn std::iter::Iterator<Item = &Option<&SanitizedTransaction>>> =
-                    match transactions {
-                        Some(transactions) => {
-                            assert_eq!(transactions.len(), accounts.len());
-                            Box::new(transactions.iter())
-                        }
-                        None => Box::new(std::iter::repeat(&None).take(accounts.len())),
-                    };
+                let txn_iter: Box<
+                    dyn std::iter::Iterator<Item = &Option<&ExtendedSanitizedTransaction>>,
+                > = match transactions {
+                    Some(transactions) => {
+                        assert_eq!(transactions.len(), accounts.len());
+                        Box::new(transactions.iter())
+                    }
+                    None => Box::new(std::iter::repeat(&None).take(accounts.len())),
+                };
 
                 self.write_accounts_to_cache(slot, accounts, txn_iter, write_version_producer)
             }
@@ -8125,7 +8126,7 @@ impl AccountsDb {
     pub fn store_cached<'a, T: ReadableAccount + Sync + ZeroLamport + 'a>(
         &self,
         accounts: impl StorableAccounts<'a, T>,
-        transactions: Option<&'a [Option<&'a SanitizedTransaction>]>,
+        transactions: Option<&'a [Option<&'a ExtendedSanitizedTransaction>]>,
     ) {
         self.store(
             accounts,
@@ -8142,7 +8143,7 @@ impl AccountsDb {
     >(
         &self,
         accounts: impl StorableAccounts<'a, T>,
-        transactions: Option<&'a [Option<&'a SanitizedTransaction>]>,
+        transactions: Option<&'a [Option<&'a ExtendedSanitizedTransaction>]>,
     ) {
         self.store(
             accounts,
@@ -8170,7 +8171,7 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a, T>,
         store_to: &StoreTo,
-        transactions: Option<&'a [Option<&'a SanitizedTransaction>]>,
+        transactions: Option<&'a [Option<&'a ExtendedSanitizedTransaction>]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
@@ -8345,7 +8346,7 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a, T>,
         hashes: Option<Vec<impl Borrow<AccountHash>>>,
         store_to: &StoreTo,
-        transactions: Option<&'a [Option<&'a SanitizedTransaction>]>,
+        transactions: Option<&'a [Option<&'a ExtendedSanitizedTransaction>]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
@@ -8400,7 +8401,7 @@ impl AccountsDb {
         write_version_producer: Option<Box<dyn Iterator<Item = u64>>>,
         store_to: &StoreTo,
         reset_accounts: bool,
-        transactions: Option<&[Option<&SanitizedTransaction>]>,
+        transactions: Option<&[Option<&ExtendedSanitizedTransaction>]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {

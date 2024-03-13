@@ -5,10 +5,10 @@ use {
     log::*,
     lru::LruCache,
     solana_measure::measure,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         clock::{BankId, Slot},
         pubkey::Pubkey,
-        transaction::SanitizedTransaction,
     },
     std::{
         collections::HashMap,
@@ -208,7 +208,11 @@ impl PrioritizationFeeCache {
     /// Update with a list of non-vote transactions' compute_budget_details and account_locks; Only
     /// transactions have both valid compute_budget_details and account_locks will be used to update
     /// fee_cache asynchronously.
-    pub fn update<'a>(&self, bank: &Bank, txs: impl Iterator<Item = &'a SanitizedTransaction>) {
+    pub fn update<'a>(
+        &self,
+        bank: &Bank,
+        txs: impl Iterator<Item = &'a ExtendedSanitizedTransaction>,
+    ) {
         let (_, send_updates_time) = measure!(
             {
                 for sanitized_transaction in txs {
@@ -466,7 +470,7 @@ mod tests {
     fn sync_update<'a>(
         prioritization_fee_cache: &PrioritizationFeeCache,
         bank: Arc<Bank>,
-        txs: impl Iterator<Item = &'a SanitizedTransaction> + ExactSizeIterator,
+        txs: impl Iterator<Item = &'a ExtendedSanitizedTransaction> + ExactSizeIterator,
     ) {
         let expected_update_count = prioritization_fee_cache
             .metrics
@@ -525,9 +529,9 @@ mod tests {
         // [2,   a,    c          ]  -->  [2,     2,         5,         2        ]
         //
         let txs = vec![
-            build_sanitized_transaction_for_test(5, &write_account_a, &write_account_b),
-            build_sanitized_transaction_for_test(9, &write_account_b, &write_account_c),
-            build_sanitized_transaction_for_test(2, &write_account_a, &write_account_c),
+            build_sanitized_transaction_for_test(5, &write_account_a, &write_account_b).into(),
+            build_sanitized_transaction_for_test(9, &write_account_b, &write_account_c).into(),
+            build_sanitized_transaction_for_test(2, &write_account_a, &write_account_c).into(),
         ];
 
         let bank = Arc::new(Bank::default_for_tests());
@@ -642,12 +646,13 @@ mod tests {
         // Assert after add one transaction for slot 1
         {
             let txs = vec![
-                build_sanitized_transaction_for_test(2, &write_account_a, &write_account_b),
+                build_sanitized_transaction_for_test(2, &write_account_a, &write_account_b).into(),
                 build_sanitized_transaction_for_test(
                     1,
                     &Pubkey::new_unique(),
                     &Pubkey::new_unique(),
-                ),
+                )
+                .into(),
             ];
             sync_update(&prioritization_fee_cache, bank1.clone(), txs.iter());
             // before block is marked as completed
@@ -705,12 +710,13 @@ mod tests {
         // Assert after add one transaction for slot 2
         {
             let txs = vec![
-                build_sanitized_transaction_for_test(4, &write_account_b, &write_account_c),
+                build_sanitized_transaction_for_test(4, &write_account_b, &write_account_c).into(),
                 build_sanitized_transaction_for_test(
                     3,
                     &Pubkey::new_unique(),
                     &Pubkey::new_unique(),
-                ),
+                )
+                .into(),
             ];
             sync_update(&prioritization_fee_cache, bank2.clone(), txs.iter());
             // before block is marked as completed
@@ -779,12 +785,13 @@ mod tests {
         // Assert after add one transaction for slot 3
         {
             let txs = vec![
-                build_sanitized_transaction_for_test(6, &write_account_a, &write_account_c),
+                build_sanitized_transaction_for_test(6, &write_account_a, &write_account_c).into(),
                 build_sanitized_transaction_for_test(
                     5,
                     &Pubkey::new_unique(),
                     &Pubkey::new_unique(),
-                ),
+                )
+                .into(),
             ];
             sync_update(&prioritization_fee_cache, bank3.clone(), txs.iter());
             // before block is marked as completed
@@ -874,12 +881,13 @@ mod tests {
         // Assert after add transactions for bank1 of slot 1
         {
             let txs = vec![
-                build_sanitized_transaction_for_test(2, &write_account_a, &write_account_b),
+                build_sanitized_transaction_for_test(2, &write_account_a, &write_account_b).into(),
                 build_sanitized_transaction_for_test(
                     1,
                     &Pubkey::new_unique(),
                     &Pubkey::new_unique(),
-                ),
+                )
+                .into(),
             ];
             sync_update(&prioritization_fee_cache, bank1.clone(), txs.iter());
 
@@ -894,12 +902,13 @@ mod tests {
         // Assert after add transactions for bank2 of slot 1
         {
             let txs = vec![
-                build_sanitized_transaction_for_test(4, &write_account_b, &write_account_c),
+                build_sanitized_transaction_for_test(4, &write_account_b, &write_account_c).into(),
                 build_sanitized_transaction_for_test(
                     3,
                     &Pubkey::new_unique(),
                     &Pubkey::new_unique(),
-                ),
+                )
+                .into(),
             ];
             sync_update(&prioritization_fee_cache, bank2.clone(), txs.iter());
 

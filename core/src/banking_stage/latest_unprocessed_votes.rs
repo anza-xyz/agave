@@ -7,6 +7,7 @@ use {
     rand::{thread_rng, Rng},
     solana_perf::packet::Packet,
     solana_runtime::bank::Bank,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
         program_utils::limited_deserialize,
@@ -286,7 +287,7 @@ impl LatestUnprocessedVotes {
                             )
                         {
                             if forward_packet_batches_by_accounts.try_add_packet(
-                                &sanitized_vote_transaction,
+                                &ExtendedSanitizedTransaction::from(sanitized_vote_transaction),
                                 deserialized_vote_packet,
                                 &bank.feature_set,
                             ) {

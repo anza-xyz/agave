@@ -26,6 +26,7 @@ use {
         sysvar_cache::SysvarCache,
         timings::{ExecuteDetailsTimings, ExecuteTimingType, ExecuteTimings},
     },
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         account_utils::StateMut,
@@ -43,6 +44,7 @@ use {
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
+        timing::duration_as_us,
         transaction::{self, SanitizedTransaction, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
@@ -52,6 +54,7 @@ use {
         fmt::{Debug, Formatter},
         rc::Rc,
         sync::{atomic::Ordering, Arc, RwLock},
+        time::Instant,
     },
 };
 
@@ -200,10 +203,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     pub fn load_and_execute_sanitized_transactions<'a, CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
-        sanitized_txs: &[SanitizedTransaction],
+        sanitized_txs: &[ExtendedSanitizedTransaction],
         check_results: &mut [TransactionCheckResult],
         error_counters: &mut TransactionErrorMetrics,
         recording_config: ExecutionRecordingConfig,
+        perf_track_metrics: &mut Option<&mut histogram::Histogram>,
         timings: &mut ExecuteTimings,
         account_overrides: Option<&AccountOverrides>,
         builtin_programs: impl Iterator<Item = &'a Pubkey>,
@@ -279,7 +283,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                     let result = self.execute_loaded_transaction(
                         callbacks,
-                        tx,
+                        tx.transaction(),
                         loaded_transaction,
                         compute_budget,
                         nonce.as_ref().map(DurableNonceFee::from),
@@ -295,6 +299,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         programs_modified_by_tx,
                     } = &result
                     {
+                        if let Some(perf_track_metrics) = perf_track_metrics.as_mut() {
+                            if let Some(start_time) = tx.start_time() {
+                                // measure the time from start of banking stage to the execution of the transaction
+                                let duration = Instant::now().duration_since(*start_time);
+                                perf_track_metrics
+                                    .increment(duration_as_us(&duration))
+                                    .unwrap();
+                            }
+                        }
                         // Update batch specific cache of the loaded programs with the modifications
                         // made by the transaction, if it executed successfully.
                         if details.status.is_ok() {
@@ -341,7 +354,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// blockhash or nonce.
     pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
         callbacks: &CB,
-        txs: &[SanitizedTransaction],
+        txs: &[ExtendedSanitizedTransaction],
         lock_results: &mut [TransactionCheckResult],
         program_owners: &'a [Pubkey],
     ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
@@ -1921,10 +1934,10 @@ mod tests {
         );
 
         let transactions = vec![
-            sanitized_transaction_1.clone(),
-            sanitized_transaction_2.clone(),
-            sanitized_transaction_2,
-            sanitized_transaction_1,
+            sanitized_transaction_1.clone().into(),
+            sanitized_transaction_2.clone().into(),
+            sanitized_transaction_2.into(),
+            sanitized_transaction_1.into(),
         ];
         let mut lock_results = vec![
             (Ok(()), None, Some(25)),

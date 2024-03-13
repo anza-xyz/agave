@@ -187,7 +187,8 @@ mod tests {
             &[&from_keypair],
             message,
             Hash::default(),
-        ));
+        ))
+        .into();
         let transaction_ttl = SanitizedTransactionTTL {
             transaction: tx,
             max_age_slot: Slot::MAX,

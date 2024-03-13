@@ -1,6 +1,7 @@
 use {
     super::immutable_deserialized_packet::ImmutableDeserializedPacket,
-    solana_sdk::{clock::Slot, transaction::SanitizedTransaction},
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
+    solana_sdk::clock::Slot,
     std::{fmt::Display, sync::Arc},
 };
 
@@ -41,7 +42,7 @@ impl Display for TransactionId {
 pub struct ConsumeWork {
     pub batch_id: TransactionBatchId,
     pub ids: Vec<TransactionId>,
-    pub transactions: Vec<SanitizedTransaction>,
+    pub transactions: Vec<ExtendedSanitizedTransaction>,
     pub max_age_slots: Vec<Slot>,
 }
 

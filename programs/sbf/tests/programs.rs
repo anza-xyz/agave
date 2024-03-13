@@ -112,6 +112,7 @@ fn process_transaction_and_record_inner(
             },
             &mut ExecuteTimings::default(),
             None,
+            None,
         )
         .0;
     let result = results
@@ -157,6 +158,7 @@ fn execute_transactions(
         true,
         ExecutionRecordingConfig::new_single_setting(true),
         &mut timings,
+        None,
         None,
     );
     let tx_post_token_balances = collect_token_balances(&bank, &batch, &mut mint_decimals);
@@ -676,7 +678,7 @@ fn test_return_data_and_log_data_syscall() {
         let blockhash = bank.last_blockhash();
         let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
         let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
-        let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(transaction);
+        let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(transaction).into();
 
         let result = bank.simulate_transaction(&sanitized_tx, false);
 

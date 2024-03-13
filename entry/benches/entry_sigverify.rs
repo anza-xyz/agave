@@ -3,6 +3,7 @@ extern crate test;
 use {
     solana_entry::entry::{self, VerifyRecyclers},
     solana_perf::test_tx::test_tx,
+    solana_runtime_transaction::extended_transaction::ExtendedSanitizedTransaction,
     solana_sdk::{
         hash::Hash,
         transaction::{
@@ -26,7 +27,7 @@ fn bench_gpusigverify(bencher: &mut Bencher) {
     let verify_transaction = {
         move |versioned_tx: VersionedTransaction,
               verification_mode: TransactionVerificationMode|
-              -> Result<SanitizedTransaction> {
+              -> Result<ExtendedSanitizedTransaction> {
             let sanitized_tx = {
                 let message_hash =
                     if verification_mode == TransactionVerificationMode::FullVerification {
@@ -41,6 +42,7 @@ fn bench_gpusigverify(bencher: &mut Bencher) {
                     None,
                     SimpleAddressLoader::Disabled,
                 )
+                .map(|t| t.into())
             }?;
 
             Ok(sanitized_tx)
@@ -73,7 +75,7 @@ fn bench_cpusigverify(bencher: &mut Bencher) {
         .collect::<Vec<_>>();
 
     let verify_transaction = {
-        move |versioned_tx: VersionedTransaction| -> Result<SanitizedTransaction> {
+        move |versioned_tx: VersionedTransaction| -> Result<ExtendedSanitizedTransaction> {
             let sanitized_tx = {
                 let message_hash = versioned_tx.verify_and_hash_message()?;
                 SanitizedTransaction::try_create(
@@ -82,7 +84,8 @@ fn bench_cpusigverify(bencher: &mut Bencher) {
                     None,
                     SimpleAddressLoader::Disabled,
                 )
-            }?;
+            }?
+            .into();
 
             Ok(sanitized_tx)
         }
