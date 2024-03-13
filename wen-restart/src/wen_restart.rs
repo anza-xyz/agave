@@ -40,8 +40,9 @@ use {
 
 // If >42% of the validators have this block, repair this block locally.
 const REPAIR_THRESHOLD: f64 = 0.42;
-// When counting Heaviest Fork, only count those > active_stake - 38% * total_stake.
-const HEAVIEST_FORK_THRESHOLD: f64 = 0.38;
+// When counting Heaviest Fork, only count those with no less than
+// 67% - 5% - (100% - active_stake) = active_stake - 38% stake.
+const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -59,7 +60,7 @@ impl std::fmt::Display for WenRestartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WenRestartError::BlockNotFound(slot) => {
-                write!(f, "Block should be repaired but not found: {}", slot)
+                write!(f, "Block not found: {}", slot)
             }
             WenRestartError::BlockNotLinkedToExpectedParent(slot, parent, expected_parent) => {
                 write!(
@@ -274,7 +275,7 @@ pub(crate) fn find_heaviest_fork(
     let total_stake = epoch_stake.total_stake();
     let stake_threshold = aggregate_final_result
         .total_active_stake
-        .saturating_sub((HEAVIEST_FORK_THRESHOLD * total_stake as f64) as u64);
+        .saturating_sub((HEAVIEST_FORK_THRESHOLD_DELTA * total_stake as f64) as u64);
     let mut slots = aggregate_final_result
         .slots_stake_map
         .iter()

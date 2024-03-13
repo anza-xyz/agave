@@ -137,6 +137,7 @@ impl LastVotedForkSlotsAggregate {
         Some(record)
     }
 
+    // TODO(wen): use better epoch stake and add a test later.
     fn total_active_stake(&self) -> u64 {
         self.active_peers.iter().fold(0, |sum: u64, pubkey| {
             sum.saturating_add(Self::validator_stake(&self.epoch_stakes, pubkey))
@@ -152,10 +153,11 @@ impl LastVotedForkSlotsAggregate {
         }
     }
 
-    pub(crate) fn get_final_result(&self) -> LastVotedForkSlotsFinalResult {
+    pub(crate) fn get_final_result(self) -> LastVotedForkSlotsFinalResult {
+        let total_active_stake = self.total_active_stake();
         LastVotedForkSlotsFinalResult {
-            slots_stake_map: self.slots_stake_map.clone(),
-            total_active_stake: self.total_active_stake(),
+            slots_stake_map: self.slots_stake_map,
+            total_active_stake,
         }
     }
 }
