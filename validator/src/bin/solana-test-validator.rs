@@ -1,4 +1,8 @@
 use {
+    agave_validator::{
+        admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
+        println_name_value, redirect_stderr_to_file,
+    },
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     itertools::Itertools,
@@ -19,6 +23,7 @@ use {
         account::AccountSharedData,
         clock::Slot,
         epoch_schedule::EpochSchedule,
+        feature_set,
         native_token::sol_to_lamports,
         pubkey::Pubkey,
         rent::Rent,
@@ -27,10 +32,6 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::*,
-    solana_validator::{
-        admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
-        println_name_value, redirect_stderr_to_file,
-    },
     std::{
         collections::HashSet,
         fs, io,
@@ -284,17 +285,20 @@ fn main() {
     let warp_slot = if matches.is_present("warp_slot") {
         Some(match matches.value_of("warp_slot") {
             Some(_) => value_t_or_exit!(matches, "warp_slot", Slot),
-            None => {
-                cluster_rpc_client.as_ref().unwrap_or_else(|_| {
-                        println!("The --url argument must be provided if --warp-slot/-w is used without an explicit slot");
-                        exit(1);
-
-                }).get_slot()
-                    .unwrap_or_else(|err| {
-                        println!("Unable to get current cluster slot: {err}");
-                        exit(1);
-                    })
-            }
+            None => cluster_rpc_client
+                .as_ref()
+                .unwrap_or_else(|_| {
+                    println!(
+                        "The --url argument must be provided if --warp-slot/-w is used without an \
+                         explicit slot"
+                    );
+                    exit(1);
+                })
+                .get_slot()
+                .unwrap_or_else(|err| {
+                    println!("Unable to get current cluster slot: {err}");
+                    exit(1);
+                }),
         })
     } else {
         None
@@ -348,7 +352,9 @@ fn main() {
         exit(1);
     });
 
-    let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
+    let mut features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
+    // Remove this when client support is ready for the enable_partitioned_epoch_reward feature
+    features_to_deactivate.push(feature_set::enable_partitioned_epoch_reward::id());
 
     if TestValidatorGenesis::ledger_exists(&ledger_path) {
         for (name, long) in &[

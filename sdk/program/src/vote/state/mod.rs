@@ -45,7 +45,7 @@ const DEFAULT_PRIOR_VOTERS_OFFSET: usize = 114;
 pub const VOTE_CREDITS_GRACE_SLOTS: u8 = 2;
 
 // Maximum number of credits to award for a vote; this number of credits is awarded to votes on slots that land within the grace period. After that grace period, vote credits are reduced.
-pub const VOTE_CREDITS_MAXIMUM_PER_SLOT: u8 = 8;
+pub const VOTE_CREDITS_MAXIMUM_PER_SLOT: u8 = 16;
 
 #[frozen_abi(digest = "Ch2vVEwos2EjAVqSHCyJjnN2MNX1yrpapZTGhMSCjWUH")]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone, AbiExample)]
@@ -348,6 +348,24 @@ impl VoteState {
             authorized_voters: AuthorizedVoters::new(clock.epoch, vote_init.authorized_voter),
             authorized_withdrawer: vote_init.authorized_withdrawer,
             commission: vote_init.commission,
+            ..VoteState::default()
+        }
+    }
+
+    pub fn new_rand_for_tests(node_pubkey: Pubkey, root_slot: Slot) -> Self {
+        let votes = (1..32)
+            .map(|x| LandedVote {
+                latency: 0,
+                lockout: Lockout::new_with_confirmation_count(
+                    u64::from(x).saturating_add(root_slot),
+                    32_u32.saturating_sub(x),
+                ),
+            })
+            .collect();
+        Self {
+            node_pubkey,
+            root_slot: Some(root_slot),
+            votes,
             ..VoteState::default()
         }
     }

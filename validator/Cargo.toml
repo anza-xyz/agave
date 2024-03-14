@@ -1,8 +1,8 @@
 [package]
-name = "solana-validator"
+name = "agave-validator"
 description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana-validator"
-default-run = "solana-validator"
+documentation = "https://docs.rs/agave-validator"
+default-run = "agave-validator"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -11,6 +11,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-geyser-plugin-interface = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { workspace = true }
 console = { workspace = true }
@@ -23,7 +24,6 @@ jsonrpc-core = { workspace = true }
 jsonrpc-core-client = { workspace = true, features = ["ipc"] }
 jsonrpc-derive = { workspace = true }
 jsonrpc-ipc-server = { workspace = true }
-jsonrpc-server-utils = { workspace = true }
 lazy_static = { workspace = true }
 libloading = { workspace = true }
 log = { workspace = true }
@@ -41,7 +41,6 @@ solana-download-utils = { workspace = true }
 solana-entry = { workspace = true }
 solana-faucet = { workspace = true }
 solana-genesis-utils = { workspace = true }
-solana-geyser-plugin-interface = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
@@ -50,6 +49,8 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
@@ -60,10 +61,12 @@ solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 symlink = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 solana-account-decoder = { workspace = true }

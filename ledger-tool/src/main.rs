@@ -6,7 +6,9 @@ use {
         blockstore::*,
         ledger_path::*,
         ledger_utils::*,
-        output::{output_account, AccountsOutputConfig, AccountsOutputStreamer},
+        output::{
+            output_account, AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer,
+        },
         program::*,
     },
     clap::{
@@ -26,7 +28,7 @@ use {
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
-            validate_maximum_full_snapshot_archives_to_retain,
+            is_within_range, validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
     },
@@ -39,6 +41,7 @@ use {
     solana_ledger::{
         blockstore::{create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
+        blockstore_processor::ProcessSlotCallback,
         use_snapshot_archives_at_startup,
     },
     solana_measure::{measure, measure::Measure},
@@ -69,7 +72,8 @@ use {
         system_program,
         transaction::{MessageHash, SanitizedTransaction, SimpleAddressLoader},
     },
-    solana_stake_program::stake_state::{self, PointValue},
+    solana_stake_program::{points::PointValue, stake_state},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::{
         self,
         vote_state::{self, VoteState},
@@ -85,7 +89,7 @@ use {
         str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc, Mutex, RwLock,
         },
     },
 };
@@ -93,6 +97,7 @@ use {
 mod args;
 mod bigtable;
 mod blockstore;
+mod error;
 mod ledger_path;
 mod ledger_utils;
 mod output;
@@ -440,14 +445,14 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     dot.join("\n")
 }
 
-fn compute_slot_cost(blockstore: &Blockstore, slot: Slot) -> Result<(), String> {
-    if blockstore.is_dead(slot) {
-        return Err("Dead slot".to_string());
-    }
-
+fn compute_slot_cost(
+    blockstore: &Blockstore,
+    slot: Slot,
+    allow_dead_slots: bool,
+) -> Result<(), String> {
     let (entries, _num_shreds, _is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, false)
-        .map_err(|err| format!(" Slot: {slot}, Failed to load entries, err {err:?}"))?;
+        .get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)
+        .map_err(|err| format!("Slot: {slot}, Failed to load entries, err {err:?}"))?;
 
     let num_entries = entries.len();
     let mut num_transactions = 0;
@@ -550,7 +555,7 @@ fn main() {
     const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: usize = std::usize::MAX;
     const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: usize = std::usize::MAX;
 
-    solana_logger::setup_with_default("solana=info");
+    solana_logger::setup_with_default_filter();
 
     let no_snapshot_arg = Arg::with_name("no_snapshot")
         .long("no-snapshot")
@@ -602,7 +607,11 @@ fn main() {
         .long("accounts")
         .value_name("PATHS")
         .takes_value(true)
-        .help("Comma separated persistent accounts location");
+        .help(
+            "Persistent accounts location. \
+            May be specified multiple times. \
+            [default: <LEDGER>/accounts]",
+        );
     let accounts_hash_cache_path_arg = Arg::with_name("accounts_hash_cache_path")
         .long("accounts-hash-cache-path")
         .value_name("PATH")
@@ -614,8 +623,9 @@ fn main() {
         .takes_value(true)
         .multiple(true)
         .help(
-            "Persistent accounts-index location. May be specified multiple times. [default: \
-             [ledger]/accounts_index]",
+            "Persistent accounts-index location. \
+            May be specified multiple times. \
+            [default: <LEDGER>/accounts_index]",
         );
     let accounts_db_test_hash_calculation_arg = Arg::with_name("accounts_db_test_hash_calculation")
         .long("accounts-db-test-hash-calculation")
@@ -846,6 +856,16 @@ fn main() {
                 .help(BlockVerificationMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("unified_scheduler_handler_threads")
+                .long("unified-scheduler-handler-threads")
+                .value_name("COUNT")
+                .takes_value(true)
+                .validator(|s| is_within_range(s, 1..))
+                .global(true)
+                .hidden(hidden_unless_forced())
+                .help(DefaultSchedulerPool::cli_message()),
+        )
+        .arg(
             Arg::with_name("output_format")
                 .long("output")
                 .value_name("FORMAT")
@@ -1041,6 +1061,28 @@ fn main() {
                              information that went into computing the completed bank's bank hash. \
                              The file will be written within <LEDGER_DIR>/bank_hash_details/",
                         ),
+                )
+                .arg(
+                    Arg::with_name("record_slots")
+                        .long("record-slots")
+                        .default_value("slots.json")
+                        .value_name("FILENAME")
+                        .help("Record slots to a file"),
+                )
+                .arg(
+                    Arg::with_name("verify_slots")
+                        .long("verify-slots")
+                        .default_value("slots.json")
+                        .value_name("FILENAME")
+                        .help("Verify slots match contents of file"),
+                )
+                .arg(
+                    Arg::with_name("record_slots_config")
+                        .long("record-slots-config")
+                        .default_value("hash-only")
+                        .possible_values(&["hash-only", "accounts"])
+                        .requires("record_slots")
+                        .help("In the slot recording, include bank details or not"),
                 ),
         )
         .subcommand(
@@ -1293,6 +1335,12 @@ fn main() {
                         .takes_value(true)
                         .help("Snapshot archive format to use.")
                         .conflicts_with("no_snapshot"),
+                )
+                .arg(
+                    Arg::with_name("enable_capitalization_change")
+                        .long("enable-capitalization-change")
+                        .takes_value(false)
+                        .help("If snapshot creation should succeed with a capitalization delta."),
                 ),
         )
         .subcommand(
@@ -1312,6 +1360,7 @@ fn main() {
                 .arg(&geyser_plugin_args)
                 .arg(&accounts_data_encoding_arg)
                 .arg(&use_snapshot_archives_at_startup)
+                .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(
                     Arg::with_name("include_sysvars")
                         .long("include-sysvars")
@@ -1333,7 +1382,27 @@ fn main() {
                         .takes_value(false)
                         .help("Do not print account data when printing account contents."),
                 )
-                .arg(&max_genesis_archive_unpacked_size_arg),
+                .arg(
+                    Arg::with_name("account")
+                        .long("account")
+                        .takes_value(true)
+                        .value_name("PUBKEY")
+                        .validator(is_pubkey)
+                        .multiple(true)
+                        .help(
+                            "Limit output to accounts corresponding to the specified pubkey(s), \
+                            may be specified multiple times",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("program_accounts")
+                        .long("program-accounts")
+                        .takes_value(true)
+                        .value_name("PUBKEY")
+                        .validator(is_pubkey)
+                        .conflicts_with("account")
+                        .help("Limit output to accounts owned by the provided program pubkey"),
+                ),
         )
         .subcommand(
             SubCommand::with_name("capitalization")
@@ -1413,7 +1482,8 @@ fn main() {
                             "Slots that their blocks are computed for cost, default to all slots \
                              in ledger",
                         ),
-                ),
+                )
+                .arg(&allow_dead_slots_arg),
         )
         .program_subcommand()
         .get_matches();
@@ -1575,7 +1645,114 @@ fn main() {
                         },
                     );
 
-                    let process_options = parse_process_options(&ledger_path, arg_matches);
+                    let mut process_options = parse_process_options(&ledger_path, arg_matches);
+
+                    // .default_value() does not work with .conflicts_with() in clap 2.33
+                    // .conflicts_with("verify_slots")
+                    // https://github.com/clap-rs/clap/issues/1605#issuecomment-722326915
+                    // So open-code the conflicts_with() here
+                    if arg_matches.occurrences_of("record_slots") > 0
+                        && arg_matches.occurrences_of("verify_slots") > 0
+                    {
+                        eprintln!(
+                            "error: The argument '--verify-slots <FILENAME>' cannot be used with '--record-slots <FILENAME>'"
+                        );
+                        exit(1);
+                    }
+
+                    let (slot_callback, record_slots_file, recorded_slots) = if arg_matches
+                        .occurrences_of("record_slots")
+                        > 0
+                    {
+                        let filename = Path::new(arg_matches.value_of_os("record_slots").unwrap());
+
+                        let file = File::create(filename).unwrap_or_else(|err| {
+                            eprintln!("Unable to write to file: {}: {:#}", filename.display(), err);
+                            exit(1);
+                        });
+
+                        let include_bank =
+                            match arg_matches.value_of("record_slots_config").unwrap() {
+                                "hash-only" => false,
+                                "accounts" => true,
+                                _ => unreachable!(),
+                            };
+
+                        let slot_hashes = Arc::new(Mutex::new(Vec::new()));
+
+                        let slot_callback = Arc::new({
+                            let slots = Arc::clone(&slot_hashes);
+                            move |bank: &Bank| {
+                                let slot_details = if include_bank {
+                                    bank_hash_details::BankHashSlotDetails::try_from(bank).unwrap()
+                                } else {
+                                    bank_hash_details::BankHashSlotDetails {
+                                        slot: bank.slot(),
+                                        bank_hash: bank.hash().to_string(),
+                                        ..Default::default()
+                                    }
+                                };
+
+                                slots.lock().unwrap().push(slot_details);
+                            }
+                        });
+
+                        (
+                            Some(slot_callback as ProcessSlotCallback),
+                            Some(file),
+                            Some(slot_hashes),
+                        )
+                    } else if arg_matches.occurrences_of("verify_slots") > 0 {
+                        let filename = Path::new(arg_matches.value_of_os("verify_slots").unwrap());
+
+                        let file = File::open(filename).unwrap_or_else(|err| {
+                            eprintln!("Unable to read file: {}: {err:#}", filename.display());
+                            exit(1);
+                        });
+
+                        let reader = std::io::BufReader::new(file);
+
+                        let details: bank_hash_details::BankHashDetails =
+                            serde_json::from_reader(reader).unwrap_or_else(|err| {
+                                eprintln!("Error loading slots file: {err:#}");
+                                exit(1);
+                            });
+
+                        let slots = Arc::new(Mutex::new(details.bank_hash_details));
+
+                        let slot_callback = Arc::new(move |bank: &Bank| {
+                            if slots.lock().unwrap().is_empty() {
+                                error!(
+                                    "Expected slot: not found got slot: {} hash: {}",
+                                    bank.slot(),
+                                    bank.hash()
+                                );
+                            } else {
+                                let bank_hash_details::BankHashSlotDetails {
+                                    slot: expected_slot,
+                                    bank_hash: expected_hash,
+                                    ..
+                                } = slots.lock().unwrap().remove(0);
+                                if bank.slot() != expected_slot
+                                    || bank.hash().to_string() != expected_hash
+                                {
+                                    error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} hash: {}",
+                                bank.slot(), bank.hash());
+                                } else {
+                                    info!(
+                                    "Expected slot: {expected_slot} hash: {expected_hash} correct"
+                                );
+                                }
+                            }
+                        });
+
+                        (Some(slot_callback as ProcessSlotCallback), None, None)
+                    } else {
+                        (None, None, None)
+                    };
+
+                    process_options.slot_callback = slot_callback;
+
                     let print_accounts_stats = arg_matches.is_present("print_accounts_stats");
                     let write_bank_file = arg_matches.is_present("write_bank_file");
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
@@ -1607,6 +1784,21 @@ fn main() {
                             })
                             .ok();
                     }
+
+                    if let Some(recorded_slots_file) = record_slots_file {
+                        if let Ok(recorded_slots) = recorded_slots.clone().unwrap().lock() {
+                            let bank_hashes =
+                                bank_hash_details::BankHashDetails::new(recorded_slots.to_vec());
+
+                            // writing the json file ends up with a syscall for each number, comma, indentation etc.
+                            // use BufWriter to speed things up
+
+                            let writer = std::io::BufWriter::new(recorded_slots_file);
+
+                            serde_json::to_writer_pretty(writer, &bank_hashes).unwrap();
+                        }
+                    }
+
                     exit_signal.store(true, Ordering::Relaxed);
                     system_monitor_service.join().unwrap();
                 }
@@ -1782,6 +1974,9 @@ fn main() {
                     } else {
                         None
                     };
+
+                    let enable_capitalization_change =
+                        arg_matches.is_present("enable_capitalization_change");
 
                     let snapshot_type_str = if is_incremental {
                         "incremental "
@@ -2024,7 +2219,30 @@ fn main() {
                         }
                     }
 
+                    let pre_capitalization = bank.capitalization();
+
                     bank.set_capitalization();
+
+                    let post_capitalization = bank.capitalization();
+
+                    let capitalization_message = if pre_capitalization != post_capitalization {
+                        let amount = if pre_capitalization > post_capitalization {
+                            format!("-{}", pre_capitalization - post_capitalization)
+                        } else {
+                            (post_capitalization - pre_capitalization).to_string()
+                        };
+                        let msg = format!("Capitalization change: {amount} lamports");
+                        warn!("{msg}");
+                        if !enable_capitalization_change {
+                            eprintln!(
+                                "{msg}\nBut `--enable-capitalization-change flag not provided"
+                            );
+                            exit(1);
+                        }
+                        Some(msg)
+                    } else {
+                        None
+                    };
 
                     let bank = if let Some(warp_slot) = warp_slot {
                         // need to flush the write cache in order to use Storages to calculate
@@ -2152,6 +2370,9 @@ fn main() {
                         }
                     }
 
+                    if let Some(msg) = capitalization_message {
+                        println!("{msg}");
+                    }
                     println!(
                         "Shred version: {}",
                         compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()))
@@ -2179,7 +2400,18 @@ fn main() {
                     let include_account_contents = !arg_matches.is_present("no_account_contents");
                     let include_account_data = !arg_matches.is_present("no_account_data");
                     let account_data_encoding = parse_encoding_format(arg_matches);
+                    let mode = if let Some(pubkeys) = pubkeys_of(arg_matches, "account") {
+                        info!("Scanning individual accounts: {pubkeys:?}");
+                        AccountsOutputMode::Individual(pubkeys)
+                    } else if let Some(pubkey) = pubkey_of(arg_matches, "program_accounts") {
+                        info!("Scanning program accounts for {pubkey}");
+                        AccountsOutputMode::Program(pubkey)
+                    } else {
+                        info!("Scanning all accounts");
+                        AccountsOutputMode::All
+                    };
                     let config = AccountsOutputConfig {
+                        mode,
                         include_sysvars,
                         include_account_contents,
                         include_account_data,
@@ -2358,7 +2590,7 @@ fn main() {
                             new_credits_observed: Option<u64>,
                             skipped_reasons: String,
                         }
-                        use solana_stake_program::stake_state::InflationPointCalculationEvent;
+                        use solana_stake_program::points::InflationPointCalculationEvent;
                         let stake_calculation_details: DashMap<Pubkey, CalculationDetail> =
                             DashMap::new();
                         let last_point_value = Arc::new(RwLock::new(None));
@@ -2716,9 +2948,10 @@ fn main() {
                     } else {
                         slots = values_t_or_exit!(arg_matches, "slots", Slot);
                     }
+                    let allow_dead_slots = arg_matches.is_present("allow_dead_slots");
 
                     for slot in slots {
-                        if let Err(err) = compute_slot_cost(&blockstore, slot) {
+                        if let Err(err) = compute_slot_cost(&blockstore, slot, allow_dead_slots) {
                             eprintln!("{err}");
                         }
                     }

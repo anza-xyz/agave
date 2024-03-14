@@ -121,8 +121,8 @@ EOF
 
 trigger_secondary_step() {
   cat  >> "$output_file" <<"EOF"
-  - name: "Trigger Build on solana-secondary"
-    trigger: "solana-secondary"
+  - name: "Trigger Build on agave-secondary"
+    trigger: "agave-secondary"
     branches: "!pull/*"
     async: true
     soft_fail: true
@@ -140,9 +140,9 @@ wait_step() {
 }
 
 all_test_steps() {
-  command_step checks1 ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-checks.sh" 20 check
-  command_step checks2 ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-dev-context-only-utils.sh check-bins" 15 check
-  command_step checks3 ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-dev-context-only-utils.sh check-all-targets" 15 check
+  command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
+  command_step checks2 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh check-bins" 15 check
+  command_step checks3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh check-all-targets" 15 check
   wait_step
 
   # Full test suite
@@ -156,7 +156,7 @@ all_test_steps() {
              ^ci/rust-version.sh \
              ^ci/test-docs.sh \
       ; then
-    command_step doctest ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-docs.sh" 15
+    command_step doctest "ci/docker-run-default-image.sh ci/test-docs.sh" 15
   else
     annotate --style info --context test-docs \
       "Docs skipped as no .rs files were modified"
@@ -182,7 +182,7 @@ all_test_steps() {
              cargo-test-sbf$ \
       ; then
     cat >> "$output_file" <<"EOF"
-  - command: ". ci/rust-version.sh; ci/docker-run.sh $$rust_stable_docker_image ci/test-stable-sbf.sh"
+  - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
     name: "stable-sbf"
     timeout_in_minutes: 35
     artifact_paths: "sbf-dumps.tar.bz2"
@@ -226,7 +226,7 @@ EOF
              ^ci/test-stable.sh \
              ^sdk/ \
       ; then
-    command_step wasm ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-wasm.sh" 20
+    command_step wasm "ci/docker-run-default-image.sh ci/test-wasm.sh" 20
   else
     annotate --style info \
       "wasm skipped as no relevant files were modified"
@@ -258,7 +258,7 @@ EOF
              ^ci/test-coverage.sh \
              ^scripts/coverage.sh \
       ; then
-    command_step coverage ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-coverage.sh" 80
+    command_step coverage "ci/docker-run-default-image.sh ci/test-coverage.sh" 80
   else
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"
@@ -296,7 +296,7 @@ pull_or_push_steps() {
 
     if [ -z "$diff_other_than_version_bump" ]; then
       echo "Diff only contains version bump."
-      command_step checks ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-checks.sh" 20
+      command_step checks "ci/docker-run-default-image.sh ci/test-checks.sh" 20
       exit 0
     fi
   fi
@@ -315,7 +315,7 @@ if [[ -n $BUILDKITE_TAG ]]; then
   start_pipeline "Tag pipeline for $BUILDKITE_TAG"
 
   annotate --style info --context release-tag \
-    "https://github.com/solana-labs/solana/releases/$BUILDKITE_TAG"
+    "https://github.com/anza-xyz/agave/releases/$BUILDKITE_TAG"
 
   # Jump directly to the secondary build to publish release artifacts quickly
   trigger_secondary_step
@@ -333,7 +333,7 @@ if [[ $BUILDKITE_BRANCH =~ ^pull ]]; then
 
   # Add helpful link back to the corresponding Github Pull Request
   annotate --style info --context pr-backlink \
-    "Github Pull Request: https://github.com/solana-labs/solana/$BUILDKITE_BRANCH"
+    "Github Pull Request: https://github.com/anza-xyz/agave/$BUILDKITE_BRANCH"
 
   if [[ $GITHUB_USER = "dependabot[bot]" ]]; then
     command_step dependabot "ci/dependabot-pr.sh" 5

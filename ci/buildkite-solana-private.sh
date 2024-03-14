@@ -134,7 +134,7 @@ wait_step() {
 }
 
 all_test_steps() {
-  command_step checks ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-checks.sh" 20
+  command_step checks "ci/docker-run-default-image.sh ci/test-checks.sh" 20
   wait_step
 
   # Full test suite
@@ -146,7 +146,7 @@ all_test_steps() {
              ^ci/rust-version.sh \
              ^ci/test-docs.sh \
       ; then
-    command_step doctest ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-docs.sh" 15
+    command_step doctest "ci/docker-run-default-image.sh ci/test-docs.sh" 15
   else
     annotate --style info --context test-docs \
       "Docs skipped as no .rs files were modified"
@@ -168,7 +168,7 @@ all_test_steps() {
              ^sdk/ \
       ; then
     cat >> "$output_file" <<"EOF"
-  - command: ". ci/rust-version.sh; ci/docker-run.sh $$rust_stable_docker_image ci/test-stable-sbf.sh"
+  - command: "ci/docker-run-default-image.sh ci/test-stable-sbf.sh"
     name: "stable-sbf"
     timeout_in_minutes: 35
     artifact_paths: "sbf-dumps.tar.bz2"
@@ -208,7 +208,7 @@ EOF
              ^ci/test-stable.sh \
              ^sdk/ \
       ; then
-    command_step wasm ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_stable_docker_image ci/test-wasm.sh" 20
+    command_step wasm "ci/docker-run-default-image.sh ci/test-wasm.sh" 20
   else
     annotate --style info \
       "wasm skipped as no relevant files were modified"
@@ -238,7 +238,7 @@ EOF
              ^ci/test-coverage.sh \
              ^scripts/coverage.sh \
       ; then
-    command_step coverage ". ci/rust-version.sh; ci/docker-run.sh \$\$rust_nightly_docker_image ci/test-coverage.sh" 80
+    command_step coverage "ci/docker-run-default-image.sh ci/test-coverage.sh" 80
   else
     annotate --style info --context test-coverage \
       "Coverage skipped as no .rs files were modified"
@@ -287,7 +287,7 @@ if [[ $BUILDKITE_BRANCH =~ ^pull ]]; then
 
   # Add helpful link back to the corresponding Github Pull Request
   annotate --style info --context pr-backlink \
-    "Github Pull Request: https://github.com/solana-labs/solana/$BUILDKITE_BRANCH"
+    "Github Pull Request: https://github.com/anza-xyz/agave/$BUILDKITE_BRANCH"
 
   if [[ $GITHUB_USER = "dependabot[bot]" ]]; then
     command_step dependabot "ci/dependabot-pr.sh" 5

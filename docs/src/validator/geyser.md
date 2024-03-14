@@ -1,5 +1,7 @@
 ---
-title: Geyser Plugins
+title: Solana Validator Geyser Plugins
+sidebar_label: Geyser Plugins
+pagination_label: Validator Geyser Plugins
 ---
 
 ## Overview
@@ -22,20 +24,20 @@ implementation for the PostgreSQL database.
 
 ### Important Crates:
 
-- [`solana-geyser-plugin-interface`] &mdash; This crate defines the plugin
+- [`agave-geyser-plugin-interface`] &mdash; This crate defines the plugin
 interfaces.
 
 - [`solana-accountsdb-plugin-postgres`] &mdash; The crate for the referential
 plugin implementation for the PostgreSQL database.
 
-[`solana-geyser-plugin-interface`]: https://docs.rs/solana-geyser-plugin-interface
+[`agave-geyser-plugin-interface`]: https://docs.rs/agave-geyser-plugin-interface
 [`solana-accountsdb-plugin-postgres`]: https://docs.rs/solana-accountsdb-plugin-postgres
 [`solana-sdk`]: https://docs.rs/solana-sdk
 [`solana-transaction-status`]: https://docs.rs/solana-transaction-status
 
 ## The Plugin Interface
 
-The Plugin interface is declared in [`solana-geyser-plugin-interface`]. It
+The Plugin interface is declared in [`agave-geyser-plugin-interface`]. It
 is defined by the trait `GeyserPlugin`. The plugin should implement the
 trait and expose a "C" function `_create_plugin` to return the pointer to this
 trait. For example, in the referential implementation, the following code
@@ -164,7 +166,7 @@ please refer to [`solana-sdk`] and [`solana-transaction-status`]
 
 The `slot` points to the slot the transaction is executed at.
 For more details, please refer to the Rust documentation in
-[`solana-geyser-plugin-interface`].
+[`agave-geyser-plugin-interface`].
 
 ## Example PostgreSQL Plugin
 
@@ -440,7 +442,7 @@ The following are the tables in the Postgres database
 When a validator lacks sufficient compute power, the overhead of saving the
 account data can cause it to fall behind the network especially when all
 accounts or a large number of accounts are selected. The node hosting the
-PostgreSQL database need to be powerful enough to handle the database loads
+PostgreSQL database needs to be powerful enough to handle the database loads
 as well. It has been found using GCP n2-standard-64 machine type for the
 validator and n2-highmem-32 for the PostgreSQL node is adequate for handling
 transmitting all accounts while keeping up with the network. In addition, it is
