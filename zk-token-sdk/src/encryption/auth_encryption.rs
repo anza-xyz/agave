@@ -157,21 +157,6 @@ impl AeKey {
     pub fn decrypt(&self, ciphertext: &AeCiphertext) -> Option<u64> {
         AuthenticatedEncryption::decrypt(self, ciphertext)
     }
-
-    pub fn to_bytes(&self) -> [u8; AE_KEY_LEN] {
-        self.0
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != AE_KEY_LEN {
-            return None;
-        }
-        let Ok(sized_array) = bytes[..AE_KEY_LEN].try_into() else {
-            return None;
-        };
-
-        Some(Self(sized_array))
-    }
 }
 
 impl EncodableKey for AeKey {
@@ -222,6 +207,25 @@ impl SeedDerivable for AeKey {
             seed_phrase,
             passphrase,
         ))
+    }
+}
+
+impl From<[u8; AE_KEY_LEN]> for AeKey {
+    fn from(value: [u8; AE_KEY_LEN]) -> Self {
+        Self(value)
+    }
+}
+
+impl TryFrom<&[u8]> for AeKey {
+    type Error = AuthenticatedEncryptionError;
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() != AE_KEY_LEN {
+            return Err(AuthenticatedEncryptionError::Deserialization);
+        }
+        let Ok(sized_array) = value.try_into() else {
+            return Err(AuthenticatedEncryptionError::Deserialization);
+        };
+        Ok(Self(sized_array))
     }
 }
 

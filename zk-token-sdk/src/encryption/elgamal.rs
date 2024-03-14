@@ -68,7 +68,7 @@ const ELGAMAL_PUBKEY_LEN: usize = RISTRETTO_POINT_LEN;
 const ELGAMAL_SECRET_KEY_LEN: usize = SCALAR_LEN;
 
 /// Byte length of an ElGamal keypair
-pub const ELGAMAL_KEYPAIR_LEN: usize = ELGAMAL_PUBKEY_LEN + ELGAMAL_SECRET_KEY_LEN;
+const ELGAMAL_KEYPAIR_LEN: usize = ELGAMAL_PUBKEY_LEN + ELGAMAL_SECRET_KEY_LEN;
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ElGamalError {
