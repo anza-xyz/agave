@@ -316,21 +316,21 @@ impl TryFrom<&[u8]> for ElGamalKeypair {
 }
 
 impl From<ElGamalKeypair> for [u8; ELGAMAL_KEYPAIR_LEN] {
-    fn from(value: ElGamalKeypair) -> Self {
+    fn from(keypair: ElGamalKeypair) -> Self {
         let mut bytes = [0u8; ELGAMAL_KEYPAIR_LEN];
         bytes[..ELGAMAL_PUBKEY_LEN]
-            .copy_from_slice(&Into::<[u8; ELGAMAL_PUBKEY_LEN]>::into(value.public));
-        bytes[ELGAMAL_PUBKEY_LEN..].copy_from_slice(value.secret.as_bytes());
+            .copy_from_slice(&Into::<[u8; ELGAMAL_PUBKEY_LEN]>::into(keypair.public));
+        bytes[ELGAMAL_PUBKEY_LEN..].copy_from_slice(keypair.secret.as_bytes());
         bytes
     }
 }
 
 impl From<&ElGamalKeypair> for [u8; ELGAMAL_KEYPAIR_LEN] {
-    fn from(value: &ElGamalKeypair) -> Self {
+    fn from(keypair: &ElGamalKeypair) -> Self {
         let mut bytes = [0u8; ELGAMAL_KEYPAIR_LEN];
         bytes[..ELGAMAL_PUBKEY_LEN]
-            .copy_from_slice(&Into::<[u8; ELGAMAL_PUBKEY_LEN]>::into(value.public));
-        bytes[ELGAMAL_PUBKEY_LEN..].copy_from_slice(value.secret.as_bytes());
+            .copy_from_slice(&Into::<[u8; ELGAMAL_PUBKEY_LEN]>::into(keypair.public));
+        bytes[ELGAMAL_PUBKEY_LEN..].copy_from_slice(keypair.secret.as_bytes());
         bytes
     }
 }
