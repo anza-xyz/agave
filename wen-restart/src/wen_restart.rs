@@ -165,11 +165,12 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
                     if slot <= &root_slot || is_full_slots.contains(slot) {
                         return false;
                     }
-                    let is_full = blockstore.is_full(*slot);
-                    if is_full {
+                    if blockstore.is_full(*slot) {
                         is_full_slots.insert(*slot);
+                        false
+                    } else {
+                        true
                     }
-                    !is_full
                 })
                 .collect();
         }
@@ -378,7 +379,6 @@ mod tests {
     use {
         crate::wen_restart::*,
         assert_matches::assert_matches,
-        solana_entry::entry,
         solana_gossip::{
             cluster_info::ClusterInfo,
             contact_info::ContactInfo,
@@ -387,7 +387,10 @@ mod tests {
             legacy_contact_info::LegacyContactInfo,
             restart_crds_values::RestartLastVotedForkSlots,
         },
-        solana_ledger::{blockstore, get_tmp_ledger_path_auto_delete},
+        solana_ledger::{
+            blockstore::{make_chaining_slot_entries, Blockstore},
+            get_tmp_ledger_path_auto_delete,
+        },
         solana_program::{
             hash::Hash,
             vote::state::{Vote, VoteStateUpdate},
@@ -452,17 +455,10 @@ mod tests {
     fn insert_slots_into_blockstore(
         blockstore: Arc<Blockstore>,
         first_parent: Slot,
-        slots_to_insert: Vec<Slot>,
+        slots_to_insert: &[Slot],
     ) {
-        let mut parent = first_parent;
-        for slot in slots_to_insert {
-            let entries = entry::create_ticks(1, 0, Hash::default());
-            let shreds = blockstore::entries_to_test_shreds(
-                &entries, slot, parent, true, // is_full_slot
-                0, true, // merkle_variant
-            );
+        for (shreds, _) in make_chaining_slot_entries(slots_to_insert, 2, first_parent) {
             blockstore.insert_shreds(shreds, None, false).unwrap();
-            parent = slot;
         }
     }
 
@@ -480,7 +476,7 @@ mod tests {
             node_keypair.clone(),
             SocketAddrSpace::Unspecified,
         ));
-        let blockstore = Arc::new(blockstore::Blockstore::open(ledger_path.path()).unwrap());
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
             10_000,
             &validator_voting_keypairs,
@@ -499,7 +495,7 @@ mod tests {
                     .saturating_add(1)) as Slot,
             );
         }
-        insert_slots_into_blockstore(blockstore.clone(), 0, last_voted_fork_slots.clone());
+        insert_slots_into_blockstore(blockstore.clone(), 0, &last_voted_fork_slots);
         last_voted_fork_slots.insert(0, 0);
         last_voted_fork_slots.reverse();
         let mut wen_restart_proto_path = ledger_path.path().to_path_buf();
@@ -645,7 +641,7 @@ mod tests {
         insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             last_vote_slot,
-            expected_slots_to_repair.clone(),
+            &expected_slots_to_repair,
         );
 
         let _ = wen_restart_thread_handle.join();
@@ -973,7 +969,7 @@ mod tests {
         insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             last_vote_slot,
-            expected_slots_to_repair.clone(),
+            &expected_slots_to_repair,
         );
 
         let last_voted_fork_slots = test_state.last_voted_fork_slots.clone();
