@@ -1999,6 +1999,7 @@ pub fn process_split_stake(
                 .into());
             }
         }
+
         let minimum_balance =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
 
