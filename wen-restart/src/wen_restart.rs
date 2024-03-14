@@ -236,36 +236,14 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
     Ok(last_voted_fork_slots_aggregate.get_final_result())
 }
 
+// Verify that all blocks with at least (active_stake_percnet - 38%) of the stake form a
+// single chain from the root, and use the highest slot in the blocks as the heaviest fork.
+// Please see SIMD 46 "gossip current heaviest fork" for correctness proof.
 pub(crate) fn find_heaviest_fork(
     aggregate_final_result: LastVotedForkSlotsFinalResult,
     bank_forks: Arc<RwLock<BankForks>>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Slot, Hash)> {
-    // Under normal cases, we should have a single chain of blocks from the root to the
-    // newest block with > (67% - 5% -  (100% - X%)) of stake.
-    // 1. If X% of the validators joined the restart (X > 80%), then there can't be two
-    //    kids B and C of the same parent A with more than (67% - 5% -  (100% - X%)) of
-    //    the stake each. Assume B and C exists, their combined stake is more than
-    //    2 * (67% - 5% - (100% - X%)) = 134% - 10% - 2 * (100% - X%) = 2*X% - 76% > X%.
-    //    Since we can only have X% of the stake, this is a contradiction.
-    // 2. If a child got Y% of the stake, then its parent should at least have Y% of the stake.
-    // So, we can start from the latest block with > (67% - 5% -  (100% - X%)) = X% - 38%
-    // of the stake and go up until we find the root.
-    //
-    // If somehow we find a block on slot D has Y% of the stake but its parent has less than Y%,
-    // something is wrong.
-    //
-    // It is also a problem if we find a happy chain which doesn't chain to our root.
-    //
-    // In both cases, we should stop and output warning on the smallest abnormal block we find
-    // in the chain, since that is likely the root of the problem.
-    // Therefore, we will filter out all slots greater than local root with more than
-    // (active_stake_percnet - 38%) of the stake and sort them. Then for each slot, we check
-    // that the block we have:
-    // 1. Chains to the root/last block we examined
-    // 2. Has less stake than its parent
-    // Abort if any block fails above checks and return error on the block.
-
     // Because everything else is stopped, it's okay to grab a big lock on bank_forks.
     let my_bank_forks = bank_forks.read().unwrap();
     let root_bank = my_bank_forks.root_bank().clone();
