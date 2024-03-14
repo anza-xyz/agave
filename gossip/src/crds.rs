@@ -130,7 +130,9 @@ pub struct VersionedCrdsValue {
     pub(crate) local_timestamp: u64,
     /// value hash
     pub(crate) value_hash: Hash,
-    /// number of times this value is recevied via PushMessage
+    /// None -> value upserted by GossipRoute::{LocalMessage,PullRequest}
+    /// Some(0) -> value upserted by GossipRoute::PullResponse
+    /// Some(k) if k > 0 -> value upserted by GossipRoute::PushMessage w/ k - 1 push duplicates
     num_push_recv: Option<u8>,
 }
 
@@ -313,18 +315,11 @@ impl Crds {
                     Err(CrdsError::InsertFailed)
                 } else if matches!(route, GossipRoute::PushMessage(_)) {
                     let entry = entry.get_mut();
-                    let num_push_recv = match entry.num_push_recv {
-                        Some(count) => {
-                            if count == 0 {
-                                self.stats.lock().unwrap().num_redundant_pull_responses += 1;
-                            }
-                            Some(count.saturating_add(1))
-                        }
-                        None => Some(1),
-                    };
-                    let num_push_dups = num_push_recv.unwrap_or(0).saturating_sub(1);
-                    entry.num_push_recv = num_push_recv;
-
+                    if entry.num_push_recv == Some(0) {
+                        self.stats.lock().unwrap().num_redundant_pull_responses += 1;
+                    }
+                    let num_push_dups = entry.num_push_recv.unwrap_or_default();
+                    entry.num_push_recv = Some(num_push_dups.saturating_add(1));
                     Err(CrdsError::DuplicatePush(num_push_dups))
                 } else {
                     Err(CrdsError::InsertFailed)
