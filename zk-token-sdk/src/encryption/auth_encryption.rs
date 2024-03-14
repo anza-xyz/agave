@@ -211,24 +211,24 @@ impl SeedDerivable for AeKey {
 }
 
 impl From<[u8; AE_KEY_LEN]> for AeKey {
-    fn from(value: [u8; AE_KEY_LEN]) -> Self {
-        Self(value)
+    fn from(bytes: [u8; AE_KEY_LEN]) -> Self {
+        Self(bytes)
     }
 }
 
 impl From<AeKey> for [u8; AE_KEY_LEN] {
-    fn from(value: AeKey) -> Self {
-        value.0
+    fn from(key: AeKey) -> Self {
+        key.0
     }
 }
 
 impl TryFrom<&[u8]> for AeKey {
     type Error = AuthenticatedEncryptionError;
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        if value.len() != AE_KEY_LEN {
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != AE_KEY_LEN {
             return Err(AuthenticatedEncryptionError::Deserialization);
         }
-        let Ok(sized_array) = value.try_into() else {
+        let Ok(sized_array) = bytes.try_into() else {
             return Err(AuthenticatedEncryptionError::Deserialization);
         };
         Ok(Self(sized_array))
