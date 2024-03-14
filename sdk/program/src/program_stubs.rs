@@ -61,7 +61,7 @@ pub trait SyscallStubs: Sync + Send {
     fn sol_get_last_restart_slot(&self, _var_addr: *mut u8) -> u64 {
         UNSUPPORTED_SYSVAR
     }
-    fn sol_stake_history_get_entry(&self, _var_addr: *mut u8, _epoch: u64) -> u64 {
+    fn sol_get_stake_history_entry(&self, _var_addr: *mut u8, _epoch: u64) -> u64 {
         UNSUPPORTED_SYSVAR
     }
     /// # Safety
@@ -174,11 +174,11 @@ pub(crate) fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
         .sol_get_last_restart_slot(var_addr)
 }
 
-pub(crate) fn sol_stake_history_get_entry(var_addr: *mut u8, epoch: u64) -> u64 {
+pub(crate) fn sol_get_stake_history_entry(var_addr: *mut u8, epoch: u64) -> u64 {
     SYSCALL_STUBS
         .read()
         .unwrap()
-        .sol_stake_history_get_entry(var_addr, epoch)
+        .sol_get_stake_history_entry(var_addr, epoch)
 }
 
 pub(crate) fn sol_memcpy(dst: *mut u8, src: *const u8, n: usize) {

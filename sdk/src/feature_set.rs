@@ -780,7 +780,7 @@ pub mod remove_rounding_in_fee_calculation {
     solana_sdk::declare_id!("BtVN7YjDzNE6Dk7kTT7YTDgMNUZTNgiSJgsdzAeTg2jF");
 }
 
-pub mod stake_history_get_entry_syscall_enabled {
+pub mod get_stake_history_entry_syscall_enabled {
     solana_sdk::declare_id!("CLCoTADvV64PSrnR6QXty6Fwrt9Xc6EdxSJE4wLRePjq");
 }
 
@@ -974,7 +974,7 @@ lazy_static! {
         (enable_gossip_duplicate_proof_ingestion::id(), "enable gossip duplicate proof ingestion #32963"),
         (enable_chained_merkle_shreds::id(), "Enable chained Merkle shreds #34916"),
         (remove_rounding_in_fee_calculation::id(), "Removing unwanted rounding in fee calculation #34982"),
-        (stake_history_get_entry_syscall_enabled::id(), "Enable syscall for fetching StakeHistoryEntry by epoch #XXXXX"), // HANA
+        (get_stake_history_entry_syscall_enabled::id(), "Enable syscall for fetching StakeHistoryEntry by epoch #XXXXX"), // HANA
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

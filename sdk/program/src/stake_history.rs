@@ -105,10 +105,10 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
         let var_addr = &mut var as *mut _ as *mut u8;
 
         #[cfg(target_os = "solana")]
-        let result = unsafe { crate::syscalls::sol_stake_history_get_entry(var_addr, epoch) };
+        let result = unsafe { crate::syscalls::sol_get_stake_history_entry(var_addr, epoch) };
 
         #[cfg(not(target_os = "solana"))]
-        let result = crate::program_stubs::sol_stake_history_get_entry(var_addr, epoch);
+        let result = crate::program_stubs::sol_get_stake_history_entry(var_addr, epoch);
 
         // HANA i dislike how this swallows errors but im not sure we really want to return Result<Option<_>, _>
         match result {

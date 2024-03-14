@@ -162,7 +162,7 @@ declare_builtin_function!(
 
 declare_builtin_function!(
     /// Get a StakeHistoryEntry at a given epoch
-    SyscallStakeHistoryGetEntry,
+    SyscallGetStakeHistoryEntry,
     fn rust(
         invoke_context: &mut InvokeContext,
         var_addr: u64,
