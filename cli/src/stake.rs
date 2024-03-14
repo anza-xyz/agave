@@ -1993,7 +1993,8 @@ pub fn process_split_stake(
                     ))
                     .into());
                 }
-            // if stake_account owner is system_program and account data is empty it is allowed to receive stake split
+            // if `stake_account`'s owner is the system_program and its data is
+            // empty, `stake_account` is allowed to receive the stake split
             } else {
                 return Err(CliError::BadParameter(format!(
                     "Account {split_stake_account_address} already exists and cannot be used to split stake"
