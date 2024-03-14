@@ -134,7 +134,7 @@ impl LastVotedForkSlotsAggregate {
         total_active_stake as f64 / total_stake as f64 * 100.0
     }
 
-    pub(crate) fn slots_to_repair(&self) -> impl Iterator<Item = &Slot> {
+    pub(crate) fn slots_to_repair_iter(&self) -> impl Iterator<Item = &Slot> {
         self.slots_to_repair.iter()
     }
 }
@@ -238,7 +238,7 @@ mod tests {
         );
         assert!(test_state
             .slots_aggregate
-            .slots_to_repair()
+            .slots_to_repair_iter()
             .next()
             .is_none());
 
@@ -273,7 +273,7 @@ mod tests {
             expected_active_percent
         );
         let mut actual_slots =
-            Vec::from_iter(test_state.slots_aggregate.slots_to_repair().cloned());
+            Vec::from_iter(test_state.slots_aggregate.slots_to_repair_iter().cloned());
         actual_slots.sort();
         assert_eq!(actual_slots, test_state.last_voted_fork_slots);
 
@@ -306,7 +306,7 @@ mod tests {
             expected_active_percent
         );
         let mut actual_slots =
-            Vec::from_iter(test_state.slots_aggregate.slots_to_repair().cloned());
+            Vec::from_iter(test_state.slots_aggregate.slots_to_repair_iter().cloned());
         actual_slots.sort();
         assert_eq!(actual_slots, vec![root_slot + 1]);
 
@@ -330,7 +330,7 @@ mod tests {
             expected_active_percent
         );
         let mut actual_slots =
-            Vec::from_iter(test_state.slots_aggregate.slots_to_repair().cloned());
+            Vec::from_iter(test_state.slots_aggregate.slots_to_repair_iter().cloned());
         actual_slots.sort();
         assert_eq!(actual_slots, vec![root_slot + 1]);
     }
