@@ -2,89 +2,16 @@ use {
     crate::{
         account_storage::meta::StoredAccountMeta,
         accounts_file::MatchAccountOwnerError,
-        accounts_hash::AccountHash,
         tiered_storage::{
             footer::{AccountMetaFormat, TieredStorageFooter},
             hot::HotStorageReader,
             index::IndexOffset,
-            meta::TieredAccountMeta,
             TieredStorageResult,
         },
     },
-    solana_sdk::{account::ReadableAccount, pubkey::Pubkey, stake_history::Epoch},
+    solana_sdk::pubkey::Pubkey,
     std::path::Path,
 };
-
-/// The struct that offers read APIs for accessing a TieredAccount.
-#[derive(PartialEq, Eq, Debug)]
-pub struct TieredReadableAccount<'accounts_file, M: TieredAccountMeta> {
-    /// TieredAccountMeta
-    pub meta: &'accounts_file M,
-    /// The address of the account
-    pub address: &'accounts_file Pubkey,
-    /// The address of the account owner
-    pub owner: &'accounts_file Pubkey,
-    /// The index for accessing the account inside its belonging AccountsFile
-    pub index: usize,
-    /// The account block that contains this account.  Note that this account
-    /// block may be shared with other accounts.
-    pub account_block: &'accounts_file [u8],
-}
-
-impl<'accounts_file, M: TieredAccountMeta> TieredReadableAccount<'accounts_file, M> {
-    /// Returns the address of this account.
-    pub fn address(&self) -> &'accounts_file Pubkey {
-        self.address
-    }
-
-    /// Returns the hash of this account.
-    pub fn hash(&self) -> Option<&'accounts_file AccountHash> {
-        self.meta.account_hash(self.account_block)
-    }
-
-    /// Returns the index to this account in its AccountsFile.
-    pub fn index(&self) -> usize {
-        self.index
-    }
-
-    /// Returns the data associated to this account.
-    pub fn data(&self) -> &'accounts_file [u8] {
-        self.meta.account_data(self.account_block)
-    }
-}
-
-impl<'accounts_file, M: TieredAccountMeta> ReadableAccount
-    for TieredReadableAccount<'accounts_file, M>
-{
-    /// Returns the balance of the lamports of this account.
-    fn lamports(&self) -> u64 {
-        self.meta.lamports()
-    }
-
-    /// Returns the address of the owner of this account.
-    fn owner(&self) -> &'accounts_file Pubkey {
-        self.owner
-    }
-
-    /// Returns true if the data associated to this account is executable.
-    fn executable(&self) -> bool {
-        self.meta.flags().executable()
-    }
-
-    /// Returns the epoch that this account will next owe rent by parsing
-    /// the specified account block.  Epoch::MAX will be returned if the account
-    /// is rent-exempt.
-    fn rent_epoch(&self) -> Epoch {
-        self.meta
-            .rent_epoch(self.account_block)
-            .unwrap_or(Epoch::MAX)
-    }
-
-    /// Returns the data associated to this account.
-    fn data(&self) -> &'accounts_file [u8] {
-        self.data()
-    }
-}
 
 /// The reader of a tiered storage instance.
 #[derive(Debug)]
@@ -118,10 +45,10 @@ impl TieredStorageReader {
     /// Returns the account located at the specified index offset.
     pub fn get_account(
         &self,
-        index_offset: u32,
-    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, usize)>> {
+        index_offset: IndexOffset,
+    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, IndexOffset)>> {
         match self {
-            Self::Hot(hot) => hot.get_account(IndexOffset(index_offset)),
+            Self::Hot(hot) => hot.get_account(index_offset),
         }
     }
 
@@ -136,16 +63,27 @@ impl TieredStorageReader {
     /// causes a data overrun.
     pub fn account_matches_owners(
         &self,
-        index_offset: u32,
+        index_offset: IndexOffset,
         owners: &[Pubkey],
     ) -> Result<usize, MatchAccountOwnerError> {
         match self {
             Self::Hot(hot) => {
                 let account_offset = hot
-                    .get_account_offset(IndexOffset(index_offset))
+                    .get_account_offset(index_offset)
                     .map_err(|_| MatchAccountOwnerError::UnableToLoad)?;
                 hot.account_matches_owners(account_offset, owners)
             }
+        }
+    }
+
+    /// Return a vector of account metadata for each account, starting from
+    /// `index_offset`
+    pub fn accounts(
+        &self,
+        index_offset: IndexOffset,
+    ) -> TieredStorageResult<Vec<StoredAccountMeta>> {
+        match self {
+            Self::Hot(hot) => hot.accounts(index_offset),
         }
     }
 }

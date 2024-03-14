@@ -20,8 +20,7 @@ fi
 
 cd "$(dirname "$0")"
 rm -rf usr/
-../../ci/docker-run.sh "$rust_stable_docker_image" \
-  scripts/cargo-install-all.sh sdk/docker-solana/usr
+../../ci/docker-run-default-image.sh scripts/cargo-install-all.sh sdk/docker-solana/usr
 
 cp -f ../../scripts/run.sh usr/bin/solana-run.sh
 cp -f ../../fetch-spl.sh usr/bin/
@@ -30,7 +29,7 @@ cp -f ../../fetch-spl.sh usr/bin/
   ./fetch-spl.sh
 )
 
-docker build -t solanalabs/solana:"$CHANNEL_OR_TAG" .
+docker build -t anzaxyz/agave:"$CHANNEL_OR_TAG" .
 
 maybeEcho=
 if [[ -z $CI ]]; then
@@ -44,4 +43,4 @@ else
     fi
   )
 fi
-$maybeEcho docker push solanalabs/solana:"$CHANNEL_OR_TAG"
+$maybeEcho docker push anzaxyz/agave:"$CHANNEL_OR_TAG"

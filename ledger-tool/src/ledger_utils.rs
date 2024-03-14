@@ -4,7 +4,8 @@ use {
     crossbeam_channel::unbounded,
     log::*,
     solana_accounts_db::{
-        hardened_unpack::open_genesis_config, utils::create_all_accounts_run_and_snapshot_dirs,
+        hardened_unpack::open_genesis_config,
+        utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier, validator::BlockVerificationMethod,
@@ -35,9 +36,7 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
-        snapshot_utils::{
-            self, clean_orphaned_account_snapshot_dirs, move_and_async_delete_path_contents,
-        },
+        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
     solana_sdk::{
         clock::Slot, genesis_config::GenesisConfig, pubkey::Pubkey,
@@ -188,14 +187,14 @@ pub fn load_and_process_ledger(
     }
 
     let account_paths = if let Some(account_paths) = arg_matches.value_of("account_paths") {
-        // If this blockstore access is Primary, no other process (solana-validator) can hold
+        // If this blockstore access is Primary, no other process (agave-validator) can hold
         // Primary access. So, allow a custom accounts path without worry of wiping the accounts
-        // of solana-validator.
+        // of agave-validator.
         if !blockstore.is_primary_access() {
             // Attempt to open the Blockstore in Primary access; if successful, no other process
             // was holding Primary so allow things to proceed with custom accounts path. Release
-            // the Primary access instead of holding it to give priority to solana-validator over
-            // solana-ledger-tool should solana-validator start before we've finished.
+            // the Primary access instead of holding it to give priority to agave-validator over
+            // agave-ledger-tool should agave-validator start before we've finished.
             info!(
                 "Checking if another process currently holding Primary access to {:?}",
                 blockstore.ledger_path()
@@ -274,7 +273,6 @@ pub fn load_and_process_ledger(
             genesis_config,
             blockstore.as_ref(),
             account_paths,
-            None,
             snapshot_config.as_ref(),
             &process_options,
             None,
@@ -293,9 +291,17 @@ pub fn load_and_process_ledger(
         "Using: block-verification-method: {}",
         block_verification_method,
     );
+    let unified_scheduler_handler_threads =
+        value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     match block_verification_method {
         BlockVerificationMethod::BlockstoreProcessor => {
             info!("no scheduler pool is installed for block verification...");
+            if let Some(count) = unified_scheduler_handler_threads {
+                warn!(
+                    "--unified-scheduler-handler-threads={count} is ignored because unified \
+                     scheduler isn't enabled"
+                );
+            }
         }
         BlockVerificationMethod::UnifiedScheduler => {
             let no_transaction_status_sender = None;
@@ -305,6 +311,7 @@ pub fn load_and_process_ledger(
                 .write()
                 .unwrap()
                 .install_scheduler_pool(DefaultSchedulerPool::new_dyn(
+                    unified_scheduler_handler_threads,
                     process_options.runtime_config.log_messages_bytes_limit,
                     no_transaction_status_sender,
                     no_replay_vote_sender,

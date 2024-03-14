@@ -118,11 +118,11 @@ Operate a configured testnet
                                       - Enable UDP for tpu transactions
 
    --client-type
-                                      - Specify backend client type for bench-tps. Valid options are (thin-client|rpc-client|tpu-client), thin-client is default
+                                      - Specify backend client type for bench-tps. Valid options are (rpc-client|tpu-client), tpu-client is default
 
  sanity/start-specific options:
    -F                   - Discard validator nodes that didn't bootup successfully
-   -o noInstallCheck    - Skip solana-install sanity
+   -o noInstallCheck    - Skip agave-install sanity
    -o rejectExtraNodes  - Require the exact number of nodes
 
  stop-specific options:
@@ -138,7 +138,7 @@ Operate a configured testnet
    --netem-cmd         - Optional command argument to netem. Default is "add". Use "cleanup" to remove rules.
 
  update-specific options:
-   --platform linux|osx|windows       - Deploy the tarball using 'solana-install deploy ...' for the
+   --platform linux|osx|windows       - Deploy the tarball using 'agave-install deploy ...' for the
                                         given platform (multiple platforms may be specified)
                                         (-t option must be supplied as well)
 
@@ -191,7 +191,7 @@ build() {
   if [[ $(uname) != Linux || ! " ${supported[*]} " =~ $(lsb_release -sr) ]]; then
     # shellcheck source=ci/rust-version.sh
     source "$SOLANA_ROOT"/ci/rust-version.sh
-    MAYBE_DOCKER="ci/docker-run.sh $rust_stable_docker_image"
+    MAYBE_DOCKER="ci/docker-run.sh ${ci_docker_image:?}"
   fi
   SECONDS=0
   (
@@ -514,11 +514,11 @@ deployUpdate() {
   declare bootstrapLeader=${validatorIpList[0]}
 
   for updatePlatform in $updatePlatforms; do
-    echo "--- Deploying solana-install update: $updatePlatform"
+    echo "--- Deploying agave-install update: $updatePlatform"
     (
       set -x
 
-      scripts/solana-install-update-manifest-keypair.sh "$updatePlatform"
+      scripts/agave-install-update-manifest-keypair.sh "$updatePlatform"
 
       timeout 30s scp "${sshOptions[@]}" \
         update_manifest_keypair.json "$bootstrapLeader:solana/update_manifest_keypair.json"
@@ -563,7 +563,7 @@ prepareDeploy() {
     if [[ -n $releaseChannel ]]; then
       echo "Downloading release from channel: $releaseChannel"
       rm -f "$SOLANA_ROOT"/solana-release.tar.bz2
-      declare updateDownloadUrl=https://release.solana.com/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+      declare updateDownloadUrl=https://release.anza.xyz/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
       (
         set -x
         curl -L -I "$updateDownloadUrl"
@@ -834,7 +834,7 @@ waitForNodeInit=true
 extraPrimordialStakes=0
 disableQuic=false
 enableUdp=false
-clientType=thin-client
+clientType=tpu-client
 maybeUseUnstakedConnection=""
 
 command=$1
@@ -972,7 +972,7 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --client-type ]]; then
       clientType=$2
       case "$clientType" in
-        thin-client|tpu-client|rpc-client)
+        tpu-client|rpc-client)
           ;;
         *)
           echo "Unexpected client type: \"$clientType\""

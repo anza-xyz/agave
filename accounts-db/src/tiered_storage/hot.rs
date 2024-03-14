@@ -2,10 +2,9 @@
 
 use {
     crate::{
-        account_storage::meta::StoredAccountMeta,
+        account_storage::meta::{StoredAccountInfo, StoredAccountMeta},
         accounts_file::MatchAccountOwnerError,
         accounts_hash::AccountHash,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         tiered_storage::{
             byte_block,
             file::TieredStorageFile,
@@ -14,7 +13,6 @@ use {
             meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
             mmap_utils::{get_pod, get_slice},
             owners::{OwnerOffset, OwnersBlockFormat, OwnersTable, OWNER_NO_OWNER},
-            readable::TieredReadableAccount,
             StorableAccounts, StorableAccountsWithHashesAndWriteVersions, TieredStorageError,
             TieredStorageFormat, TieredStorageResult,
         },
@@ -22,7 +20,10 @@ use {
     bytemuck::{Pod, Zeroable},
     memmap2::{Mmap, MmapOptions},
     modular_bitfield::prelude::*,
-    solana_sdk::{account::ReadableAccount, pubkey::Pubkey, stake_history::Epoch},
+    solana_sdk::{
+        account::ReadableAccount, pubkey::Pubkey, rent_collector::RENT_EXEMPT_RENT_EPOCH,
+        stake_history::Epoch,
+    },
     std::{borrow::Borrow, fs::OpenOptions, option::Option, path::Path},
 };
 
@@ -240,19 +241,6 @@ impl TieredAccountMeta for HotAccountMeta {
             .flatten()
     }
 
-    /// Returns the account hash by parsing the specified account block.  None
-    /// will be returned if this account does not persist this optional field.
-    fn account_hash<'a>(&self, account_block: &'a [u8]) -> Option<&'a AccountHash> {
-        self.flags()
-            .has_account_hash()
-            .then(|| {
-                let offset = self.optional_fields_offset(account_block)
-                    + AccountMetaOptionalFields::account_hash_offset(self.flags());
-                byte_block::read_pod::<AccountHash>(account_block, offset)
-            })
-            .flatten()
-    }
-
     /// Returns the offset of the optional fields based on the specified account
     /// block.
     fn optional_fields_offset(&self, account_block: &[u8]) -> usize {
@@ -272,6 +260,81 @@ impl TieredAccountMeta for HotAccountMeta {
     /// account block.
     fn account_data<'a>(&self, account_block: &'a [u8]) -> &'a [u8] {
         &account_block[..self.account_data_size(account_block)]
+    }
+}
+
+/// The struct that offers read APIs for accessing a hot account.
+#[derive(PartialEq, Eq, Debug)]
+pub struct HotAccount<'accounts_file, M: TieredAccountMeta> {
+    /// TieredAccountMeta
+    pub meta: &'accounts_file M,
+    /// The address of the account
+    pub address: &'accounts_file Pubkey,
+    /// The address of the account owner
+    pub owner: &'accounts_file Pubkey,
+    /// The index for accessing the account inside its belonging AccountsFile
+    pub index: IndexOffset,
+    /// The account block that contains this account.  Note that this account
+    /// block may be shared with other accounts.
+    pub account_block: &'accounts_file [u8],
+}
+
+impl<'accounts_file, M: TieredAccountMeta> HotAccount<'accounts_file, M> {
+    /// Returns the address of this account.
+    pub fn address(&self) -> &'accounts_file Pubkey {
+        self.address
+    }
+
+    /// Returns the index to this account in its AccountsFile.
+    pub fn index(&self) -> IndexOffset {
+        self.index
+    }
+
+    /// Returns the data associated to this account.
+    pub fn data(&self) -> &'accounts_file [u8] {
+        self.meta.account_data(self.account_block)
+    }
+}
+
+impl<'accounts_file, M: TieredAccountMeta> ReadableAccount for HotAccount<'accounts_file, M> {
+    /// Returns the balance of the lamports of this account.
+    fn lamports(&self) -> u64 {
+        self.meta.lamports()
+    }
+
+    /// Returns the address of the owner of this account.
+    fn owner(&self) -> &'accounts_file Pubkey {
+        self.owner
+    }
+
+    /// Returns true if the data associated to this account is executable.
+    fn executable(&self) -> bool {
+        self.meta.flags().executable()
+    }
+
+    /// Returns the epoch that this account will next owe rent by parsing
+    /// the specified account block.  RENT_EXEMPT_RENT_EPOCH will be returned
+    /// if the account is rent-exempt.
+    ///
+    /// For a zero-lamport account, Epoch::default() will be returned to
+    /// default states of an AccountSharedData.
+    fn rent_epoch(&self) -> Epoch {
+        self.meta
+            .rent_epoch(self.account_block)
+            .unwrap_or(if self.lamports() != 0 {
+                RENT_EXEMPT_RENT_EPOCH
+            } else {
+                // While there is no valid-values for any fields of a zero
+                // lamport account, here we return Epoch::default() to
+                // match the default states of AccountSharedData.  Otherwise,
+                // a hash mismatch will occur.
+                Epoch::default()
+            })
+    }
+
+    /// Returns the data associated to this account.
+    fn data(&self) -> &'accounts_file [u8] {
+        self.data()
     }
 }
 
@@ -435,7 +498,7 @@ impl HotStorageReader {
     pub fn get_account(
         &self,
         index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, usize)>> {
+    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, IndexOffset)>> {
         if index_offset.0 >= self.footer.account_entry_count {
             return Ok(None);
         }
@@ -448,15 +511,33 @@ impl HotStorageReader {
         let account_block = self.get_account_block(account_offset, index_offset)?;
 
         Ok(Some((
-            StoredAccountMeta::Hot(TieredReadableAccount {
+            StoredAccountMeta::Hot(HotAccount {
                 meta,
                 address,
                 owner,
-                index: index_offset.0 as usize,
+                index: index_offset,
                 account_block,
             }),
-            index_offset.0.saturating_add(1) as usize,
+            IndexOffset(index_offset.0.saturating_add(1)),
         )))
+    }
+
+    /// Return a vector of account metadata for each account, starting from
+    /// `index_offset`
+    pub fn accounts(
+        &self,
+        mut index_offset: IndexOffset,
+    ) -> TieredStorageResult<Vec<StoredAccountMeta>> {
+        let mut accounts = Vec::with_capacity(
+            self.footer
+                .account_entry_count
+                .saturating_sub(index_offset.0) as usize,
+        );
+        while let Some((account, next)) = self.get_account(index_offset)? {
+            accounts.push(account);
+            index_offset = next;
+        }
+        Ok(accounts)
     }
 }
 
@@ -467,9 +548,6 @@ fn write_optional_fields(
     let mut size = 0;
     if let Some(rent_epoch) = opt_fields.rent_epoch {
         size += file.write_pod(&rent_epoch)?;
-    }
-    if let Some(hash) = opt_fields.account_hash {
-        size += file.write_pod(hash)?;
     }
 
     debug_assert_eq!(size, opt_fields.size());
@@ -500,12 +578,8 @@ impl HotStorageWriter {
         account_data: &[u8],
         executable: bool,
         rent_epoch: Option<Epoch>,
-        account_hash: Option<&AccountHash>,
     ) -> TieredStorageResult<usize> {
-        let optional_fields = AccountMetaOptionalFields {
-            rent_epoch,
-            account_hash,
-        };
+        let optional_fields = AccountMetaOptionalFields { rent_epoch };
 
         let mut flags = AccountMetaFlags::new_from(&optional_fields);
         flags.set_executable(executable);
@@ -543,7 +617,7 @@ impl HotStorageWriter {
         &self,
         accounts: &StorableAccountsWithHashesAndWriteVersions<'a, 'b, T, U, V>,
         skip: usize,
-    ) -> TieredStorageResult<()> {
+    ) -> TieredStorageResult<Vec<StoredAccountInfo>> {
         let mut footer = new_hot_footer();
         let mut index = vec![];
         let mut owners_table = OwnersTable::default();
@@ -551,8 +625,10 @@ impl HotStorageWriter {
 
         // writing accounts blocks
         let len = accounts.accounts.len();
+        let total_input_accounts = len - skip;
+        let mut stored_infos = Vec::with_capacity(total_input_accounts);
         for i in skip..len {
-            let (account, address, account_hash, _write_version) = accounts.get(i);
+            let (account, address, _account_hash, _write_version) = accounts.get(i);
             let index_entry = AccountIndexWriterEntry {
                 address,
                 offset: HotAccountOffset::new(cursor)?,
@@ -560,7 +636,7 @@ impl HotStorageWriter {
 
             // Obtain necessary fields from the account, or default fields
             // for a zero-lamport account in the None case.
-            let (lamports, owner, data, executable, rent_epoch, account_hash) = account
+            let (lamports, owner, data, executable, rent_epoch) = account
                 .map(|acc| {
                     (
                         acc.lamports(),
@@ -569,22 +645,31 @@ impl HotStorageWriter {
                         acc.executable(),
                         // only persist rent_epoch for those rent-paying accounts
                         (acc.rent_epoch() != RENT_EXEMPT_RENT_EPOCH).then_some(acc.rent_epoch()),
-                        Some(account_hash),
                     )
                 })
-                .unwrap_or((0, &OWNER_NO_OWNER, &[], false, None, None));
+                .unwrap_or((0, &OWNER_NO_OWNER, &[], false, None));
             let owner_offset = owners_table.insert(owner);
-            cursor += self.write_account(
-                lamports,
-                owner_offset,
-                data,
-                executable,
-                rent_epoch,
-                account_hash,
-            )?;
+            let stored_size =
+                self.write_account(lamports, owner_offset, data, executable, rent_epoch)?;
+            cursor += stored_size;
+
+            stored_infos.push(StoredAccountInfo {
+                // Here we pass the IndexOffset as the get_account() API
+                // takes IndexOffset.  Given the account address is also
+                // maintained outside the TieredStorage, a potential optimization
+                // is to store AccountOffset instead, which can further save
+                // one jump from the index block to the accounts block.
+                offset: index.len(),
+                // Here we only include the stored size that the account directly
+                // contribute (i.e., account entry + index entry that include the
+                // account meta, data, optional fields, its address, and AccountOffset).
+                // Storage size from those shared blocks like footer and owners block
+                // is not included.
+                size: stored_size + footer.index_block_format.entry_size::<HotAccountOffset>(),
+            });
             index.push(index_entry);
         }
-        footer.account_entry_count = (len - skip) as u32;
+        footer.account_entry_count = total_input_accounts as u32;
 
         // writing index block
         // expect the offset of each block aligned.
@@ -611,7 +696,7 @@ impl HotStorageWriter {
 
         footer.write_footer_block(&self.storage)?;
 
-        Ok(())
+        Ok(stored_infos)
     }
 }
 
@@ -619,26 +704,21 @@ impl HotStorageWriter {
 pub mod tests {
     use {
         super::*,
-        crate::{
-            account_storage::meta::StoredMeta,
-            tiered_storage::{
-                byte_block::ByteBlockWriter,
-                file::TieredStorageFile,
-                footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
-                hot::{HotAccountMeta, HotStorageReader},
-                index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
-                meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
-                owners::{OwnersBlockFormat, OwnersTable},
-            },
+        crate::tiered_storage::{
+            byte_block::ByteBlockWriter,
+            file::TieredStorageFile,
+            footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
+            hot::{HotAccountMeta, HotStorageReader},
+            index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
+            meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
+            owners::{OwnersBlockFormat, OwnersTable},
+            test_utils::{create_test_account, verify_test_account},
         },
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{seq::SliceRandom, Rng},
         solana_sdk::{
-            account::{Account, AccountSharedData, ReadableAccount},
-            hash::Hash,
-            pubkey::Pubkey,
-            slot_history::Slot,
+            account::ReadableAccount, hash::Hash, pubkey::Pubkey, slot_history::Slot,
             stake_history::Epoch,
         },
         tempfile::TempDir,
@@ -722,11 +802,9 @@ pub mod tests {
         const TEST_PADDING: u8 = 5;
         const TEST_OWNER_OFFSET: OwnerOffset = OwnerOffset(0x1fef_1234);
         const TEST_RENT_EPOCH: Epoch = 7;
-        let acc_hash = AccountHash(Hash::new_unique());
 
         let optional_fields = AccountMetaOptionalFields {
             rent_epoch: Some(TEST_RENT_EPOCH),
-            account_hash: Some(&acc_hash),
         };
 
         let flags = AccountMetaFlags::new_from(&optional_fields);
@@ -746,7 +824,6 @@ pub mod tests {
     fn test_hot_account_meta_full() {
         let account_data = [11u8; 83];
         let padding = [0u8; 5];
-        let acc_hash = AccountHash(Hash::new_unique());
 
         const TEST_LAMPORT: u64 = 2314232137;
         const OWNER_OFFSET: u32 = 0x1fef_1234;
@@ -754,7 +831,6 @@ pub mod tests {
 
         let optional_fields = AccountMetaOptionalFields {
             rent_epoch: Some(TEST_RENT_EPOCH),
-            account_hash: Some(&acc_hash),
         };
 
         let flags = AccountMetaFlags::new_from(&optional_fields);
@@ -777,7 +853,6 @@ pub mod tests {
         let meta = byte_block::read_pod::<HotAccountMeta>(&buffer, 0).unwrap();
         assert_eq!(expected_meta, *meta);
         assert!(meta.flags().has_rent_epoch());
-        assert!(meta.flags().has_account_hash());
         assert_eq!(meta.account_data_padding() as usize, padding.len());
 
         let account_block = &buffer[std::mem::size_of::<HotAccountMeta>()..];
@@ -790,10 +865,6 @@ pub mod tests {
         assert_eq!(account_data.len(), meta.account_data_size(account_block));
         assert_eq!(account_data, meta.account_data(account_block));
         assert_eq!(meta.rent_epoch(account_block), optional_fields.rent_epoch);
-        assert_eq!(
-            (meta.account_hash(account_block).unwrap()),
-            optional_fields.account_hash.unwrap()
-        );
     }
 
     #[test]
@@ -1226,7 +1297,7 @@ pub mod tests {
             );
             assert_eq!(*stored_meta.pubkey(), addresses[i]);
 
-            assert_eq!(i + 1, next);
+            assert_eq!(i + 1, next.0 as usize);
         }
         // Make sure it returns None on NUM_ACCOUNTS to allow termination on
         // while loop in actual accounts-db read case.
@@ -1248,36 +1319,6 @@ pub mod tests {
         // Expect the second call on the same path returns Err, as the
         // HotStorageWriter only writes once.
         assert_matches!(HotStorageWriter::new(&path), Err(_));
-    }
-
-    /// Create a test account based on the specified seed.
-    /// The created test account might have default rent_epoch
-    /// and write_version.
-    ///
-    /// When the seed is zero, then a zero-lamport test account will be
-    /// created.
-    fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) {
-        let data_byte = seed as u8;
-        let owner_byte = u8::MAX - data_byte;
-        let account = Account {
-            lamports: seed,
-            data: std::iter::repeat(data_byte).take(seed as usize).collect(),
-            // this will allow some test account sharing the same owner.
-            owner: [owner_byte; 32].into(),
-            executable: seed % 2 > 0,
-            rent_epoch: if seed % 3 > 0 {
-                seed
-            } else {
-                RENT_EXEMPT_RENT_EPOCH
-            },
-        };
-
-        let stored_meta = StoredMeta {
-            write_version_obsolete: u64::MAX,
-            pubkey: Pubkey::new_unique(),
-            data_len: seed,
-        };
-        (stored_meta, AccountSharedData::from(account))
     }
 
     #[test]
@@ -1316,11 +1357,10 @@ pub mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_write_account_and_index_blocks");
-
-        {
+        let stored_infos = {
             let writer = HotStorageWriter::new(&path).unwrap();
-            writer.write_accounts(&storable_accounts, 0).unwrap();
-        }
+            writer.write_accounts(&storable_accounts, 0).unwrap()
+        };
 
         let hot_storage = HotStorageReader::new_from_path(&path).unwrap();
 
@@ -1332,32 +1372,10 @@ pub mod tests {
                 .unwrap()
                 .unwrap();
 
-            let (account, address, account_hash, _write_version) = storable_accounts.get(i);
-            let (lamports, owner, data, executable, account_hash) = account
-                .map(|acc| {
-                    (
-                        acc.lamports(),
-                        acc.owner(),
-                        acc.data(),
-                        acc.executable(),
-                        // only persist rent_epoch for those rent-paying accounts
-                        Some(*account_hash),
-                    )
-                })
-                .unwrap_or((0, &OWNER_NO_OWNER, &[], false, None));
+            let (account, address, _account_hash, _write_version) = storable_accounts.get(i);
+            verify_test_account(&stored_meta, account, address);
 
-            assert_eq!(stored_meta.lamports(), lamports);
-            assert_eq!(stored_meta.data().len(), data.len());
-            assert_eq!(stored_meta.data(), data);
-            assert_eq!(stored_meta.executable(), executable);
-            assert_eq!(stored_meta.owner(), owner);
-            assert_eq!(stored_meta.pubkey(), address);
-            assert_eq!(
-                *stored_meta.hash(),
-                account_hash.unwrap_or(AccountHash(Hash::default()))
-            );
-
-            assert_eq!(i + 1, next);
+            assert_eq!(i + 1, next.0 as usize);
         }
         // Make sure it returns None on NUM_ACCOUNTS to allow termination on
         // while loop in actual accounts-db read case.
@@ -1365,5 +1383,32 @@ pub mod tests {
             hot_storage.get_account(IndexOffset(num_accounts as u32)),
             Ok(None)
         );
+
+        for stored_info in stored_infos {
+            let (stored_meta, _) = hot_storage
+                .get_account(IndexOffset(stored_info.offset as u32))
+                .unwrap()
+                .unwrap();
+
+            let (account, address, _account_hash, _write_version) =
+                storable_accounts.get(stored_info.offset);
+            verify_test_account(&stored_meta, account, address);
+        }
+
+        // verify get_accounts
+        let accounts = hot_storage.accounts(IndexOffset(0)).unwrap();
+
+        // first, we verify everything
+        for (i, stored_meta) in accounts.iter().enumerate() {
+            let (account, address, _account_hash, _write_version) = storable_accounts.get(i);
+            verify_test_account(stored_meta, account, address);
+        }
+
+        // second, we verify various initial position
+        let total_stored_accounts = accounts.len();
+        for i in 0..total_stored_accounts {
+            let partial_accounts = hot_storage.accounts(IndexOffset(i as u32)).unwrap();
+            assert_eq!(&partial_accounts, &accounts[i..]);
+        }
     }
 }

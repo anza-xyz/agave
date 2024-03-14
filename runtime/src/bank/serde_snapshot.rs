@@ -7,7 +7,6 @@ mod tests {
                 StartBlockHeightAndRewards,
             },
             genesis_utils::activate_all_features,
-            runtime_config::RuntimeConfig,
             serde_snapshot::{
                 reserialize_bank_with_new_accounts_hash, BankIncrementalSnapshotPersistence,
                 SerdeAccountsHash, SerdeIncrementalAccountsHash, SerdeStyle, SnapshotStreams,
@@ -32,6 +31,7 @@ mod tests {
             epoch_accounts_hash::EpochAccountsHash,
             stake_rewards::StakeReward,
         },
+        solana_program_runtime::runtime_config::RuntimeConfig,
         solana_sdk::{
             epoch_schedule::EpochSchedule,
             genesis_config::create_genesis_config,
@@ -605,7 +605,7 @@ mod tests {
 
         // This some what long test harness is required to freeze the ABI of
         // Bank's serialization due to versioned nature
-        #[frozen_abi(digest = "12WNiuA7qeLU8JFweQszX5sCnCj1fYnYV4i9DeACqhQD")]
+        #[frozen_abi(digest = "7BH2s2Y1yKy396c3ixC4TTyvvpkyenAvWDSiZvY5yb7P")]
         #[derive(Serialize, AbiExample)]
         pub struct BankAbiTestWrapperNewer {
             #[serde(serialize_with = "wrapper_newer")]

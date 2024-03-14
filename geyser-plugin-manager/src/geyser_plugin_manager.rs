@@ -1,13 +1,13 @@
 use {
+    agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
-    jsonrpc_server_utils::tokio::sync::oneshot::Sender as OneShotSender,
     libloading::Library,
     log::*,
-    solana_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
     std::{
         ops::{Deref, DerefMut},
         path::Path,
     },
+    tokio::sync::oneshot::Sender as OneShotSender,
 };
 
 #[derive(Debug)]
@@ -304,10 +304,10 @@ pub enum GeyserPluginManagerRequest {
 
 #[derive(thiserror::Error, Debug)]
 pub enum GeyserPluginManagerError {
-    #[error("Cannot open the the plugin config file")]
+    #[error("Cannot open the plugin config file")]
     CannotOpenConfigFile(String),
 
-    #[error("Cannot read the the plugin config file")]
+    #[error("Cannot read the plugin config file")]
     CannotReadConfigFile(String),
 
     #[error("The config file is not in a valid Json format")]
@@ -442,8 +442,8 @@ mod tests {
         crate::geyser_plugin_manager::{
             GeyserPluginManager, LoadedGeyserPlugin, TESTPLUGIN2_CONFIG, TESTPLUGIN_CONFIG,
         },
+        agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         libloading::Library,
-        solana_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin,
         std::sync::{Arc, RwLock},
     };
 
