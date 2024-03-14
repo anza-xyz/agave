@@ -951,7 +951,7 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
     signatures_sender: Option<SignatureBatchSender>,
 ) {
     let mut last_sent_time = timestamp();
-    loop {
+    'thread_loop: loop {
         if thread_batch_sleep_ms > 0 {
             sleep(Duration::from_millis(thread_batch_sleep_ms as u64));
         }
@@ -995,16 +995,13 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
             }
 
             if let Some(signatures_sender) = &signatures_sender {
-                if signatures_sender
-                    .send(TransactionInfoBatch {
-                        signatures,
-                        sent_at: Utc::now(),
-                        compute_unit_prices,
-                    })
-                    .is_err()
-                {
-                    error!("Receiver has been dropped, stop sending transactions.");
-                    break;
+                if let Err(error) = signatures_sender.send(TransactionInfoBatch {
+                    signatures,
+                    sent_at: Utc::now(),
+                    compute_unit_prices,
+                }) {
+                    error!("Receiver has been dropped with error `{error}`, stop sending transactions.");
+                    break 'thread_loop;
                 }
             }
 
