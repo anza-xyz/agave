@@ -1454,11 +1454,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Maximum number of bytes written to the program log before truncation"),
         )
         .arg(
-            Arg::with_name("replay_slots_concurrently")
-                .long("replay-slots-concurrently")
-                .help("Allow concurrent replay of slots on different forks"),
-        )
-        .arg(
             Arg::with_name("banking_trace_dir_byte_limit")
                 // expose friendly alternative name to cli than internal
                 // implementation-oriented one
@@ -2061,6 +2056,13 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .long("no-rocksdb-compaction")
         .takes_value(false)
         .help("Disable manual compaction of the ledger database"));
+    add_arg!(
+        Arg::with_name("replay_slots_concurrently")
+            .long("replay-slots-concurrently")
+            .help("Allow concurrent replay of slots on different forks")
+            .conflicts_with("replay_forks_threads"),
+        replaced_by: "replay_forks_threads",
+        usage_warning: "Equivalent behavior to this flag would be --replay-forks-threads 4");
     add_arg!(Arg::with_name("rocksdb_compaction_interval")
         .long("rocksdb-compaction-interval-slots")
         .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
