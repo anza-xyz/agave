@@ -417,15 +417,10 @@ pub fn split(
         StakeStateV2::Stake(meta, mut stake, stake_flags) => {
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
             let minimum_delegation = crate::get_minimum_delegation(&invoke_context.feature_set);
-            let is_active = if invoke_context
-                .feature_set
-                .is_active(&feature_set::require_rent_exempt_split_destination::id())
-            {
+            let is_active = {
                 let clock = invoke_context.get_sysvar_cache().get_clock()?;
                 let status = get_stake_status(invoke_context, &stake, &clock)?;
                 status.effective > 0
-            } else {
-                false
             };
             let validated_split_info = validate_split_amount(
                 invoke_context,
@@ -994,10 +989,7 @@ fn validate_split_amount(
     // these criteria must be met:
     // 1. the destination account must be prefunded with at least the rent-exempt reserve, or
     // 2. the split must consume 100% of the source
-    if invoke_context
-        .feature_set
-        .is_active(&feature_set::require_rent_exempt_split_destination::id())
-        && source_is_active
+    if source_is_active
         && source_remaining_balance != 0
         && destination_lamports < destination_rent_exempt_reserve
     {
