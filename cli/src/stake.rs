@@ -1995,7 +1995,7 @@ pub fn process_split_stake(
                 }
             } else {
                 return Err(CliError::BadParameter(format!(
-                    "Account {split_stake_account_address} already exists and is not a stake account"
+                    "Account {split_stake_account_address} already exists and cannot be used to split stake"
                 ))
                 .into());
             }
