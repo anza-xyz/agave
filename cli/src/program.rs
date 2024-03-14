@@ -2308,7 +2308,8 @@ fn do_process_program_write_and_deploy(
 
     // Create and add write messages
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = if loader_id == &bpf_loader_upgradeable::id() {
+        let mut ixs: Vec<Instruction> = Vec::new();
+        let ix_to_add = if loader_id == &bpf_loader_upgradeable::id() {
             bpf_loader_upgradeable::write(
                 buffer_pubkey,
                 &buffer_authority_signer.pubkey(),
@@ -2318,7 +2319,16 @@ fn do_process_program_write_and_deploy(
         } else {
             loader_instruction::write(buffer_pubkey, loader_id, offset, bytes)
         };
-        Message::new_with_blockhash(&[instruction], Some(&fee_payer_signer.pubkey()), &blockhash)
+        if let Some(compute_unit_price) = compute_unit_price {
+            ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                3 as u32 * 200_000u32,
+            ));
+            ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+                0u64.mul((10 as u64).pow(6)),
+            ));
+        }
+        ixs.push(ix_to_add);
+        Message::new_with_blockhash(&ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
     };
 
     let mut write_messages = vec![];
@@ -2329,27 +2339,42 @@ fn do_process_program_write_and_deploy(
 
     // Create and add final message
     let final_message = if let Some(program_signers) = program_signers {
+        let mut ixs: Vec<Instruction> = Vec::new();
+
         let message = if loader_id == &bpf_loader_upgradeable::id() {
-            Message::new_with_blockhash(
-                &bpf_loader_upgradeable::deploy_with_max_program_len(
-                    &fee_payer_signer.pubkey(),
-                    &program_signers[0].pubkey(),
-                    buffer_pubkey,
-                    &program_signers[1].pubkey(),
-                    rpc_client.get_minimum_balance_for_rent_exemption(
-                        UpgradeableLoaderState::size_of_program(),
-                    )?,
-                    program_data_max_len,
+            let ixs_to_add = bpf_loader_upgradeable::deploy_with_max_program_len(
+                &fee_payer_signer.pubkey(),
+                &program_signers[0].pubkey(),
+                buffer_pubkey,
+                &program_signers[1].pubkey(),
+                rpc_client.get_minimum_balance_for_rent_exemption(
+                    UpgradeableLoaderState::size_of_program(),
                 )?,
-                Some(&fee_payer_signer.pubkey()),
-                &blockhash,
-            )
+                program_data_max_len,
+            )?;
+
+            if let Some(compute_unit_price) = compute_unit_price {
+                ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                    (ixs_to_add.len() + 2) as u32 * 200_000u32,
+                ));
+                ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+                    compute_unit_price.mul((10 as u64).pow(6)),
+                ));
+            }
+            ixs.extend(ixs_to_add);
+            Message::new_with_blockhash(&ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
         } else {
-            Message::new_with_blockhash(
-                &[loader_instruction::finalize(buffer_pubkey, loader_id)],
-                Some(&fee_payer_signer.pubkey()),
-                &blockhash,
-            )
+            if let Some(compute_unit_price) = compute_unit_price {
+                ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                    3u32 * 200_000u32,
+                ));
+                ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+                    compute_unit_price.mul((10 as u64).pow(6)),
+                ));
+            }
+
+            ixs.push(loader_instruction::finalize(buffer_pubkey, loader_id));
+            Message::new_with_blockhash(&ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
         };
         Some(message)
     } else {
