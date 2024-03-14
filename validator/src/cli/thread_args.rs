@@ -2,6 +2,7 @@
 
 use {
     clap::Arg, solana_clap_utils::input_validators::is_within_range,
+    solana_core::replay_stage::MAX_CONCURRENT_FORKS_TO_REPLAY,
     solana_rayon_threadlimit::get_max_thread_count,
 };
 
@@ -29,7 +30,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
             .takes_value(true)
             .value_name("NUMBER")
             .default_value(&defaults.replay_forks_threads)
-            .validator(|num| is_within_range(num, 1..=get_max_thread_count()))
+            .validator(|num| is_within_range(num, 1..=MAX_CONCURRENT_FORKS_TO_REPLAY))
             .help("Number of threads to use for replay of blocks on different forks"),
         Arg::with_name("replay_transactions_threads")
             .long("replay-transactions-threads")
