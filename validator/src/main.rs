@@ -1446,11 +1446,20 @@ pub fn main() {
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
-        replay_slots_concurrently: matches.is_present("replay_slots_concurrently"),
         use_snapshot_archives_at_startup: value_t_or_exit!(
             matches,
             use_snapshot_archives_at_startup::cli::NAME,
             UseSnapshotArchivesAtStartup
+        ),
+        replay_forks_threads: if matches.is_present("replay_slots_concurrently") {
+            NonZeroUsize::new(4).expect("4 is non-zero")
+        } else {
+            value_t_or_exit!(matches, "replay_forks_threads", NonZeroUsize)
+        },
+        replay_transactions_threads: value_t_or_exit!(
+            matches,
+            "replay_transactions_threads",
+            NonZeroUsize
         ),
         ..ValidatorConfig::default()
     };

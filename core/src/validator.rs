@@ -123,6 +123,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -260,7 +261,6 @@ pub struct ValidatorConfig {
     pub wait_to_vote_slot: Option<Slot>,
     pub ledger_column_options: LedgerColumnOptions,
     pub runtime_config: RuntimeConfig,
-    pub replay_slots_concurrently: bool,
     pub banking_trace_dir_byte_limit: banking_trace::DirByteLimit,
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
@@ -268,6 +268,8 @@ pub struct ValidatorConfig {
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub wen_restart_proto_path: Option<PathBuf>,
     pub unified_scheduler_handler_threads: Option<usize>,
+    pub replay_forks_threads: NonZeroUsize,
+    pub replay_transactions_threads: NonZeroUsize,
 }
 
 impl Default for ValidatorConfig {
@@ -328,7 +330,6 @@ impl Default for ValidatorConfig {
             wait_to_vote_slot: None,
             ledger_column_options: LedgerColumnOptions::default(),
             runtime_config: RuntimeConfig::default(),
-            replay_slots_concurrently: false,
             banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
@@ -336,6 +337,8 @@ impl Default for ValidatorConfig {
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
             unified_scheduler_handler_threads: None,
+            replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
         }
     }
 }
@@ -346,6 +349,8 @@ impl ValidatorConfig {
             enforce_ulimit_nofile: false,
             rpc_config: JsonRpcConfig::default_for_test(),
             block_production_method: BlockProductionMethod::ThreadLocalMultiIterator,
+            replay_forks_threads: NonZeroUsize::new(8).expect("8 is non-zero"),
+            replay_transactions_threads: NonZeroUsize::new(8).expect("8 is non-zero"),
             ..Self::default()
         }
     }
@@ -1305,7 +1310,8 @@ impl Validator {
                 repair_validators: config.repair_validators.clone(),
                 repair_whitelist: config.repair_whitelist.clone(),
                 wait_for_vote_to_start_leader,
-                replay_slots_concurrently: config.replay_slots_concurrently,
+                replay_forks_threads: config.replay_forks_threads,
+                replay_transactions_threads: config.replay_transactions_threads,
             },
             &max_slots,
             block_metadata_notifier,

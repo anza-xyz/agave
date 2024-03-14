@@ -52,6 +52,9 @@ use {
     std::{path::PathBuf, str::FromStr},
 };
 
+mod thread_args;
+use thread_args::{thread_args, DefaultThreadArgs};
+
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 // The default minimal snapshot download speed (bytes/second)
@@ -1539,6 +1542,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ",
                 ),
         )
+        .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
         .subcommand(
@@ -2179,6 +2183,8 @@ pub struct DefaultArgs {
     pub banking_trace_dir_byte_limit: String,
 
     pub wen_restart_path: String,
+
+    pub thread_args: DefaultThreadArgs,
 }
 
 impl DefaultArgs {
@@ -2261,6 +2267,7 @@ impl DefaultArgs {
             wait_for_restart_window_max_delinquent_stake: "5".to_string(),
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             wen_restart_path: "wen_restart_progress.proto".to_string(),
+            thread_args: DefaultThreadArgs::default(),
         }
     }
 }
