@@ -1986,12 +1986,13 @@ pub fn process_split_stake(
                     "Stake account {split_stake_account_address} already exists"
                 ))
                 .into());
-            } else if stake_account.owner == system_program::id() && !stake_account.data.is_empty()
-            {
-                return Err(CliError::BadParameter(format!(
+            } else if stake_account.owner == system_program::id() {
+                if !stake_account.data.is_empty() {
+                    return Err(CliError::BadParameter(format!(
                         "Account {split_stake_account_address} has data and cannot be used to split stake"
                     ))
                     .into());
+                }
             } else {
                 return Err(CliError::BadParameter(format!(
                     "Account {split_stake_account_address} already exists and is not a stake account"
