@@ -216,6 +216,12 @@ impl From<[u8; AE_KEY_LEN]> for AeKey {
     }
 }
 
+impl From<AeKey> for [u8; AE_KEY_LEN] {
+    fn from(value: AeKey) -> Self {
+        value.0
+    }
+}
+
 impl TryFrom<&[u8]> for AeKey {
     type Error = AuthenticatedEncryptionError;
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -319,10 +325,24 @@ mod tests {
     }
 
     #[test]
-    fn test_aes_key_from_to_bytes() {
+    fn test_aes_key_from() {
         let key = AeKey::from_seed(&vec![0; 32]).unwrap();
-        let key_bytes = key.to_bytes();
+        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&vec![0; 32]).unwrap().into();
 
-        assert_eq!(key, AeKey::from_bytes(&key_bytes).unwrap());
+        assert_eq!(key, AeKey::from(key_bytes));
+    }
+
+    #[test]
+    fn test_aes_key_try_from() {
+        let key = AeKey::from_seed(&vec![0; 32]).unwrap();
+        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&vec![0; 32]).unwrap().into();
+
+        assert_eq!(key, AeKey::try_from(key_bytes.as_slice()).unwrap());
+    }
+
+    #[test]
+    fn test_aes_key_try_from_error() {
+        let too_many_bytes = vec![0_u8; 32];
+        assert!(AeKey::try_from(too_many_bytes.as_slice()).is_err());
     }
 }
