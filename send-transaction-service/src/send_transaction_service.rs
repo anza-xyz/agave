@@ -476,16 +476,20 @@ impl SendTransactionService {
                     );
                     let last_sent_time = Instant::now();
                     {
+                        // drop transactions with 0 max retries
+                        let transactions = transactions
+                            .drain()
+                            .filter(|(_signature, transaction_info)| {
+                                let max_retries = transaction_info.get_max_retries(&config);
+                                max_retries != Some(0)
+                            })
+                            .collect::<Vec<_>>();
+
                         // take a lock of retry_transactions and move the batch to the retry set.
                         let mut retry_transactions = retry_transactions.lock().unwrap();
                         let transactions_to_retry = transactions.len();
                         let mut transactions_added_to_retry: usize = 0;
-                        for (signature, mut transaction_info) in transactions.drain() {
-                            let max_retries = transaction_info.get_max_retries(&config);
-                            if max_retries == Some(0) {
-                                continue;
-                            }
-
+                        for (signature, mut transaction_info) in transactions {
                             let retry_len = retry_transactions.len();
                             let entry = retry_transactions.entry(signature);
                             if let Entry::Vacant(_) = entry {
