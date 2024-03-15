@@ -1980,7 +1980,7 @@ pub fn process_split_stake(
     };
 
     let rent_exempt_reserve = if !sign_only {
-        let check_stake_account = |account: Account| -> Result<(), CliError> {
+        let check_stake_account = |account: Account| -> Result<u64, CliError> {
             match account.owner {
                 owner if owner == stake::program::id() => Err(CliError::BadParameter(format!(
                     "Stake account {split_stake_account_address} already exists"
@@ -1993,7 +1993,7 @@ pub fn process_split_stake(
                     } else {
                         // if `stake_account`'s owner is the system_program and its data is
                         // empty, `stake_account` is allowed to receive the stake split
-                        Ok(())
+                        Ok(account.lamports)
                     }
                 }
                 _ => Err(CliError::BadParameter(format!(
@@ -2001,14 +2001,17 @@ pub fn process_split_stake(
                 )))
             }
         };
-        if let Ok(stake_account) = rpc_client.get_account(&split_stake_account_address) {
-            check_stake_account(stake_account)?;
-        }
+        let current_balance =
+            if let Ok(stake_account) = rpc_client.get_account(&split_stake_account_address) {
+                check_stake_account(stake_account)?
+            } else {
+                0
+            };
 
         let minimum_balance =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
 
-        minimum_balance
+        minimum_balance.saturating_sub(current_balance)
     } else {
         rent_exempt_reserve
             .cloned()
