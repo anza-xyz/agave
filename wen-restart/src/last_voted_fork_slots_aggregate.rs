@@ -152,15 +152,6 @@ impl LastVotedForkSlotsAggregate {
         })
     }
 
-    pub(crate) fn get_aggregate_result(&self) -> LastVotedForkSlotsAggregateResult {
-        LastVotedForkSlotsAggregateResult {
-            slots_to_repair: self.slots_to_repair.iter().cloned().collect(),
-            active_percent: self.total_active_stake() as f64
-                / self.epoch_stakes.total_stake() as f64
-                * 100.0,
-        }
-    }
-
     pub(crate) fn get_final_result(self) -> LastVotedForkSlotsFinalResult {
         let total_active_stake = self.total_active_stake();
         LastVotedForkSlotsFinalResult {
