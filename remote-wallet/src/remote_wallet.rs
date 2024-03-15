@@ -291,7 +291,7 @@ impl RemoteWalletInfo {
     }
 
     pub fn get_pretty_path(&self) -> String {
-        format!("usb://{}/{:?}", self.manufacturer, self.pubkey,)
+        format!("usb://{}/{}", self.manufacturer, self.pubkey,)
     }
 
     pub(crate) fn matches(&self, other: &Self) -> bool {
