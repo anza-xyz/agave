@@ -4908,16 +4908,12 @@ impl Bank {
                     lamports_per_signature,
                 );
 
-                // In case of instruction error, even though no accounts
-                // were stored we still need to charge the payer the
-                // fee.
-                //
-                //...except nonce accounts, which already have their
-                // post-load, fee deducted, pre-execute account state
-                // stored
-                if execution_status.is_err() && !is_nonce {
-                    self.withdraw(tx.message().fee_payer(), fee)?;
-                }
+                self.check_execution_status_and_charge_fee(
+                    tx.message(),
+                    execution_status,
+                    is_nonce,
+                    fee,
+                )?;
 
                 fees += fee;
                 Ok(())
@@ -4959,22 +4955,15 @@ impl Bank {
                         .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
                 );
 
-                // In case of instruction error, even though no accounts
-                // were stored we still need to charge the payer the
-                // fee.
-                //
-                //...except nonce accounts, which already have their
-                // post-load, fee deducted, pre-execute account state
-                // stored
-                if execution_status.is_err() && !is_nonce {
-                    self.withdraw(
-                        tx.message().fee_payer(),
-                        fee_details.total_fee(
-                            self.feature_set
-                                .is_active(&remove_rounding_in_fee_calculation::id()),
-                        ),
-                    )?;
-                }
+                self.check_execution_status_and_charge_fee(
+                    message,
+                    execution_status,
+                    is_nonce,
+                    fee_details.total_fee(
+                        self.feature_set
+                            .is_active(&remove_rounding_in_fee_calculation::id()),
+                    ),
+                )?;
 
                 accumulated_fee_details.accumulate(&fee_details);
                 Ok(())
@@ -4986,6 +4975,27 @@ impl Bank {
             .unwrap()
             .accumulate(&accumulated_fee_details);
         results
+    }
+
+    fn check_execution_status_and_charge_fee(
+        &self,
+        message: &SanitizedMessage,
+        execution_status: &transaction::Result<()>,
+        is_nonce: bool,
+        fee: u64,
+    ) -> Result<()> {
+        // In case of instruction error, even though no accounts
+        // were stored we still need to charge the payer the
+        // fee.
+        //
+        //...except nonce accounts, which already have their
+        // post-load, fee deducted, pre-execute account state
+        // stored
+        if execution_status.is_err() && !is_nonce {
+            self.withdraw(message.fee_payer(), fee)?;
+        }
+
+        Ok(())
     }
 
     /// `committed_transactions_count` is the number of transactions out of `sanitized_txs`
