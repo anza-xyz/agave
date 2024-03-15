@@ -11,7 +11,8 @@ use {
     solana_core::validator::ValidatorConfig,
     solana_faucet::faucet::run_local_faucet,
     solana_local_cluster::{
-        local_cluster::{build_tpu_quic_client, ClusterConfig, LocalCluster},
+        cluster::Cluster,
+        local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::make_identical_validator_configs,
     },
     solana_rpc::rpc::JsonRpcConfig,
@@ -75,7 +76,7 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     cluster.transfer(&cluster.funding_keypair, &faucet_pubkey, 100_000_000);
 
-    let client = Arc::new(build_tpu_quic_client(&cluster).unwrap_or_else(|err| {
+    let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
         panic!("Could not create TpuClient with Quic Cache {err:?}");
     }));
 

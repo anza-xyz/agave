@@ -818,16 +818,15 @@ fn main() {
 pub mod test {
     use {
         super::*,
-        solana_client::tpu_client::TpuClient,
+        solana_client::tpu_client::QuicTpuClient,
         solana_core::validator::ValidatorConfig,
         solana_faucet::faucet::run_local_faucet,
         solana_gossip::contact_info::LegacyContactInfo,
         solana_local_cluster::{
             cluster::Cluster,
-            local_cluster::{build_tpu_quic_client, ClusterConfig, LocalCluster},
+            local_cluster::{ClusterConfig, LocalCluster},
             validator_configs::make_identical_validator_configs,
         },
-        solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
         solana_rpc::rpc::JsonRpcConfig,
         solana_sdk::timing::timestamp,
     };
@@ -837,9 +836,7 @@ pub mod test {
     // thin wrapper for the run_dos function
     // to avoid specifying everywhere generic parameters
     fn run_dos_no_client(nodes: &[ContactInfo], iterations: usize, params: DosClientParameters) {
-        run_dos::<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>(
-            nodes, iterations, None, params,
-        );
+        run_dos::<QuicTpuClient>(nodes, iterations, None, params);
     }
 
     #[test]
@@ -979,7 +976,7 @@ pub mod test {
             .unwrap();
         let nodes_slice = [node];
 
-        let client = Arc::new(build_tpu_quic_client(&cluster).unwrap_or_else(|err| {
+        let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
             panic!("Could not create TpuClient with Quic Cache {err:?}");
         }));
 
@@ -1113,7 +1110,7 @@ pub mod test {
             .unwrap();
         let nodes_slice = [node];
 
-        let client = Arc::new(build_tpu_quic_client(&cluster).unwrap_or_else(|err| {
+        let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
             panic!("Could not create TpuClient with Quic Cache {err:?}");
         }));
 
