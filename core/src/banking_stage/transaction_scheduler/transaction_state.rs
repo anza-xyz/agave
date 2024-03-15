@@ -47,6 +47,55 @@ impl TransactionState {
         }
     }
 
+    /*
+    /// Returns a reference to the priority details of the transaction.
+    pub(crate) fn transaction_priority_details(&self) -> &TransactionPriorityDetails {
+        match self {
+            Self::Unprocessed {
+                transaction_priority_details,
+                ..
+            } => transaction_priority_details,
+            Self::Pending {
+                transaction_priority_details,
+                ..
+            } => transaction_priority_details,
+        }
+    }
+
+    /// Returns a reference to the transaction cost of the transaction.
+    pub(crate) fn transaction_cost(&self) -> &TransactionCost {
+        match self {
+            Self::Unprocessed {
+                transaction_cost, ..
+            } => transaction_cost,
+            Self::Pending {
+                transaction_cost, ..
+            } => transaction_cost,
+        }
+    }
+
+    /// Returns the priority of the transaction.
+    pub(crate) fn priority(&self) -> u64 {
+        self.transaction_priority_details().priority
+    }
+
+    /// Returns whether or not the transaction has already been forwarded.
+    pub(crate) fn forwarded(&self) -> bool {
+        match self {
+            Self::Unprocessed { forwarded, .. } => *forwarded,
+            Self::Pending { forwarded, .. } => *forwarded,
+        }
+    }
+
+    /// Sets the transaction as forwarded.
+    pub(crate) fn set_forwarded(&mut self) {
+        match self {
+            Self::Unprocessed { forwarded, .. } => *forwarded = true,
+            Self::Pending { forwarded, .. } => *forwarded = true,
+        }
+    }
+    */
+
     /// Return the priority of the transaction.
     /// This is *not* the same as the `compute_unit_price` of the transaction.
     /// The priority is used to order transactions for processing.
