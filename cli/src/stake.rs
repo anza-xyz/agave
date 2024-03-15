@@ -2020,11 +2020,14 @@ pub fn process_split_stake(
 
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
-    let mut ixs = vec![system_instruction::transfer(
-        &fee_payer.pubkey(),
-        &split_stake_account_address,
-        rent_exempt_reserve,
-    )];
+    let mut ixs = vec![];
+    if rent_exempt_reserve > 0 {
+        ixs.push(system_instruction::transfer(
+            &fee_payer.pubkey(),
+            &split_stake_account_address,
+            rent_exempt_reserve,
+        ));
+    }
     if let Some(seed) = split_stake_account_seed {
         ixs.append(
             &mut stake_instruction::split_with_seed(
