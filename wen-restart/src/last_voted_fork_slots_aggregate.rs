@@ -41,7 +41,7 @@ impl LastVotedForkSlotsAggregate {
         active_peers.insert(*my_pubkey);
         let mut slots_stake_map = HashMap::new();
         for slot in last_voted_fork_slots {
-            if slot > &root_slot {
+            if slot >= &root_slot {
                 slots_stake_map.insert(*slot, sender_stake);
             }
         }
@@ -132,8 +132,7 @@ impl LastVotedForkSlotsAggregate {
         Some(record)
     }
 
-
-   pub(crate) fn active_percent(&self) -> f64 {
+    pub(crate) fn active_percent(&self) -> f64 {
         let total_stake = self.epoch_stakes.total_stake();
         let total_active_stake = self.active_peers.iter().fold(0, |sum: u64, pubkey| {
             sum.saturating_add(Self::validator_stake(&self.epoch_stakes, pubkey))

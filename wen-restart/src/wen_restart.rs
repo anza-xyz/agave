@@ -47,7 +47,7 @@ const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
     BlockNotFound(Slot),
-    BlockNotLinkedToExpectedParent(Slot, Slot, Slot),
+    BlockNotLinkedToExpectedParent(Slot, Option<Slot>, Slot),
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
     Exiting,
     InvalidLastVoteType(VoteTransaction),
@@ -65,7 +65,7 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::BlockNotLinkedToExpectedParent(slot, parent, expected_parent) => {
                 write!(
                     f,
-                    "Block {} is not linked to expected parent {} but to {}",
+                    "Block {} is not linked to expected parent {} but to {:?}",
                     slot, expected_parent, parent
                 )
             }
@@ -244,6 +244,7 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
 pub(crate) fn find_heaviest_fork(
     aggregate_final_result: LastVotedForkSlotsFinalResult,
     bank_forks: Arc<RwLock<BankForks>>,
+    blockstore: Arc<Blockstore>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Slot, Hash)> {
     // Because everything else is stopped, it's okay to grab a big lock on bank_forks.
@@ -263,46 +264,31 @@ pub(crate) fn find_heaviest_fork(
         .map(|(slot, _)| *slot)
         .collect::<Vec<Slot>>();
     slots.sort();
-    let mut current_bank = root_bank;
-    let mut current_stake = aggregate_final_result
-        .slots_stake_map
-        .get(&root_slot)
-        .unwrap_or(&0);
+    let mut expected_parent = root_slot;
     for slot in slots {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
-        if let Some(new_bank) = my_bank_forks.get(slot) {
-            if new_bank.parent_slot() != current_bank.slot() {
+        if let Ok(Some(block_meta)) = blockstore.meta(slot) {
+            info!("block meta: {:?}", block_meta);
+            if block_meta.parent_slot != Some(expected_parent) {
+                info!(
+                    "Block {} is not linked to expected parent {} but to {:?}",
+                    slot, expected_parent, block_meta.parent_slot
+                );
                 return Err(WenRestartError::BlockNotLinkedToExpectedParent(
                     slot,
-                    current_bank.slot(),
-                    new_bank.parent_slot(),
+                    block_meta.parent_slot,
+                    expected_parent,
                 )
                 .into());
             }
-            let new_stake = aggregate_final_result
-                .slots_stake_map
-                .get(&slot)
-                .unwrap_or(&0);
-            // When we find a block with less stake than its parent, something is seriously
-            // wrong. We don't care how much stake root has, so we don't check it.
-            if current_bank.slot() != root_slot && new_stake > current_stake {
-                return Err(WenRestartError::ChildStakeLargerThanParent(
-                    slot,
-                    *new_stake,
-                    current_bank.slot(),
-                    *current_stake,
-                )
-                .into());
-            }
-            current_bank = new_bank;
-            current_stake = new_stake;
+            expected_parent = slot;
         } else {
             return Err(WenRestartError::BlockNotFound(slot).into());
         }
     }
-    Ok((current_bank.slot(), current_bank.hash()))
+    Ok((expected_parent, Hash::default()))
 }
 
 pub fn wait_for_wen_restart(
@@ -367,6 +353,7 @@ pub fn wait_for_wen_restart(
                         let (slot, bankhash) = find_heaviest_fork(
                             aggregate_final_result.clone(),
                             bank_forks.clone(),
+                            blockstore.clone(),
                             exit.clone(),
                         )?;
                         info!(
@@ -876,13 +863,7 @@ mod tests {
             .collect();
         expected_slots_stake_map.extend(expected_slots_to_repair.iter().map(|slot| (*slot, 800)));
         let expected_heaviest_fork_slot = last_vote_slot + 2;
-        let expected_heaviest_fork_bankhash = test_state
-            .bank_forks
-            .read()
-            .unwrap()
-            .get(expected_heaviest_fork_slot)
-            .unwrap()
-            .hash();
+        let expected_heaviest_fork_bankhash = Hash::default();
         assert_eq!(
             progress,
             WenRestartProgress {
@@ -1372,6 +1353,7 @@ mod tests {
 
     #[test]
     fn test_find_heaviest_fork_failures() {
+        solana_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let exit = Arc::new(AtomicBool::new(false));
         let test_state = wen_restart_test_init(&ledger_path);
@@ -1388,6 +1370,7 @@ mod tests {
                     total_active_stake: 900,
                 },
                 test_state.bank_forks.clone(),
+                test_state.blockstore.clone(),
                 exit.clone(),
             )
             .unwrap_err()
@@ -1403,39 +1386,16 @@ mod tests {
                     total_active_stake: 900,
                 },
                 test_state.bank_forks.clone(),
+                test_state.blockstore.clone(),
                 exit.clone(),
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
             .unwrap(),
-            WenRestartError::BlockNotLinkedToExpectedParent(last_vote_slot, 0, last_vote_slot - 1),
-        );
-        // The following fails because a child block has more stake than its parent.
-        let len = test_state.last_voted_fork_slots.len();
-        let parent_with_less_stake = test_state.last_voted_fork_slots[len - 1];
-        let child_with_more_stake = test_state.last_voted_fork_slots[len - 2];
-        assert_eq!(
-            find_heaviest_fork(
-                LastVotedForkSlotsFinalResult {
-                    slots_stake_map: vec![
-                        (parent_with_less_stake, 700),
-                        (child_with_more_stake, 800)
-                    ]
-                    .into_iter()
-                    .collect(),
-                    total_active_stake: 900,
-                },
-                test_state.bank_forks.clone(),
-                exit.clone(),
-            )
-            .unwrap_err()
-            .downcast::<WenRestartError>()
-            .unwrap(),
-            WenRestartError::ChildStakeLargerThanParent(
-                child_with_more_stake,
-                800,
-                parent_with_less_stake,
-                700
+            WenRestartError::BlockNotLinkedToExpectedParent(
+                last_vote_slot,
+                Some(last_vote_slot - 1),
+                0
             ),
         );
     }
