@@ -985,8 +985,7 @@ fn validate_split_amount(
     let rent = invoke_context.get_sysvar_cache().get_rent()?;
     let destination_rent_exempt_reserve = rent.minimum_balance(destination_data_len);
 
-    // As of feature `require_rent_exempt_split_destination`, if the source is active stake, one of
-    // these criteria must be met:
+    // If the source is active stake, one of these criteria must be met:
     // 1. the destination account must be prefunded with at least the rent-exempt reserve, or
     // 2. the split must consume 100% of the source
     if source_is_active
