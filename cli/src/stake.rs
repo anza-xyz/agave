@@ -38,7 +38,7 @@ use {
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
-        account::from_account,
+        account::{from_account, Account},
         account_utils::StateMut,
         clock::{Clock, UnixTimestamp, SECONDS_PER_DAY},
         commitment_config::CommitmentConfig,
@@ -1980,27 +1980,29 @@ pub fn process_split_stake(
     };
 
     let rent_exempt_reserve = if !sign_only {
-        if let Ok(stake_account) = rpc_client.get_account(&split_stake_account_address) {
-            if stake_account.owner == stake::program::id() {
-                return Err(CliError::BadParameter(format!(
+        let check_stake_account = |account: Account| -> Result<(), CliError> {
+            if account.owner == stake::program::id() {
+                Err(CliError::BadParameter(format!(
                     "Stake account {split_stake_account_address} already exists"
-                ))
-                .into());
-            } else if stake_account.owner == system_program::id() {
-                if !stake_account.data.is_empty() {
-                    return Err(CliError::BadParameter(format!(
+                )))
+            } else if account.owner == system_program::id() {
+                if !account.data.is_empty() {
+                    Err(CliError::BadParameter(format!(
                         "Account {split_stake_account_address} has data and cannot be used to split stake"
-                    ))
-                    .into());
+                    )))
+                } else {
+                    // if `stake_account`'s owner is the system_program and its data is
+                    // empty, `stake_account` is allowed to receive the stake split
+                    Ok(())
                 }
-            // if `stake_account`'s owner is the system_program and its data is
-            // empty, `stake_account` is allowed to receive the stake split
             } else {
-                return Err(CliError::BadParameter(format!(
+                Err(CliError::BadParameter(format!(
                     "Account {split_stake_account_address} already exists and cannot be used to split stake"
-                ))
-                .into());
+                )))
             }
+        };
+        if let Ok(stake_account) = rpc_client.get_account(&split_stake_account_address) {
+            check_stake_account(stake_account)?;
         }
 
         let minimum_balance =
