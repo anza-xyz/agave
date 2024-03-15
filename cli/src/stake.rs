@@ -2006,13 +2006,6 @@ pub fn process_split_stake(
         let minimum_balance =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
 
-        if lamports < minimum_balance {
-            return Err(CliError::BadParameter(format!(
-                "need at least {minimum_balance} lamports for stake account to be rent exempt, \
-                 provided lamports: {lamports}"
-            ))
-            .into());
-        }
         minimum_balance
     } else {
         rent_exempt_reserve
