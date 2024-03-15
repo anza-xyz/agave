@@ -665,15 +665,13 @@ impl AsMut<[u8]> for Pubkey {
 
 impl fmt::Debug for Pubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let _ = bs58::encode(self.0).into_string().fmt(f);
-        write!(f, "")
+        bs58::encode(self.0).into_string().fmt(f)
     }
 }
 
 impl fmt::Display for Pubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let _ = bs58::encode(self.0).into_string().fmt(f);
-        write!(f, "")
+        bs58::encode(self.0).into_string().fmt(f)
     }
 }
 
