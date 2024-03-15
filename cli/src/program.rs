@@ -65,7 +65,6 @@ use {
         fs::File,
         io::{Read, Write},
         mem::size_of,
-        ops::Mul,
         path::PathBuf,
         rc::Rc,
         str::FromStr,
@@ -247,7 +246,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .help(
                                     "Set computeUnitPrice (tx priotity fee) to boost transactions resulting in faster execution speed \
-                                    [Note: priority fee is added in LAMPORTS, so enter priority fee in terms of LAMPORTS]",
+                                    [Note: priority fee is added in Micro Lamports, so enter priority fee in terms of Micro Lamports]",
                                 ),
                         )
                 )
@@ -2285,16 +2284,7 @@ fn do_process_program_write_and_deploy(
 
     let mut initial_instructions: Vec<Instruction> = Vec::new();
 
-    // Set compute limit and unit price
-    if let Some(compute_unit_price) = compute_unit_price {
-        let compute_units = (ixs.len() + 2) as u32 * 200_000u32;
-        initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(
-            compute_units,
-        ));
-        initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-            compute_unit_price.mul((10 as u64).pow(6)),
-        ));
-    }
+    set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price, ixs.len());
     initial_instructions.extend(ixs);
     let initial_message = if !initial_instructions.is_empty() {
         Some(Message::new_with_blockhash(
@@ -2308,7 +2298,7 @@ fn do_process_program_write_and_deploy(
 
     // Create and add write messages
     let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let mut ixs: Vec<Instruction> = Vec::new();
+        let mut write_ixs: Vec<Instruction> = Vec::new();
         let ix_to_add = if loader_id == &bpf_loader_upgradeable::id() {
             bpf_loader_upgradeable::write(
                 buffer_pubkey,
@@ -2319,16 +2309,10 @@ fn do_process_program_write_and_deploy(
         } else {
             loader_instruction::write(buffer_pubkey, loader_id, offset, bytes)
         };
-        if let Some(compute_unit_price) = compute_unit_price {
-            ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                3 as u32 * 200_000u32,
-            ));
-            ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
-                0u64.mul((10 as u64).pow(6)),
-            ));
-        }
-        ixs.push(ix_to_add);
-        Message::new_with_blockhash(&ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
+
+        set_compute_budget_ixs_if_needed(&mut write_ixs, &compute_unit_price, 1);
+        write_ixs.push(ix_to_add);
+        Message::new_with_blockhash(&write_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
     };
 
     let mut write_messages = vec![];
@@ -2339,7 +2323,7 @@ fn do_process_program_write_and_deploy(
 
     // Create and add final message
     let final_message = if let Some(program_signers) = program_signers {
-        let mut ixs: Vec<Instruction> = Vec::new();
+        let mut final_ixs: Vec<Instruction> = Vec::new();
 
         let message = if loader_id == &bpf_loader_upgradeable::id() {
             let ixs_to_add = bpf_loader_upgradeable::deploy_with_max_program_len(
@@ -2353,28 +2337,21 @@ fn do_process_program_write_and_deploy(
                 program_data_max_len,
             )?;
 
-            if let Some(compute_unit_price) = compute_unit_price {
-                ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                    (ixs_to_add.len() + 2) as u32 * 200_000u32,
-                ));
-                ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
-                    compute_unit_price.mul((10 as u64).pow(6)),
-                ));
-            }
-            ixs.extend(ixs_to_add);
-            Message::new_with_blockhash(&ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
+            set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price, ixs_to_add.len());
+            final_ixs.extend(ixs_to_add);
+            Message::new_with_blockhash(&final_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
         } else {
             if let Some(compute_unit_price) = compute_unit_price {
-                ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                final_ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
                     3u32 * 200_000u32,
                 ));
-                ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
-                    compute_unit_price.mul((10 as u64).pow(6)),
+                final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+                    compute_unit_price,
                 ));
             }
 
-            ixs.push(loader_instruction::finalize(buffer_pubkey, loader_id));
-            Message::new_with_blockhash(&ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
+            final_ixs.push(loader_instruction::finalize(buffer_pubkey, loader_id));
+            Message::new_with_blockhash(&final_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
         };
         Some(message)
     } else {
@@ -2436,96 +2413,91 @@ fn do_process_program_upgrade(
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
 
-    let (initial_message, write_messages, balance_needed) =
-        if let Some(buffer_signer) = buffer_signer {
-            // Check Buffer account to see if partial initialization has occurred
-            let (ixs, balance_needed) = if let Some(account) = rpc_client
-                .get_account_with_commitment(&buffer_signer.pubkey(), config.commitment)?
-                .value
-            {
-                complete_partial_program_init(
-                    &bpf_loader_upgradeable::id(),
-                    &fee_payer_signer.pubkey(),
-                    &buffer_signer.pubkey(),
-                    &account,
-                    UpgradeableLoaderState::size_of_buffer(program_len),
-                    min_rent_exempt_program_data_balance,
-                    true,
-                )?
-            } else {
-                (
-                    bpf_loader_upgradeable::create_buffer(
-                        &fee_payer_signer.pubkey(),
-                        buffer_pubkey,
-                        &upgrade_authority.pubkey(),
-                        min_rent_exempt_program_data_balance,
-                        program_len,
-                    )?,
-                    min_rent_exempt_program_data_balance,
-                )
-            };
-            let mut initial_instructions: Vec<Instruction> = Vec::new();
-
-            // Set compute limit and unit price
-            if let Some(compute_unit_price) = compute_unit_price {
-                let compute_units = (ixs.len() + 2) as u32 * 200_000u32;
-                initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                    compute_units,
-                ));
-                initial_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(
-                    compute_unit_price.mul((10 as u64).pow(6)),
-                ));
-            }
-            initial_instructions.extend(ixs);
-            let initial_message = if !initial_instructions.is_empty() {
-                Some(Message::new_with_blockhash(
-                    &initial_instructions,
-                    Some(&fee_payer_signer.pubkey()),
-                    &blockhash,
-                ))
-            } else {
-                None
-            };
-
-            let buffer_signer_pubkey = buffer_signer.pubkey();
-            let upgrade_authority_pubkey = upgrade_authority.pubkey();
-            let create_msg = |offset: u32, bytes: Vec<u8>| {
-                let instruction = bpf_loader_upgradeable::write(
-                    &buffer_signer_pubkey,
-                    &upgrade_authority_pubkey,
-                    offset,
-                    bytes,
-                );
-                Message::new_with_blockhash(
-                    &[instruction],
-                    Some(&fee_payer_signer.pubkey()),
-                    &blockhash,
-                )
-            };
-
-            // Create and add write messages
-            let mut write_messages = vec![];
-            let chunk_size = calculate_max_chunk_size(&create_msg);
-            for (chunk, i) in program_data.chunks(chunk_size).zip(0..) {
-                write_messages.push(create_msg((i * chunk_size) as u32, chunk.to_vec()));
-            }
-
-            (initial_message, write_messages, balance_needed)
+    let (initial_message, write_messages, balance_needed) = if let Some(buffer_signer) =
+        buffer_signer
+    {
+        // Check Buffer account to see if partial initialization has occurred
+        let (ixs, balance_needed) = if let Some(account) = rpc_client
+            .get_account_with_commitment(&buffer_signer.pubkey(), config.commitment)?
+            .value
+        {
+            complete_partial_program_init(
+                &bpf_loader_upgradeable::id(),
+                &fee_payer_signer.pubkey(),
+                &buffer_signer.pubkey(),
+                &account,
+                UpgradeableLoaderState::size_of_buffer(program_len),
+                min_rent_exempt_program_data_balance,
+                true,
+            )?
         } else {
-            (None, vec![], 0)
+            (
+                bpf_loader_upgradeable::create_buffer(
+                    &fee_payer_signer.pubkey(),
+                    buffer_pubkey,
+                    &upgrade_authority.pubkey(),
+                    min_rent_exempt_program_data_balance,
+                    program_len,
+                )?,
+                min_rent_exempt_program_data_balance,
+            )
+        };
+        let mut initial_instructions: Vec<Instruction> = Vec::new();
+
+        set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price, ixs.len());
+        initial_instructions.extend(ixs);
+        let initial_message = if !initial_instructions.is_empty() {
+            Some(Message::new_with_blockhash(
+                &initial_instructions,
+                Some(&fee_payer_signer.pubkey()),
+                &blockhash,
+            ))
+        } else {
+            None
         };
 
+        let buffer_signer_pubkey = buffer_signer.pubkey();
+        let upgrade_authority_pubkey = upgrade_authority.pubkey();
+        let create_msg = |offset: u32, bytes: Vec<u8>| {
+            let mut write_ixs: Vec<Instruction> = Vec::new();
+            let ix_to_add = bpf_loader_upgradeable::write(
+                &buffer_signer_pubkey,
+                &upgrade_authority_pubkey,
+                offset,
+                bytes,
+            );
+
+            set_compute_budget_ixs_if_needed(&mut write_ixs, &compute_unit_price, 1);
+            write_ixs.push(ix_to_add);
+
+            Message::new_with_blockhash(&write_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
+        };
+
+        // Create and add write messages
+        let mut write_messages = vec![];
+        let chunk_size = calculate_max_chunk_size(&create_msg);
+        for (chunk, i) in program_data.chunks(chunk_size).zip(0..) {
+            write_messages.push(create_msg((i * chunk_size) as u32, chunk.to_vec()));
+        }
+
+        (initial_message, write_messages, balance_needed)
+    } else {
+        (None, vec![], 0)
+    };
+
     // Create and add final message
-    let final_message = Message::new_with_blockhash(
-        &[bpf_loader_upgradeable::upgrade(
-            program_id,
-            buffer_pubkey,
-            &upgrade_authority.pubkey(),
-            &fee_payer_signer.pubkey(),
-        )],
-        Some(&fee_payer_signer.pubkey()),
-        &blockhash,
-    );
+    let mut final_ixs: Vec<Instruction> = Vec::new();
+
+    set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price, 1);
+
+    final_ixs.push(bpf_loader_upgradeable::upgrade(
+        program_id,
+        buffer_pubkey,
+        &upgrade_authority.pubkey(),
+        &fee_payer_signer.pubkey(),
+    ));
+    let final_message =
+        Message::new_with_blockhash(&final_ixs, Some(&fee_payer_signer.pubkey()), &blockhash);
     let final_message = Some(final_message);
 
     if !skip_fee_check {
@@ -2810,6 +2782,22 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
     eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
     eprintln!("Or to recover the account's lamports, pass it as the");
     eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
+}
+
+fn set_compute_budget_ixs_if_needed(
+    ixs: &mut Vec<Instruction>,
+    compute_unit_price: &Option<u64>,
+    ixs_len: usize,
+) {
+    if let Some(compute_unit_price) = compute_unit_price {
+        println!("ixs_len: {}", ixs_len);
+        ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
+            ((ixs_len + 2) as u32) * 200_000u32,
+        ));
+        ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+            *compute_unit_price,
+        ));
+    }
 }
 
 #[cfg(test)]
