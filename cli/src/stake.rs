@@ -1981,22 +1981,22 @@ pub fn process_split_stake(
 
     let rent_exempt_reserve = if !sign_only {
         let check_stake_account = |account: Account| -> Result<(), CliError> {
-            if account.owner == stake::program::id() {
-                Err(CliError::BadParameter(format!(
+            match account.owner {
+                owner if owner == stake::program::id() => Err(CliError::BadParameter(format!(
                     "Stake account {split_stake_account_address} already exists"
-                )))
-            } else if account.owner == system_program::id() {
-                if !account.data.is_empty() {
-                    Err(CliError::BadParameter(format!(
-                        "Account {split_stake_account_address} has data and cannot be used to split stake"
-                    )))
-                } else {
-                    // if `stake_account`'s owner is the system_program and its data is
-                    // empty, `stake_account` is allowed to receive the stake split
-                    Ok(())
+                ))),
+                owner if owner == system_program::id() => {
+                    if !account.data.is_empty() {
+                        Err(CliError::BadParameter(format!(
+                            "Account {split_stake_account_address} has data and cannot be used to split stake"
+                        )))
+                    } else {
+                        // if `stake_account`'s owner is the system_program and its data is
+                        // empty, `stake_account` is allowed to receive the stake split
+                        Ok(())
+                    }
                 }
-            } else {
-                Err(CliError::BadParameter(format!(
+                _ => Err(CliError::BadParameter(format!(
                     "Account {split_stake_account_address} already exists and cannot be used to split stake"
                 )))
             }
