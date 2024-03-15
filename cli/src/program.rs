@@ -2790,7 +2790,6 @@ fn set_compute_budget_ixs_if_needed(
     ixs_len: usize,
 ) {
     if let Some(compute_unit_price) = compute_unit_price {
-        println!("ixs_len: {}", ixs_len);
         ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
             ((ixs_len + 2) as u32) * 200_000u32,
         ));
