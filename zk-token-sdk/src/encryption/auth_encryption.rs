@@ -326,16 +326,16 @@ mod tests {
 
     #[test]
     fn test_aes_key_from() {
-        let key = AeKey::from_seed(&vec![0; 32]).unwrap();
-        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&vec![0; 32]).unwrap().into();
+        let key = AeKey::from_seed(&[0; 32]).unwrap();
+        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&[0; 32]).unwrap().into();
 
         assert_eq!(key, AeKey::from(key_bytes));
     }
 
     #[test]
     fn test_aes_key_try_from() {
-        let key = AeKey::from_seed(&vec![0; 32]).unwrap();
-        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&vec![0; 32]).unwrap().into();
+        let key = AeKey::from_seed(&[0; 32]).unwrap();
+        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&[0; 32]).unwrap().into();
 
         assert_eq!(key, AeKey::try_from(key_bytes.as_slice()).unwrap());
     }
