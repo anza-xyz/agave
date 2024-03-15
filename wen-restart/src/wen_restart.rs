@@ -167,8 +167,8 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
                     if *slot <= &root_slot || is_full_slots.contains(*slot) {
                         return false;
                     }
-                    if blockstore.is_full(*slot) {
-                        is_full_slots.insert(*slot);
+                    if blockstore.is_full(**slot) {
+                        is_full_slots.insert(**slot);
                         false
                     } else {
                         true
