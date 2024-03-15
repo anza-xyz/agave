@@ -13,6 +13,7 @@ use {
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_clap_utils::{
         self,
+        compute_unit_price::compute_unit_price_arg,
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
         hidden_unless_forced,
         input_parsers::*,
@@ -240,15 +241,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                      holds a large balance of SOL",
                                 ),
                         )
-                        .arg(
-                            Arg::with_name("compute_unit_price")
-                                .long("compute-unit-price")
-                                .takes_value(true)
-                                .help(
-                                    "Set computeUnitPrice (tx priotity fee) to boost transactions resulting in faster execution speed \
-                                    [Note: priority fee is added in Micro Lamports, so enter priority fee in terms of Micro Lamports]",
-                                ),
-                        )
+                        .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
                     SubCommand::with_name("upgrade")
@@ -320,7 +313,8 @@ impl ProgramSubCommands for App<'_, '_> {
                                     "Maximum length of the upgradeable program \
                                     [default: the length of the original deployed program]",
                                 ),
-                        ),
+                        )
+                        .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
                     SubCommand::with_name("set-buffer-authority")
