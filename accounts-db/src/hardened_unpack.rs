@@ -112,25 +112,26 @@ where
         // first by ourselves when there are odd paths like including `..` or /
         // for our clearer pattern matching reasoning:
         //   https://docs.rs/tar/0.4.26/src/tar/entry.rs.html#371
-        let parts = path.components().map(|p| match p {
-            CurDir => Some("."),
-            Normal(c) => c.to_str(),
-            _ => None, // Prefix (for Windows) and RootDir are forbidden
-        });
+        let parts = path
+            .components()
+            .map(|p| match p {
+                CurDir => Ok("."),
+                Normal(c) => c.to_str().ok_or(()),
+                _ => Err(()), // Prefix (for Windows) and RootDir are forbidden
+            })
+            .collect::<std::result::Result<Vec<_>, _>>();
 
         // Reject old-style BSD directory entries that aren't explicitly tagged as directories
         let legacy_dir_entry =
             entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/");
         let kind = entry.header().entry_type();
         let reject_legacy_dir_entry = legacy_dir_entry && (kind != Directory);
-
-        if parts.clone().any(|p| p.is_none()) || reject_legacy_dir_entry {
+        let (Ok(parts), false) = (parts, reject_legacy_dir_entry) else {
             return Err(UnpackError::Archive(format!(
                 "invalid path found: {path_str:?}"
             )));
-        }
+        };
 
-        let parts: Vec<_> = parts.map(|p| p.unwrap()).collect();
         let account_filename =
             (parts.len() == 2 && parts[0] == "accounts").then(|| PathBuf::from(parts[1]));
         let unpack_dir = match entry_checker(parts.as_slice(), kind) {
