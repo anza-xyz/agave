@@ -748,37 +748,10 @@ pub mod disable_bpf_loader_instructions {
     solana_sdk::declare_id!("7WeS1vfPRgeeoXArLh7879YcB9mgE9ktjPDtajXeWfXn");
 }
 
-<<<<<<< HEAD
-=======
-pub mod deprecate_executable_meta_update_in_bpf_loader {
-    solana_sdk::declare_id!("k6uR1J9VtKJnTukBV2Eo15BEy434MBg8bT6hHQgmU8v");
-}
-
-pub mod enable_zk_proof_from_account {
-    solana_sdk::declare_id!("zkiTNuzBKxrCLMKehzuQeKZyLtX2yvFcEKMML8nExU8");
-}
-
-pub mod cost_model_requested_write_lock_cost {
-    solana_sdk::declare_id!("wLckV1a64ngtcKPRGU4S4grVTestXjmNjxBjaKZrAcn");
-}
-
-pub mod enable_gossip_duplicate_proof_ingestion {
-    solana_sdk::declare_id!("FNKCMBzYUdjhHyPdsKG2LSmdzH8TCHXn3ytj8RNBS4nG");
-}
-
-pub mod enable_chained_merkle_shreds {
-    solana_sdk::declare_id!("7uZBkJXJ1HkuP6R3MJfZs7mLwymBcDbKdqbF51ZWLier");
-}
-
-pub mod remove_rounding_in_fee_calculation {
-    solana_sdk::declare_id!("BtVN7YjDzNE6Dk7kTT7YTDgMNUZTNgiSJgsdzAeTg2jF");
-}
-
 pub mod deprecate_unused_legacy_vote_plumbing {
     solana_sdk::declare_id!("6Uf8S75PVh91MYgPQSHnjRAPQq6an5BDv9vomrCwDqLe");
 }
 
->>>>>>> b27c80a920 (vote: deprecate unused legacy vote tx plumbing (#274))
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -960,15 +933,8 @@ lazy_static! {
         (consume_blockstore_duplicate_proofs::id(), "consume duplicate proofs from blockstore in consensus #34372"),
         (index_erasure_conflict_duplicate_proofs::id(), "generate duplicate proofs for index and erasure conflicts #34360"),
         (curve25519_restrict_msm_length::id(), "restrict curve25519 multiscalar multiplication vector lengths #34763"),
-<<<<<<< HEAD
         (disable_bpf_loader_instructions::id(), "disable bpf loader management instructions #34194"),
-=======
-        (cost_model_requested_write_lock_cost::id(), "cost model uses number of requested write locks #34819"),
-        (enable_gossip_duplicate_proof_ingestion::id(), "enable gossip duplicate proof ingestion #32963"),
-        (enable_chained_merkle_shreds::id(), "Enable chained Merkle shreds #34916"),
-        (remove_rounding_in_fee_calculation::id(), "Removing unwanted rounding in fee calculation #34982"),
         (deprecate_unused_legacy_vote_plumbing::id(), "Deprecate unused legacy vote tx plumbing"),
->>>>>>> b27c80a920 (vote: deprecate unused legacy vote tx plumbing (#274))
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
