@@ -273,7 +273,7 @@ pub(crate) fn find_heaviest_fork(
             info!("block meta: {:?}", block_meta);
             if block_meta.parent_slot != Some(expected_parent) {
                 info!(
-                    "Block {} is not linked to expected parent {} but to {:?}",
+                    "Block {} in blockstore is not linked to expected parent from Wen Restart {} but to Block {:?}",
                     slot, expected_parent, block_meta.parent_slot
                 );
                 return Err(WenRestartError::BlockNotLinkedToExpectedParent(
