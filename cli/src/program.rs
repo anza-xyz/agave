@@ -2278,7 +2278,7 @@ fn do_process_program_write_and_deploy(
 
     let mut initial_instructions: Vec<Instruction> = Vec::new();
 
-    set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price, ixs.len());
+    set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price);
     initial_instructions.extend(ixs);
     let initial_message = if !initial_instructions.is_empty() {
         Some(Message::new_with_blockhash(
@@ -2304,7 +2304,7 @@ fn do_process_program_write_and_deploy(
             loader_instruction::write(buffer_pubkey, loader_id, offset, bytes)
         };
 
-        set_compute_budget_ixs_if_needed(&mut write_ixs, &compute_unit_price, 1);
+        set_compute_budget_ixs_if_needed(&mut write_ixs, &compute_unit_price);
         write_ixs.push(ix_to_add);
         Message::new_with_blockhash(&write_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
     };
@@ -2331,18 +2331,11 @@ fn do_process_program_write_and_deploy(
                 program_data_max_len,
             )?;
 
-            set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price, ixs_to_add.len());
+            set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price);
             final_ixs.extend(ixs_to_add);
             Message::new_with_blockhash(&final_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
         } else {
-            if let Some(compute_unit_price) = compute_unit_price {
-                final_ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                    3u32 * 200_000u32,
-                ));
-                final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
-                    compute_unit_price,
-                ));
-            }
+            set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price);
 
             final_ixs.push(loader_instruction::finalize(buffer_pubkey, loader_id));
             Message::new_with_blockhash(&final_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
@@ -2438,7 +2431,7 @@ fn do_process_program_upgrade(
         };
         let mut initial_instructions: Vec<Instruction> = Vec::new();
 
-        set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price, ixs.len());
+        set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price);
         initial_instructions.extend(ixs);
         let initial_message = if !initial_instructions.is_empty() {
             Some(Message::new_with_blockhash(
@@ -2461,7 +2454,7 @@ fn do_process_program_upgrade(
                 bytes,
             );
 
-            set_compute_budget_ixs_if_needed(&mut write_ixs, &compute_unit_price, 1);
+            set_compute_budget_ixs_if_needed(&mut write_ixs, &compute_unit_price);
             write_ixs.push(ix_to_add);
 
             Message::new_with_blockhash(&write_ixs, Some(&fee_payer_signer.pubkey()), &blockhash)
@@ -2482,7 +2475,7 @@ fn do_process_program_upgrade(
     // Create and add final message
     let mut final_ixs: Vec<Instruction> = Vec::new();
 
-    set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price, 1);
+    set_compute_budget_ixs_if_needed(&mut final_ixs, &compute_unit_price);
 
     final_ixs.push(bpf_loader_upgradeable::upgrade(
         program_id,
@@ -2778,14 +2771,23 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
     eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
 }
 
-fn set_compute_budget_ixs_if_needed(
-    ixs: &mut Vec<Instruction>,
-    compute_unit_price: &Option<u64>,
-    ixs_len: usize,
-) {
+fn set_compute_budget_ixs_if_needed(ixs: &mut Vec<Instruction>, compute_unit_price: &Option<u64>) {
+    let mut compute_units_required_for_ixs: u32 = 0;
+    for ix in ixs.iter() {
+        if ix.program_id == bpf_loader_upgradeable::id() {
+            compute_units_required_for_ixs += 2370u32;
+        } else if ix.program_id == system_program::id() {
+            compute_units_required_for_ixs += 150u32;
+        } else {
+            compute_units_required_for_ixs += 2000u32;
+        }
+    }
+
+    let compute_units_for_compute_budget_ixs = 300u32;
+
     if let Some(compute_unit_price) = compute_unit_price {
         ixs.push(ComputeBudgetInstruction::set_compute_unit_limit(
-            ((ixs_len + 2) as u32) * 200_000u32,
+            compute_units_required_for_ixs + compute_units_for_compute_budget_ixs,
         ));
         ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
             *compute_unit_price,
