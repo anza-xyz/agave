@@ -654,7 +654,8 @@ async fn packet_batch_sender(
                 || (!packet_batch.is_empty() && elapsed >= coalesce)
             {
                 let len = packet_batch.len();
-                track_streamer_fetch_packet_performance(&mut packet_perf_measure, &stats).await;
+
+                track_streamer_fetch_packet_performance(&packet_perf_measure, &stats).await;
 
                 if let Err(e) = packet_sender.send(packet_batch) {
                     stats
@@ -746,8 +747,9 @@ fn reset_throttling_params_if_needed(last_instant: &mut tokio::time::Instant) ->
     }
 }
 
+
 async fn track_streamer_fetch_packet_performance(
-    packet_perf_measure: &mut [([u8; 64], Instant)],
+    packet_perf_measure: &[([u8; 64], Instant)],
     stats: &Arc<StreamStats>,
 ) {
     if packet_perf_measure.is_empty() {
