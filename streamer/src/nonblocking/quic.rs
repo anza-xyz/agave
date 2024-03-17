@@ -834,7 +834,7 @@ async fn handle_connection(
                                     .fetch_add(1, Ordering::Relaxed);
                             }
                         }
-                        debug!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
+                        info!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
                             params.stake, params.total_stake);
                         let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
                         continue;
