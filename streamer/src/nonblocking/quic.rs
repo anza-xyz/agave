@@ -803,6 +803,21 @@ async fn handle_connection(
         {
             match stream {
                 Ok(mut stream) => {
+                    stats.received_streams.fetch_add(1, Ordering::Relaxed);
+
+                    match peer_type {
+                        ConnectionPeerType::Unstaked => {
+                            stats
+                                .received_unstaked_streams
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        ConnectionPeerType::Staked => {
+                            stats
+                                .received_staked_streams
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+
                     if reset_throttling_params_if_needed(&mut last_throttling_instant) {
                         streams_in_current_interval = 0;
                     } else if streams_in_current_interval >= max_streams_per_100ms {
@@ -819,6 +834,8 @@ async fn handle_connection(
                                     .fetch_add(1, Ordering::Relaxed);
                             }
                         }
+                        debug!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
+                            params.stake, params.total_stake);
                         let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
                         continue;
                     }
