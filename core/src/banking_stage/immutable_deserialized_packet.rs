@@ -17,7 +17,7 @@ use {
             VersionedTransaction,
         },
     },
-    std::{cmp::Ordering, mem::size_of, sync::Arc},
+    std::{cmp::Ordering, mem::size_of, sync::Arc, time::Instant},
     thiserror::Error,
 };
 
@@ -45,10 +45,16 @@ pub struct ImmutableDeserializedPacket {
     message_hash: Hash,
     is_simple_vote: bool,
     priority_details: TransactionPriorityDetails,
+    banking_stage_start_time: Option<Instant>,
 }
 
 impl ImmutableDeserializedPacket {
     pub fn new(packet: Packet) -> Result<Self, DeserializedPacketError> {
+        let banking_stage_start_time = packet
+            .meta()
+            .is_perf_track_packet()
+            .then_some(Instant::now());
+
         let versioned_transaction: VersionedTransaction = packet.deserialize_slice(..)?;
         let sanitized_transaction = SanitizedVersionedTransaction::try_from(versioned_transaction)?;
         let message_bytes = packet_message(&packet)?;
@@ -71,6 +77,7 @@ impl ImmutableDeserializedPacket {
             message_hash,
             is_simple_vote,
             priority_details,
+            banking_stage_start_time,
         })
     }
 
@@ -112,6 +119,10 @@ impl ImmutableDeserializedPacket {
         }
 
         self.compute_unit_limit() >= static_builtin_cost_sum
+    }
+
+    pub fn start_time(&self) -> &Option<Instant> {
+        &self.banking_stage_start_time
     }
 
     // This function deserializes packets into transactions, computes the blake3 hash of transaction
