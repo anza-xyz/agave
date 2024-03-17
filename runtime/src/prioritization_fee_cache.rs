@@ -10,7 +10,7 @@ use {
         transaction::SanitizedTransaction,
     },
     std::{
-        collections::HashMap,
+        collections::{BTreeMap, HashMap},
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, RwLock,
@@ -262,7 +262,7 @@ impl PrioritizationFeeCache {
     /// Internal function is invoked by worker thread to update slot's minimum prioritization fee,
     /// Cache lock contends here.
     fn update_cache(
-        unfinalized: &mut HashMap<Slot, HashMap<BankId, PrioritizationFee>>,
+        unfinalized: &mut BTreeMap<Slot, HashMap<BankId, PrioritizationFee>>,
         slot: Slot,
         bank_id: BankId,
         transaction_fee: u64,
@@ -285,7 +285,7 @@ impl PrioritizationFeeCache {
     }
 
     fn finalize_slot(
-        unfinalized: &mut HashMap<Slot, HashMap<BankId, PrioritizationFee>>,
+        unfinalized: &mut BTreeMap<Slot, HashMap<BankId, PrioritizationFee>>,
         cache: &RwLock<LruCache<Slot, PrioritizationFee>>,
         slot: Slot,
         bank_id: BankId,
@@ -297,9 +297,8 @@ impl PrioritizationFeeCache {
         let (slot_prioritization_fee, slot_finalize_time) = measure!(
             {
                 // remove unfinalized slots
-                unfinalized.retain(|unfinalized_slot, _fee| {
-                    *unfinalized_slot + MAX_UNFINALIZED_SLOTS > slot
-                });
+                *unfinalized = unfinalized
+                    .split_off(&slot.checked_sub(MAX_UNFINALIZED_SLOTS).unwrap_or_default());
 
                 let Some(mut slot_prioritization_fee) = unfinalized.remove(&slot) else {
                     return;
@@ -354,7 +353,7 @@ impl PrioritizationFeeCache {
     ) {
         // Potentially there are more than one bank that updates Prioritization Fee
         // for a slot. The updates are tracked and finalized by bank_id.
-        let mut unfinalized = HashMap::<Slot, HashMap<BankId, PrioritizationFee>>::new();
+        let mut unfinalized = BTreeMap::<Slot, HashMap<BankId, PrioritizationFee>>::new();
 
         for update in receiver.iter() {
             match update {
