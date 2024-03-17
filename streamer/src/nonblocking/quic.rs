@@ -973,6 +973,19 @@ async fn handle_chunk(
                             .total_chunks_sent_for_batching
                             .fetch_add(chunks_sent, Ordering::Relaxed);
 
+                        match peer_type {
+                            ConnectionPeerType::Unstaked => {
+                                stats
+                                    .total_unstaked_packets_sent_for_batching
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                            ConnectionPeerType::Staked => {
+                                stats
+                                    .total_staked_packets_sent_for_batching
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+
                         trace!("sent {} byte packet for batching", bytes_sent);
                     }
                 } else {
