@@ -805,6 +805,18 @@ async fn handle_connection(
                         streams_in_current_interval = 0;
                     } else if streams_in_current_interval >= max_streams_per_100ms {
                         stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
+                        match peer_type {
+                            ConnectionPeerType::Unstaked => {
+                                stats
+                                    .throttled_unstaked_streams
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                            ConnectionPeerType::Staked => {
+                                stats
+                                    .throttled_staked_streams
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
                         continue;
                     }
