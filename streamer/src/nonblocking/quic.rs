@@ -1,6 +1,8 @@
 use {
     crate::{
-        quic::{configure_server, QuicServerError, StreamStats, MAX_UNSTAKED_CONNECTIONS},
+        quic::{
+            configure_server, PeerStats, QuicServerError, StreamStats, MAX_UNSTAKED_CONNECTIONS,
+        },
         streamer::StakedNodes,
         tls_certificates::get_pubkey_from_tls_certificate,
     },
@@ -797,6 +799,10 @@ async fn handle_connection(
         max_streams_for_connection_in_100ms(peer_type, params.stake, params.total_stake);
     let mut last_throttling_instant = tokio::time::Instant::now();
     let mut streams_in_current_interval = 0;
+    let peer = ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey);
+    let connection_count = { connection_table.lock().unwrap().get_connection_count(&peer) };
+    let peer_stat = Arc::new(PeerStats::new(peer_type, params.stake, connection_count));
+
     while !stream_exit.load(Ordering::Relaxed) {
         if let Ok(stream) =
             tokio::time::timeout(WAIT_FOR_STREAM_TIMEOUT, connection.accept_uni()).await
@@ -817,6 +823,7 @@ async fn handle_connection(
                                 .fetch_add(1, Ordering::Relaxed);
                         }
                     }
+                    peer_stat.received_streams.fetch_add(1, Ordering::Relaxed);
 
                     if reset_throttling_params_if_needed(&mut last_throttling_instant) {
                         streams_in_current_interval = 0;
@@ -834,9 +841,11 @@ async fn handle_connection(
                                     .fetch_add(1, Ordering::Relaxed);
                             }
                         }
+                        peer_stat.throttled_streams.fetch_add(1, Ordering::Relaxed);
                         info!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
                             params.stake, params.total_stake);
                         let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
+                        update_peer_stats(&params.remote_pubkey, &stats, &peer_stat);
                         continue;
                     }
                     streams_in_current_interval = streams_in_current_interval.saturating_add(1);
@@ -844,6 +853,7 @@ async fn handle_connection(
                     stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
                     let stream_exit = stream_exit.clone();
                     let stats = stats.clone();
+                    let peer_stat = peer_stat.clone();
                     let packet_sender = params.packet_sender.clone();
                     let last_update = last_update.clone();
                     tokio::spawn(async move {
@@ -870,10 +880,12 @@ async fn handle_connection(
                                     &packet_sender,
                                     stats.clone(),
                                     peer_type,
+                                    peer_stat.clone(),
                                 )
                                 .await
                                 {
                                     last_update.store(timing::timestamp(), Ordering::Relaxed);
+                                    update_peer_stats(&params.remote_pubkey, &stats, &peer_stat);
                                     break;
                                 }
                                 start = Instant::now();
@@ -882,6 +894,10 @@ async fn handle_connection(
                                 stats
                                     .total_stream_read_timeouts
                                     .fetch_add(1, Ordering::Relaxed);
+                                peer_stat
+                                    .stream_read_timeouts
+                                    .fetch_add(1, Ordering::Relaxed);
+                                update_peer_stats(&params.remote_pubkey, &stats, &peer_stat);
                                 break;
                             }
                         }
@@ -913,6 +929,16 @@ async fn handle_connection(
     stats.total_connections.fetch_sub(1, Ordering::Relaxed);
 }
 
+fn update_peer_stats(
+    pubkey: &Option<Pubkey>,
+    stats: &Arc<StreamStats>,
+    peer_stat: &Arc<PeerStats>,
+) {
+    if let Some(pubkey) = pubkey {
+        stats.update_peer_stats(pubkey, peer_stat);
+    }
+}
+
 // Return true if the server should drop the stream
 async fn handle_chunk(
     chunk: Result<Option<quinn::Chunk>, quinn::ReadError>,
@@ -921,6 +947,7 @@ async fn handle_chunk(
     packet_sender: &AsyncSender<PacketAccumulator>,
     stats: Arc<StreamStats>,
     peer_type: ConnectionPeerType,
+    peer_stat: Arc<PeerStats>,
 ) -> bool {
     match chunk {
         Ok(maybe_chunk) => {
@@ -1016,7 +1043,12 @@ async fn handle_chunk(
                                     .fetch_add(1, Ordering::Relaxed);
                             }
                         }
-
+                        peer_stat
+                            .bytes_sent_for_batching
+                            .fetch_add(bytes_sent, Ordering::Relaxed);
+                        peer_stat
+                            .packets_sent_for_batching
+                            .fetch_add(1, Ordering::Relaxed);
                         trace!("sent {} byte packet for batching", bytes_sent);
                     }
                 } else {
@@ -1032,6 +1064,7 @@ async fn handle_chunk(
             stats
                 .total_stream_read_errors
                 .fetch_add(1, Ordering::Relaxed);
+            peer_stat.stream_read_errors.fetch_add(1, Ordering::Relaxed);
             return true;
         }
     }
@@ -1081,8 +1114,9 @@ impl Drop for ConnectionEntry {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum ConnectionPeerType {
+    #[default]
     Unstaked,
     Staked,
 }
@@ -1230,6 +1264,13 @@ impl ConnectionTable {
         } else {
             0
         }
+    }
+
+    /// return the connection count of the peer in the cache
+    fn get_connection_count(&self, key: &ConnectionTableKey) -> usize {
+        self.table
+            .get(key)
+            .map_or_else(|| 0, |connections| connections.len())
     }
 }
 

@@ -1,6 +1,7 @@
 use {
     crate::{
-        nonblocking::quic::ALPN_TPU_PROTOCOL_ID, streamer::StakedNodes,
+        nonblocking::quic::{ConnectionPeerType, ALPN_TPU_PROTOCOL_ID},
+        streamer::StakedNodes,
         tls_certificates::new_self_signed_tls_certificate,
     },
     crossbeam_channel::Sender,
@@ -10,17 +11,19 @@ use {
     solana_perf::packet::PacketBatch,
     solana_sdk::{
         packet::PACKET_DATA_SIZE,
+        pubkey::Pubkey,
         quic::{QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS},
         signature::Keypair,
     },
     std::{
+        collections::HashMap,
         net::{IpAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread,
-        time::{Duration, SystemTime},
+        time::{Duration, Instant, SystemTime},
     },
     tokio::{runtime::Runtime, sync::Mutex}
 };
@@ -166,6 +169,80 @@ pub struct StreamStats {
     pub(crate) received_streams: AtomicUsize,
     pub(crate) received_unstaked_streams: AtomicUsize,
     pub(crate) received_staked_streams: AtomicUsize,
+    pub(crate) peer_stats: PeerStatsRecorder,
+}
+
+/// Stats per peer
+pub struct PeerStats {
+    pub(crate) peer_type: ConnectionPeerType,
+    pub(crate) stakes: AtomicUsize,
+    pub(crate) received_streams: AtomicUsize,
+    pub(crate) throttled_streams: AtomicUsize,
+    pub(crate) packets_sent_for_batching: AtomicUsize,
+    pub(crate) bytes_sent_for_batching: AtomicUsize,
+    pub(crate) stream_read_errors: AtomicUsize,
+    pub(crate) stream_read_timeouts: AtomicUsize,
+    pub(crate) connection_count: AtomicUsize,
+    pub(crate) start_time: Instant,
+    pub(crate) end_time: Instant,
+}
+
+impl Default for PeerStats {
+    fn default() -> Self {
+        Self {
+            peer_type: Default::default(),
+            stakes: Default::default(),
+            received_streams: Default::default(),
+            throttled_streams: Default::default(),
+            packets_sent_for_batching: Default::default(),
+            bytes_sent_for_batching: Default::default(),
+            stream_read_errors: Default::default(),
+            stream_read_timeouts: Default::default(),
+            connection_count: Default::default(),
+            start_time: Instant::now(),
+            end_time: Instant::now(),
+        }
+    }
+}
+
+impl Clone for PeerStats {
+    fn clone(&self) -> Self {
+        Self {
+            received_streams: AtomicUsize::new(self.received_streams.load(Ordering::Relaxed)),
+            throttled_streams: AtomicUsize::new(self.throttled_streams.load(Ordering::Relaxed)),
+            peer_type: self.peer_type,
+            connection_count: AtomicUsize::new(self.connection_count.load(Ordering::Relaxed)),
+            stakes: AtomicUsize::new(self.stakes.load(Ordering::Relaxed)),
+            stream_read_errors: AtomicUsize::new(self.stream_read_errors.load(Ordering::Relaxed)),
+            stream_read_timeouts: AtomicUsize::new(
+                self.stream_read_timeouts.load(Ordering::Relaxed),
+            ),
+            packets_sent_for_batching: AtomicUsize::new(
+                self.packets_sent_for_batching.load(Ordering::Relaxed),
+            ),
+            bytes_sent_for_batching: AtomicUsize::new(
+                self.bytes_sent_for_batching.load(Ordering::Relaxed),
+            ),
+            start_time: self.start_time,
+            end_time: self.end_time,
+        }
+    }
+}
+
+impl PeerStats {
+    pub fn new(peer_type: ConnectionPeerType, stakes: u64, connection_count: usize) -> Self {
+        Self {
+            peer_type,
+            stakes: AtomicUsize::new(stakes as usize),
+            connection_count: AtomicUsize::new(connection_count),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PeerStatsRecorder {
+    pub(crate) stats: Mutex<HashMap<Pubkey, PeerStats>>,
 }
 
 impl StreamStats {
@@ -469,6 +546,75 @@ impl StreamStats {
             ),
         );
         process_sampled_packets_us_hist.clear();
+        self.report_peer_stats();
+    }
+
+    fn report_peer_stats(&self) {
+        let map = {
+            let mut stats = self.peer_stats.stats.lock().unwrap();
+            let new_map = HashMap::<Pubkey, PeerStats>::default();
+            std::mem::replace(&mut *stats, new_map)
+        };
+        // now we can report the stats without holding the lock
+        for (key, stats) in map {
+            info!(
+                "STREAMER_PEER_STATS: {key}, {:?}, {}, {}, {}, {}, {}, {}, {}, {} {}",
+                stats.peer_type,
+                stats.stakes.load(Ordering::Relaxed),
+                stats.received_streams.load(Ordering::Relaxed),
+                stats.throttled_streams.load(Ordering::Relaxed),
+                stats.packets_sent_for_batching.load(Ordering::Relaxed),
+                stats.bytes_sent_for_batching.load(Ordering::Relaxed),
+                stats.stream_read_errors.load(Ordering::Relaxed),
+                stats.stream_read_timeouts.load(Ordering::Relaxed),
+                stats.connection_count.load(Ordering::Relaxed),
+                stats.end_time.duration_since(stats.start_time).as_micros()
+            );
+        }
+    }
+
+    /// Update the peer stat for a peer given its key
+    pub fn update_peer_stats(&self, pubkey: &Pubkey, peer_stat: &PeerStats) {
+        let mut stats = self.peer_stats.stats.lock().unwrap();
+        stats
+            .entry(*pubkey)
+            .and_modify(|stat| {
+                stat.peer_type = peer_stat.peer_type;
+                stat.stakes
+                    .store(peer_stat.stakes.load(Ordering::Relaxed), Ordering::Relaxed);
+                stat.received_streams.fetch_add(
+                    peer_stat.received_streams.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.throttled_streams.fetch_add(
+                    peer_stat.throttled_streams.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.packets_sent_for_batching.fetch_add(
+                    peer_stat
+                        .packets_sent_for_batching
+                        .swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.bytes_sent_for_batching.fetch_add(
+                    peer_stat.bytes_sent_for_batching.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.stream_read_errors.fetch_add(
+                    peer_stat.stream_read_errors.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.stream_read_timeouts.fetch_add(
+                    peer_stat.stream_read_timeouts.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.connection_count.store(
+                    peer_stat.connection_count.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.end_time = Instant::now();
+            })
+            .or_insert(peer_stat.clone());
     }
 }
 
