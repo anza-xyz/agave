@@ -545,7 +545,7 @@ impl StreamStats {
             ),
         );
         process_sampled_packets_us_hist.clear();
-        self.report_peer_stats();
+        self.report_peer_stats().await;
     }
 
     async fn report_peer_stats(&self) {
