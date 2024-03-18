@@ -1575,8 +1575,8 @@ declare_builtin_function!(
 
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
-            Err(e) => {
-                return Ok(e.into());
+            Err(_) => {
+                return Ok(1);
             }
         };
 
@@ -1722,8 +1722,8 @@ declare_builtin_function!(
             .collect::<Result<Vec<_>, Error>>()?;
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
-            Err(e) => {
-                return Ok(e.into());
+            Err(_) => {
+                return Ok(1);
             }
         };
         hash_result.copy_from_slice(&hash.to_bytes());
@@ -1811,8 +1811,8 @@ declare_builtin_function!(
             ALT_BN128_G1_COMPRESS => {
                 let result_point = match alt_bn128_g1_compress(input) {
                     Ok(result_point) => result_point,
-                    Err(e) => {
-                        return Ok(e.into());
+                    Err(_) => {
+                        return Ok(1);
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -1821,8 +1821,8 @@ declare_builtin_function!(
             ALT_BN128_G1_DECOMPRESS => {
                 let result_point = match alt_bn128_g1_decompress(input) {
                     Ok(result_point) => result_point,
-                    Err(e) => {
-                        return Ok(e.into());
+                    Err(_) => {
+                        return Ok(1);
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -1831,8 +1831,8 @@ declare_builtin_function!(
             ALT_BN128_G2_COMPRESS => {
                 let result_point = match alt_bn128_g2_compress(input) {
                     Ok(result_point) => result_point,
-                    Err(e) => {
-                        return Ok(e.into());
+                    Err(_) => {
+                        return Ok(1);
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -1841,8 +1841,8 @@ declare_builtin_function!(
             ALT_BN128_G2_DECOMPRESS => {
                 let result_point = match alt_bn128_g2_decompress(input) {
                     Ok(result_point) => result_point,
-                    Err(e) => {
-                        return Ok(e.into());
+                    Err(_) => {
+                        return Ok(1);
                     }
                 };
                 call_result.copy_from_slice(&result_point);
