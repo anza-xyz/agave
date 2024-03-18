@@ -52,7 +52,7 @@ use {
     std::{path::PathBuf, str::FromStr},
 };
 
-mod thread_args;
+pub mod thread_args;
 use thread_args::{thread_args, DefaultThreadArgs};
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
