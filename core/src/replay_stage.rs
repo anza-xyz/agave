@@ -95,10 +95,6 @@ pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
 pub const MAX_UNCONFIRMED_SLOTS: usize = 5;
 pub const DUPLICATE_LIVENESS_THRESHOLD: f64 = 0.1;
 pub const DUPLICATE_THRESHOLD: f64 = 1.0 - SWITCH_FORK_THRESHOLD - DUPLICATE_LIVENESS_THRESHOLD;
-// The maximum number of threads to allocate for replaying forks concurrently
-// This value was chosen to be small enough to limit the overhead of having a large thread pool
-// while also being large enough to allow replay of all active forks in most scenarios.
-pub const MAX_CONCURRENT_FORKS_TO_REPLAY: usize = 4;
 
 const MAX_VOTE_SIGNATURES: usize = 200;
 const MAX_VOTE_REFRESH_INTERVAL_MILLIS: usize = 5000;
