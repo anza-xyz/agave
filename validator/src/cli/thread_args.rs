@@ -1,7 +1,8 @@
 //! Arguments for controlling the number of threads allocated for various tasks
 
 use {
-    clap::Arg, solana_clap_utils::input_validators::is_within_range,
+    clap::Arg,
+    solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
     solana_core::replay_stage::MAX_CONCURRENT_FORKS_TO_REPLAY,
     solana_rayon_threadlimit::get_max_thread_count,
 };
@@ -31,6 +32,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("NUMBER")
             .default_value(&defaults.replay_forks_threads)
             .validator(|num| is_within_range(num, 1..=MAX_CONCURRENT_FORKS_TO_REPLAY))
+            .hidden(hidden_unless_forced())
             .help("Number of threads to use for replay of blocks on different forks"),
         Arg::with_name("replay_transactions_threads")
             .long("replay-transactions-threads")
@@ -38,6 +40,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
             .value_name("NUMBER")
             .default_value(&defaults.replay_transactions_threads)
             .validator(|num| is_within_range(num, 1..=get_max_thread_count()))
+            .hidden(hidden_unless_forced())
             .help("Number of threads to use for transaction replay"),
     ]
 }
