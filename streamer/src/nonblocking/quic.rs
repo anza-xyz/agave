@@ -749,7 +749,6 @@ fn reset_throttling_params_if_needed(last_instant: &mut tokio::time::Instant) ->
     }
 }
 
-
 async fn track_streamer_fetch_packet_performance(
     packet_perf_measure: &[([u8; 64], Instant)],
     stats: &Arc<StreamStats>,
@@ -845,7 +844,7 @@ async fn handle_connection(
                         info!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
                             params.stake, params.total_stake);
                         let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
-                        update_peer_stats(&params.remote_pubkey, &stats, &peer_stat);
+                        update_peer_stats(&params.remote_pubkey, &stats, &peer_stat).await;
                         continue;
                     }
                     streams_in_current_interval = streams_in_current_interval.saturating_add(1);
@@ -929,13 +928,13 @@ async fn handle_connection(
     stats.total_connections.fetch_sub(1, Ordering::Relaxed);
 }
 
-fn update_peer_stats(
+async fn update_peer_stats(
     pubkey: &Option<Pubkey>,
     stats: &Arc<StreamStats>,
     peer_stat: &Arc<PeerStats>,
 ) {
     if let Some(pubkey) = pubkey {
-        stats.update_peer_stats(pubkey, peer_stat);
+        stats.update_peer_stats(pubkey, peer_stat).await;
     }
 }
 
