@@ -794,8 +794,8 @@ pub fn create_executable_meta(owner: &Pubkey) -> &[u8] {
     const EXECUTABLE_META_FOR_LOADER_V4: [u8; LOADER_V4_STATUS_BYTE_OFFSET + 1] =
         get_executable_meta_for_loader_v4();
 
-    // For other owners, simple returns a 1 byte array would make it executable.
-    const DEFAULT_EXECUTABLE_META: [u8; 1] = [1];
+    // For other owners, simple returns a 4 byte array of elf header to make it executable.
+    const DEFAULT_EXECUTABLE_META: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 
     if bpf_loader_upgradeable::check_id(owner) {
         &EXECUTABLE_META_FOR_BPF_LOADER_UPGRADABLE
@@ -821,11 +821,14 @@ pub fn is_executable(account: &impl ReadableAccount, feature_set: &FeatureSet) -
         // mark `executable` flag on the account. We can't emulate `executable` for
         // these two loaders. However, when `deprecate_executable` is true, we
         // should have already disabled the deployment of bpf_loader and
-        // bpf_loader_deprecated. Therefore, we can safely assume that all those
-        // programs are `executable`.
+        // bpf_loader_deprecated.
         if bpf_loader::check_id(account.owner()) || bpf_loader_deprecated::check_id(account.owner())
         {
-            return true;
+            const ELF_HEADER: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
+            if account.data().len() < 4 {
+                return false;
+            }
+            return account.data()[0..4] == ELF_HEADER;
         }
 
         if bpf_loader_upgradeable::check_id(account.owner()) {
@@ -868,6 +871,21 @@ pub mod tests {
         account2.rent_epoch = 4;
         assert!(accounts_equal(&account1, &account2));
         (account1, account2)
+    }
+
+    #[test]
+    fn test_is_executable() {
+        let feature_set = FeatureSet::all_enabled();
+
+        let key = Pubkey::new_unique();
+        let (mut account1, mut account2) = make_two_accounts(&key);
+
+        account1.set_owner(bpf_loader::id());
+        assert!(!is_executable(&account1, &feature_set));
+
+        account2.set_owner(bpf_loader::id());
+        account2.set_data_from_slice(&[0x7f, 0x45, 0x4c, 0x46]);
+        assert!(is_executable(&account2, &feature_set));
     }
 
     #[test]
