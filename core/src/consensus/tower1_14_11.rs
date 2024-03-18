@@ -6,7 +6,7 @@ use {
     },
 };
 
-#[frozen_abi(digest = "F83xHQA1wxoFDy25MTKXXmFXTc9Jbp6SXRXEPcehtKbQ")]
+#[frozen_abi(digest = "HvW1REM3KBUYBHnAd1BSFoGWqtrVG2D12FQbMZ3sd9zo")]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, AbiExample)]
 pub struct Tower1_14_11 {
     pub(crate) node_pubkey: Pubkey,
