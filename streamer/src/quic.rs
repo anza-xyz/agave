@@ -190,15 +190,15 @@ pub struct PeerStats {
 impl Default for PeerStats {
     fn default() -> Self {
         Self {
-            peer_type: Default::default(),
-            stakes: Default::default(),
-            received_streams: Default::default(),
-            throttled_streams: Default::default(),
-            packets_sent_for_batching: Default::default(),
-            bytes_sent_for_batching: Default::default(),
-            stream_read_errors: Default::default(),
-            stream_read_timeouts: Default::default(),
-            connection_count: Default::default(),
+            peer_type: ConnectionPeerType::default(),
+            stakes: AtomicUsize::default(),
+            received_streams: AtomicUsize::default(),
+            throttled_streams: AtomicUsize::default(),
+            packets_sent_for_batching: AtomicUsize::default(),
+            bytes_sent_for_batching: AtomicUsize::default(),
+            stream_read_errors: AtomicUsize::default(),
+            stream_read_timeouts: AtomicUsize::default(),
+            connection_count: AtomicUsize::default(),
             start_time: Instant::now(),
             end_time: Instant::now(),
         }
