@@ -848,11 +848,14 @@ pub fn is_executable(account: &impl ReadableAccount, feature_set: &FeatureSet) -
 /// Return true if the account program is a builtin program.
 ///
 /// This function also ensures that all valid builtin programs have non-empty
-/// program data. Typically, the program data contains only the "name" for the
-/// program. If, for some reason, the program account's data is empty, we should
-/// exclude such a program from `builtins`.
+/// program data and at least one non-zero byte in first 8 bytes.
+///
+/// For all typical builtin programs, its account data contains the "name" of
+/// program. To prevent malicious user account from pretending to be builtin
+/// account, we require that at least one of the first 8 bytes of the account
+/// must be non-zero.
 pub fn is_builtin(account: &impl ReadableAccount) -> bool {
-    native_loader::check_id(account.owner()) && !account.data().is_empty()
+    native_loader::check_id(account.owner()) && account.data().iter().take(8).any(|x| *x != 0)
 }
 
 #[cfg(test)]

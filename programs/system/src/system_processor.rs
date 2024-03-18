@@ -2065,4 +2065,54 @@ mod tests {
             upgraded_nonce_account
         );
     }
+
+    #[test]
+    fn test_assign_native_loader() {
+        for size in [0, 10] {
+            let pubkey = Pubkey::new_unique();
+            let account = AccountSharedData::new(100, size, &system_program::id());
+            let accounts = process_instruction(
+                &bincode::serialize(&SystemInstruction::Assign {
+                    owner: solana_sdk::native_loader::id(),
+                })
+                .unwrap(),
+                vec![(pubkey, account.clone())],
+                vec![AccountMeta {
+                    pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                }],
+                Ok(()),
+            );
+            assert_eq!(accounts[0].owner(), &solana_sdk::native_loader::id());
+            assert_eq!(accounts[0].lamports(), 100);
+
+            let pubkey2 = Pubkey::new_unique();
+            let accounts = process_instruction(
+                &bincode::serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
+                vec![
+                    (
+                        pubkey2,
+                        AccountSharedData::new(100, 0, &system_program::id()),
+                    ),
+                    (pubkey, accounts[0].clone()),
+                ],
+                vec![
+                    AccountMeta {
+                        pubkey: pubkey2,
+                        is_signer: true,
+                        is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey,
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                ],
+                Ok(()),
+            );
+            assert_eq!(accounts[1].owner(), &solana_sdk::native_loader::id());
+            assert_eq!(accounts[1].lamports(), 150);
+        }
+    }
 }
