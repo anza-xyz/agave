@@ -558,7 +558,7 @@ impl StreamStats {
         // now we can report the stats without holding the lock
         for (key, stats) in map {
             info!(
-                "STREAMER_PEER_STATS: {key}, {:?}, {}, {}, {}, {}, {}, {}, {}, {} {}",
+                "STREAMER_PEER_STATS: node={key}, type={:?}, stakes={}, received_streams={}, throttled_streams={}, packets_sent={}, bytes_sent={}, read_errors={}, read_timeouts={}, connection_count={} duration_us={}",
                 stats.peer_type,
                 stats.stakes.load(Ordering::Relaxed),
                 stats.received_streams.load(Ordering::Relaxed),
