@@ -799,7 +799,7 @@ async fn handle_connection(
     let mut last_throttling_instant = tokio::time::Instant::now();
     let mut streams_in_current_interval = 0;
     let peer = ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey);
-    let connection_count = { connection_table.lock().unwrap().get_connection_count(&peer) };
+    let connection_count = { connection_table.lock().await.get_connection_count(&peer) };
     let peer_stat = Arc::new(PeerStats::new(peer_type, params.stake, connection_count));
 
     while !stream_exit.load(Ordering::Relaxed) {
