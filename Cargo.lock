@@ -7316,6 +7316,7 @@ dependencies = [
  "solana-logger",
  "solana-program-runtime",
  "solana-sdk",
+ "test-case",
 ]
 
 [[package]]

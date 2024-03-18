@@ -545,6 +545,7 @@ mod tests {
     #[allow(deprecated)]
     use solana_sdk::{
         account::{self, Account, AccountSharedData, ReadableAccount},
+        feature_set::{self, FeatureSet},
         fee_calculator::FeeCalculator,
         hash::{hash, Hash},
         instruction::{AccountMeta, Instruction, InstructionError},
@@ -564,6 +565,8 @@ mod tests {
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
+        std::sync::Arc,
+        test_case::test_case,
     };
 
     impl From<Pubkey> for Address {
@@ -573,6 +576,33 @@ mod tests {
                 base: None,
             }
         }
+    }
+
+    fn process_instruction_toggle_feature(
+        instruction_data: &[u8],
+        transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+        instruction_accounts: Vec<AccountMeta>,
+        expected_result: Result<(), InstructionError>,
+        feature_id: &Pubkey,
+        enable: bool,
+    ) -> Vec<AccountSharedData> {
+        mock_process_instruction(
+            &system_program::id(),
+            Vec::new(),
+            instruction_data,
+            transaction_accounts,
+            instruction_accounts,
+            expected_result,
+            Entrypoint::vm,
+            |invoke_context| {
+                if !enable {
+                    let mut features = FeatureSet::all_enabled();
+                    features.deactivate(feature_id);
+                    invoke_context.feature_set = Arc::new(features);
+                }
+            },
+            |_invoke_context| {},
+        )
     }
 
     fn process_instruction(
@@ -2064,5 +2094,62 @@ mod tests {
             accounts[0].deserialize_data::<NonceVersions>().unwrap(),
             upgraded_nonce_account
         );
+    }
+
+    #[test_case(true; "enable_deprecate_executable_meta_update_in_bpf_loader")]
+    #[test_case(false; "disable_deprecate_executable_meta_update_in_bpf_loader")]
+    fn test_assign_native_loader(enable: bool) {
+        let pubkey = Pubkey::new_unique();
+        let account = AccountSharedData::new(100, 10, &system_program::id());
+        let accounts = process_instruction(
+            &bincode::serialize(&SystemInstruction::Assign {
+                owner: solana_sdk::native_loader::id(),
+            })
+            .unwrap(),
+            vec![(pubkey, account.clone())],
+            vec![AccountMeta {
+                pubkey,
+                is_signer: true,
+                is_writable: true,
+            }],
+            Ok(()),
+        );
+        assert_eq!(accounts[0].owner(), &solana_sdk::native_loader::id());
+        assert_eq!(accounts[0].lamports(), 100);
+
+        let pubkey2 = Pubkey::new_unique();
+        let expected = if enable {
+            Err(InstructionError::ExecutableLamportChange)
+        } else {
+            Ok(())
+        };
+        let accounts = process_instruction_toggle_feature(
+            &bincode::serialize(&SystemInstruction::Transfer { lamports: 50 }).unwrap(),
+            vec![
+                (
+                    pubkey2,
+                    AccountSharedData::new(100, 0, &system_program::id()),
+                ),
+                (pubkey, accounts[0].clone()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: pubkey2,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ],
+            expected,
+            &feature_set::deprecate_executable_meta_update_in_bpf_loader::id(),
+            enable,
+        );
+        assert_eq!(accounts[1].owner(), &solana_sdk::native_loader::id());
+        let expected_lamports = if enable { 100 } else { 150 };
+        assert_eq!(accounts[1].lamports(), expected_lamports);
     }
 }

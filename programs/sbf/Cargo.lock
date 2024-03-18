@@ -6372,6 +6372,7 @@ dependencies = [
  "serde_derive",
  "solana-program-runtime",
  "solana-sdk",
+ "test-case",
 ]
 
 [[package]]
