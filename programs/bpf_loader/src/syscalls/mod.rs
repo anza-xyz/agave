@@ -1584,12 +1584,16 @@ declare_builtin_function!(
                     Ok(1)
                 } else {
                     Ok(e.into())
-                }
+                };
             }
         };
 
         if result_point.len() != output {
-            return Ok(AltBn128Error::SliceOutOfBounds.into());
+            return if simplify_alt_bn128_syscall_error_codes {
+                Ok(1)
+            } else {
+                Ok(AltBn128Error::SliceOutOfBounds.into())
+            };
         }
 
         call_result.copy_from_slice(&result_point);
