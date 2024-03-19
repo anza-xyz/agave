@@ -14,11 +14,9 @@ pub struct DefaultThreadArgs {
 
 impl Default for DefaultThreadArgs {
     fn default() -> Self {
-        let num_total_threads = get_max_thread_count();
-
         Self {
             replay_forks_threads: ReplayForksThreadsArg::default().to_string(),
-            replay_transactions_threads: num_total_threads.to_string(),
+            replay_transactions_threads: ReplayTransactionsThreadsArg::default().to_string(),
         }
     }
 }
@@ -31,14 +29,7 @@ pub struct NumThreadConfig {
 pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
     vec![
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
-        Arg::with_name(replay_transactions_threads::NAME)
-            .long(replay_transactions_threads::LONG_ARG)
-            .takes_value(true)
-            .value_name("NUMBER")
-            .default_value(&defaults.replay_transactions_threads)
-            .validator(|num| is_within_range(num, 1..=get_max_thread_count()))
-            .hidden(hidden_unless_forced())
-            .help(replay_transactions_threads::HELP),
+        new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
     ]
 }
 
@@ -62,7 +53,7 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         },
         replay_transactions_threads: value_t_or_exit!(
             matches,
-            replay_transactions_threads::NAME,
+            ReplayTransactionsThreadsArg::NAME,
             NonZeroUsize
         ),
     }
@@ -111,8 +102,13 @@ impl ThreadArg for ReplayForksThreadsArg {
     }
 }
 
-mod replay_transactions_threads {
-    pub const NAME: &str = "replay_transactions_threads";
-    pub const LONG_ARG: &str = "replay-transactions-threads";
-    pub const HELP: &str = "Number of threads to use for transaction replay";
+struct ReplayTransactionsThreadsArg;
+impl ThreadArg for ReplayTransactionsThreadsArg {
+    const NAME: &'static str = "replay_transactions_threads";
+    const LONG_NAME: &'static str = "replay-transactions-threads";
+    const HELP: &'static str = "Number of threads to use for transaction replay";
+
+    fn default() -> usize {
+        get_max_thread_count()
+    }
 }
