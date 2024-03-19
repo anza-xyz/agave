@@ -2235,11 +2235,11 @@ fn do_process_program_write_and_deploy(
     let blockhash = rpc_client.get_latest_blockhash()?;
 
     // Initialize buffer account or complete if already partially initialized
-    let (ixs, balance_needed) = if let Some(account) = rpc_client
+    let (ixs, balance_needed, buffer_program_data) = if let Some(mut account) = rpc_client
         .get_account_with_commitment(buffer_pubkey, config.commitment)?
         .value
     {
-        complete_partial_program_init(
+        let (ixs, balance_needed) = complete_partial_program_init(
             loader_id,
             &fee_payer_signer.pubkey(),
             buffer_pubkey,
@@ -2251,7 +2251,11 @@ fn do_process_program_write_and_deploy(
             },
             min_rent_exempt_program_data_balance,
             allow_excessive_balance,
-        )?
+        )?;
+        let buffer_program_data = account
+            .data
+            .split_off(UpgradeableLoaderState::size_of_buffer_metadata());
+        (ixs, balance_needed, buffer_program_data)
     } else if loader_id == &bpf_loader_upgradeable::id() {
         (
             bpf_loader_upgradeable::create_buffer(
@@ -2262,6 +2266,7 @@ fn do_process_program_write_and_deploy(
                 program_len,
             )?,
             min_rent_exempt_program_data_balance,
+            vec![0; program_len],
         )
     } else {
         (
@@ -2273,6 +2278,7 @@ fn do_process_program_write_and_deploy(
                 loader_id,
             )],
             min_rent_exempt_program_data_balance,
+            vec![0; program_len],
         )
     };
 
@@ -2312,7 +2318,10 @@ fn do_process_program_write_and_deploy(
     let mut write_messages = vec![];
     let chunk_size = calculate_max_chunk_size(&create_msg);
     for (chunk, i) in program_data.chunks(chunk_size).zip(0..) {
-        write_messages.push(create_msg((i * chunk_size) as u32, chunk.to_vec()));
+        let offset = i * chunk_size;
+        if chunk != &buffer_program_data[offset..offset + chunk.len()] {
+            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
+        }
     }
 
     // Create and add final message
@@ -2404,11 +2413,11 @@ fn do_process_program_upgrade(
         buffer_signer
     {
         // Check Buffer account to see if partial initialization has occurred
-        let (ixs, balance_needed) = if let Some(account) = rpc_client
+        let (ixs, balance_needed, buffer_program_data) = if let Some(mut account) = rpc_client
             .get_account_with_commitment(&buffer_signer.pubkey(), config.commitment)?
             .value
         {
-            complete_partial_program_init(
+            let (ixs, balance_needed) = complete_partial_program_init(
                 &bpf_loader_upgradeable::id(),
                 &fee_payer_signer.pubkey(),
                 &buffer_signer.pubkey(),
@@ -2416,7 +2425,11 @@ fn do_process_program_upgrade(
                 UpgradeableLoaderState::size_of_buffer(program_len),
                 min_rent_exempt_program_data_balance,
                 true,
-            )?
+            )?;
+            let buffer_program_data = account
+                .data
+                .split_off(UpgradeableLoaderState::size_of_buffer_metadata());
+            (ixs, balance_needed, buffer_program_data)
         } else {
             (
                 bpf_loader_upgradeable::create_buffer(
@@ -2427,7 +2440,18 @@ fn do_process_program_upgrade(
                     program_len,
                 )?,
                 min_rent_exempt_program_data_balance,
+                vec![0; program_len],
             )
+        };
+
+        let initial_message = if !ixs.is_empty() {
+            Some(Message::new_with_blockhash(
+                &ixs,
+                Some(&fee_payer_signer.pubkey()),
+                &blockhash,
+            ))
+        } else {
+            None
         };
         let mut initial_instructions: Vec<Instruction> = Vec::new();
 
@@ -2464,7 +2488,10 @@ fn do_process_program_upgrade(
         let mut write_messages = vec![];
         let chunk_size = calculate_max_chunk_size(&create_msg);
         for (chunk, i) in program_data.chunks(chunk_size).zip(0..) {
-            write_messages.push(create_msg((i * chunk_size) as u32, chunk.to_vec()));
+            let offset = i * chunk_size;
+            if chunk != &buffer_program_data[offset..offset + chunk.len()] {
+                write_messages.push(create_msg(offset as u32, chunk.to_vec()));
+            }
         }
 
         (initial_message, write_messages, balance_needed)
