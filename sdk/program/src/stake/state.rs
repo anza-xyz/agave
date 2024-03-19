@@ -917,10 +917,10 @@ pub struct Stake {
 }
 
 impl Stake {
-    pub fn stake(
+    pub fn stake<T: StakeHistoryGetEntry>(
         &self,
         epoch: Epoch,
-        history: &StakeHistory,
+        history: &T,
         new_rate_activation_epoch: Option<Epoch>,
     ) -> u64 {
         self.delegation
