@@ -1573,11 +1573,18 @@ declare_builtin_function!(
             }
         };
 
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .feature_set
+            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
-            Err(_) => {
-                //TODO: add feature gate
-                return Ok(1);
+            Err(e) => {
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                }
             }
         };
 
