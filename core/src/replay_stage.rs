@@ -663,8 +663,6 @@ impl ReplayStage {
                     .build()
                     .expect("new rayon threadpool");
                 ForkReplayMode::Parallel(pool)
-            } else {
-                ForkReplayMode::Serial
             };
             // Thread pool to replay multiple transactions within one block in parallel
             let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
