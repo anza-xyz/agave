@@ -7,6 +7,7 @@ use {
     std::{num::NonZeroUsize, ops::RangeInclusive},
 };
 
+// Need this struct to provide &str whose lifetime matches that of the CLAP Arg's
 pub struct DefaultThreadArgs {
     pub replay_forks_threads: String,
     pub replay_transactions_threads: String,
@@ -19,11 +20,6 @@ impl Default for DefaultThreadArgs {
             replay_transactions_threads: ReplayTransactionsThreadsArg::default().to_string(),
         }
     }
-}
-
-pub struct NumThreadConfig {
-    pub replay_forks_threads: NonZeroUsize,
-    pub replay_transactions_threads: NonZeroUsize,
 }
 
 pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
@@ -42,6 +38,11 @@ fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
         .validator(|num| is_within_range(num, T::range()))
         .hidden(hidden_unless_forced())
         .help(T::HELP)
+}
+
+pub struct NumThreadConfig {
+    pub replay_forks_threads: NonZeroUsize,
+    pub replay_transactions_threads: NonZeroUsize,
 }
 
 pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
