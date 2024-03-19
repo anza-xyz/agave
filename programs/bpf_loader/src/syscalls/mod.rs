@@ -1576,6 +1576,7 @@ declare_builtin_function!(
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
             Err(_) => {
+                //TODO: add feature gate
                 return Ok(1);
             }
         };

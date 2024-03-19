@@ -87,7 +87,7 @@ mod target_arch {
         let decompressed_g1 = G1::deserialize_with_mode(
             convert_endianness::<32, 32>(&g1_bytes).as_slice(),
             Compress::Yes,
-            Validate::Yes,
+            Validate::No,
         )
         .map_err(|_| AltBn128CompressionError::G1DecompressionFailed)?;
         let mut decompressed_g1_bytes = [0u8; alt_bn128_compression_size::G1];
@@ -114,7 +114,7 @@ mod target_arch {
         let g1 = G1::deserialize_with_mode(
             convert_endianness::<32, 64>(&g1_bytes).as_slice(),
             Compress::No,
-            Validate::Yes,
+            Validate::No,
         )
         .map_err(|_| AltBn128CompressionError::G1CompressionFailed)?;
         let mut g1_bytes = [0u8; alt_bn128_compression_size::G1_COMPRESSED];
@@ -135,7 +135,7 @@ mod target_arch {
         let decompressed_g2 = G2::deserialize_with_mode(
             convert_endianness::<64, 64>(&g2_bytes).as_slice(),
             Compress::Yes,
-            Validate::Yes,
+            Validate::No,
         )
         .map_err(|_| AltBn128CompressionError::G2DecompressionFailed)?;
         let mut decompressed_g2_bytes = [0u8; alt_bn128_compression_size::G2];
@@ -162,7 +162,7 @@ mod target_arch {
         let g2 = G2::deserialize_with_mode(
             convert_endianness::<64, 128>(&g2_bytes).as_slice(),
             Compress::No,
-            Validate::Yes,
+            Validate::No,
         )
         .map_err(|_| AltBn128CompressionError::G2CompressionFailed)?;
         let mut g2_bytes = [0u8; alt_bn128_compression_size::G2_COMPRESSED];
