@@ -71,16 +71,16 @@ trait ThreadArg {
 
     /// The default number of threads
     fn default() -> usize;
-    /// The minimum allowed value of threads (inclusive)
+    /// The minimum allowed number of threads (inclusive)
     fn min() -> usize {
         1
     }
-    /// The maximum allowed value of threads (inclusive)
+    /// The maximum allowed number of threads (inclusive)
     fn max() -> usize {
-        // By default, no thread pool should scale over the machine's number of threads
+        // By default, no thread pool should scale over the number of the machine's threads
         get_max_thread_count()
     }
-    /// The range of allowable values
+    /// The range of allowed number of threads (inclusive on both ends)
     fn range() -> RangeInclusive<usize> {
         RangeInclusive::new(Self::min(), Self::max())
     }
