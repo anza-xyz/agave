@@ -2444,15 +2444,6 @@ fn do_process_program_upgrade(
             )
         };
 
-        let initial_message = if !ixs.is_empty() {
-            Some(Message::new_with_blockhash(
-                &ixs,
-                Some(&fee_payer_signer.pubkey()),
-                &blockhash,
-            ))
-        } else {
-            None
-        };
         let mut initial_instructions: Vec<Instruction> = Vec::new();
 
         set_compute_budget_ixs_if_needed(&mut initial_instructions, &compute_unit_price);
