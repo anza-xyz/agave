@@ -12,7 +12,7 @@ use {
             instruction::{LockupArgs, StakeError},
             stake_flags::StakeFlags,
         },
-        stake_history::{StakeHistory, StakeHistoryEntry, StakeHistoryGetEntry},
+        stake_history::{StakeHistoryEntry, StakeHistoryGetEntry},
     },
     borsh::{io, BorshDeserialize, BorshSchema, BorshSerialize},
     std::collections::HashSet,
