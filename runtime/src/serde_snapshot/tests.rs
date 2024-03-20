@@ -863,7 +863,7 @@ mod serde_snapshot_tests {
         old_id: usize,
         next_id: usize,
         expected_remapped_id: usize,
-        collisions: usize,
+        expected_collisions: usize,
         become_ungovernable: impl FnOnce(&Path),
     ) {
         let tmp = tempfile::tempdir().unwrap();
@@ -880,7 +880,7 @@ mod serde_snapshot_tests {
                 .unwrap();
         assert_eq!(remapped_id as usize, expected_remapped_id);
         assert_eq!(&remapped_path, &expected_remapped_path);
-        assert_eq!(num_collisions.load(Ordering::Relaxed), collisions);
+        assert_eq!(num_collisions.load(Ordering::Relaxed), expected_collisions);
     }
 
     #[test]
