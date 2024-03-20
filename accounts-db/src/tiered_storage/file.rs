@@ -10,7 +10,7 @@ use {
 };
 
 /// The ending 8 bytes of a valid tiered account storage file.
-pub const FILE_MAGIC_NUMBER: u64 = 0xA72A2AB5; // ANZALABS
+pub const FILE_MAGIC_NUMBER: u64 = u64::from_le_bytes(*b"AnzaTech");
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
@@ -168,7 +168,6 @@ mod tests {
     };
 
     fn generate_test_file_with_number(path: impl AsRef<Path>, number: u64) {
-        // Generate a new temp path that is guaranteed to NOT already have a file.
         let mut file = TieredWritableFile::new(path).unwrap();
         file.write_pod(&number).unwrap();
     }
@@ -178,7 +177,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_new");
         generate_test_file_with_number(&path, FILE_MAGIC_NUMBER);
-        TieredReadableFile::new(&path).unwrap();
+        assert!(TieredReadableFile::new(&path).is_ok());
     }
 
     #[test]
