@@ -413,12 +413,12 @@ impl InnerProductProof {
         let pos = 2 * lg_n * 32;
         let attempt = Scalar::from_canonical_bytes(util::read32(&slice[pos..]));
         if attempt.is_none().into() {
-            return Err(RangeProofVerificationError::Deserialization);
+            return Err(RangeProofVerificationError::Deserialization)
         }
         let a = attempt.unwrap();
         let attempt = Scalar::from_canonical_bytes(util::read32(&slice[pos + 32..]));
         if attempt.is_none().into() {
-            return Err(RangeProofVerificationError::Deserialization);
+            return Err(RangeProofVerificationError::Deserialization)
         }
         let b = attempt.unwrap();
 
@@ -442,13 +442,13 @@ mod tests {
         let G: Vec<RistrettoPoint> = bp_gens.G(n).cloned().collect();
         let H: Vec<RistrettoPoint> = bp_gens.H(n).cloned().collect();
 
-        let Q = RistrettoPoint::hash_from_bytes::<Sha3_512>(b"test point");
+        let Q = RistrettoPoint::hash_from_bytes::<sha3::Sha3_512>(b"test point");
 
         let a: Vec<_> = (0..n).map(|_| Scalar::random(&mut OsRng)).collect();
         let b: Vec<_> = (0..n).map(|_| Scalar::random(&mut OsRng)).collect();
         let c = util::inner_product(&a, &b).unwrap();
 
-        let G_factors: Vec<Scalar> = iter::repeat(Scalar::one()).take(n).collect();
+        let G_factors: Vec<Scalar> = iter::repeat(*SCALAR_ONE).take(n).collect();
 
         let y_inv = Scalar::random(&mut OsRng);
         let H_factors: Vec<Scalar> = util::exp_iter(y_inv).take(n).collect();
@@ -485,7 +485,7 @@ mod tests {
         assert!(proof
             .verify(
                 n,
-                iter::repeat(Scalar::one()).take(n),
+                iter::repeat(*SCALAR_ONE).take(n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,
@@ -500,7 +500,7 @@ mod tests {
         assert!(proof
             .verify(
                 n,
-                iter::repeat(Scalar::one()).take(n),
+                iter::repeat(*SCALAR_ONE).take(n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,
