@@ -57,8 +57,7 @@ impl Default for TieredStorageMagicNumber {
 pub enum AccountMetaFormat {
     #[default]
     Hot = 0,
-    // Temporarily comment out to avoid unimplemented!() block
-    // Cold = 1,
+    HotPacked = 1,
 }
 
 #[repr(u16)]
@@ -336,7 +335,7 @@ mod tests {
     fn test_footer() {
         let path = get_append_vec_path("test_file_footer");
         let expected_footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             owners_block_format: OwnersBlockFormat::AddressesOnly,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
             account_block_format: AccountBlockFormat::AlignedRaw,

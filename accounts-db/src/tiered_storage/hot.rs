@@ -5,6 +5,7 @@ use {
         account_storage::meta::{StoredAccountInfo, StoredAccountMeta},
         accounts_file::MatchAccountOwnerError,
         accounts_hash::AccountHash,
+        accounts_index::ZeroLamport,
         tiered_storage::{
             byte_block,
             file::TieredWritableFile,
@@ -29,7 +30,7 @@ use {
 
 pub const HOT_FORMAT: TieredStorageFormat = TieredStorageFormat {
     meta_entry_size: std::mem::size_of::<HotAccountMeta>(),
-    account_meta_format: AccountMetaFormat::Hot,
+    account_meta_format: AccountMetaFormat::HotPacked,
     owners_block_format: OwnersBlockFormat::AddressesOnly,
     index_block_format: IndexBlockFormat::AddressesThenOffsets,
     account_block_format: AccountBlockFormat::AlignedRaw,
@@ -141,8 +142,6 @@ impl HotAccountOffset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
 #[repr(C)]
 pub struct HotAccountMeta {
-    /// The balance of this account.
-    lamports: u64,
     /// Stores important fields in a packed struct.
     packed_fields: HotMetaPackedFields,
     /// Stores boolean flags and existence of each optional field.
@@ -150,22 +149,15 @@ pub struct HotAccountMeta {
 }
 
 // Ensure there are no implicit padding bytes
-const _: () = assert!(std::mem::size_of::<HotAccountMeta>() == 8 + 4 + 4);
+const _: () = assert!(std::mem::size_of::<HotAccountMeta>() == 4 + 4);
 
 impl TieredAccountMeta for HotAccountMeta {
     /// Construct a HotAccountMeta instance.
     fn new() -> Self {
         HotAccountMeta {
-            lamports: 0,
             packed_fields: HotMetaPackedFields::default(),
             flags: AccountMetaFlags::new(),
         }
-    }
-
-    /// A builder function that initializes lamports.
-    fn with_lamports(mut self, lamports: u64) -> Self {
-        self.lamports = lamports;
-        self
     }
 
     /// A builder function that initializes the number of padding bytes
@@ -201,9 +193,25 @@ impl TieredAccountMeta for HotAccountMeta {
         self
     }
 
-    /// Returns the balance of the lamports associated with the account.
-    fn lamports(&self) -> u64 {
-        self.lamports
+    /// Returns the balance of the lamports associated with the account
+    /// from the TieredAccountMeta, or None if the lamports is stored
+    /// inside the optional field.
+    fn lamports_from_meta(&self) -> Option<u64> {
+        self.flags.lamports()
+    }
+
+    /// Returns the balance of the lamports associated with the account
+    /// from the optional fields, or None if the lamports is stored
+    /// inside the TieredAccountMeta.
+    fn lamports_from_optional_fields(&self, account_block: &[u8]) -> Option<u64> {
+        self.flags
+            .has_optional_lamports_field()
+            .then(|| {
+                let offset = self.optional_fields_offset(account_block)
+                    + AccountMetaOptionalFields::lamports_offset(self.flags());
+                byte_block::read_pod::<u64>(account_block, offset).copied()
+            })
+            .flatten()
     }
 
     /// Returns the number of padding bytes for the associated account data
@@ -263,6 +271,13 @@ impl TieredAccountMeta for HotAccountMeta {
     }
 }
 
+impl ZeroLamport for HotAccountMeta {
+    /// Whether the account has zero lamports.
+    fn is_zero_lamport(&self) -> bool {
+        self.flags.is_zero_lamport()
+    }
+}
+
 /// The struct that offers read APIs for accessing a hot account.
 #[derive(PartialEq, Eq, Debug)]
 pub struct HotAccount<'accounts_file, M: TieredAccountMeta> {
@@ -299,7 +314,15 @@ impl<'accounts_file, M: TieredAccountMeta> HotAccount<'accounts_file, M> {
 impl<'accounts_file, M: TieredAccountMeta> ReadableAccount for HotAccount<'accounts_file, M> {
     /// Returns the balance of the lamports of this account.
     fn lamports(&self) -> u64 {
-        self.meta.lamports()
+        if let Some(lamports) = self.meta.lamports_from_meta() {
+            return lamports;
+        }
+
+        // If the meta does not have the lamports, then it must inside the optional
+        // fields.
+        self.meta
+            .lamports_from_optional_fields(self.account_block)
+            .unwrap()
     }
 
     /// Returns the address of the owner of this account.
@@ -375,17 +398,22 @@ impl HotStorageReader {
         &self,
         account_offset: HotAccountOffset,
     ) -> TieredStorageResult<&HotAccountMeta> {
-        let offset = account_offset.offset();
+        match self.footer.account_meta_format {
+            AccountMetaFormat::HotPacked => {
+                let offset = account_offset.offset();
 
-        assert!(
-            offset.saturating_add(std::mem::size_of::<HotAccountMeta>())
-                <= self.footer.index_block_offset as usize,
-            "reading HotAccountOffset ({}) would exceed accounts blocks offset boundary ({}).",
-            offset,
-            self.footer.index_block_offset,
-        );
-        let (meta, _) = get_pod::<HotAccountMeta>(&self.mmap, offset)?;
-        Ok(meta)
+                assert!(
+                    offset.saturating_add(std::mem::size_of::<HotAccountMeta>())
+                        <= self.footer.index_block_offset as usize,
+                    "reading HotAccountOffset ({}) would exceed accounts blocks offset boundary ({}).",
+                    offset,
+                    self.footer.index_block_offset,
+                );
+                let (meta, _) = get_pod::<HotAccountMeta>(&self.mmap, offset)?;
+                Ok(meta)
+            }
+            _ => Err(TieredStorageError::UnsupportedAccountMetaFormat),
+        }
     }
 
     /// Returns the offset to the account given the specified index.
@@ -431,7 +459,7 @@ impl HotStorageReader {
             .get_account_meta_from_offset(account_offset)
             .map_err(|_| MatchAccountOwnerError::UnableToLoad)?;
 
-        if account_meta.lamports() == 0 {
+        if account_meta.is_zero_lamport() {
             Err(MatchAccountOwnerError::NoMatch)
         } else {
             let account_owner = self
@@ -549,6 +577,9 @@ fn write_optional_fields(
     if let Some(rent_epoch) = opt_fields.rent_epoch {
         size += file.write_pod(&rent_epoch)?;
     }
+    if let Some(lamports) = opt_fields.lamports {
+        size += file.write_pod(&lamports)?;
+    }
 
     debug_assert_eq!(size, opt_fields.size());
 
@@ -579,14 +610,16 @@ impl HotStorageWriter {
         executable: bool,
         rent_epoch: Option<Epoch>,
     ) -> TieredStorageResult<usize> {
-        let optional_fields = AccountMetaOptionalFields { rent_epoch };
+        let optional_fields = AccountMetaOptionalFields {
+            rent_epoch,
+            lamports: AccountMetaFlags::get_optional_lamports_field(lamports),
+        };
 
-        let mut flags = AccountMetaFlags::new_from(&optional_fields);
+        let mut flags = AccountMetaFlags::new_from(&optional_fields, lamports);
         flags.set_executable(executable);
 
         let padding_len = padding_bytes(account_data.len());
         let meta = HotAccountMeta::new()
-            .with_lamports(lamports)
             .with_owner_offset(owner_offset)
             .with_account_data_size(account_data.len() as u64)
             .with_account_data_padding(padding_len)
@@ -710,7 +743,10 @@ pub mod tests {
             footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
             hot::{HotAccountMeta, HotStorageReader},
             index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
-            meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
+            meta::{
+                AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta,
+                LAMPORTS_INFO_MAX_BALANCE,
+            },
             owners::{OwnersBlockFormat, OwnersTable},
             test_utils::{create_test_account, verify_test_account},
         },
@@ -726,10 +762,9 @@ pub mod tests {
 
     #[test]
     fn test_hot_account_meta_layout() {
-        assert_eq!(offset_of!(HotAccountMeta, lamports), 0x00);
-        assert_eq!(offset_of!(HotAccountMeta, packed_fields), 0x08);
-        assert_eq!(offset_of!(HotAccountMeta, flags), 0x0C);
-        assert_eq!(std::mem::size_of::<HotAccountMeta>(), 16);
+        assert_eq!(offset_of!(HotAccountMeta, packed_fields), 0x00);
+        assert_eq!(offset_of!(HotAccountMeta, flags), 0x04);
+        assert_eq!(std::mem::size_of::<HotAccountMeta>(), 8);
     }
 
     #[test]
@@ -796,28 +831,42 @@ pub mod tests {
         HotAccountMeta::new().with_owner_offset(OwnerOffset(MAX_HOT_OWNER_OFFSET.0 + 1));
     }
 
-    #[test]
-    fn test_hot_account_meta() {
-        const TEST_LAMPORTS: u64 = 2314232137;
+    /// A helper function to test hot account lamports.
+    fn hot_account_lamports_test(lamports: u64, expected_lamports: Option<u64>) {
         const TEST_PADDING: u8 = 5;
         const TEST_OWNER_OFFSET: OwnerOffset = OwnerOffset(0x1fef_1234);
         const TEST_RENT_EPOCH: Epoch = 7;
 
         let optional_fields = AccountMetaOptionalFields {
             rent_epoch: Some(TEST_RENT_EPOCH),
+            lamports: AccountMetaFlags::get_optional_lamports_field(lamports),
         };
 
-        let flags = AccountMetaFlags::new_from(&optional_fields);
+        let flags = AccountMetaFlags::new_from(&optional_fields, lamports);
         let meta = HotAccountMeta::new()
-            .with_lamports(TEST_LAMPORTS)
             .with_account_data_padding(TEST_PADDING)
             .with_owner_offset(TEST_OWNER_OFFSET)
             .with_flags(&flags);
 
-        assert_eq!(meta.lamports(), TEST_LAMPORTS);
+        assert_eq!(meta.lamports_from_meta(), expected_lamports);
         assert_eq!(meta.account_data_padding(), TEST_PADDING);
         assert_eq!(meta.owner_offset(), TEST_OWNER_OFFSET);
         assert_eq!(*meta.flags(), flags);
+    }
+
+    #[test]
+    fn test_hot_account_zero_lamports() {
+        hot_account_lamports_test(0, Some(0));
+    }
+
+    #[test]
+    fn test_hot_account_lamports_in_meta() {
+        hot_account_lamports_test(LAMPORTS_INFO_MAX_BALANCE, Some(LAMPORTS_INFO_MAX_BALANCE));
+    }
+
+    #[test]
+    fn test_hot_account_lamports_not_fit() {
+        hot_account_lamports_test(LAMPORTS_INFO_MAX_BALANCE + 1, None);
     }
 
     #[test]
@@ -828,14 +877,18 @@ pub mod tests {
         const TEST_LAMPORT: u64 = 2314232137;
         const OWNER_OFFSET: u32 = 0x1fef_1234;
         const TEST_RENT_EPOCH: Epoch = 7;
+        const TEST_BIG_LAMPORTS: u64 = u64::MAX;
 
         let optional_fields = AccountMetaOptionalFields {
             rent_epoch: Some(TEST_RENT_EPOCH),
+            lamports: AccountMetaFlags::get_optional_lamports_field(TEST_BIG_LAMPORTS),
         };
+        // Since the lamports is too big to fit into meta, it is expected
+        // to be in the optional fields.
+        assert_eq!(optional_fields.lamports, Some(TEST_BIG_LAMPORTS));
 
-        let flags = AccountMetaFlags::new_from(&optional_fields);
+        let flags = AccountMetaFlags::new_from(&optional_fields, TEST_BIG_LAMPORTS);
         let expected_meta = HotAccountMeta::new()
-            .with_lamports(TEST_LAMPORT)
             .with_account_data_padding(padding.len().try_into().unwrap())
             .with_owner_offset(OwnerOffset(OWNER_OFFSET))
             .with_flags(&flags);
@@ -854,6 +907,7 @@ pub mod tests {
         assert_eq!(expected_meta, *meta);
         assert!(meta.flags().has_rent_epoch());
         assert_eq!(meta.account_data_padding() as usize, padding.len());
+        assert!(meta.flags().has_optional_lamports_field());
 
         let account_block = &buffer[std::mem::size_of::<HotAccountMeta>()..];
         assert_eq!(
@@ -865,6 +919,10 @@ pub mod tests {
         assert_eq!(account_data.len(), meta.account_data_size(account_block));
         assert_eq!(account_data, meta.account_data(account_block));
         assert_eq!(meta.rent_epoch(account_block), optional_fields.rent_epoch);
+        assert_eq!(
+            meta.lamports_from_optional_fields(account_block),
+            optional_fields.lamports
+        );
     }
 
     #[test]
@@ -873,7 +931,7 @@ pub mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_hot_storage_footer");
         let expected_footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             owners_block_format: OwnersBlockFormat::AddressesOnly,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
             account_block_format: AccountBlockFormat::AlignedRaw,
@@ -915,15 +973,13 @@ pub mod tests {
 
         let hot_account_metas: Vec<_> = (0..NUM_ACCOUNTS)
             .map(|_| {
-                HotAccountMeta::new()
-                    .with_lamports(rng.gen_range(0..u64::MAX))
-                    .with_owner_offset(OwnerOffset(rng.gen_range(0..NUM_ACCOUNTS)))
+                HotAccountMeta::new().with_owner_offset(OwnerOffset(rng.gen_range(0..NUM_ACCOUNTS)))
             })
             .collect();
 
         let account_offsets: Vec<_>;
         let mut footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             account_entry_count: NUM_ACCOUNTS,
             ..TieredStorageFooter::default()
         };
@@ -965,7 +1021,7 @@ pub mod tests {
             .join("test_get_acount_meta_from_offset_out_of_bounds");
 
         let footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             index_block_offset: 160,
             ..TieredStorageFooter::default()
         };
@@ -1008,7 +1064,7 @@ pub mod tests {
             .collect();
 
         let mut footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             account_entry_count: NUM_ACCOUNTS,
             // Set index_block_offset to 0 as we didn't write any account
             // meta/data in this test
@@ -1052,7 +1108,7 @@ pub mod tests {
             .collect();
 
         let footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             // meta/data nor index block in this test
             owners_block_offset: 0,
             ..TieredStorageFooter::default()
@@ -1103,14 +1159,17 @@ pub mod tests {
         let hot_account_metas: Vec<_> = std::iter::repeat_with({
             || {
                 HotAccountMeta::new()
-                    .with_lamports(rng.gen_range(1..u64::MAX))
                     .with_owner_offset(OwnerOffset(rng.gen_range(0..NUM_OWNERS)))
+                    .with_flags(&AccountMetaFlags::new_from(
+                        &AccountMetaOptionalFields::default(),
+                        rng.gen_range(0..LAMPORTS_INFO_MAX_BALANCE),
+                    ))
             }
         })
         .take(NUM_ACCOUNTS as usize)
         .collect();
         let mut footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             account_entry_count: NUM_ACCOUNTS,
             owner_count: NUM_OWNERS,
             ..TieredStorageFooter::default()
@@ -1218,7 +1277,6 @@ pub mod tests {
         let account_metas: Vec<_> = (0..NUM_ACCOUNTS)
             .map(|i| {
                 HotAccountMeta::new()
-                    .with_lamports(rng.gen_range(0..u64::MAX))
                     .with_owner_offset(OwnerOffset(rng.gen_range(0..NUM_OWNERS) as u32))
                     .with_account_data_padding(padding_bytes(account_datas[i].len()))
             })
@@ -1230,7 +1288,7 @@ pub mod tests {
             .collect();
 
         let mut footer = TieredStorageFooter {
-            account_meta_format: AccountMetaFormat::Hot,
+            account_meta_format: AccountMetaFormat::HotPacked,
             account_entry_count: NUM_ACCOUNTS as u32,
             owner_count: NUM_OWNERS as u32,
             ..TieredStorageFooter::default()
@@ -1288,7 +1346,6 @@ pub mod tests {
                 .get_account(IndexOffset(i as u32))
                 .unwrap()
                 .unwrap();
-            assert_eq!(stored_meta.lamports(), account_metas[i].lamports());
             assert_eq!(stored_meta.data().len(), account_datas[i].len());
             assert_eq!(stored_meta.data(), account_datas[i]);
             assert_eq!(

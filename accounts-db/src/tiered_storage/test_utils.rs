@@ -4,7 +4,7 @@ use {
     crate::{
         account_storage::meta::{StoredAccountMeta, StoredMeta},
         accounts_hash::AccountHash,
-        tiered_storage::owners::OWNER_NO_OWNER,
+        tiered_storage::{meta::LAMPORTS_INFO_MAX_BALANCE, owners::OWNER_NO_OWNER},
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
@@ -24,7 +24,13 @@ pub(super) fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) 
     let data_byte = seed as u8;
     let owner_byte = u8::MAX - data_byte;
     let account = Account {
-        lamports: seed,
+        // make sure the created test accounts cover both lamports inside meta
+        // and lamports inside optional fields.
+        lamports: if seed % 2 == 0 {
+            seed
+        } else {
+            seed + LAMPORTS_INFO_MAX_BALANCE
+        },
         data: std::iter::repeat(data_byte).take(seed as usize).collect(),
         // this will allow some test account sharing the same owner.
         owner: [owner_byte; 32].into(),

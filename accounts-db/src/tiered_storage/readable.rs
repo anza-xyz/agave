@@ -3,6 +3,7 @@ use {
         account_storage::meta::StoredAccountMeta,
         accounts_file::MatchAccountOwnerError,
         tiered_storage::{
+            error::TieredStorageError,
             footer::{AccountMetaFormat, TieredStorageFooter},
             hot::HotStorageReader,
             index::IndexOffset,
@@ -24,7 +25,8 @@ impl TieredStorageReader {
     pub fn new_from_path(path: impl AsRef<Path>) -> TieredStorageResult<Self> {
         let footer = TieredStorageFooter::new_from_path(&path)?;
         match footer.account_meta_format {
-            AccountMetaFormat::Hot => Ok(Self::Hot(HotStorageReader::new_from_path(path)?)),
+            AccountMetaFormat::HotPacked => Ok(Self::Hot(HotStorageReader::new_from_path(path)?)),
+            _ => Err(TieredStorageError::UnsupportedAccountMetaFormat),
         }
     }
 
@@ -85,5 +87,34 @@ impl TieredStorageReader {
         match self {
             Self::Hot(hot) => hot.accounts(index_offset),
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use {
+        super::*,
+        crate::tiered_storage::{file::TieredStorageFile, footer::AccountMetaFormat},
+        tempfile::TempDir,
+    };
+
+    #[test]
+    #[should_panic(expected = "UnsupportedAccountMetaFormat")]
+    fn test_unsupported_meta_format() {
+        // Generate a new temp path that is guaranteed to NOT already have a file.
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test_unsupported_meta_format");
+
+        let footer = TieredStorageFooter {
+            account_meta_format: AccountMetaFormat::Hot, // deprecated
+            ..TieredStorageFooter::default()
+        };
+
+        {
+            let file = TieredStorageFile::new_writable(&path).unwrap();
+            footer.write_footer_block(&file).unwrap();
+        }
+
+        TieredStorageReader::new_from_path(&path).unwrap();
     }
 }

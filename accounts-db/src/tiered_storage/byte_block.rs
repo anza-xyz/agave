@@ -95,6 +95,9 @@ impl ByteBlockWriter {
         if let Some(rent_epoch) = opt_fields.rent_epoch {
             size += self.write_pod(&rent_epoch)?;
         }
+        if let Some(lamports) = opt_fields.lamports {
+            size += self.write_pod(&lamports)?;
+        }
 
         debug_assert_eq!(size, opt_fields.size());
 
@@ -341,6 +344,7 @@ mod tests {
 
     fn write_optional_fields(format: AccountBlockFormat) {
         let mut test_epoch = 5432312;
+        let mut test_lamports = 2314312321321;
 
         let mut writer = ByteBlockWriter::new(format);
         let mut opt_fields_vec = vec![];
@@ -349,10 +353,17 @@ mod tests {
         // prepare a vector of optional fields that contains all combinations
         // of Some and None.
         for rent_epoch in [None, Some(test_epoch)] {
-            some_count += rent_epoch.iter().count();
+            for lamports in [None, Some(test_lamports)] {
+                some_count += rent_epoch.map_or(0, |_| 1);
+                some_count += lamports.map_or(0, |_| 1);
 
-            opt_fields_vec.push(AccountMetaOptionalFields { rent_epoch });
-            test_epoch += 1;
+                opt_fields_vec.push(AccountMetaOptionalFields {
+                    rent_epoch,
+                    lamports,
+                });
+                test_epoch += 1;
+                test_lamports += 1;
+            }
         }
 
         // write all the combinations of the optional fields
@@ -382,6 +393,12 @@ mod tests {
                 assert_eq!(*rent_epoch, expected_rent_epoch);
                 verified_count += 1;
                 offset += std::mem::size_of::<Epoch>();
+            }
+            if let Some(expected_lamports) = opt_fields.lamports {
+                let lamports = read_pod::<u64>(&decoded_buffer, offset).unwrap();
+                assert_eq!(*lamports, expected_lamports);
+                verified_count += 1;
+                offset += std::mem::size_of::<u64>();
             }
         }
 
