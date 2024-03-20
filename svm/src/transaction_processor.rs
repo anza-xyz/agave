@@ -228,7 +228,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         )));
 
         if programs_loaded_for_tx_batch.borrow().hit_max_limit {
-            const ERROR: TransactionError = TransactionError::ProgramAccountNotFound;
+            const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
             let loaded_transactions = vec![(Err(ERROR), None); sanitized_txs.len()];
             let execution_results =
                 vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
