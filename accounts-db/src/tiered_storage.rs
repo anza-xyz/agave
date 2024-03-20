@@ -125,7 +125,7 @@ impl TieredStorage {
 
         if format == &HOT_FORMAT {
             let result = {
-                let writer = HotStorageWriter::new(&self.path)?;
+                let mut writer = HotStorageWriter::new(&self.path)?;
                 writer.write_accounts(accounts, skip)
             };
 
@@ -170,7 +170,8 @@ mod tests {
     use {
         super::*,
         crate::account_storage::meta::StoredMetaWriteVersion,
-        footer::{TieredStorageFooter, TieredStorageMagicNumber},
+        file::TieredStorageMagicNumber,
+        footer::TieredStorageFooter,
         hot::HOT_FORMAT,
         index::IndexOffset,
         solana_sdk::{

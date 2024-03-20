@@ -2618,9 +2618,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hidapi"
-version = "2.6.0"
+version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a722fb137d008dbf264f54612457f8eb6a299efbcb0138178964a0809035d74"
+checksum = "9e58251020fe88fe0dae5ebcc1be92b4995214af84725b375d08354d0311c23c"
 dependencies = [
  "cc",
  "cfg-if 1.0.0",
@@ -4486,12 +4486,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "raptorq"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cc8cd0bcb2d520fff368264b5a6295e064c60955349517d09b14473afae4856"
-
-[[package]]
 name = "rayon"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5978,7 +5972,6 @@ dependencies = [
  "quinn",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
- "raptorq",
  "rayon",
  "rolling-file",
  "rustc_version 0.4.0",
@@ -6427,6 +6420,7 @@ dependencies = [
  "solana-ledger",
  "solana-logger",
  "solana-pubsub-client",
+ "solana-quic-client",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
