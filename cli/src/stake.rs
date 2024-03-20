@@ -2008,10 +2008,10 @@ pub fn process_split_stake(
                 0
             };
 
-        let minimum_balance =
+        let rent_exempt_reserve =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
 
-        minimum_balance.saturating_sub(current_balance)
+        rent_exempt_reserve.saturating_sub(current_balance)
     } else {
         rent_exempt_reserve
             .cloned()
