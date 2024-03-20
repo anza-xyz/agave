@@ -244,8 +244,8 @@ fn bank_forks_from_snapshot(
             .map(SnapshotArchiveInfoGetter::slot)
             .unwrap_or(0),
     );
-    let latest_bank_snapshot =
-        snapshot_utils::get_highest_bank_snapshot_post(&snapshot_config.bank_snapshots_dir);
+
+    let latest_bank_snapshot = snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config);
 
     let will_startup_from_snapshot_archives = match process_options.use_snapshot_archives_at_startup
     {
@@ -294,11 +294,19 @@ fn bank_forks_from_snapshot(
         })?;
         bank
     } else {
-        let bank_snapshot =
-            latest_bank_snapshot.ok_or_else(|| BankForksUtilsError::NoBankSnapshotDirectory {
+        // fastboot from local state
+        let Some(bank_snapshot) = latest_bank_snapshot else {
+            // If we do *not* have a local snapshot to fastboot, then it must be because there was
+            // *not* a loadable local snapshot AND we shall *not* startup from a snapshot archive.
+            assert_eq!(
+                process_options.use_snapshot_archives_at_startup,
+                UseSnapshotArchivesAtStartup::Never,
+            );
+            return Err(BankForksUtilsError::NoBankSnapshotDirectory {
                 flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
                 value: UseSnapshotArchivesAtStartup::Never.to_string(),
-            })?;
+            });
+        };
 
         // If a newer snapshot archive was downloaded, it is possible that its slot is
         // higher than the local bank we will load.  Did the user intend for this?
