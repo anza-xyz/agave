@@ -33,10 +33,6 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
-#[cfg(feature = "dev-context-only-utils")]
-use solana_accounts_db::accounts_db::{
-    ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
-};
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
 pub use solana_sdk::reward_type::RewardType;
@@ -101,8 +97,8 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, LoadedProgramsForTxBatch,
-            ProgramCache, ProgramRuntimeEnvironments,
+            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, ProgramCache,
+            ProgramRuntimeEnvironments,
         },
         runtime_config::RuntimeConfig,
         timings::{ExecuteTimingType, ExecuteTimings},
@@ -198,6 +194,13 @@ use {
         thread::Builder,
         time::{Duration, Instant},
     },
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    solana_accounts_db::accounts_db::{
+        ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+    },
+    solana_program_runtime::loaded_programs::LoadedProgramsForTxBatch,
 };
 
 /// params to `verify_accounts_hash`
@@ -1527,19 +1530,6 @@ impl Bank {
             .unwrap()
             .get_environments_for_epoch(epoch)
             .clone()
-    }
-
-    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> LoadedProgramsForTxBatch {
-        let loaded_program_cache_r = self.program_cache.read().unwrap();
-        let epoch = self.epoch_schedule.get_epoch(slot);
-        LoadedProgramsForTxBatch::new(
-            slot,
-            loaded_program_cache_r
-                .get_environments_for_epoch(epoch)
-                .clone(),
-            loaded_program_cache_r.get_upcoming_environments_for_epoch(epoch),
-            loaded_program_cache_r.latest_root_epoch,
-        )
     }
 
     /// Epoch in which the new cooldown warmup rate for stake was activated
@@ -7893,6 +7883,17 @@ impl Bank {
 
     pub fn update_accounts_hash_for_tests(&self) -> AccountsHash {
         self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false, false)
+    }
+
+    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> LoadedProgramsForTxBatch {
+        let program_cache_r = self.program_cache.read().unwrap();
+        let epoch = self.epoch_schedule.get_epoch(slot);
+        LoadedProgramsForTxBatch::new(
+            slot,
+            program_cache_r.get_environments_for_epoch(epoch).clone(),
+            program_cache_r.get_upcoming_environments_for_epoch(epoch),
+            program_cache_r.latest_root_epoch,
+        )
     }
 }
 

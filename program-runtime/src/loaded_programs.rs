@@ -651,7 +651,7 @@ impl LoadedProgramsForTxBatch {
     pub fn new_from_cache<FG: ForkGraph>(
         slot: Slot,
         epoch: Epoch,
-        cache: &LoadedPrograms<FG>,
+        cache: &ProgramCache<FG>,
     ) -> Self {
         Self {
             entries: HashMap::new(),
