@@ -45,6 +45,7 @@ use {
         epoch_schedule::EpochSchedule,
         feature_set,
         message::Message,
+        native_token::Sol,
         pubkey::Pubkey,
         stake::{
             self,
@@ -1980,6 +1981,17 @@ pub fn process_split_stake(
     };
 
     let rent_exempt_reserve = if !sign_only {
+        let stake_minimum_delegation = rpc_client.get_stake_minimum_delegation()?;
+        if lamports < stake_minimum_delegation {
+            let lamports = Sol(lamports);
+            let stake_minimum_delegation = Sol(stake_minimum_delegation);
+            return Err(CliError::BadParameter(format!(
+                "need at least {stake_minimum_delegation} for minimum stake delegation, \
+                 provided: {lamports}"
+            ))
+            .into());
+        }
+
         let check_stake_account = |account: Account| -> Result<u64, CliError> {
             match account.owner {
                 owner if owner == stake::program::id() => Err(CliError::BadParameter(format!(
