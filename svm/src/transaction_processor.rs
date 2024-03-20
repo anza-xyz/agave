@@ -103,6 +103,10 @@ pub trait TransactionProcessingCallback {
     ) -> transaction::Result<()> {
         Ok(())
     }
+
+    fn get_program_match_criteria(&self, _program: &Pubkey) -> LoadedProgramMatchCriteria {
+        LoadedProgramMatchCriteria::NoCriteria
+    }
 }
 
 #[derive(Debug)]
@@ -128,8 +132,6 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Transaction fee structure
     fee_structure: FeeStructure,
 
-    pub check_program_modification_slot: bool,
-
     /// Optional config parameters that can override runtime behavior
     runtime_config: Arc<RuntimeConfig>,
 
@@ -145,10 +147,6 @@ impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
             .field("epoch", &self.epoch)
             .field("epoch_schedule", &self.epoch_schedule)
             .field("fee_structure", &self.fee_structure)
-            .field(
-                "check_program_modification_slot",
-                &self.check_program_modification_slot,
-            )
             .field("runtime_config", &self.runtime_config)
             .field("sysvar_cache", &self.sysvar_cache)
             .field("loaded_programs_cache", &self.loaded_programs_cache)
@@ -163,7 +161,6 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             epoch: Epoch::default(),
             epoch_schedule: EpochSchedule::default(),
             fee_structure: FeeStructure::default(),
-            check_program_modification_slot: false,
             runtime_config: Arc::<RuntimeConfig>::default(),
             sysvar_cache: RwLock::<SysvarCache>::default(),
             loaded_programs_cache: Arc::new(RwLock::new(LoadedPrograms::new(
@@ -188,7 +185,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             epoch,
             epoch_schedule,
             fee_structure,
-            check_program_modification_slot: false,
             runtime_config,
             sysvar_cache: RwLock::<SysvarCache>::default(),
             loaded_programs_cache,
@@ -342,11 +338,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
         callbacks: &CB,
         txs: &[SanitizedTransaction],
-        lock_results: &mut [TransactionCheckResult],
+        check_results: &mut [TransactionCheckResult],
         program_owners: &'a [Pubkey],
     ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
         let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
-        lock_results.iter_mut().zip(txs).for_each(|etx| {
+        check_results.iter_mut().zip(txs).for_each(|etx| {
             if let ((Ok(()), _nonce, lamports_per_signature), tx) = etx {
                 if lamports_per_signature.is_some() {
                     tx.message()
@@ -361,9 +357,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 if let Some(index) =
                                     callbacks.account_matches_owners(key, program_owners)
                                 {
-                                    program_owners
-                                        .get(index)
-                                        .map(|owner| entry.insert((owner, 1)));
+                                    if let Some(owner) = program_owners.get(index) {
+                                        entry.insert((owner, 1));
+                                    }
                                 }
                             }
                         });
@@ -491,30 +487,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         limit_to_load_programs: bool,
     ) -> LoadedProgramsForTxBatch {
         let mut missing_programs: Vec<(Pubkey, (LoadedProgramMatchCriteria, u64))> =
-            if self.check_program_modification_slot {
-                program_accounts_map
-                    .iter()
-                    .map(|(pubkey, (_, count))| {
-                        (
-                            *pubkey,
-                            (
-                                self.program_modification_slot(callback, pubkey)
-                                    .map_or(LoadedProgramMatchCriteria::Tombstone, |slot| {
-                                        LoadedProgramMatchCriteria::DeployedOnOrAfterSlot(slot)
-                                    }),
-                                *count,
-                            ),
-                        )
-                    })
-                    .collect()
-            } else {
-                program_accounts_map
-                    .iter()
-                    .map(|(pubkey, (_, count))| {
-                        (*pubkey, (LoadedProgramMatchCriteria::NoCriteria, *count))
-                    })
-                    .collect()
-            };
+            program_accounts_map
+                .iter()
+                .map(|(pubkey, (_, count))| {
+                    (
+                        *pubkey,
+                        (callback.get_program_match_criteria(pubkey), *count),
+                    )
+                })
+                .collect();
 
         let mut loaded_programs_for_txs = None;
         let mut program_to_store = None;
@@ -763,7 +744,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    fn program_modification_slot<CB: TransactionProcessingCallback>(
+    /// Find the slot in which the program was most recently modified.
+    /// Returns slot 0 for programs deployed with v1/v2 loaders, since programs deployed
+    /// with those loaders do not retain deployment slot information.
+    /// Returns an error if the program's account state can not be found or parsed.
+    pub fn program_modification_slot<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
         pubkey: &Pubkey,
@@ -1215,7 +1200,7 @@ mod tests {
     fn test_load_program_from_bytes() {
         let mut dir = env::current_dir().unwrap();
         dir.push("tests");
-        dir.push("test_program.so");
+        dir.push("hello_solana_program.so");
         let mut file = File::open(dir.clone()).expect("file not found");
         let metadata = fs::metadata(dir).expect("Unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
@@ -1321,7 +1306,7 @@ mod tests {
 
         let mut dir = env::current_dir().unwrap();
         dir.push("tests");
-        dir.push("test_program.so");
+        dir.push("hello_solana_program.so");
         let mut file = File::open(dir.clone()).expect("file not found");
         let metadata = fs::metadata(dir).expect("Unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
@@ -1394,7 +1379,7 @@ mod tests {
 
         let mut dir = env::current_dir().unwrap();
         dir.push("tests");
-        dir.push("test_program.so");
+        dir.push("hello_solana_program.so");
         let mut file = File::open(dir.clone()).expect("file not found");
         let metadata = fs::metadata(dir).expect("Unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
@@ -1479,7 +1464,7 @@ mod tests {
 
         let mut dir = env::current_dir().unwrap();
         dir.push("tests");
-        dir.push("test_program.so");
+        dir.push("hello_solana_program.so");
         let mut file = File::open(dir.clone()).expect("file not found");
         let metadata = fs::metadata(dir).expect("Unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
@@ -1815,10 +1800,7 @@ mod tests {
     fn test_replenish_program_cache() {
         // Case 1
         let mut mock_bank = MockBankCallback::default();
-        let mut batch_processor = TransactionBatchProcessor::<TestForkGraph> {
-            check_program_modification_slot: true,
-            ..TransactionBatchProcessor::default()
-        };
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         batch_processor
             .loaded_programs_cache
             .write()
@@ -1848,8 +1830,6 @@ mod tests {
         ));
 
         // Case 2
-        batch_processor.check_program_modification_slot = false;
-
         let result = batch_processor.replenish_program_cache(&mock_bank, &account_maps, true);
 
         let program1 = result.find(&key1).unwrap();

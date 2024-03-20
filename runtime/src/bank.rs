@@ -98,15 +98,17 @@ use {
     solana_program_runtime::{
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
-        loaded_programs::{LoadedProgram, LoadedProgramType, LoadedPrograms},
+        loaded_programs::{
+            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, LoadedPrograms,
+            ProgramRuntimeEnvironments,
+        },
         runtime_config::RuntimeConfig,
         timings::{ExecuteTimingType, ExecuteTimings},
     },
     solana_sdk::{
         account::{
-            create_account_shared_data_with_fields as create_account, create_executable_meta,
-            from_account, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
-            WritableAccount,
+            create_account_shared_data_with_fields as create_account, from_account, Account,
+            AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
         },
         clock::{
             BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
@@ -166,7 +168,8 @@ use {
         account_overrides::AccountOverrides,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processor::{
-            TransactionBatchProcessor, TransactionLogMessages, TransactionProcessingCallback,
+            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
+            TransactionProcessingCallback,
         },
         transaction_results::{
             TransactionExecutionDetails, TransactionExecutionResult, TransactionResults,
@@ -269,7 +272,6 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
-use solana_svm::transaction_processor::ExecutionRecordingConfig;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -548,6 +550,7 @@ impl PartialEq for Bank {
             loaded_programs_cache: _,
             epoch_reward_status: _,
             transaction_processor: _,
+            check_program_modification_slot: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -803,11 +806,13 @@ pub struct Bank {
 
     pub incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
 
-    pub loaded_programs_cache: Arc<RwLock<LoadedPrograms<BankForks>>>,
+    loaded_programs_cache: Arc<RwLock<LoadedPrograms<BankForks>>>,
 
     epoch_reward_status: EpochRewardStatus,
 
     transaction_processor: TransactionBatchProcessor<BankForks>,
+
+    check_program_modification_slot: bool,
 }
 
 struct VoteWithStakeDelegations {
@@ -994,6 +999,7 @@ impl Bank {
             ))),
             epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
+            check_program_modification_slot: false,
         };
 
         bank.transaction_processor = TransactionBatchProcessor::new(
@@ -1312,6 +1318,7 @@ impl Bank {
             loaded_programs_cache: parent.loaded_programs_cache.clone(),
             epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor: TransactionBatchProcessor::default(),
+            check_program_modification_slot: false,
         };
 
         new.transaction_processor = TransactionBatchProcessor::new(
@@ -1465,6 +1472,36 @@ impl Bank {
 
         new.loaded_programs_cache.write().unwrap().stats.reset();
         new
+    }
+
+    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Arc<RwLock<BankForks>>) {
+        self.loaded_programs_cache
+            .write()
+            .unwrap()
+            .set_fork_graph(fork_graph);
+    }
+
+    pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
+        self.loaded_programs_cache
+            .write()
+            .unwrap()
+            .prune(new_root_slot, new_root_epoch);
+    }
+
+    pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
+        self.loaded_programs_cache
+            .write()
+            .unwrap()
+            .prune_by_deployment_slot(deployment_slot);
+    }
+
+    pub fn get_runtime_environments_for_slot(&self, slot: Slot) -> ProgramRuntimeEnvironments {
+        let epoch = self.epoch_schedule.get_epoch(slot);
+        self.loaded_programs_cache
+            .read()
+            .unwrap()
+            .get_environments_for_epoch(epoch)
+            .clone()
     }
 
     /// Epoch in which the new cooldown warmup rate for stake was activated
@@ -1832,6 +1869,7 @@ impl Bank {
             ))),
             epoch_reward_status: fields.epoch_reward_status,
             transaction_processor: TransactionBatchProcessor::default(),
+            check_program_modification_slot: false,
         };
 
         bank.transaction_processor = TransactionBatchProcessor::new(
@@ -3916,12 +3954,10 @@ impl Bank {
         // Add a bogus executable account, which will be loaded and ignored.
         let (lamports, rent_epoch) = self.inherit_specially_retained_account_fields(&None);
 
-        // Mock account_data with executable_meta so that the account is executable.
-        let account_data = create_executable_meta(&owner);
         let account = AccountSharedData::from(Account {
             lamports,
             owner,
-            data: account_data.to_vec(),
+            data: vec![],
             executable: true,
             rent_epoch,
         });
@@ -7485,7 +7521,7 @@ impl Bank {
     }
 
     pub fn check_program_modification_slot(&mut self) {
-        self.transaction_processor.check_program_modification_slot = true;
+        self.check_program_modification_slot = true;
     }
 
     pub fn load_program(
@@ -7545,6 +7581,18 @@ impl TransactionProcessingCallback for Bank {
             })
         } else {
             Ok(())
+        }
+    }
+
+    fn get_program_match_criteria(&self, program: &Pubkey) -> LoadedProgramMatchCriteria {
+        if self.check_program_modification_slot {
+            self.transaction_processor
+                .program_modification_slot(self, program)
+                .map_or(LoadedProgramMatchCriteria::Tombstone, |slot| {
+                    LoadedProgramMatchCriteria::DeployedOnOrAfterSlot(slot)
+                })
+        } else {
+            LoadedProgramMatchCriteria::NoCriteria
         }
     }
 }
