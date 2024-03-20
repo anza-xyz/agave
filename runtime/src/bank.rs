@@ -125,14 +125,9 @@ use {
     },
     solana_sdk::{
         account::{
-<<<<<<< HEAD
-            create_account_shared_data_with_fields as create_account, create_executable_meta,
-            from_account, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
-            WritableAccount, PROGRAM_OWNERS,
-=======
             create_account_shared_data_with_fields as create_account, from_account, Account,
             AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
->>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
+            PROGRAM_OWNERS,
         },
         account_utils::StateMut,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},

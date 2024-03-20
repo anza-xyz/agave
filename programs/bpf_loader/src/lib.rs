@@ -34,13 +34,8 @@ use {
         clock::Slot,
         entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
         feature_set::{
-<<<<<<< HEAD
-            bpf_account_data_direct_mapping, deprecate_executable_meta_update_in_bpf_loader,
-            enable_bpf_loader_extend_program_ix, enable_bpf_loader_set_authority_checked_ix,
-            FeatureSet,
-=======
-            bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
->>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
+            bpf_account_data_direct_mapping, enable_bpf_loader_extend_program_ix,
+            enable_bpf_loader_set_authority_checked_ix,
         },
         instruction::{AccountMeta, InstructionError},
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,

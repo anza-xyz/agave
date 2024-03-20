@@ -6494,42 +6494,26 @@ fn test_bank_hash_consistency() {
         if bank.slot == 0 {
             assert_eq!(
                 bank.hash().to_string(),
-<<<<<<< HEAD
-                "trdzvRDTAXAqo1i2GX4JfK9ReixV1NYNG7DRaVq43Do",
-=======
                 "i5hGiQ3WtEehNrvhbfPFkUdm267t18fSpujcYtkBioW",
->>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
         }
 
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-<<<<<<< HEAD
-                "2rdj8QEnDnBSyMv81rCmncss4UERACyXXB3pEvkep8eS",
-=======
                 "7NmBtNvbhoqzatJv8NgBs84qWrm4ZhpuC75DCpbqwiS"
->>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-<<<<<<< HEAD
-                "7g3ofXVQB3reFt9ki8zLA8S4w1GdmEWsWuWrwkPN3SSv"
-=======
                 "A1jjuUaENeDcsSvwejFGaZ5zWmnJ77doSzqdKtfzpoFk"
->>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-<<<<<<< HEAD
-                "4uX1AZFbqwjwWBACWbAW3V8rjbWH4N3ZRTbNysSLAzj2"
-=======
                 "ApnMkFt5Bs4yDJ8S2CCPsQRL1He6vWXw6vMzAyc5i811"
->>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
             break;
         }
