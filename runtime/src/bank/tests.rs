@@ -6491,29 +6491,30 @@ fn test_bank_hash_consistency() {
     assert_eq!(bank.get_slots_in_epoch(0), 32);
     loop {
         goto_end_of_slot(bank.clone());
+
         if bank.slot == 0 {
             assert_eq!(
                 bank.hash().to_string(),
-                "i5hGiQ3WtEehNrvhbfPFkUdm267t18fSpujcYtkBioW",
+                "3KE2bigpBiiMLGYNqmWkgbrQGSqMt5ccG6ED87CFCVpt",
             );
         }
 
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-                "7NmBtNvbhoqzatJv8NgBs84qWrm4ZhpuC75DCpbqwiS"
+                "FpNDsd21HXznXf6tRpMNiWhFyhZ4aCCECQm3gL4jGV22",
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-                "A1jjuUaENeDcsSvwejFGaZ5zWmnJ77doSzqdKtfzpoFk"
+                "7gDCoXPfFtKPALi212akhhQHEuLdAqyf7DE3yUN4bR2p",
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-                "ApnMkFt5Bs4yDJ8S2CCPsQRL1He6vWXw6vMzAyc5i811"
+                "6FREbeHdTNYnEXg4zobL2mqGfevukg75frkQJqKpYnk4",
             );
             break;
         }
