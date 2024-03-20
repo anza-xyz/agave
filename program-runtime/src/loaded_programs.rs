@@ -648,6 +648,21 @@ impl LoadedProgramsForTxBatch {
         }
     }
 
+    pub fn new_from_cache<FG: ForkGraph>(
+        slot: Slot,
+        epoch: Epoch,
+        cache: &LoadedPrograms<FG>,
+    ) -> Self {
+        Self {
+            entries: HashMap::new(),
+            slot,
+            environments: cache.get_environments_for_epoch(epoch).clone(),
+            upcoming_environments: cache.get_upcoming_environments_for_epoch(epoch),
+            latest_root_epoch: cache.latest_root_epoch,
+            hit_max_limit: false,
+        }
+    }
+
     /// Returns the current environments depending on the given epoch
     pub fn get_environments_for_epoch(&self, epoch: Epoch) -> &ProgramRuntimeEnvironments {
         if epoch != self.latest_root_epoch {
