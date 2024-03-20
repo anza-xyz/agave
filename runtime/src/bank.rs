@@ -7886,13 +7886,10 @@ impl Bank {
     }
 
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> LoadedProgramsForTxBatch {
-        let program_cache_r = self.program_cache.read().unwrap();
-        let epoch = self.epoch_schedule.get_epoch(slot);
-        LoadedProgramsForTxBatch::new(
+        LoadedProgramsForTxBatch::new_from_cache(
             slot,
-            program_cache_r.get_environments_for_epoch(epoch).clone(),
-            program_cache_r.get_upcoming_environments_for_epoch(epoch),
-            program_cache_r.latest_root_epoch,
+            self.epoch_schedule.get_epoch(slot),
+            &self.program_cache.read().unwrap(),
         )
     }
 }
