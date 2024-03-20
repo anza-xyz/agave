@@ -494,7 +494,9 @@ impl ElGamalSecretKey {
 
     pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalSecretKey> {
         match bytes.try_into() {
-            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(ElGamalSecretKey).into(),
+            Ok(bytes) => Scalar::from_canonical_bytes(bytes)
+                .map(ElGamalSecretKey)
+                .into(),
             _ => None,
         }
     }

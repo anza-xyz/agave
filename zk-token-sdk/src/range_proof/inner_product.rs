@@ -413,12 +413,12 @@ impl InnerProductProof {
         let pos = 2 * lg_n * 32;
         let attempt = Scalar::from_canonical_bytes(util::read32(&slice[pos..]));
         if attempt.is_none().into() {
-            return Err(RangeProofVerificationError::Deserialization)
+            return Err(RangeProofVerificationError::Deserialization);
         }
         let a = attempt.unwrap();
         let attempt = Scalar::from_canonical_bytes(util::read32(&slice[pos + 32..]));
         if attempt.is_none().into() {
-            return Err(RangeProofVerificationError::Deserialization)
+            return Err(RangeProofVerificationError::Deserialization);
         }
         let b = attempt.unwrap();
 

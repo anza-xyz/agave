@@ -1,6 +1,8 @@
 //! Functionality for public and private keys.
 #![cfg(feature = "full")]
 
+use ed25519_dalek::PUBLIC_KEY_LENGTH;
+
 // legacy module paths
 pub use crate::signer::{keypair::*, null_signer::*, presigner::*, *};
 use {
@@ -46,7 +48,12 @@ impl Signature {
         pubkey_bytes: &[u8],
         message_bytes: &[u8],
     ) -> Result<(), ed25519_dalek::SignatureError> {
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey_bytes)?;
+        if pubkey_bytes.len() != PUBLIC_KEY_LENGTH {
+            return Err(ed25519_dalek::SignatureError::new());
+        }
+        let mut pubkey_bytes_sized = [0u8; PUBLIC_KEY_LENGTH];
+        pubkey_bytes_sized.copy_from_slice(pubkey_bytes);
+        let publickey = ed25519_dalek::VerifyingKey::from_bytes(&pubkey_bytes_sized)?;
         let signature = self.0.as_slice().try_into()?;
         publickey.verify_strict(message_bytes, &signature)
     }
