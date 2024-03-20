@@ -48,3 +48,22 @@ fn canonical_scalar_from_optional_slice(
         .and_then(Scalar::from_canonical_bytes)
         .ok_or(SigmaProofVerificationError::Deserialization)
 }
+
+fn curve_to_sigma_unpack(bytes: impl AsRef<[u8]>) -> Option<Scalar> {
+    let r_bytes = bytes.as_ref();
+    if r_bytes.len() != 32 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(r_bytes);
+    let attempt = Scalar::from_canonical_bytes(bytes);
+    if attempt.is_some().into() {
+        Some(attempt.unwrap())
+    } else {
+        None
+    }
+}
+
+fn curve_to_sigma_unpack_compressed(bytes: impl AsRef<[u8]>) -> Option<CompressedRistretto> {
+    CompressedRistretto::from_slice(bytes.as_ref()).ok()
+}

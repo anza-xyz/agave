@@ -11,6 +11,7 @@ use {
         scalar::Scalar,
         traits::MultiscalarMul,
     },
+    rand_core::OsRng,
     serde::{Deserialize, Serialize},
     sha3::Sha3_512,
     std::convert::TryInto,
@@ -99,7 +100,9 @@ impl PedersenOpening {
 
     pub fn from_bytes(bytes: &[u8]) -> Option<PedersenOpening> {
         match bytes.try_into() {
-            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(PedersenOpening),
+            Ok(bytes) => Scalar::from_canonical_bytes(bytes)
+                .map(PedersenOpening)
+                .into(),
             _ => None,
         }
     }

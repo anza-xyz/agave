@@ -411,10 +411,16 @@ impl InnerProductProof {
         }
 
         let pos = 2 * lg_n * 32;
-        let a = Scalar::from_canonical_bytes(util::read32(&slice[pos..]))
-            .ok_or(RangeProofVerificationError::Deserialization)?;
-        let b = Scalar::from_canonical_bytes(util::read32(&slice[pos + 32..]))
-            .ok_or(RangeProofVerificationError::Deserialization)?;
+        let attempt = Scalar::from_canonical_bytes(util::read32(&slice[pos..]));
+        if attempt.is_none().into() {
+            return Err(RangeProofVerificationError::Deserialization);
+        }
+        let a = attempt.unwrap();
+        let attempt = Scalar::from_canonical_bytes(util::read32(&slice[pos + 32..]));
+        if attempt.is_none().into() {
+            return Err(RangeProofVerificationError::Deserialization);
+        }
+        let b = attempt.unwrap();
 
         Ok(InnerProductProof { L_vec, R_vec, a, b })
     }
@@ -423,8 +429,8 @@ impl InnerProductProof {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::range_proof::generators::BulletproofGens, rand::rngs::OsRng,
-        sha3::Sha3_512,
+        super::*, crate::range_proof::generators::BulletproofGens, crate::SCALAR_ONE,
+        rand_core::OsRng,
     };
 
     #[test]

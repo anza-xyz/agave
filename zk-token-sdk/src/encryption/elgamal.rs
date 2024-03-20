@@ -14,6 +14,7 @@
 //! discrete log to recover the originally encrypted value.
 
 use {
+    crate::SCALAR_ZERO,
     crate::{
         encryption::{
             discrete_log::DiscreteLog,
@@ -31,6 +32,7 @@ use {
         traits::Identity,
     },
     serde::{Deserialize, Serialize},
+    sha3::*,
     solana_sdk::{
         derivation_path::DerivationPath,
         signature::Signature,
@@ -493,7 +495,9 @@ impl ElGamalSecretKey {
 
     pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalSecretKey> {
         match bytes.try_into() {
-            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(ElGamalSecretKey),
+            Ok(bytes) => Scalar::from_canonical_bytes(bytes)
+                .map(ElGamalSecretKey)
+                .into(),
             _ => None,
         }
     }

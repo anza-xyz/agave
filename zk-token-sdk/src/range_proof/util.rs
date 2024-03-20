@@ -1,3 +1,4 @@
+use crate::{SCALAR_ONE, SCALAR_ZERO};
 /// Utility functions for Bulletproofs.
 ///
 /// The code is copied from https://github.com/dalek-cryptography/bulletproofs for now...
