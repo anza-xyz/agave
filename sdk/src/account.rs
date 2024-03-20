@@ -6,9 +6,8 @@ use {
     crate::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
         clock::{Epoch, INITIAL_RENT_EPOCH},
-        feature_set::{deprecate_executable_meta_update_in_bpf_loader, FeatureSet},
         lamports::LamportsError,
-        loader_v4, native_loader,
+        loader_v4,
         pubkey::Pubkey,
     },
     serde::{
@@ -40,9 +39,6 @@ pub struct Account {
     /// the program that owns this account. If executable, the program that loads this account.
     pub owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
-    ///
-    /// When feature `deprecate_executable_meta_update_in_bpf_loader` is active,
-    /// `executable` is deprecated, please use `fn is_executable(&account)` instead.
     pub executable: bool,
     /// the epoch at which this account will next owe rent
     pub rent_epoch: Epoch,
@@ -768,6 +764,7 @@ pub const PROGRAM_OWNERS: &[Pubkey] = &[
     loader_v4::id(),
 ];
 
+<<<<<<< HEAD
 const LOADER_V4_STATUS_BYTE_OFFSET: usize = 40;
 
 /// Create executable account meta data based on account's `owner`.
@@ -853,6 +850,8 @@ pub fn is_builtin(account: &impl ReadableAccount) -> bool {
     native_loader::check_id(account.owner()) && !account.data().is_empty()
 }
 
+=======
+>>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
 #[cfg(test)]
 pub mod tests {
     use super::*;

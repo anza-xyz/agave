@@ -1048,7 +1048,6 @@ fn test_rent_exempt_executable_account() {
     let mut account = AccountSharedData::new(account_balance, 0, &solana_sdk::pubkey::new_rand());
     account.set_executable(true);
     account.set_owner(bpf_loader_upgradeable::id());
-    account.set_data(create_executable_meta(account.owner()).to_vec());
     bank.store_account(&account_pubkey, &account);
 
     let transfer_lamports = 1;
@@ -1086,10 +1085,10 @@ fn test_rent_complex() {
                 MockInstruction::Deduction => {
                     instruction_context
                         .try_borrow_instruction_account(transaction_context, 1)?
-                        .checked_add_lamports(1, &invoke_context.feature_set)?;
+                        .checked_add_lamports(1)?;
                     instruction_context
                         .try_borrow_instruction_account(transaction_context, 2)?
-                        .checked_sub_lamports(1, &invoke_context.feature_set)?;
+                        .checked_sub_lamports(1)?;
                     Ok(())
                 }
             }
@@ -6018,16 +6017,16 @@ fn test_transaction_with_duplicate_accounts_in_instruction() {
         let lamports = u64::from_le_bytes(instruction_data.try_into().unwrap());
         instruction_context
             .try_borrow_instruction_account(transaction_context, 2)?
-            .checked_sub_lamports(lamports, &invoke_context.feature_set)?;
+            .checked_sub_lamports(lamports)?;
         instruction_context
             .try_borrow_instruction_account(transaction_context, 1)?
-            .checked_add_lamports(lamports, &invoke_context.feature_set)?;
+            .checked_add_lamports(lamports)?;
         instruction_context
             .try_borrow_instruction_account(transaction_context, 0)?
-            .checked_sub_lamports(lamports, &invoke_context.feature_set)?;
+            .checked_sub_lamports(lamports)?;
         instruction_context
             .try_borrow_instruction_account(transaction_context, 1)?
-            .checked_add_lamports(lamports, &invoke_context.feature_set)?;
+            .checked_add_lamports(lamports)?;
         Ok(())
     });
 
@@ -6495,25 +6494,42 @@ fn test_bank_hash_consistency() {
         if bank.slot == 0 {
             assert_eq!(
                 bank.hash().to_string(),
+<<<<<<< HEAD
                 "trdzvRDTAXAqo1i2GX4JfK9ReixV1NYNG7DRaVq43Do",
+=======
+                "i5hGiQ3WtEehNrvhbfPFkUdm267t18fSpujcYtkBioW",
+>>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
         }
+
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
+<<<<<<< HEAD
                 "2rdj8QEnDnBSyMv81rCmncss4UERACyXXB3pEvkep8eS",
+=======
+                "7NmBtNvbhoqzatJv8NgBs84qWrm4ZhpuC75DCpbqwiS"
+>>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
+<<<<<<< HEAD
                 "7g3ofXVQB3reFt9ki8zLA8S4w1GdmEWsWuWrwkPN3SSv"
+=======
+                "A1jjuUaENeDcsSvwejFGaZ5zWmnJ77doSzqdKtfzpoFk"
+>>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
+<<<<<<< HEAD
                 "4uX1AZFbqwjwWBACWbAW3V8rjbWH4N3ZRTbNysSLAzj2"
+=======
+                "ApnMkFt5Bs4yDJ8S2CCPsQRL1He6vWXw6vMzAyc5i811"
+>>>>>>> 0f8f8cd970 (Revert deprecate executable feature (#309))
             );
             break;
         }
@@ -6529,7 +6545,7 @@ fn test_same_program_id_uses_unique_executable_accounts() {
         let instruction_context = transaction_context.get_current_instruction_context()?;
         instruction_context
             .try_borrow_program_account(transaction_context, 0)?
-            .set_data_length(2, &invoke_context.feature_set)
+            .set_data_length(2)
     });
 
     let (genesis_config, mint_keypair) = create_genesis_config(50000);
@@ -9495,7 +9511,7 @@ fn test_transfer_sysvar() {
         let instruction_context = transaction_context.get_current_instruction_context()?;
         instruction_context
             .try_borrow_instruction_account(transaction_context, 1)?
-            .set_data(vec![0; 40], &invoke_context.feature_set)?;
+            .set_data(vec![0; 40])?;
         Ok(())
     });
 
@@ -10346,10 +10362,10 @@ declare_process_instruction!(MockTransferBuiltin, 1, |invoke_context| {
             MockTransferInstruction::Transfer(amount) => {
                 instruction_context
                     .try_borrow_instruction_account(transaction_context, 1)?
-                    .checked_sub_lamports(amount, &invoke_context.feature_set)?;
+                    .checked_sub_lamports(amount)?;
                 instruction_context
                     .try_borrow_instruction_account(transaction_context, 2)?
-                    .checked_add_lamports(amount, &invoke_context.feature_set)?;
+                    .checked_add_lamports(amount)?;
                 Ok(())
             }
         }
@@ -11116,7 +11132,7 @@ declare_process_instruction!(MockReallocBuiltin, 1, |invoke_context| {
                 // Set data length
                 instruction_context
                     .try_borrow_instruction_account(transaction_context, 1)?
-                    .set_data_length(new_size, &invoke_context.feature_set)?;
+                    .set_data_length(new_size)?;
 
                 // set balance
                 let current_balance = instruction_context
@@ -11127,17 +11143,17 @@ declare_process_instruction!(MockReallocBuiltin, 1, |invoke_context| {
                 if diff_balance.is_positive() {
                     instruction_context
                         .try_borrow_instruction_account(transaction_context, 0)?
-                        .checked_sub_lamports(amount, &invoke_context.feature_set)?;
+                        .checked_sub_lamports(amount)?;
                     instruction_context
                         .try_borrow_instruction_account(transaction_context, 1)?
-                        .set_lamports(new_balance, &invoke_context.feature_set)?;
+                        .set_lamports(new_balance)?;
                 } else {
                     instruction_context
                         .try_borrow_instruction_account(transaction_context, 0)?
-                        .checked_add_lamports(amount, &invoke_context.feature_set)?;
+                        .checked_add_lamports(amount)?;
                     instruction_context
                         .try_borrow_instruction_account(transaction_context, 1)?
-                        .set_lamports(new_balance, &invoke_context.feature_set)?;
+                        .set_lamports(new_balance)?;
                 }
                 Ok(())
             }
