@@ -270,12 +270,16 @@ pub(crate) fn find_heaviest_fork(
             return Err(WenRestartError::Exiting.into());
         }
         if let Ok(Some(block_meta)) = blockstore.meta(slot) {
-            info!("block meta: {:?}", block_meta);
             if block_meta.parent_slot != Some(expected_parent) {
-                info!(
-                    "Block {} in blockstore is not linked to expected parent from Wen Restart {} but to Block {:?}",
-                    slot, expected_parent, block_meta.parent_slot
-                );
+                if expected_parent == root_slot {
+                    error!("First block {} in repair list not linked to local root {}, this could mean our root is too old",
+                        slot, root_slot);
+                } else {
+                    error!(
+                        "Block {} in blockstore is not linked to expected parent from Wen Restart {} but to Block {:?}",
+                        slot, expected_parent, block_meta.parent_slot
+                    );
+                }
                 return Err(WenRestartError::BlockNotLinkedToExpectedParent(
                     slot,
                     block_meta.parent_slot,
@@ -1378,7 +1382,7 @@ mod tests {
             .unwrap(),
             WenRestartError::BlockNotFound(slot_with_no_block),
         );
-        // The following fails because we expect to see the full chain from root to the last vote.
+        // The following fails because we expect to see the first slot in slots_stake_map doesn't chain to local root.
         assert_eq!(
             find_heaviest_fork(
                 LastVotedForkSlotsFinalResult {
@@ -1396,6 +1400,27 @@ mod tests {
                 last_vote_slot,
                 Some(last_vote_slot - 1),
                 0
+            ),
+        );
+        // The following fails because we expect to see the some slot in slots_stake_map doesn't chain to the
+        // one before it.
+        assert_eq!(
+            find_heaviest_fork(
+                LastVotedForkSlotsFinalResult {
+                    slots_stake_map: vec![(1, 900), (last_vote_slot, 900)].into_iter().collect(),
+                    total_active_stake: 900,
+                },
+                test_state.bank_forks.clone(),
+                test_state.blockstore.clone(),
+                exit.clone(),
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::BlockNotLinkedToExpectedParent(
+                last_vote_slot,
+                Some(last_vote_slot - 1),
+                1
             ),
         );
     }
