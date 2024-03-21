@@ -1006,7 +1006,6 @@ fn test_cli_program_write_buffer() {
         buffer_authority_signer_index: 0,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1044,7 +1043,6 @@ fn test_cli_program_write_buffer() {
         buffer_authority_signer_index: 0,
         max_len: Some(max_len),
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     let response = process_command(&config);
@@ -1109,7 +1107,6 @@ fn test_cli_program_write_buffer() {
         buffer_authority_signer_index: 2,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     let response = process_command(&config);
@@ -1150,7 +1147,6 @@ fn test_cli_program_write_buffer() {
         buffer_authority_signer_index: 2,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     let response = process_command(&config);
@@ -1227,7 +1223,6 @@ fn test_cli_program_write_buffer() {
         buffer_authority_signer_index: 0,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1271,7 +1266,6 @@ fn test_cli_program_write_buffer() {
         buffer_authority_signer_index: 0,
         max_len: None, //Some(max_len),
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     process_command(&config).unwrap();
@@ -1348,7 +1342,6 @@ fn test_cli_program_set_buffer_authority() {
         buffer_authority_signer_index: 0,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     process_command(&config).unwrap();
@@ -1505,7 +1498,6 @@ fn test_cli_program_mismatch_buffer_authority() {
         buffer_authority_signer_index: 2,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     process_command(&config).unwrap();
@@ -1801,7 +1793,6 @@ fn test_cli_program_show() {
         buffer_authority_signer_index: 2,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     process_command(&config).unwrap();
@@ -1993,7 +1984,6 @@ fn test_cli_program_dump() {
         buffer_authority_signer_index: 2,
         max_len: None,
         skip_fee_check: false,
-
         compute_unit_price: None,
     });
     process_command(&config).unwrap();
