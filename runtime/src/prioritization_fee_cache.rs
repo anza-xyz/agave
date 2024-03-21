@@ -567,10 +567,19 @@ mod tests {
         );
         sync_finalize_priority_fee_for_test(&prioritization_fee_cache, 1, bank1.bank_id());
 
-        let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 2));
+        // add slot 2 entry to cache, but not finalize it
+        let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 3));
+        let txs = vec![build_sanitized_transaction_for_test(
+            1,
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+        )];
+        sync_update(&prioritization_fee_cache, bank2.clone(), txs.iter());
+
+        let bank3 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 2));
         sync_update(
             &prioritization_fee_cache,
-            bank2.clone(),
+            bank3.clone(),
             vec![build_sanitized_transaction_for_test(
                 1,
                 &Pubkey::new_unique(),
@@ -578,19 +587,9 @@ mod tests {
             )]
             .iter(),
         );
-        sync_finalize_priority_fee_for_test(&prioritization_fee_cache, 2, bank2.bank_id());
-
-        // add slot 3 entry to cache, but not finalize it
-        let bank3 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 3));
-        let txs = vec![build_sanitized_transaction_for_test(
-            1,
-            &Pubkey::new_unique(),
-            &Pubkey::new_unique(),
-        )];
-        sync_update(&prioritization_fee_cache, bank3.clone(), txs.iter());
+        sync_finalize_priority_fee_for_test(&prioritization_fee_cache, 2, bank3.bank_id());
 
         // assert available block count should be 2 finalized blocks
-        std::thread::sleep(std::time::Duration::from_millis(1_000));
         assert_eq!(2, prioritization_fee_cache.available_block_count());
     }
 
