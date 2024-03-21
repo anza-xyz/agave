@@ -1,7 +1,6 @@
 use {
     crate::{
-        bank::{Bank, BankFieldsToDeserialize, BankSlotDelta},
-        builtins::BuiltinPrototype,
+        bank::{builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankSlotDelta},
         serde_snapshot::{
             bank_from_streams, bank_to_stream, fields_from_streams,
             BankIncrementalSnapshotPersistence, SerdeStyle,
@@ -2366,7 +2365,8 @@ mod tests {
             fs::read_dir(path).unwrap().for_each(|entry| {
                 let path = entry.unwrap().path();
                 let filename = path.file_name().unwrap();
-                let (_slot, append_vec_id) = get_slot_and_append_vec_id(filename.to_str().unwrap());
+                let (_slot, append_vec_id) =
+                    get_slot_and_append_vec_id(filename.to_str().unwrap()).unwrap();
                 max_id = std::cmp::max(max_id, append_vec_id);
             });
         }
