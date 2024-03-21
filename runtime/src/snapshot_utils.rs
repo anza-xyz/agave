@@ -630,7 +630,12 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
 /// Writes the fastboot file into the bank snapshot dir
 pub fn write_fastboot_file(bank_snapshot_dir: impl AsRef<Path>, slot: Slot) -> IoResult<()> {
     let fastboot_path = bank_snapshot_dir.as_ref().join(SNAPSHOT_FASTBOOT_FILENAME);
-    fs::write(fastboot_path, slot.to_le_bytes())
+    fs::write(&fastboot_path, slot.to_le_bytes()).map_err(|err| {
+        IoError::other(format!(
+            "failed to write fastboot file '{}': {err}",
+            fastboot_path.display(),
+        ))
+    })
 }
 
 // Reads the fastboot file from the bank snapshot dir
