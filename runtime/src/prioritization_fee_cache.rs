@@ -308,9 +308,9 @@ impl PrioritizationFeeCache {
 
                 // Only retain priority fee reported from optimistically confirmed bank
                 let pre_purge_bank_count = slot_prioritization_fee.len() as u64;
-                let mut slot_prioritization_fee = slot_prioritization_fee.remove(&bank_id);
+                let mut prioritization_fee = slot_prioritization_fee.remove(&bank_id);
                 let post_purge_bank_count =
-                    slot_prioritization_fee.as_ref().map(|_| 1).unwrap_or(0);
+                    prioritization_fee.as_ref().map(|_| 1).unwrap_or(0);
                 metrics.accumulate_total_purged_duplicated_bank_count(
                     pre_purge_bank_count.saturating_sub(post_purge_bank_count),
                 );
@@ -320,16 +320,16 @@ impl PrioritizationFeeCache {
                     warn!("Finalized bank has empty prioritization fee cache. slot {slot} bank id {bank_id}");
                 }
 
-                if let Some(slot_prioritization_fee) = &mut slot_prioritization_fee {
-                    if let Err(err) = slot_prioritization_fee.mark_block_completed() {
+                if let Some(prioritization_fee) = &mut prioritization_fee {
+                    if let Err(err) = prioritization_fee.mark_block_completed() {
                         error!(
                             "Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {:?}",
                             err
                         );
                     }
-                    slot_prioritization_fee.report_metrics(slot);
+                    prioritization_fee.report_metrics(slot);
                 }
-                slot_prioritization_fee
+                prioritization_fee
             },
             "slot_finalize_time"
         );
