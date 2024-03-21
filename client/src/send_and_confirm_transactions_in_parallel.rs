@@ -350,8 +350,12 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
                     .map(|x| x.serialized_transaction.clone())
                     .collect::<Vec<_>>();
                 let num_txs_to_resend = txs_to_resend_over_tpu.len();
+                // This is a "reasonable" constant for how long it should
+                // take to fan the transactions out, taken from
+                // `solana_tpu_client::nonblocking::tpu_client::send_wire_transaction_futures`
+                const SEND_TIMEOUT_INTERVAL: Duration = Duration::from_secs(5);
                 let message = if tokio::time::timeout(
-                    Duration::from_secs(5),
+                    SEND_TIMEOUT_INTERVAL,
                     tpu_client.try_send_wire_transaction_batch(txs_to_resend_over_tpu),
                 )
                 .await
