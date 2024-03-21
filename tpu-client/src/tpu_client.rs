@@ -5,10 +5,8 @@ use {
     solana_connection_cache::connection_cache::{
         ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig,
     },
-    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{clock::Slot, transaction::Transaction, transport::Result as TransportResult},
-    solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::{
         collections::VecDeque,
         net::UdpSocket,
@@ -26,11 +24,6 @@ pub const DEFAULT_TPU_USE_QUIC: bool = true;
 pub const DEFAULT_TPU_CONNECTION_POOL_SIZE: usize = 4;
 
 pub type Result<T> = std::result::Result<T, TpuSenderError>;
-
-pub enum TpuClientWrapper {
-    Quic(TpuClient<QuicPool, QuicConnectionManager, QuicConfig>),
-    Udp(TpuClient<UdpPool, UdpConnectionManager, UdpConfig>),
-}
 
 /// Send at ~100 TPS
 #[cfg(feature = "spinner")]

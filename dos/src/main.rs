@@ -46,7 +46,10 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     solana_bench_tps::{bench::generate_and_fund_keypairs, bench_tps_client::BenchTpsClient},
-    solana_client::{connection_cache::ConnectionCache, tpu_connection::TpuConnection},
+    solana_client::{
+        connection_cache::ConnectionCache, tpu_client::TpuClientWrapper,
+        tpu_connection::TpuConnection,
+    },
     solana_core::repair::serve_repair::{RepairProtocol, RepairRequestHeader, ServeRepair},
     solana_dos::cli::*,
     solana_gossip::{
@@ -69,7 +72,7 @@ use {
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_tpu_client::tpu_client::{TpuClientWrapper, DEFAULT_TPU_CONNECTION_POOL_SIZE},
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     std::{
         net::{SocketAddr, UdpSocket},
         process::exit,
