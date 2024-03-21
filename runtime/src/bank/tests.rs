@@ -39,9 +39,7 @@ use {
         compute_budget::ComputeBudget,
         compute_budget_processor::{self, MAX_COMPUTE_UNIT_LIMIT},
         declare_process_instruction,
-        loaded_programs::{
-            LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch,
-        },
+        loaded_programs::{LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch},
         prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         timings::ExecuteTimings,
     },
@@ -7165,6 +7163,26 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     );
     let upgrade_authority_keypair = Keypair::new();
 
+    // Invoke not yet deployed program
+    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
+    let invocation_message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let binding = mint_keypair.insecure_clone();
+    let transaction = Transaction::new(
+        &[&binding],
+        invocation_message.clone(),
+        bank.last_blockhash(),
+    );
+    assert_eq!(
+        bank.process_transaction(&transaction),
+        Err(TransactionError::ProgramAccountNotFound),
+    );
+    {
+        // Make sure it is not in the cache because the account owner is not a loader
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert!(slot_versions.is_empty());
+    }
+
     // Load program file
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
         .expect("file open failed");
@@ -7229,7 +7247,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             &system_program::id(),
         ),
     );
-    bank.store_account(&buffer_address, &buffer_account);
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
@@ -7301,9 +7318,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap();
 
     // Invoke the deployed program
-    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
-    let invocation_message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-    let binding = mint_keypair.insecure_clone();
     let transaction = Transaction::new(&[&binding], invocation_message, bank.last_blockhash());
     assert!(bank.process_transaction(&transaction).is_ok());
 
