@@ -309,8 +309,7 @@ impl PrioritizationFeeCache {
                 // Only retain priority fee reported from optimistically confirmed bank
                 let pre_purge_bank_count = slot_prioritization_fee.len() as u64;
                 let mut prioritization_fee = slot_prioritization_fee.remove(&bank_id);
-                let post_purge_bank_count =
-                    prioritization_fee.as_ref().map(|_| 1).unwrap_or(0);
+                let post_purge_bank_count = prioritization_fee.as_ref().map(|_| 1).unwrap_or(0);
                 metrics.accumulate_total_purged_duplicated_bank_count(
                     pre_purge_bank_count.saturating_sub(post_purge_bank_count),
                 );
