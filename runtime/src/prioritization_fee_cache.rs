@@ -874,14 +874,6 @@ mod tests {
                 ),
             ];
             sync_update(&prioritization_fee_cache, bank1.clone(), txs.iter());
-
-            // Not possible to check the state in the thread
-            // let slot_prioritization_fee = PrioritizationFeeCache::get_prioritization_fee(
-            //     prioritization_fee_cache.cache.clone(),
-            //     &slot,
-            // );
-            // assert_eq!(1, slot_prioritization_fee.len());
-            // assert!(slot_prioritization_fee.contains_key(&bank1.bank_id()));
         }
 
         // Assert after add transactions for bank2 of slot 1
@@ -895,28 +887,11 @@ mod tests {
                 ),
             ];
             sync_update(&prioritization_fee_cache, bank2.clone(), txs.iter());
-
-            // Not possible to check the state in the thread
-            // let slot_prioritization_fee = PrioritizationFeeCache::get_prioritization_fee(
-            //     prioritization_fee_cache.cache.clone(),
-            //     &slot,
-            // );
-            // assert_eq!(2, slot_prioritization_fee.len());
-            // assert!(slot_prioritization_fee.contains_key(&bank1.bank_id()));
-            // assert!(slot_prioritization_fee.contains_key(&bank2.bank_id()));
         }
 
         // Assert after finalize with bank1 of slot 1,
         {
             sync_finalize_priority_fee_for_test(&prioritization_fee_cache, slot, bank1.bank_id());
-
-            // Not possible to check bank_id
-            // let slot_prioritization_fee = PrioritizationFeeCache::get_prioritization_fee(
-            //     prioritization_fee_cache.cache.clone(),
-            //     &slot,
-            // );
-            // assert_eq!(1, slot_prioritization_fee.len());
-            // assert!(slot_prioritization_fee.contains_key(&bank1.bank_id()));
 
             // and data available for query are from bank1
             assert_eq!(
