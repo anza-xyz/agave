@@ -526,21 +526,10 @@ mod tests {
         let prioritization_fee_cache = PrioritizationFeeCache::default();
         sync_update(&prioritization_fee_cache, bank.clone(), txs.iter());
 
-        // assert block minimum fee and account a, b, c fee accordingly
+        // assert empty cache
         {
-            // let fee = PrioritizationFeeCache::get_prioritization_fee(
-            //     prioritization_fee_cache.cache.clone(),
-            //     &slot,
-            // );
-            // let fee = fee.get(&bank.bank_id()).unwrap();
-            // assert_eq!(2, fee.get_min_transaction_fee().unwrap());
-            // assert_eq!(2, fee.get_writable_account_fee(&write_account_a).unwrap());
-            // assert_eq!(5, fee.get_writable_account_fee(&write_account_b).unwrap());
-            // assert_eq!(2, fee.get_writable_account_fee(&write_account_c).unwrap());
-            // // assert unknown account d fee
-            // assert!(fee
-            //     .get_writable_account_fee(&Pubkey::new_unique())
-            //     .is_none());
+            let mut lock = prioritization_fee_cache.cache.write().unwrap();
+            assert!(lock.get(&slot).is_none());
         }
 
         // assert after prune, account a and c should be removed from cache to save space
