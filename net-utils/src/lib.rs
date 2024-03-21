@@ -16,7 +16,9 @@ use {
 };
 
 mod ip_echo_server;
-pub use ip_echo_server::{ip_echo_server, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE};
+pub use ip_echo_server::{
+    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
+};
 use ip_echo_server::{IpEchoServerMessage, IpEchoServerResponse};
 
 /// A data type representing a public Udp socket
@@ -580,7 +582,10 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::net::Ipv4Addr};
+    use {
+        super::*,
+        std::{net::Ipv4Addr, num::NonZeroUsize},
+    };
 
     #[test]
     fn test_response_length() {
@@ -744,7 +749,11 @@ mod tests {
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 
-        let _runtime = ip_echo_server(server_tcp_listener, /*shred_version=*/ Some(42));
+        let _runtime = ip_echo_server(
+            server_tcp_listener,
+            NonZeroUsize::new(DEFAULT_IP_ECHO_SERVER_THREADS).expect("non-zero num workers"),
+            /*shred_version=*/ Some(42),
+        );
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
@@ -764,7 +773,11 @@ mod tests {
         let (client_port, (client_udp_socket, client_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 
-        let _runtime = ip_echo_server(server_tcp_listener, /*shred_version=*/ Some(65535));
+        let _runtime = ip_echo_server(
+            server_tcp_listener,
+            NonZeroUsize::new(DEFAULT_IP_ECHO_SERVER_THREADS).expect("non-zero num workers"),
+            /*shred_version=*/ Some(65535),
+        );
 
         let ip_echo_server_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(

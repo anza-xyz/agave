@@ -6,6 +6,7 @@ use {
     std::{
         io,
         net::{IpAddr, SocketAddr},
+        num::NonZeroUsize,
         time::Duration,
     },
     tokio::{
@@ -17,7 +18,11 @@ use {
 };
 
 pub type IpEchoServer = Runtime;
-
+// IP echo requests require little computation and come in fairly infrequently
+// so keep the number of server workers small to avoid overhead
+pub const DEFAULT_IP_ECHO_SERVER_THREADS: usize = 2;
+// There must be at least one worker so the value must be non-zero
+static_assertions::const_assert!(DEFAULT_IP_ECHO_SERVER_THREADS > 0);
 pub const MAX_PORT_COUNT_PER_MESSAGE: usize = 4;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -168,6 +173,7 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
 /// connects.  Used by |get_public_ip_addr|
 pub fn ip_echo_server(
     tcp_listener: std::net::TcpListener,
+    num_server_threads: NonZeroUsize,
     // Cluster shred-version of the node running the server.
     shred_version: Option<u16>,
 ) -> IpEchoServer {
@@ -175,6 +181,7 @@ pub fn ip_echo_server(
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("solIpEchoSrvrRt")
+        .worker_threads(num_server_threads.get())
         .enable_all()
         .build()
         .expect("new tokio runtime");
