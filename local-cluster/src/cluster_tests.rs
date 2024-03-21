@@ -337,11 +337,11 @@ pub fn kill_entry_and_spend_and_verify_rest(
     }
 }
 
-pub fn simulate_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, tower_path: PathBuf) {
+pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, tower_path: PathBuf) {
     let tower_storage = FileTowerStorage::new(tower_path);
     let mut tower = tower_storage.load(&node_keypair.pubkey()).unwrap();
     for (slot, hash) in votes {
-        tower.record_bank_vote_and_update_lockouts(slot, hash);
+        tower.record_vote(slot, hash);
     }
     let saved_tower = SavedTowerVersions::from(SavedTower::new(&tower, node_keypair).unwrap());
     tower_storage.store(&saved_tower).unwrap();

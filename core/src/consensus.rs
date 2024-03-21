@@ -599,7 +599,7 @@ impl Tower {
         self.last_vote = new_vote;
     }
 
-    pub fn record_bank_vote_and_update_lockouts(
+    fn record_bank_vote_and_update_lockouts(
         &mut self,
         vote_slot: Slot,
         vote_hash: Hash,
@@ -631,7 +631,6 @@ impl Tower {
         }
     }
 
-    #[cfg(test)]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
         self.record_bank_vote_and_update_lockouts(slot, hash)
     }
