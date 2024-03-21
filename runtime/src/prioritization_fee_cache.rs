@@ -27,6 +27,8 @@ const MAX_NUM_RECENT_BLOCKS: u64 = 150;
 /// Thers is no guarantee that slots coming in order, we keep extra slots in the buffer.
 const MAX_UNFINALIZED_SLOTS: u64 = 128;
 
+type UnfinalizedPrioritizationFees = BTreeMap<Slot, HashMap<BankId, PrioritizationFee>>;
+
 #[derive(Debug, Default)]
 struct PrioritizationFeeCacheMetrics {
     // Count of transactions that successfully updated each slot's prioritization fee cache.
@@ -262,7 +264,7 @@ impl PrioritizationFeeCache {
     /// Internal function is invoked by worker thread to update slot's minimum prioritization fee,
     /// Cache lock contends here.
     fn update_cache(
-        unfinalized: &mut BTreeMap<Slot, HashMap<BankId, PrioritizationFee>>,
+        unfinalized: &mut UnfinalizedPrioritizationFees,
         slot: Slot,
         bank_id: BankId,
         transaction_fee: u64,
@@ -285,7 +287,7 @@ impl PrioritizationFeeCache {
     }
 
     fn finalize_slot(
-        unfinalized: &mut BTreeMap<Slot, HashMap<BankId, PrioritizationFee>>,
+        unfinalized: &mut UnfinalizedPrioritizationFees,
         cache: &RwLock<LruCache<Slot, PrioritizationFee>>,
         slot: Slot,
         bank_id: BankId,
@@ -353,7 +355,7 @@ impl PrioritizationFeeCache {
     ) {
         // Potentially there are more than one bank that updates Prioritization Fee
         // for a slot. The updates are tracked and finalized by bank_id.
-        let mut unfinalized = BTreeMap::<Slot, HashMap<BankId, PrioritizationFee>>::new();
+        let mut unfinalized = UnfinalizedPrioritizationFees::new();
 
         for update in receiver.iter() {
             match update {
