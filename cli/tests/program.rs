@@ -10,26 +10,35 @@ use {
         test_utils::wait_n_slots,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
+    solana_client::{
+        rpc_client::GetConfirmedSignaturesForAddress2Config, rpc_config::RpcTransactionConfig,
+    },
     solana_faucet::faucet::run_local_faucet,
+    solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
         account_utils::StateMut,
+        borsh1::try_from_slice_unchecked,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         commitment_config::CommitmentConfig,
+        compute_budget::{self, ComputeBudgetInstruction},
+        fee_calculator::FeeRateGovernor,
         pubkey::Pubkey,
-        signature::{Keypair, NullSigner, Signer},
-        signer::EncodableKey,
+        rent::Rent,
+        signature::{Keypair, NullSigner, Signature, Signer},
+        system_program,
+        transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_test_validator::TestValidator,
+    solana_test_validator::{TestValidator, TestValidatorGenesis},
+    solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
         fs::File,
         io::Read,
         path::{Path, PathBuf},
         str::FromStr,
-        time::Instant,
     },
     test_case::test_case,
 };
@@ -2056,49 +2065,78 @@ fn create_buffer_with_offline_authority<'a>(
     }
 }
 
-fn program_deploy_with_args(compute_unit_price: Option<u64>) {
-    solana_logger::setup();
-
+#[allow(clippy::assertions_on_constants)]
+fn cli_program_deploy_with_args(compute_unit_price: Option<u64>) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
     noop_path.push("fixtures");
     noop_path.push("noop");
     noop_path.set_extension("so");
 
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
+    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .rpc_config(JsonRpcConfig {
+            enable_rpc_transaction_history: true,
+            faucet_addr: Some(faucet_addr),
+            ..JsonRpcConfig::default_for_test()
+        })
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
+
+    let rpc_client =
+        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::confirmed());
+
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
     file.read_to_end(&mut program_data).unwrap();
-
-    let mut config = CliConfig::recent_for_tests();
-    let keypair = Keypair::read_from_file(&config.keypair_path).unwrap();
-
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .unwrap();
     let upgrade_authority = Keypair::new();
 
-    config.json_rpc_url = "https://api.devnet.solana.com".to_string();
-
+    let mut config = CliConfig::recent_for_tests();
+    let keypair = Keypair::new();
+    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+    };
+    process_command(&config).unwrap();
 
-    // Deploy a program
-    config.signers = vec![&keypair, &upgrade_authority];
+    // Deploy the upgradeable program with specified program_id
+    let program_keypair = Keypair::new();
+    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
     config.command = CliCommand::Program(ProgramCliCommand::Deploy {
         program_location: Some(noop_path.to_str().unwrap().to_string()),
         fee_payer_signer_index: 0,
-        program_signer_index: None,
-        program_pubkey: None,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
         buffer_signer_index: None,
         buffer_pubkey: None,
         allow_excessive_balance: false,
         upgrade_authority_signer_index: 1,
-        is_final: true,
-        max_len: None,
+        is_final: false,
+        max_len: Some(max_len),
         skip_fee_check: false,
         compute_unit_price,
     });
     config.output_format = OutputFormat::JsonCompact;
-    let start = Instant::now();
     let response = process_command(&config);
-    let duration = start.elapsed();
-    println!("Time elapsed: {:?}", duration);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
     let program_pubkey_str = json
         .as_object()
@@ -2107,17 +2145,99 @@ fn program_deploy_with_args(compute_unit_price: Option<u64>) {
         .unwrap()
         .as_str()
         .unwrap();
-    println!(
-        "Program deployed successfully with id: {}",
-        program_pubkey_str
+    assert_eq!(
+        program_keypair.pubkey(),
+        Pubkey::from_str(program_pubkey_str).unwrap()
     );
+    let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
+    assert_eq!(program_account.lamports, minimum_balance_for_program);
+    assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
+    assert!(program_account.executable);
+    let signature_statuses = rpc_client
+        .get_signatures_for_address_with_config(
+            &keypair.pubkey(),
+            GetConfirmedSignaturesForAddress2Config {
+                commitment: Some(CommitmentConfig::confirmed()),
+                ..GetConfirmedSignaturesForAddress2Config::default()
+            },
+        )
+        .unwrap();
+    let signatures: Vec<_> = signature_statuses
+        .into_iter()
+        .rev()
+        .map(|status| Signature::from_str(&status.signature).unwrap())
+        .collect();
+
+    fn fetch_and_decode_transaction(rpc_client: &RpcClient, signature: &Signature) -> Transaction {
+        rpc_client
+            .get_transaction_with_config(
+                signature,
+                RpcTransactionConfig {
+                    encoding: Some(UiTransactionEncoding::Base64),
+                    commitment: Some(CommitmentConfig::confirmed()),
+                    ..RpcTransactionConfig::default()
+                },
+            )
+            .unwrap()
+            .transaction
+            .transaction
+            .decode()
+            .unwrap()
+            .into_legacy_transaction()
+            .unwrap()
+    }
+
+    assert!(signatures.len() >= 4);
+    let initial_tx = fetch_and_decode_transaction(&rpc_client, &signatures[1]);
+    let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]);
+    let final_tx = fetch_and_decode_transaction(&rpc_client, signatures.last().unwrap());
+
+    if let Some(compute_unit_price) = compute_unit_price {
+        for tx in [&initial_tx, &write_tx, &final_tx] {
+            for i in [0, 1] {
+                assert_eq!(
+                    tx.message.instructions[i].program_id(&tx.message.account_keys),
+                    &compute_budget::id()
+                );
+            }
+
+            match try_from_slice_unchecked(&tx.message.instructions[0].data) {
+                Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price))
+                    if price == compute_unit_price => {}
+                ix => assert!(false, "unexpected ix {ix:?}"),
+            }
+        }
+
+        match try_from_slice_unchecked(&initial_tx.message.instructions[1].data) {
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2820)) => {}
+            ix => assert!(false, "unexpected ix {ix:?}"),
+        }
+        match try_from_slice_unchecked(&write_tx.message.instructions[1].data) {
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2670)) => {}
+            ix => assert!(false, "unexpected ix {ix:?}"),
+        }
+        match try_from_slice_unchecked(&final_tx.message.instructions[1].data) {
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970)) => {}
+            ix => assert!(false, "unexpected ix {ix:?}"),
+        }
+    } else {
+        assert_eq!(
+            initial_tx.message.instructions[0].program_id(&initial_tx.message.account_keys),
+            &system_program::id()
+        );
+        assert_eq!(
+            write_tx.message.instructions[0].program_id(&write_tx.message.account_keys),
+            &bpf_loader_upgradeable::id()
+        );
+        assert_eq!(
+            final_tx.message.instructions[0].program_id(&final_tx.message.account_keys),
+            &system_program::id()
+        );
+    }
 }
 
 #[test]
 fn test_cli_program_deploy_with_compute_unit_price() {
-    //test without compute_unit_price
-    program_deploy_with_args(None);
-
-    //test with 1000 micro lamports as compute_unit_price
-    program_deploy_with_args(Some(1000));
+    cli_program_deploy_with_args(Some(1000));
+    cli_program_deploy_with_args(None);
 }
