@@ -396,20 +396,19 @@ impl PrioritizationFeeCache {
             .read()
             .unwrap()
             .iter()
-            .filter_map(|(slot, slot_prioritization_fee)| {
-                slot_prioritization_fee.is_finalized().then(|| {
-                    let mut fee = slot_prioritization_fee
-                        .get_min_transaction_fee()
-                        .unwrap_or_default();
-                    for account_key in account_keys {
-                        if let Some(account_fee) =
-                            slot_prioritization_fee.get_writable_account_fee(account_key)
-                        {
-                            fee = std::cmp::max(fee, account_fee);
-                        }
+            .filter(|(_slot, slot_prioritization_fee)| slot_prioritization_fee.is_finalized())
+            .map(|(slot, slot_prioritization_fee)| {
+                let mut fee = slot_prioritization_fee
+                    .get_min_transaction_fee()
+                    .unwrap_or_default();
+                for account_key in account_keys {
+                    if let Some(account_fee) =
+                        slot_prioritization_fee.get_writable_account_fee(account_key)
+                    {
+                        fee = std::cmp::max(fee, account_fee);
                     }
-                    (*slot, fee)
-                })
+                }
+                (*slot, fee)
             })
             .collect()
     }
