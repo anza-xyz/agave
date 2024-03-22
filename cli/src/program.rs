@@ -29,12 +29,16 @@ use {
     },
     solana_client::{
         connection_cache::ConnectionCache,
+        rpc_config::RpcSimulateTransactionConfig,
         send_and_confirm_transactions_in_parallel::{
             send_and_confirm_transactions_in_parallel_blocking, SendAndConfirmConfig,
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
-    solana_program_runtime::{compute_budget::ComputeBudget, invoke_context::InvokeContext},
+    solana_program_runtime::{
+        compute_budget::ComputeBudget, compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
+        invoke_context::InvokeContext,
+    },
     solana_rbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -47,9 +51,10 @@ use {
     solana_sdk::{
         account::Account,
         account_utils::StateMut,
+        borsh1::try_from_slice_unchecked,
         bpf_loader, bpf_loader_deprecated,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        compute_budget::ComputeBudgetInstruction,
+        compute_budget::{self, ComputeBudgetInstruction},
         feature_set::FeatureSet,
         instruction::{Instruction, InstructionError},
         loader_instruction,
@@ -2627,6 +2632,70 @@ fn check_payer(
     Ok(())
 }
 
+// This enum is equivalent to an Option but was added to self-document
+// the ok variants and has the benefit of not forcing the caller to use
+// the result if they don't care about it.
+enum UpdateComputeUnitLimitResult {
+    UpdatedInstructionIndex(usize),
+    NoInstructionFound,
+}
+
+// Returns the index of the compute unit limit instruction
+fn simulate_and_update_compute_unit_limit(
+    rpc_client: &RpcClient,
+    transaction: &mut Transaction,
+) -> Result<UpdateComputeUnitLimitResult, Box<dyn std::error::Error>> {
+    let Some(compute_unit_limit_ix_index) = transaction
+        .message
+        .instructions
+        .iter()
+        .enumerate()
+        .filter_map(|(ix_index, instruction)| {
+            let ix_program_id = transaction.message.program_id(ix_index)?;
+            if ix_program_id != &compute_budget::id() {
+                return None;
+            }
+
+            match try_from_slice_unchecked(&instruction.data).ok()? {
+                ComputeBudgetInstruction::SetComputeUnitLimit(_) => Some(ix_index),
+                _ => None,
+            }
+        })
+        .next()
+    else {
+        return Ok(UpdateComputeUnitLimitResult::NoInstructionFound);
+    };
+
+    let simulate_result = rpc_client
+        .simulate_transaction_with_config(
+            transaction,
+            RpcSimulateTransactionConfig {
+                replace_recent_blockhash: true,
+                commitment: Some(rpc_client.commitment()),
+                ..RpcSimulateTransactionConfig::default()
+            },
+        )?
+        .value;
+
+    // Bail if the simulated transaction failed
+    if let Some(err) = simulate_result.err {
+        return Err(err.into());
+    }
+
+    let units_consumed = simulate_result
+        .units_consumed
+        .expect("compute units unavailable");
+
+    // Overwrite the compute unit limit instruction with the actual units consumed
+    let compute_unit_limit = u32::try_from(units_consumed)?;
+    transaction.message.instructions[compute_unit_limit_ix_index].data =
+        ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit).data;
+
+    Ok(UpdateComputeUnitLimitResult::UpdatedInstructionIndex(
+        compute_unit_limit_ix_index,
+    ))
+}
+
 fn send_deploy_messages(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
@@ -2641,9 +2710,12 @@ fn send_deploy_messages(
     if let Some(message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
-            let blockhash = rpc_client.get_latest_blockhash()?;
 
             let mut initial_transaction = Transaction::new_unsigned(message.clone());
+            simulate_and_update_compute_unit_limit(&rpc_client, &mut initial_transaction)?;
+
+            let blockhash = rpc_client.get_latest_blockhash()?;
+
             // Most of the initial_transaction combinations require both the fee-payer and new program
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
             // This check is to ensure signing does not fail on a KeypairPubkeyMismatch error from an
@@ -2664,6 +2736,29 @@ fn send_deploy_messages(
     if !write_messages.is_empty() {
         if let Some(write_signer) = write_signer {
             trace!("Writing program data");
+
+            // Simulate the first write message to get the number of compute units
+            // consumed and then reuse that value as the compute unit limit for all
+            // write messages.
+            let mut write_messages = write_messages.to_vec();
+            {
+                let mut transaction = Transaction::new_unsigned(write_messages[0].clone());
+                if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
+                    simulate_and_update_compute_unit_limit(&rpc_client, &mut transaction)?
+                {
+                    for msg in &mut write_messages {
+                        // Write messages are all assumed to be identical except
+                        // the program data being written. But just in case that
+                        // assumption is broken, assert that we are only ever
+                        // changing the instruction data for a compute budget
+                        // instruction.
+                        assert_eq!(msg.program_id(ix_index), Some(&compute_budget::id()));
+                        msg.instructions[ix_index].data =
+                            transaction.message.instructions[ix_index].data.clone();
+                    }
+                }
+            }
+
             let connection_cache = if config.use_quic {
                 ConnectionCache::new_quic("connection_cache_cli_program_quic", 1)
             } else {
@@ -2677,7 +2772,7 @@ fn send_deploy_messages(
                     cache,
                 )?
                 .send_and_confirm_messages_with_spinner(
-                    write_messages,
+                    &write_messages,
                     &[fee_payer_signer, write_signer],
                 ),
                 ConnectionCache::Quic(cache) => {
@@ -2695,7 +2790,7 @@ fn send_deploy_messages(
                     send_and_confirm_transactions_in_parallel_blocking(
                         rpc_client.clone(),
                         Some(tpu_client),
-                        write_messages,
+                        &write_messages,
                         &[fee_payer_signer, write_signer],
                         SendAndConfirmConfig {
                             resign_txs_count: Some(5),
@@ -2723,9 +2818,11 @@ fn send_deploy_messages(
     if let Some(message) = final_message {
         if let Some(final_signers) = final_signers {
             trace!("Deploying program");
-            let blockhash = rpc_client.get_latest_blockhash()?;
 
             let mut final_tx = Transaction::new_unsigned(message.clone());
+            simulate_and_update_compute_unit_limit(&rpc_client, &mut final_tx)?;
+
+            let blockhash = rpc_client.get_latest_blockhash()?;
             let mut signers = final_signers.to_vec();
             signers.push(fee_payer_signer);
             final_tx.try_sign(&signers, blockhash)?;
@@ -2774,33 +2871,13 @@ fn set_compute_budget_ixs_if_needed(ixs: &mut Vec<Instruction>, compute_unit_pri
         return;
     };
 
-    let mut compute_unit_limit: u32 = 300; // 2 * 150 for compute budget ixs
-    for ix in ixs.iter() {
-        if ix.program_id == bpf_loader_upgradeable::id() {
-            compute_unit_limit += 2370;
-            match ix.data.first() {
-                Some(2) // DeployWithMaxDataLen
-                | Some(6) // ExtendProgram
-                => {
-                    // add compute for native system program invocation
-                    compute_unit_limit += 150;
-                }
-                _ => {}
-            }
-        } else if ix.program_id == system_program::id() {
-            compute_unit_limit += 150;
-        } else {
-            panic!(
-                "Couldn't estimate compute unit limit for unexpected program {}",
-                ix.program_id
-            );
-        }
-    }
-
+    // Default to the max compute unit limit because later transactions will be
+    // simulated to get the exact compute units consumed.
     ixs.insert(
         0,
-        ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
+        ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT),
     );
+
     ixs.insert(
         0,
         ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
