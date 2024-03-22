@@ -313,18 +313,21 @@ impl AccountsHashVerifier {
             );
 
             // now write the fastboot file after reserializing so this bank snapshot is loadable
-            let fastboot_slot = match accounts_package.package_kind {
+            let full_snapshot_archive_slot = match accounts_package.package_kind {
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(base_slot)) => {
                     base_slot
                 }
                 _ => accounts_package.slot,
             };
-            snapshot_utils::write_fastboot_file(&snapshot_info.bank_snapshot_dir, fastboot_slot)
-                .map_err(|err| {
-                    IoError::other(format!(
-                        "failed to calculate accounts hash for {accounts_package:?}: {err}"
-                    ))
-                })?;
+            snapshot_utils::write_fastboot_file(
+                &snapshot_info.bank_snapshot_dir,
+                full_snapshot_archive_slot,
+            )
+            .map_err(|err| {
+                IoError::other(format!(
+                    "failed to calculate accounts hash for {accounts_package:?}: {err}"
+                ))
+            })?;
         }
 
         if accounts_package.package_kind
