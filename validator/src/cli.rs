@@ -2053,8 +2053,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("no-accounts-db-index-hashing")
             .help(
                 "This is obsolete. See --accounts-db-index-hashing. \
-                   Disables the use of the index in hash calculation in \
-                   AccountsHashVerifier/Accounts Background Service.",
+                 Disables the use of the index in hash calculation in \
+                 AccountsHashVerifier/Accounts Background Service.",
             ),
         usage_warning: "The accounts hash is only calculated without using the index.",
     );
