@@ -1060,13 +1060,18 @@ impl Transaction {
             return Err(TransactionError::InvalidAccountIndex);
         }
 
-        signers
-            .iter()
-            .enumerate()
-            .for_each(|(i, (pubkey, signature))| {
-                self.signatures[i] = *signature;
-                self.message.account_keys[i] = *pubkey;
-            });
+        let indices = signers.iter().map(|(pubkey, _signature)| {
+            self.message
+                .account_keys
+                .iter()
+                .position(|key| key == pubkey)
+                .filter(|index| index < &num_required_signatures)
+                .ok_or(TransactionError::InvalidAccountIndex)
+        });
+        for ((_pubkey, signature), index) in signers.iter().zip(indices) {
+            let index = index?;
+            self.signatures[index] = *signature
+        }
 
         self.verify()
     }
