@@ -233,7 +233,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(false)
                 .help(
                     "Enable historical transaction info over JSON RPC, including the \
-                     'getConfirmedBlock' API.  This will cause an increase in disk usage and IOPS",
+                     'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
                 ),
         )
         .arg(
@@ -675,7 +675,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .possible_values(&["none", "lz4", "snappy", "zlib"])
                 .default_value(&default_args.rocksdb_ledger_compression)
                 .help(
-                    "The compression algorithm that is used to compress transaction status data.  \
+                    "The compression algorithm that is used to compress transaction status data. \
                      Turning on compression can save ~10% of the ledger size.",
                 ),
         )
@@ -841,7 +841,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .multiple(true)
                 .takes_value(true)
                 .help(
-                    "A list of validators to gossip with.  If specified, gossip will not \
+                    "A list of validators to gossip with. If specified, gossip will not \
                      push/pull from from validators outside this set. [default: all validators]",
                 ),
         )
@@ -2363,7 +2363,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(is_pubkey)
                 .takes_value(true)
                 .help(
-                    "Address of the mint account that will receive tokens created at genesis.  If \
+                    "Address of the mint account that will receive tokens created at genesis. If \
                      the ledger already exists then this parameter is silently ignored \
                      [default: client keypair]",
                 ),
