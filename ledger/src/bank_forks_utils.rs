@@ -245,54 +245,42 @@ fn bank_forks_from_snapshot(
             .unwrap_or(0),
     );
 
-    let latest_bank_snapshot = snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config);
-
-    let will_startup_from_snapshot_archives = match process_options.use_snapshot_archives_at_startup
-    {
-        UseSnapshotArchivesAtStartup::Always => true,
-        UseSnapshotArchivesAtStartup::Never => false,
-        UseSnapshotArchivesAtStartup::WhenNewest => latest_bank_snapshot
-            .as_ref()
-            .map(|bank_snapshot| latest_snapshot_archive_slot > bank_snapshot.slot)
-            .unwrap_or(true),
+    let fastboot_snapshot = match process_options.use_snapshot_archives_at_startup {
+        UseSnapshotArchivesAtStartup::Always => None,
+        UseSnapshotArchivesAtStartup::Never => {
+            let Some(bank_snapshot) =
+                snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config)
+            else {
+                return Err(BankForksUtilsError::NoBankSnapshotDirectory {
+                    flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
+                    value: UseSnapshotArchivesAtStartup::Never.to_string(),
+                });
+            };
+            // If a newer snapshot archive was downloaded, it is possible that its slot is
+            // higher than the local state we will load.  Did the user intend for this?
+            if bank_snapshot.slot < latest_snapshot_archive_slot {
+                warn!(
+                    "Starting up from local state at slot {}, which is *older* than \
+                    the latest snapshot archive at slot {}. If this is not desired, \
+                    change the --{} CLI option to *not* \"{}\" and restart.",
+                    bank_snapshot.slot,
+                    latest_snapshot_archive_slot,
+                    use_snapshot_archives_at_startup::cli::LONG_ARG,
+                    UseSnapshotArchivesAtStartup::Never.to_string(),
+                );
+            }
+            Some(bank_snapshot)
+        }
+        UseSnapshotArchivesAtStartup::WhenNewest => {
+            snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config)
+                .filter(|bank_snapshot| bank_snapshot.slot >= latest_snapshot_archive_slot)
+        }
     };
 
-    let bank = if will_startup_from_snapshot_archives {
-        // fastboot from local state
-        let Some(bank_snapshot) = latest_bank_snapshot else {
-            // If we do *not* have a local snapshot to fastboot, then it must be because there was
-            // *not* a loadable local snapshot AND we shall *not* startup from a snapshot archive.
-            assert_eq!(
-                process_options.use_snapshot_archives_at_startup,
-                UseSnapshotArchivesAtStartup::Never,
-            );
-            return Err(BankForksUtilsError::NoBankSnapshotDirectory {
-                flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
-                value: UseSnapshotArchivesAtStartup::Never.to_string(),
-            });
-        };
-
-        // If a newer snapshot archive was downloaded, it is possible that its slot is
-        // higher than the local bank we will load.  Did the user intend for this?
-        if bank_snapshot.slot < latest_snapshot_archive_slot {
-            assert_eq!(
-                process_options.use_snapshot_archives_at_startup,
-                UseSnapshotArchivesAtStartup::Never,
-            );
-            warn!(
-                "Starting up from local state at slot {}, which is *older* than \
-                the latest snapshot archive at slot {}. If this is not desired, \
-                change the --{} CLI option to *not* \"{}\" and restart.",
-                bank_snapshot.slot,
-                latest_snapshot_archive_slot,
-                use_snapshot_archives_at_startup::cli::LONG_ARG,
-                UseSnapshotArchivesAtStartup::Never.to_string(),
-            );
-        }
-
+    let bank = if let Some(fastboot_snapshot) = fastboot_snapshot {
         let (bank, _) = snapshot_bank_utils::bank_from_snapshot_dir(
             &account_paths,
-            &bank_snapshot,
+            &fastboot_snapshot,
             genesis_config,
             &process_options.runtime_config,
             process_options.debug_keys.clone(),
@@ -307,7 +295,7 @@ fn bank_forks_from_snapshot(
         )
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
             source: err,
-            path: bank_snapshot.snapshot_path(),
+            path: fastboot_snapshot.snapshot_path(),
         })?;
 
         // If the node crashes before taking the next bank snapshot, the next startup will attempt
