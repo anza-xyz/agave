@@ -9,7 +9,7 @@ use {
     },
 };
 
-/// Used to validate a built-in program's account before migrating to Core BPF.
+/// The account details of a built-in program to be migrated to Core BPF.
 #[derive(Debug)]
 pub(crate) struct TargetProgramBuiltin {
     pub program_address: Pubkey,
@@ -19,7 +19,8 @@ pub(crate) struct TargetProgramBuiltin {
 }
 
 impl TargetProgramBuiltin {
-    /// Create a new migration configuration for a built-in program.
+    /// Collects the details of a built-in program and verifies it is properly
+    /// configured
     pub(crate) fn new_checked(
         bank: &Bank,
         program_address: &Pubkey,
