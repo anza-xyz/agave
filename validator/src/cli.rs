@@ -2042,8 +2042,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .help("Enable incremental snapshots")
         .long_help(
             "Enable incremental snapshots by setting this flag.  When enabled, \
-             --snapshot-interval-slots will set the incremental snapshot interval. To set the
-                 full snapshot interval, use --full-snapshot-interval-slots.",
+             --snapshot-interval-slots will set the incremental snapshot interval. To set the \
+             full snapshot interval, use --full-snapshot-interval-slots.",
         ));
     add_arg!(Arg::with_name("minimal_rpc_api")
         .long("minimal-rpc-api")
