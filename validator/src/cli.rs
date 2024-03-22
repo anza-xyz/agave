@@ -762,9 +762,9 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced())
                 .long("no-wait-for-vote-to-start-leader")
                 .help(
-                    "If the validator starts up with no ledger, it will wait to start block
-                      production until it sees a vote land in a rooted slot. This prevents
-                      double signing. Turn off to risk double signing a block.",
+                    "If the validator starts up with no ledger, it will wait to start block \
+                     production until it sees a vote land in a rooted slot. This prevents \
+                     double signing. Turn off to risk double signing a block.",
                 ),
         )
         .arg(
