@@ -100,7 +100,6 @@ use {
             LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, ProgramCache,
         },
         runtime_config::RuntimeConfig,
-        sysvar_cache::SysvarCache,
         timings::{ExecuteTimingType, ExecuteTimings},
     },
     solana_sdk::{
@@ -200,7 +199,9 @@ use {
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
-    solana_program_runtime::loaded_programs::LoadedProgramsForTxBatch,
+    solana_program_runtime::{
+        loaded_programs::LoadedProgramsForTxBatch, sysvar_cache::SysvarCache,
+    },
 };
 
 /// params to `verify_accounts_hash`
