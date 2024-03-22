@@ -258,42 +258,6 @@ fn bank_forks_from_snapshot(
     };
 
     let bank = if will_startup_from_snapshot_archives {
-        // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
-        // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
-        // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
-        // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
-        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
-
-        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
-            &account_paths,
-            &snapshot_config.bank_snapshots_dir,
-            &full_snapshot_archive_info,
-            incremental_snapshot_archive_info.as_ref(),
-            genesis_config,
-            &process_options.runtime_config,
-            process_options.debug_keys.clone(),
-            None,
-            process_options.account_indexes.clone(),
-            process_options.limit_load_slot_count_from_snapshot,
-            process_options.shrink_ratio,
-            process_options.accounts_db_test_hash_calculation,
-            process_options.accounts_db_skip_shrink,
-            process_options.accounts_db_force_initial_clean,
-            process_options.verify_index,
-            process_options.accounts_db_config.clone(),
-            accounts_update_notifier,
-            exit,
-        )
-        .map_err(|err| BankForksUtilsError::BankFromSnapshotsArchive {
-            source: err,
-            full_snapshot_archive: full_snapshot_archive_info.path().display().to_string(),
-            incremental_snapshot_archive: incremental_snapshot_archive_info
-                .as_ref()
-                .map(|archive| archive.path().display().to_string())
-                .unwrap_or("none".to_string()),
-        })?;
-        bank
-    } else {
         // fastboot from local state
         let Some(bank_snapshot) = latest_bank_snapshot else {
             // If we do *not* have a local snapshot to fastboot, then it must be because there was
@@ -354,6 +318,42 @@ fn bank_forks_from_snapshot(
         // snapshot archive next time, which is safe.
         snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
+        bank
+    } else {
+        // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
+        // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
+        // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
+        // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
+        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+
+        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+            &account_paths,
+            &snapshot_config.bank_snapshots_dir,
+            &full_snapshot_archive_info,
+            incremental_snapshot_archive_info.as_ref(),
+            genesis_config,
+            &process_options.runtime_config,
+            process_options.debug_keys.clone(),
+            None,
+            process_options.account_indexes.clone(),
+            process_options.limit_load_slot_count_from_snapshot,
+            process_options.shrink_ratio,
+            process_options.accounts_db_test_hash_calculation,
+            process_options.accounts_db_skip_shrink,
+            process_options.accounts_db_force_initial_clean,
+            process_options.verify_index,
+            process_options.accounts_db_config.clone(),
+            accounts_update_notifier,
+            exit,
+        )
+        .map_err(|err| BankForksUtilsError::BankFromSnapshotsArchive {
+            source: err,
+            full_snapshot_archive: full_snapshot_archive_info.path().display().to_string(),
+            incremental_snapshot_archive: incremental_snapshot_archive_info
+                .as_ref()
+                .map(|archive| archive.path().display().to_string())
+                .unwrap_or("none".to_string()),
+        })?;
         bank
     };
 
