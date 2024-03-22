@@ -1532,25 +1532,24 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .required(false)
                 .conflicts_with("wait_for_supermajority")
                 .help(
-                    "When specified, the validator will enter Wen Restart mode which
-                    pauses normal activity. Validators in this mode will gossip their last
-                    vote to reach consensus on a safe restart slot and repair all blocks
-                    on the selected fork. The safe slot will be a descendant of the latest
-                    optimistically confirmed slot to ensure we do not roll back any
-                    optimistically confirmed slots.
-
-                    The progress in this mode will be saved in the file location provided.
-                    If consensus is reached, the validator will automatically exit and then
-                    execute wait_for_supermajority logic so the cluster will resume execution.
-                    The progress file will be kept around for future debugging.
-
-                    After the cluster resumes normal operation, the validator arguments can
-                    be adjusted to remove --wen_restart and update expected_shred_version to
-                    the new shred_version agreed on in the consensus.
-
-                    If wen_restart fails, refer to the progress file (in proto3 format) for
-                    further debugging.
-                ",
+                    "When specified, the validator will enter Wen Restart mode which \
+                    pauses normal activity. Validators in this mode will gossip their last \
+                    vote to reach consensus on a safe restart slot and repair all blocks \
+                    on the selected fork. The safe slot will be a descendant of the latest \
+                    optimistically confirmed slot to ensure we do not roll back any \
+                    optimistically confirmed slots. \
+                    \n\n\
+                    The progress in this mode will be saved in the file location provided. \
+                    If consensus is reached, the validator will automatically exit and then \
+                    execute wait_for_supermajority logic so the cluster will resume execution. \
+                    The progress file will be kept around for future debugging. \
+                    \n\n\
+                    After the cluster resumes normal operation, the validator arguments can \
+                    be adjusted to remove --wen_restart and update expected_shred_version to \
+                    the new shred_version agreed on in the consensus. \
+                    \n\n\
+                    If wen_restart fails, refer to the progress file (in proto3 format) for \
+                    further debugging.",
                 ),
         )
         .args(&thread_args(&default_args.thread_args))
