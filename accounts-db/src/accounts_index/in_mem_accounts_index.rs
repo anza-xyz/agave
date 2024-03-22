@@ -174,7 +174,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             bucket: storage
                 .disk
                 .as_ref()
-                .map(|disk| disk.get_bucket_from_index(bin)).cloned(),
+                .map(|disk| disk.get_bucket_from_index(bin))
+                .cloned(),
             cache_ranges_held: CacheRangesHeld::default(),
             stop_evictions_changes: AtomicU64::default(),
             stop_evictions: AtomicU64::default(),

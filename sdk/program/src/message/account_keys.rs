@@ -171,9 +171,11 @@ mod tests {
         };
         let account_keys = AccountKeys::new(&static_keys, Some(&dynamic_keys));
 
-        let expected_segments = [vec![keys[0], keys[1], keys[2]],
+        let expected_segments = [
+            vec![keys[0], keys[1], keys[2]],
             vec![keys[3], keys[4]],
-            vec![keys[5]]];
+            vec![keys[5]],
+        ];
 
         assert!(account_keys.key_segment_iter().eq(expected_segments.iter()));
     }
