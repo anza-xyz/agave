@@ -3,6 +3,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use {
+    assert_matches::assert_matches,
     serde_json::Value,
     solana_cli::{
         cli::{process_command, CliCommand, CliConfig},
@@ -2191,25 +2192,24 @@ fn cli_program_deploy_with_args(compute_unit_price: Option<u64>) {
                 );
             }
 
-            match try_from_slice_unchecked(&tx.message.instructions[0].data) {
-                Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price))
-                    if price == compute_unit_price => {}
-                ix => assert!(false, "unexpected ix {ix:?}"),
-            }
+            assert_matches!(
+                try_from_slice_unchecked(&tx.message.instructions[0].data),
+                Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) if price == compute_unit_price
+            );
         }
 
-        match try_from_slice_unchecked(&initial_tx.message.instructions[1].data) {
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2820)) => {}
-            ix => assert!(false, "unexpected ix {ix:?}"),
-        }
-        match try_from_slice_unchecked(&write_tx.message.instructions[1].data) {
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2670)) => {}
-            ix => assert!(false, "unexpected ix {ix:?}"),
-        }
-        match try_from_slice_unchecked(&final_tx.message.instructions[1].data) {
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970)) => {}
-            ix => assert!(false, "unexpected ix {ix:?}"),
-        }
+        assert_matches!(
+            try_from_slice_unchecked(&initial_tx.message.instructions[1].data),
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2820))
+        );
+        assert_matches!(
+            try_from_slice_unchecked(&write_tx.message.instructions[1].data),
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2670))
+        );
+        assert_matches!(
+            try_from_slice_unchecked(&final_tx.message.instructions[1].data),
+            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970))
+        );
     } else {
         assert_eq!(
             initial_tx.message.instructions[0].program_id(&initial_tx.message.account_keys),
