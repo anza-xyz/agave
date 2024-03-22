@@ -424,6 +424,7 @@ pub struct RpcSimulateTransactionResult {
     pub units_consumed: Option<u64>,
     pub return_data: Option<UiTransactionReturnData>,
     pub inner_instructions: Option<Vec<UiInnerInstructions>>,
+    pub blockhash: Option<RpcBlockhash>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
