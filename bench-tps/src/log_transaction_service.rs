@@ -2,7 +2,10 @@
 //! and saves log files in csv format.
 
 use {
-    crate::bench_tps_client::{BenchTpsClient, Result},
+    crate::{
+        bench_tps_client::BenchTpsClient,
+        rpc_with_retry_utils::{get_blocks_with_retry, get_slot_with_retry},
+    },
     chrono::{DateTime, TimeZone, Utc},
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
     log::*,
@@ -23,7 +26,7 @@ use {
         collections::HashMap,
         fs::File,
         sync::Arc,
-        thread::{self, sleep, Builder, JoinHandle},
+        thread::{self, Builder, JoinHandle},
         time::Duration,
     },
 };
@@ -51,7 +54,7 @@ pub(crate) fn create_log_transactions_service_and_sender<Client>(
 where
     Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
 {
-    if verify_data_files(block_data_file, transaction_data_file) {
+    if data_file_provided(block_data_file, transaction_data_file) {
         let (sender, receiver) = unbounded();
         let log_tx_service =
             LogTransactionService::new(client, receiver, block_data_file, transaction_data_file);
@@ -70,7 +73,7 @@ const PROCESS_BLOCKS_EVERY_MS: u64 = NUM_SLOTS_PER_ITERATION * DEFAULT_MS_PER_SL
 // Empirically calculated constant added to MAX_PROCESSING_AGE to avoid cleaning some transactions
 // that still might be added to the block.
 const AGE_EPSILON: usize = 50;
-// Max age for transaction in the transaction map.
+// Max age for transaction in the transaction map, older transactions are cleaned up and marked as timeout.
 const REMOVE_TIMEOUT_TX_EVERY_SEC: i64 =
     ((MAX_PROCESSING_AGE + AGE_EPSILON) as f64 * DEFAULT_S_PER_SLOT) as i64;
 
@@ -94,7 +97,7 @@ impl LogTransactionService {
     where
         Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
-        if !verify_data_files(block_data_file, transaction_data_file) {
+        if !data_file_provided(block_data_file, transaction_data_file) {
             panic!("Expect block-data-file or transaction-data-file is specified, must have been verified by callee.");
         }
 
@@ -107,7 +110,7 @@ impl LogTransactionService {
             .spawn(move || {
                 Self::run(client, signature_receiver, tx_log_writer, block_log_writer);
             })
-            .expect("LogTransactionService is up.");
+            .expect("LogTransactionService should have started successfully.");
         Self { thread_handler }
     }
 
@@ -123,13 +126,14 @@ impl LogTransactionService {
     ) where
         Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
     {
+        // used to request blocks data and only confirmed makes sense in this context.
         let commitment: CommitmentConfig = CommitmentConfig {
             commitment: CommitmentLevel::Confirmed,
         };
         let block_processing_timer_receiver = tick(Duration::from_millis(PROCESS_BLOCKS_EVERY_MS));
 
         let mut start_slot = get_slot_with_retry(&client, commitment)
-            .expect("get_slot_with_retry succeed, cannot proceed without having slot. Must be a problem with RPC.");
+            .expect("get_slot_with_retry should have succeed, cannot proceed without having slot. Must be a problem with RPC.");
 
         let mut sender_stopped = false;
         let mut signature_to_tx_info = MapSignatureToTxInfo::new();
@@ -237,7 +241,10 @@ impl LogTransactionService {
         tx_log_writer: &mut TransactionLogWriter,
         block_log_writer: &mut BlockLogWriter,
     ) {
-        let rewards = block.rewards.as_ref().expect("Rewards are present.");
+        let rewards = block
+            .rewards
+            .as_ref()
+            .expect("Rewards should be part of the block information.");
         let slot_leader = rewards
             .iter()
             .find(|r| r.reward_type == Some(RewardType::Fee))
@@ -326,7 +333,7 @@ impl LogTransactionService {
     }
 }
 
-fn verify_data_files(block_data_file: Option<&str>, transaction_data_file: Option<&str>) -> bool {
+fn data_file_provided(block_data_file: Option<&str>, transaction_data_file: Option<&str>) -> bool {
     block_data_file.is_some() || transaction_data_file.is_some()
 }
 
@@ -351,7 +358,10 @@ struct BlockLogWriter {
 impl BlockLogWriter {
     fn new(block_data_file: Option<&str>) -> Self {
         let block_log_writer = block_data_file.map(|block_data_file| {
-            CsvFileWriter::from_writer(File::create(block_data_file).expect("File can be created."))
+            CsvFileWriter::from_writer(
+                File::create(block_data_file)
+                    .expect("Application should be able to create a file."),
+            )
         });
         Self {
             log_writer: block_log_writer,
@@ -419,7 +429,8 @@ impl TransactionLogWriter {
     fn new(transaction_data_file: Option<&str>) -> Self {
         let transaction_log_writer = transaction_data_file.map(|transaction_data_file| {
             CsvFileWriter::from_writer(
-                File::create(transaction_data_file).expect("File can be created."),
+                File::create(transaction_data_file)
+                    .expect("Application should be able to create a file."),
             )
         });
         Self {
@@ -469,54 +480,4 @@ impl TransactionLogWriter {
             let _ = transaction_log_writer.flush();
         }
     }
-}
-
-const NUM_RETRY: u64 = 5;
-const RETRY_EVERY_MS: u64 = 4 * DEFAULT_MS_PER_SLOT;
-
-fn call_rpc_with_retry<Func, Data>(f: Func, retry_warning: &str) -> Result<Data>
-where
-    Func: Fn() -> Result<Data>,
-{
-    let mut iretry = 0;
-    loop {
-        match f() {
-            Ok(slot) => {
-                return Ok(slot);
-            }
-            Err(error) => {
-                if iretry == NUM_RETRY {
-                    return Err(error);
-                }
-                warn!("{retry_warning}: {error}, retry.");
-                sleep(Duration::from_millis(RETRY_EVERY_MS));
-            }
-        }
-        iretry += 1;
-    }
-}
-
-fn get_slot_with_retry<Client>(client: &Arc<Client>, commitment: CommitmentConfig) -> Result<Slot>
-where
-    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
-{
-    call_rpc_with_retry(
-        || client.get_slot_with_commitment(commitment),
-        "Failed to get slot",
-    )
-}
-
-fn get_blocks_with_retry<Client>(
-    client: &Arc<Client>,
-    start_slot: Slot,
-    end_slot: Option<Slot>,
-    commitment: CommitmentConfig,
-) -> Result<Vec<Slot>>
-where
-    Client: 'static + BenchTpsClient + Send + Sync + ?Sized,
-{
-    call_rpc_with_retry(
-        || client.get_blocks_with_commitment(start_slot, end_slot, commitment),
-        "Failed to download blocks",
-    )
 }

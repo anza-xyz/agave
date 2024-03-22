@@ -959,17 +959,17 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
             let mut shared_txs_wl = shared_txs.write().expect("write lock in do_tx_transfers");
             shared_txs_wl.pop_front()
         };
-        if let Some(txs0) = txs {
+        if let Some(txs) = txs {
             shared_tx_thread_count.fetch_add(1, Ordering::Relaxed);
-            info!("Transferring 1 unit {} times...", txs0.len());
-            let tx_len = txs0.len();
+            let num_txs = txs.len();
+            info!("Transferring 1 unit {} times...", num_txs);
             let transfer_start = Instant::now();
             let mut old_transactions = false;
             let mut min_timestamp = u64::MAX;
-            let mut transactions = Vec::<_>::with_capacity(txs0.len());
-            let mut signatures = Vec::<_>::with_capacity(txs0.len());
-            let mut compute_unit_prices = Vec::<_>::with_capacity(txs0.len());
-            for tx in txs0 {
+            let mut transactions = Vec::<_>::with_capacity(num_txs);
+            let mut signatures = Vec::<_>::with_capacity(num_txs);
+            let mut compute_unit_prices = Vec::<_>::with_capacity(num_txs);
+            for tx in txs {
                 let now = timestamp();
                 // Transactions without durable nonce that are too old will be rejected by the cluster Don't bother
                 // sending them.
@@ -1025,16 +1025,16 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
                 shared_txs_wl.clear();
             }
             shared_tx_thread_count.fetch_add(-1, Ordering::Relaxed);
-            total_tx_sent_count.fetch_add(tx_len, Ordering::Relaxed);
+            total_tx_sent_count.fetch_add(num_txs, Ordering::Relaxed);
             info!(
                 "Tx send done. {} ms {} tps",
                 duration_as_ms(&transfer_start.elapsed()),
-                tx_len as f32 / duration_as_s(&transfer_start.elapsed()),
+                num_txs as f32 / duration_as_s(&transfer_start.elapsed()),
             );
             datapoint_info!(
                 "bench-tps-do_tx_transfers",
                 ("duration", duration_as_us(&transfer_start.elapsed()), i64),
-                ("count", tx_len, i64)
+                ("count", num_txs, i64)
             );
         }
         if exit_signal.load(Ordering::Relaxed) {
