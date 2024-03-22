@@ -3,6 +3,7 @@ use {
         account_storage::meta::{
             StorableAccountsWithHashesAndWriteVersions, StoredAccountInfo, StoredAccountMeta,
         },
+        accounts_db::AccountsFileId,
         accounts_hash::AccountHash,
         append_vec::{AppendVec, AppendVecError},
         storable_accounts::StorableAccounts,
@@ -103,13 +104,7 @@ impl AccountsFile {
         }
     }
 
-    pub fn is_recyclable(&self) -> bool {
-        match self {
-            Self::AppendVec(_) => true,
-        }
-    }
-
-    pub fn file_name(slot: Slot, id: impl std::fmt::Display) -> String {
+    pub fn file_name(slot: Slot, id: AccountsFileId) -> String {
         format!("{slot}.{id}")
     }
 
