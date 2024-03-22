@@ -312,14 +312,14 @@ impl AccountsHashVerifier {
                 bank_incremental_snapshot_persistence.as_ref(),
             );
 
-            // now write the fastboot file after reserializing so this bank snapshot is loadable
+            // now write the full snapshot slot file after reserializing so this bank snapshot is loadable
             let full_snapshot_archive_slot = match accounts_package.package_kind {
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(base_slot)) => {
                     base_slot
                 }
                 _ => accounts_package.slot,
             };
-            snapshot_utils::write_fastboot_file(
+            snapshot_utils::write_full_snapshot_slot_file(
                 &snapshot_info.bank_snapshot_dir,
                 full_snapshot_archive_slot,
             )

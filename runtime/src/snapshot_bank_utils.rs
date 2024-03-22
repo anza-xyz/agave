@@ -1266,8 +1266,8 @@ mod tests {
                 get_highest_loadable_bank_snapshot, purge_all_bank_snapshots, purge_bank_snapshot,
                 purge_bank_snapshots_older_than_slot, purge_incomplete_bank_snapshots,
                 purge_old_bank_snapshots, purge_old_bank_snapshots_at_startup,
-                snapshot_storage_rebuilder::get_slot_and_append_vec_id, write_fastboot_file,
-                ArchiveFormat, SNAPSHOT_FASTBOOT_FILENAME,
+                snapshot_storage_rebuilder::get_slot_and_append_vec_id,
+                write_full_snapshot_slot_file, ArchiveFormat, SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME,
             },
             status_cache::Status,
         },
@@ -2697,7 +2697,7 @@ mod tests {
                     None,
                 )
             );
-            write_fastboot_file(&bank_snapshot_info.snapshot_dir, slot).unwrap();
+            write_full_snapshot_slot_file(&bank_snapshot_info.snapshot_dir, slot).unwrap();
             package_and_archive_full_snapshot(
                 &bank,
                 &bank_snapshot_info,
@@ -2759,8 +2759,13 @@ mod tests {
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 
-        // 6. delete the fastboot file, get_highest_loadable() should return NONE
-        fs::remove_file(bank_snapshot.snapshot_dir.join(SNAPSHOT_FASTBOOT_FILENAME)).unwrap();
+        // 6. delete the full snapshot slot file, get_highest_loadable() should return NONE
+        fs::remove_file(
+            bank_snapshot
+                .snapshot_dir
+                .join(SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME),
+        )
+        .unwrap();
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
         // 7. however, a load-only snapshot config should return Some() again
