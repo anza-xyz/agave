@@ -2650,18 +2650,18 @@ fn simulate_and_update_compute_unit_limit(
         .instructions
         .iter()
         .enumerate()
-        .filter_map(|(ix_index, instruction)| {
+        .find_map(|(ix_index, instruction)| {
             let ix_program_id = transaction.message.program_id(ix_index)?;
             if ix_program_id != &compute_budget::id() {
                 return None;
             }
 
-            match try_from_slice_unchecked(&instruction.data).ok()? {
-                ComputeBudgetInstruction::SetComputeUnitLimit(_) => Some(ix_index),
-                _ => None,
-            }
+            matches!(
+                try_from_slice_unchecked(&instruction.data),
+                Ok(ComputeBudgetInstruction::SetComputeUnitLimit(_))
+            )
+            .then_some(ix_index)
         })
-        .next()
     else {
         return Ok(UpdateComputeUnitLimitResult::NoInstructionFound);
     };
