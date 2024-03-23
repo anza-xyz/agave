@@ -4683,7 +4683,6 @@ impl Bank {
                 recording_config,
                 timings,
                 account_overrides,
-                self.builtin_program_ids.iter(),
                 log_messages_bytes_limit,
                 limit_to_load_programs,
             );
@@ -7687,6 +7686,10 @@ impl TransactionProcessingCallback for Bank {
         } else {
             Ok(())
         }
+    }
+
+    fn get_builtin_program_ids(&self) -> Vec<Pubkey> {
+        self.builtin_programs
     }
 
     fn get_program_match_criteria(&self, program: &Pubkey) -> LoadedProgramMatchCriteria {

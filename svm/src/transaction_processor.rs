@@ -48,7 +48,7 @@ use {
     },
     std::{
         cell::RefCell,
-        collections::{hash_map::Entry, HashMap},
+        collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
         sync::{atomic::Ordering, Arc, RwLock},
@@ -102,6 +102,10 @@ pub trait TransactionProcessingCallback {
         _error_counters: &mut TransactionErrorMetrics,
     ) -> transaction::Result<()> {
         Ok(())
+    }
+
+    fn get_builtin_program_ids(&self) -> Vec<Pubkey> {
+        vec![]
     }
 
     fn get_program_match_criteria(&self, _program: &Pubkey) -> LoadedProgramMatchCriteria {
@@ -206,7 +210,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         account_overrides: Option<&AccountOverrides>,
-        builtin_programs: impl Iterator<Item = &'a Pubkey>,
         log_messages_bytes_limit: Option<usize>,
         limit_to_load_programs: bool,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
@@ -217,8 +220,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             PROGRAM_OWNERS,
         );
         let native_loader = native_loader::id();
-        for builtin_program in builtin_programs {
-            program_accounts_map.insert(*builtin_program, (&native_loader, 0));
+        for builtin_program in callbacks.get_builtin_program_ids() {
+            program_accounts_map.insert(builtin_program, (&native_loader, 0));
         }
 
         let programs_loaded_for_tx_batch = Rc::new(RefCell::new(self.replenish_program_cache(
