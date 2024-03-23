@@ -48,7 +48,7 @@ use {
     },
     std::{
         cell::RefCell,
-        collections::{hash_map::Entry, HashMap, HashSet},
+        collections::{hash_map::Entry, HashMap},
         fmt::{Debug, Formatter},
         rc::Rc,
         sync::{atomic::Ordering, Arc, RwLock},

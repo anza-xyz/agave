@@ -7689,7 +7689,7 @@ impl TransactionProcessingCallback for Bank {
     }
 
     fn get_builtin_program_ids(&self) -> Vec<Pubkey> {
-        self.builtin_programs
+        self.builtin_program_ids.iter().copied().collect()
     }
 
     fn get_program_match_criteria(&self, program: &Pubkey) -> LoadedProgramMatchCriteria {
