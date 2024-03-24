@@ -158,7 +158,7 @@ impl LogTransactionService {
                 },
                 recv(block_processing_timer_receiver) -> _ => {
                     info!("sign_receiver queue len: {}", signature_receiver.len());
-                    if signature_receiver.len() != 0 {
+                    if !signature_receiver.is_empty() {
                         continue;
                     }
                     let mut measure_get_blocks = Measure::start("measure_get_blocks");
@@ -186,7 +186,7 @@ impl LogTransactionService {
                     start_slot = start_slot.saturating_add(NUM_SLOTS_PER_ITERATION);
                     tx_log_writer.flush();
                     block_log_writer.flush();
-                    if sender_stopped && signature_to_tx_info.len() == 0 {
+                    if sender_stopped && signature_to_tx_info.is_empty() {
                         info!("Stop LogTransactionService");
                         break;
                     }
