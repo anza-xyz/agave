@@ -535,7 +535,7 @@ where
     }
 
     if let Some(log_transaction_service) = log_transaction_service {
-        info!("Waiting for confirmation thread...");
+        info!("Waiting for log_transaction_service thread...");
         if let Err(err) = log_transaction_service.join() {
             info!("  join() failed with: {:?}", err);
         }
@@ -1038,7 +1038,6 @@ fn do_tx_transfers<T: BenchTpsClient + ?Sized>(
             );
         }
         if exit_signal.load(Ordering::Relaxed) {
-            drop(signatures_sender);
             break;
         }
     }
