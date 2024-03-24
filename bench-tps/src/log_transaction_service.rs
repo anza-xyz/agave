@@ -13,7 +13,7 @@ use {
     solana_client::rpc_config::RpcBlockConfig,
     solana_measure::measure::Measure,
     solana_sdk::{
-        clock::{DEFAULT_MS_PER_SLOT, DEFAULT_S_PER_SLOT, MAX_PROCESSING_AGE},
+        clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
         commitment_config::{CommitmentConfig, CommitmentLevel},
         signature::Signature,
         slot_history::Slot,
@@ -74,8 +74,8 @@ const PROCESS_BLOCKS_EVERY_MS: u64 = NUM_SLOTS_PER_ITERATION * DEFAULT_MS_PER_SL
 // that still might be added to the block.
 const AGE_EPSILON: usize = 50;
 // Max age for transaction in the transaction map, older transactions are cleaned up and marked as timeout.
-const REMOVE_TIMEOUT_TX_EVERY_SEC: i64 =
-    ((MAX_PROCESSING_AGE + AGE_EPSILON) as f64 * DEFAULT_S_PER_SLOT) as i64;
+const REMOVE_TIMEOUT_TX_EVERY_MS: i64 =
+    (MAX_PROCESSING_AGE + AGE_EPSILON) as i64 * (DEFAULT_MS_PER_SLOT as i64);
 
 // Map used to filter submitted transactions.
 #[derive(Clone)]
@@ -314,7 +314,7 @@ impl LogTransactionService {
         let now: DateTime<Utc> = Utc::now();
         signature_to_tx_info.retain(|signature, tx_info| {
             let duration_since_sent = now.signed_duration_since(tx_info.sent_at);
-            let is_timeout_tx = duration_since_sent.num_seconds() > REMOVE_TIMEOUT_TX_EVERY_SEC;
+            let is_timeout_tx = duration_since_sent.num_milliseconds() > REMOVE_TIMEOUT_TX_EVERY_MS;
             if is_timeout_tx {
                 tx_log_writer.write(
                     None,
