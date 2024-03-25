@@ -1588,12 +1588,10 @@ declare_builtin_function!(
             }
         };
 
-        if result_point.len() != output {
-            return if simplify_alt_bn128_syscall_error_codes {
-                Ok(1)
-            } else {
-                Ok(AltBn128Error::SliceOutOfBounds.into())
-            };
+        // This can never happen and should be removed when the
+        // simplify_alt_bn128_syscall_error_codes fature gets activated
+        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
+            return Ok(AltBn128Error::SliceOutOfBounds.into());
         }
 
         call_result.copy_from_slice(&result_point);
