@@ -879,7 +879,7 @@ async fn handle_connection(
                         // Within this value, the heuristic is to wake up 10 times to check for exit
                         // for the set timeout if there are no data.
                         let exit_check_interval = (wait_for_chunk_timeout / 10)
-                            .clamp(Duration::from_millis(10), Duration::from_secs(1));
+                            .clamp(Duration::from_millis(100), Duration::from_secs(1));
                         let mut start = Instant::now();
                         while !stream_exit.load(Ordering::Relaxed) {
                             if let Ok(chunk) = tokio::time::timeout(
