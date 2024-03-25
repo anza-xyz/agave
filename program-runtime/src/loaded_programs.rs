@@ -63,11 +63,9 @@ pub trait ForkGraph {
 /// Actual payload of [LoadedProgram].
 #[derive(Default)]
 pub enum LoadedProgramType {
-    /// Tombstone for programs which did not pass the verifier.
-    ///
-    /// These can potentially come back alive if the environment changes.
+    /// Tombstone for programs which currently do not pass the verifier but could if the feature set changed.
     FailedVerification(ProgramRuntimeEnvironment),
-    /// Tombstone for programs which were explicitly undeployed / closed.
+    /// Tombstone for accounts which are not programs but might still be owned by a loader.
     #[default]
     Closed,
     /// Tombstone for programs which have recently been modified but the new version is not visible yet.
@@ -777,11 +775,15 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 let existing = slot_versions.get_mut(index).unwrap();
                 match (&existing.program, &entry.program) {
                     (LoadedProgramType::Builtin(_), LoadedProgramType::Builtin(_))
+                    | (LoadedProgramType::Closed, LoadedProgramType::LegacyV0(_))
+                    | (LoadedProgramType::Closed, LoadedProgramType::LegacyV1(_))
+                    | (LoadedProgramType::Closed, LoadedProgramType::Typed(_))
                     | (LoadedProgramType::Unloaded(_), LoadedProgramType::LegacyV0(_))
                     | (LoadedProgramType::Unloaded(_), LoadedProgramType::LegacyV1(_))
                     | (LoadedProgramType::Unloaded(_), LoadedProgramType::Typed(_)) => {}
                     #[cfg(test)]
-                    (LoadedProgramType::Unloaded(_), LoadedProgramType::TestLoaded(_)) => {}
+                    (LoadedProgramType::Closed, LoadedProgramType::TestLoaded(_))
+                    | (LoadedProgramType::Unloaded(_), LoadedProgramType::TestLoaded(_)) => {}
                     _ => {
                         // Something is wrong, I can feel it ...
                         error!("ProgramCache::assign_program() failed key={:?} existing={:?} entry={:?}", key, slot_versions, entry);
@@ -1680,7 +1682,6 @@ mod tests {
     #[test_matrix(
         (
             LoadedProgramType::FailedVerification(Arc::new(BuiltinProgram::new_mock())),
-            LoadedProgramType::Closed,
             LoadedProgramType::TestLoaded(Arc::new(BuiltinProgram::new_mock())),
         ),
         (
@@ -1692,7 +1693,10 @@ mod tests {
         )
     )]
     #[test_matrix(
-        (LoadedProgramType::Unloaded(Arc::new(BuiltinProgram::new_mock())),),
+        (
+            LoadedProgramType::Closed,
+            LoadedProgramType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+        ),
         (
             LoadedProgramType::FailedVerification(Arc::new(BuiltinProgram::new_mock())),
             LoadedProgramType::Closed,
@@ -1739,6 +1743,10 @@ mod tests {
         );
     }
 
+    #[test_case(
+        LoadedProgramType::Closed,
+        LoadedProgramType::TestLoaded(Arc::new(BuiltinProgram::new_mock()))
+    )]
     #[test_case(
         LoadedProgramType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
         LoadedProgramType::TestLoaded(Arc::new(BuiltinProgram::new_mock()))
