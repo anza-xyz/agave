@@ -92,5 +92,9 @@ rustc_version = { workspace = true }
 dev-context-only-utils = []
 
 [[bench]]
+name = "bench_accounts_file"
+harness = false
+
+[[bench]]
 name = "bench_hashing"
 harness = false
