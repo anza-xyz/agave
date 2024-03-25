@@ -17,7 +17,7 @@ use {
         compute_budget::ComputeBudget,
         loaded_programs::{
             ForkGraph, LoadProgramMetrics, LoadedProgram, LoadedProgramMatchCriteria,
-            LoadedProgramType, LoadedPrograms, LoadedProgramsForTxBatch, ProgramRuntimeEnvironment,
+            LoadedProgramType, LoadedProgramsForTxBatch, ProgramCache, ProgramRuntimeEnvironment,
             ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
@@ -135,9 +135,13 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Optional config parameters that can override runtime behavior
     runtime_config: Arc<RuntimeConfig>,
 
+    /// SysvarCache is a collection of system variables that are
+    /// accessible from on chain programs. It is passed to SVM from
+    /// client code (e.g. Bank) and forwarded to the MessageProcessor.
     pub sysvar_cache: RwLock<SysvarCache>,
 
-    pub loaded_programs_cache: Arc<RwLock<LoadedPrograms<FG>>>,
+    /// Programs required for transaction batch processing
+    pub program_cache: Arc<RwLock<ProgramCache<FG>>>,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -149,7 +153,7 @@ impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
             .field("fee_structure", &self.fee_structure)
             .field("runtime_config", &self.runtime_config)
             .field("sysvar_cache", &self.sysvar_cache)
-            .field("loaded_programs_cache", &self.loaded_programs_cache)
+            .field("program_cache", &self.program_cache)
             .finish()
     }
 }
@@ -163,7 +167,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
             fee_structure: FeeStructure::default(),
             runtime_config: Arc::<RuntimeConfig>::default(),
             sysvar_cache: RwLock::<SysvarCache>::default(),
-            loaded_programs_cache: Arc::new(RwLock::new(LoadedPrograms::new(
+            program_cache: Arc::new(RwLock::new(ProgramCache::new(
                 Slot::default(),
                 Epoch::default(),
             ))),
@@ -178,7 +182,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         epoch_schedule: EpochSchedule,
         fee_structure: FeeStructure,
         runtime_config: Arc<RuntimeConfig>,
-        loaded_programs_cache: Arc<RwLock<LoadedPrograms<FG>>>,
+        program_cache: Arc<RwLock<ProgramCache<FG>>>,
     ) -> Self {
         Self {
             slot,
@@ -187,7 +191,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_structure,
             runtime_config,
             sysvar_cache: RwLock::<SysvarCache>::default(),
-            loaded_programs_cache,
+            program_cache,
         }
     }
 
@@ -308,7 +312,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execution_time.stop();
 
         const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
-        self.loaded_programs_cache
+        self.program_cache
             .write()
             .unwrap()
             .evict_using_2s_random_selection(
@@ -374,8 +378,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         result
     }
 
-    /// Load program with a specific pubkey from loaded programs
-    /// cache, and update the program's access slot as a side-effect.
+    /// Load program with a specific pubkey from program cache, and
+    /// update the program's access slot as a side-effect.
     pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
@@ -383,8 +387,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         reload: bool,
         effective_epoch: Epoch,
     ) -> Arc<LoadedProgram> {
-        let loaded_programs_cache = self.loaded_programs_cache.read().unwrap();
-        let environments = loaded_programs_cache.get_environments_for_epoch(effective_epoch);
+        let program_cache = self.program_cache.read().unwrap();
+        let environments = program_cache.get_environments_for_epoch(effective_epoch);
         let mut load_program_metrics = LoadProgramMetrics {
             program_id: pubkey.to_string(),
             ..LoadProgramMetrics::default()
@@ -463,10 +467,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         load_program_metrics.submit_datapoint(&mut timings);
         if !Arc::ptr_eq(
             &environments.program_runtime_v1,
-            &loaded_programs_cache.environments.program_runtime_v1,
+            &program_cache.environments.program_runtime_v1,
         ) || !Arc::ptr_eq(
             &environments.program_runtime_v2,
-            &loaded_programs_cache.environments.program_runtime_v2,
+            &program_cache.environments.program_runtime_v2,
         ) {
             // There can be two entries per program when the environment changes.
             // One for the old environment before the epoch boundary and one for the new environment after the epoch boundary.
@@ -502,43 +506,40 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         loop {
             let (program_to_load, task_cookie, task_waiter) = {
                 // Lock the global cache.
-                let mut loaded_programs_cache = self.loaded_programs_cache.write().unwrap();
+                let mut program_cache = self.program_cache.write().unwrap();
                 // Initialize our local cache.
                 let is_first_round = loaded_programs_for_txs.is_none();
                 if is_first_round {
-                    loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new(
+                    loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new_from_cache(
                         self.slot,
-                        loaded_programs_cache
-                            .get_environments_for_epoch(self.epoch)
-                            .clone(),
+                        self.epoch,
+                        &program_cache,
                     ));
                 }
                 // Submit our last completed loading task.
                 if let Some((key, program)) = program_to_store.take() {
-                    if loaded_programs_cache
-                        .finish_cooperative_loading_task(self.slot, key, program)
+                    if program_cache.finish_cooperative_loading_task(self.slot, key, program)
                         && limit_to_load_programs
                     {
                         // This branch is taken when there is an error in assigning a program to a
                         // cache slot. It is not possible to mock this error for SVM unit
                         // tests purposes.
-                        let mut ret = LoadedProgramsForTxBatch::new(
+                        let mut ret = LoadedProgramsForTxBatch::new_from_cache(
                             self.slot,
-                            loaded_programs_cache
-                                .get_environments_for_epoch(self.epoch)
-                                .clone(),
+                            self.epoch,
+                            &program_cache,
                         );
                         ret.hit_max_limit = true;
                         return ret;
                     }
                 }
                 // Figure out which program needs to be loaded next.
-                let program_to_load = loaded_programs_cache.extract(
+                let program_to_load = program_cache.extract(
                     &mut missing_programs,
                     loaded_programs_for_txs.as_mut().unwrap(),
                     is_first_round,
                 );
-                let task_waiter = Arc::clone(&loaded_programs_cache.loading_task_waiter);
+                let task_waiter = Arc::clone(&program_cache.loading_task_waiter);
                 (program_to_load, task_waiter.cookie(), task_waiter)
                 // Unlock the global cache again.
             };
@@ -631,6 +632,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut programs_modified_by_tx = LoadedProgramsForTxBatch::new(
             self.slot,
             programs_loaded_for_tx_batch.environments.clone(),
+            programs_loaded_for_tx_batch.upcoming_environments.clone(),
+            programs_loaded_for_tx_batch.latest_root_epoch,
         );
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = MessageProcessor::process_message(
@@ -924,6 +927,27 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
         outer_instructions
     }
+
+    pub fn fill_missing_sysvar_cache_entries<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+    ) {
+        let mut sysvar_cache = self.sysvar_cache.write().unwrap();
+        sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
+            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
+                set_sysvar(account.data());
+            }
+        });
+    }
+
+    pub fn reset_sysvar_cache(&self) {
+        let mut sysvar_cache = self.sysvar_cache.write().unwrap();
+        sysvar_cache.reset();
+    }
+
+    pub fn get_sysvar_cache_for_tests(&self) -> SysvarCache {
+        self.sysvar_cache.read().unwrap().clone()
+    }
 }
 
 #[cfg(test)]
@@ -934,12 +958,13 @@ mod tests {
             loaded_programs::BlockRelation, solana_rbpf::program::BuiltinProgram,
         },
         solana_sdk::{
-            account::WritableAccount,
+            account::{create_account_shared_data_for_test, WritableAccount},
             bpf_loader,
+            fee_calculator::FeeCalculator,
             message::{LegacyMessage, Message, MessageHeader},
             rent_debits::RentDebits,
             signature::{Keypair, Signature},
-            sysvar::rent::Rent,
+            sysvar::{self, rent::Rent},
             transaction::{SanitizedTransaction, Transaction, TransactionError},
             transaction_context::TransactionContext,
         },
@@ -1196,19 +1221,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_load_program_from_bytes() {
+    fn load_test_program() -> Vec<u8> {
         let mut dir = env::current_dir().unwrap();
         dir.push("tests");
+        dir.push("example-programs");
+        dir.push("hello-solana");
         dir.push("hello_solana_program.so");
         let mut file = File::open(dir.clone()).expect("file not found");
         let metadata = fs::metadata(dir).expect("Unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
         file.read_exact(&mut buffer).expect("Buffer overflow");
+        buffer
+    }
+
+    #[test]
+    fn test_load_program_from_bytes() {
+        let buffer = load_test_program();
 
         let mut metrics = LoadProgramMetrics::default();
         let loader = bpf_loader_upgradeable::id();
-        let size = metadata.len() as usize;
+        let size = buffer.len();
         let slot = 2;
         let environment = ProgramRuntimeEnvironment::new(BuiltinProgram::new_mock());
 
@@ -1266,7 +1298,7 @@ mod tests {
             0,
             LoadedProgramType::FailedVerification(
                 batch_processor
-                    .loaded_programs_cache
+                    .program_cache
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(20)
@@ -1294,7 +1326,7 @@ mod tests {
             0,
             LoadedProgramType::FailedVerification(
                 batch_processor
-                    .loaded_programs_cache
+                    .program_cache
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(20)
@@ -1304,13 +1336,7 @@ mod tests {
         );
         assert_eq!(result, Arc::new(loaded_program));
 
-        let mut dir = env::current_dir().unwrap();
-        dir.push("tests");
-        dir.push("hello_solana_program.so");
-        let mut file = File::open(dir.clone()).expect("file not found");
-        let metadata = fs::metadata(dir).expect("Unable to read metadata");
-        let mut buffer = vec![0; metadata.len() as usize];
-        file.read_exact(&mut buffer).expect("buffer overflow");
+        let buffer = load_test_program();
         account_data.set_data(buffer);
 
         mock_bank
@@ -1367,7 +1393,7 @@ mod tests {
             0,
             LoadedProgramType::FailedVerification(
                 batch_processor
-                    .loaded_programs_cache
+                    .program_cache
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(0)
@@ -1377,13 +1403,7 @@ mod tests {
         );
         assert_eq!(result, Arc::new(loaded_program));
 
-        let mut dir = env::current_dir().unwrap();
-        dir.push("tests");
-        dir.push("hello_solana_program.so");
-        let mut file = File::open(dir.clone()).expect("file not found");
-        let metadata = fs::metadata(dir).expect("Unable to read metadata");
-        let mut buffer = vec![0; metadata.len() as usize];
-        file.read_exact(&mut buffer).expect("buffer overflow");
+        let mut buffer = load_test_program();
         let mut header = bincode::serialize(&state).unwrap();
         let mut complement = vec![
             0;
@@ -1447,7 +1467,7 @@ mod tests {
             0,
             LoadedProgramType::FailedVerification(
                 batch_processor
-                    .loaded_programs_cache
+                    .program_cache
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(0)
@@ -1462,13 +1482,7 @@ mod tests {
             vec![0; std::cmp::max(0, LoaderV4State::program_data_offset() - header.len())];
         header.append(&mut complement);
 
-        let mut dir = env::current_dir().unwrap();
-        dir.push("tests");
-        dir.push("hello_solana_program.so");
-        let mut file = File::open(dir.clone()).expect("file not found");
-        let metadata = fs::metadata(dir).expect("Unable to read metadata");
-        let mut buffer = vec![0; metadata.len() as usize];
-        file.read_exact(&mut buffer).expect("buffer overflow");
+        let mut buffer = load_test_program();
         header.append(&mut buffer);
 
         account_data.set_data(header);
@@ -1506,7 +1520,7 @@ mod tests {
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
         batch_processor
-            .loaded_programs_cache
+            .program_cache
             .write()
             .unwrap()
             .upcoming_environments = Some(ProgramRuntimeEnvironments::default());
@@ -1801,11 +1815,8 @@ mod tests {
         // Case 1
         let mut mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        batch_processor
-            .loaded_programs_cache
-            .write()
-            .unwrap()
-            .fork_graph = Some(Arc::new(RwLock::new(TestForkGraph {})));
+        batch_processor.program_cache.write().unwrap().fork_graph =
+            Some(Arc::new(RwLock::new(TestForkGraph {})));
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
@@ -2112,5 +2123,158 @@ mod tests {
             &(&program1_pubkey, 1)
         );
         assert_eq!(lock_results[1].0, Err(TransactionError::BlockhashNotFound));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_sysvar_cache_initialization1() {
+        let mut mock_bank = MockBankCallback::default();
+
+        let clock = sysvar::clock::Clock {
+            slot: 1,
+            epoch_start_timestamp: 2,
+            epoch: 3,
+            leader_schedule_epoch: 4,
+            unix_timestamp: 5,
+        };
+        let clock_account = create_account_shared_data_for_test(&clock);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::clock::id(), clock_account);
+
+        let epoch_schedule = EpochSchedule::custom(64, 2, true);
+        let epoch_schedule_account = create_account_shared_data_for_test(&epoch_schedule);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
+
+        let fees = sysvar::fees::Fees {
+            fee_calculator: FeeCalculator {
+                lamports_per_signature: 123,
+            },
+        };
+        let fees_account = create_account_shared_data_for_test(&fees);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::fees::id(), fees_account);
+
+        let rent = Rent::with_slots_per_epoch(2048);
+        let rent_account = create_account_shared_data_for_test(&rent);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::rent::id(), rent_account);
+
+        let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        transaction_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+
+        let sysvar_cache = transaction_processor.sysvar_cache.read().unwrap();
+        let cached_clock = sysvar_cache.get_clock();
+        let cached_epoch_schedule = sysvar_cache.get_epoch_schedule();
+        let cached_fees = sysvar_cache.get_fees();
+        let cached_rent = sysvar_cache.get_rent();
+
+        assert_eq!(
+            cached_clock.expect("clock sysvar missing in cache"),
+            clock.into()
+        );
+        assert_eq!(
+            cached_epoch_schedule.expect("epoch_schedule sysvar missing in cache"),
+            epoch_schedule.into()
+        );
+        assert_eq!(
+            cached_fees.expect("fees sysvar missing in cache"),
+            fees.into()
+        );
+        assert_eq!(
+            cached_rent.expect("rent sysvar missing in cache"),
+            rent.into()
+        );
+        assert!(sysvar_cache.get_slot_hashes().is_err());
+        assert!(sysvar_cache.get_epoch_rewards().is_err());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_reset_and_fill_sysvar_cache() {
+        let mut mock_bank = MockBankCallback::default();
+
+        let clock = sysvar::clock::Clock {
+            slot: 1,
+            epoch_start_timestamp: 2,
+            epoch: 3,
+            leader_schedule_epoch: 4,
+            unix_timestamp: 5,
+        };
+        let clock_account = create_account_shared_data_for_test(&clock);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::clock::id(), clock_account);
+
+        let epoch_schedule = EpochSchedule::custom(64, 2, true);
+        let epoch_schedule_account = create_account_shared_data_for_test(&epoch_schedule);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
+
+        let fees = sysvar::fees::Fees {
+            fee_calculator: FeeCalculator {
+                lamports_per_signature: 123,
+            },
+        };
+        let fees_account = create_account_shared_data_for_test(&fees);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::fees::id(), fees_account);
+
+        let rent = Rent::with_slots_per_epoch(2048);
+        let rent_account = create_account_shared_data_for_test(&rent);
+        mock_bank
+            .account_shared_data
+            .insert(sysvar::rent::id(), rent_account);
+
+        let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        // Fill the sysvar cache
+        transaction_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+        // Reset the sysvar cache
+        transaction_processor.reset_sysvar_cache();
+
+        {
+            let sysvar_cache = transaction_processor.sysvar_cache.read().unwrap();
+            // Test that sysvar cache is empty and none of the values are found
+            assert!(sysvar_cache.get_clock().is_err());
+            assert!(sysvar_cache.get_epoch_schedule().is_err());
+            assert!(sysvar_cache.get_fees().is_err());
+            assert!(sysvar_cache.get_epoch_rewards().is_err());
+            assert!(sysvar_cache.get_rent().is_err());
+            assert!(sysvar_cache.get_epoch_rewards().is_err());
+        }
+
+        // Refill the cache and test the values are available.
+        transaction_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+
+        let sysvar_cache = transaction_processor.sysvar_cache.read().unwrap();
+        let cached_clock = sysvar_cache.get_clock();
+        let cached_epoch_schedule = sysvar_cache.get_epoch_schedule();
+        let cached_fees = sysvar_cache.get_fees();
+        let cached_rent = sysvar_cache.get_rent();
+
+        assert_eq!(
+            cached_clock.expect("clock sysvar missing in cache"),
+            clock.into()
+        );
+        assert_eq!(
+            cached_epoch_schedule.expect("epoch_schedule sysvar missing in cache"),
+            epoch_schedule.into()
+        );
+        assert_eq!(
+            cached_fees.expect("fees sysvar missing in cache"),
+            fees.into()
+        );
+        assert_eq!(
+            cached_rent.expect("rent sysvar missing in cache"),
+            rent.into()
+        );
+        assert!(sysvar_cache.get_slot_hashes().is_err());
+        assert!(sysvar_cache.get_epoch_rewards().is_err());
     }
 }

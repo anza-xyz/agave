@@ -28,7 +28,7 @@ use {
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
-    solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
+    solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
     solana_runtime::{
         snapshot_bank_utils::{
             DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
@@ -51,6 +51,9 @@ use {
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{path::PathBuf, str::FromStr},
 };
+
+pub mod thread_args;
+use thread_args::{thread_args, DefaultThreadArgs};
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
@@ -230,7 +233,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(false)
                 .help(
                     "Enable historical transaction info over JSON RPC, including the \
-                     'getConfirmedBlock' API.  This will cause an increase in disk usage and IOPS",
+                     'getConfirmedBlock' API. This will cause an increase in disk usage and IOPS",
                 ),
         )
         .arg(
@@ -672,7 +675,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .possible_values(&["none", "lz4", "snappy", "zlib"])
                 .default_value(&default_args.rocksdb_ledger_compression)
                 .help(
-                    "The compression algorithm that is used to compress transaction status data.  \
+                    "The compression algorithm that is used to compress transaction status data. \
                      Turning on compression can save ~10% of the ledger size.",
                 ),
         )
@@ -759,9 +762,9 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced())
                 .long("no-wait-for-vote-to-start-leader")
                 .help(
-                    "If the validator starts up with no ledger, it will wait to start block
-                      production until it sees a vote land in a rooted slot. This prevents
-                      double signing. Turn off to risk double signing a block.",
+                    "If the validator starts up with no ledger, it will wait to start block \
+                     production until it sees a vote land in a rooted slot. This prevents \
+                     double signing. Turn off to risk double signing a block.",
                 ),
         )
         .arg(
@@ -838,7 +841,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .multiple(true)
                 .takes_value(true)
                 .help(
-                    "A list of validators to gossip with.  If specified, gossip will not \
+                    "A list of validators to gossip with. If specified, gossip will not \
                      push/pull from from validators outside this set. [default: all validators]",
                 ),
         )
@@ -1467,11 +1470,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Maximum number of bytes written to the program log before truncation"),
         )
         .arg(
-            Arg::with_name("replay_slots_concurrently")
-                .long("replay-slots-concurrently")
-                .help("Allow concurrent replay of slots on different forks"),
-        )
-        .arg(
             Arg::with_name("banking_trace_dir_byte_limit")
                 // expose friendly alternative name to cli than internal
                 // implementation-oriented one
@@ -1534,27 +1532,27 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .required(false)
                 .conflicts_with("wait_for_supermajority")
                 .help(
-                    "When specified, the validator will enter Wen Restart mode which
-                    pauses normal activity. Validators in this mode will gossip their last
-                    vote to reach consensus on a safe restart slot and repair all blocks
-                    on the selected fork. The safe slot will be a descendant of the latest
-                    optimistically confirmed slot to ensure we do not roll back any
-                    optimistically confirmed slots.
-
-                    The progress in this mode will be saved in the file location provided.
-                    If consensus is reached, the validator will automatically exit and then
-                    execute wait_for_supermajority logic so the cluster will resume execution.
-                    The progress file will be kept around for future debugging.
-
-                    After the cluster resumes normal operation, the validator arguments can
-                    be adjusted to remove --wen_restart and update expected_shred_version to
-                    the new shred_version agreed on in the consensus.
-
-                    If wen_restart fails, refer to the progress file (in proto3 format) for
-                    further debugging.
-                ",
+                    "When specified, the validator will enter Wen Restart mode which \
+                    pauses normal activity. Validators in this mode will gossip their last \
+                    vote to reach consensus on a safe restart slot and repair all blocks \
+                    on the selected fork. The safe slot will be a descendant of the latest \
+                    optimistically confirmed slot to ensure we do not roll back any \
+                    optimistically confirmed slots. \
+                    \n\n\
+                    The progress in this mode will be saved in the file location provided. \
+                    If consensus is reached, the validator will automatically exit and then \
+                    execute wait_for_supermajority logic so the cluster will resume execution. \
+                    The progress file will be kept around for future debugging. \
+                    \n\n\
+                    After the cluster resumes normal operation, the validator arguments can \
+                    be adjusted to remove --wen_restart and update expected_shred_version to \
+                    the new shred_version agreed on in the consensus. \
+                    \n\n\
+                    If wen_restart fails, refer to the progress file (in proto3 format) for \
+                    further debugging.",
                 ),
         )
+        .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
         .subcommand(
@@ -2043,8 +2041,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .help("Enable incremental snapshots")
         .long_help(
             "Enable incremental snapshots by setting this flag.  When enabled, \
-             --snapshot-interval-slots will set the incremental snapshot interval. To set the
-                 full snapshot interval, use --full-snapshot-interval-slots.",
+             --snapshot-interval-slots will set the incremental snapshot interval. To set the \
+             full snapshot interval, use --full-snapshot-interval-slots.",
         ));
     add_arg!(Arg::with_name("minimal_rpc_api")
         .long("minimal-rpc-api")
@@ -2055,8 +2053,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("no-accounts-db-index-hashing")
             .help(
                 "This is obsolete. See --accounts-db-index-hashing. \
-                   Disables the use of the index in hash calculation in \
-                   AccountsHashVerifier/Accounts Background Service.",
+                 Disables the use of the index in hash calculation in \
+                 AccountsHashVerifier/Accounts Background Service.",
             ),
         usage_warning: "The accounts hash is only calculated without using the index.",
     );
@@ -2073,6 +2071,13 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .long("no-rocksdb-compaction")
         .takes_value(false)
         .help("Disable manual compaction of the ledger database"));
+    add_arg!(
+        Arg::with_name("replay_slots_concurrently")
+            .long("replay-slots-concurrently")
+            .help("Allow concurrent replay of slots on different forks")
+            .conflicts_with("replay_forks_threads"),
+        replaced_by: "replay_forks_threads",
+        usage_warning: "Equivalent behavior to this flag would be --replay-forks-threads 4");
     add_arg!(Arg::with_name("rocksdb_compaction_interval")
         .long("rocksdb-compaction-interval-slots")
         .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
@@ -2195,6 +2200,8 @@ pub struct DefaultArgs {
     pub banking_trace_dir_byte_limit: String,
 
     pub wen_restart_path: String,
+
+    pub thread_args: DefaultThreadArgs,
 }
 
 impl DefaultArgs {
@@ -2208,7 +2215,7 @@ impl DefaultArgs {
             maximum_local_snapshot_age: "2500".to_string(),
             genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string(),
             rpc_max_multiple_accounts: MAX_MULTIPLE_ACCOUNTS.to_string(),
-            health_check_slot_distance: "150".to_string(),
+            health_check_slot_distance: DELINQUENT_VALIDATOR_SLOT_DISTANCE.to_string(),
             tower_storage: "file".to_string(),
             etcd_domain_name: "localhost".to_string(),
             rpc_pubsub_max_active_subscriptions: PubSubConfig::default()
@@ -2277,6 +2284,7 @@ impl DefaultArgs {
             wait_for_restart_window_max_delinquent_stake: "5".to_string(),
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             wen_restart_path: "wen_restart_progress.proto".to_string(),
+            thread_args: DefaultThreadArgs::default(),
         }
     }
 }
@@ -2355,7 +2363,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(is_pubkey)
                 .takes_value(true)
                 .help(
-                    "Address of the mint account that will receive tokens created at genesis.  If \
+                    "Address of the mint account that will receive tokens created at genesis. If \
                      the ledger already exists then this parameter is silently ignored \
                      [default: client keypair]",
                 ),
