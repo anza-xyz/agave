@@ -74,8 +74,8 @@ pub(crate) fn configure_server(
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(server_tls_config));
-    server_config.use_retry(true);
-    server_config.concurrent_connections(2 * (MAX_STAKED_CONNECTIONS + MAX_UNSTAKED_CONNECTIONS) as u32);
+    server_config
+        .concurrent_connections(2 * (MAX_STAKED_CONNECTIONS + MAX_UNSTAKED_CONNECTIONS) as u32);
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
     // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability

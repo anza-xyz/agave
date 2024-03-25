@@ -183,7 +183,6 @@ fn new_server_config(cert: Certificate, key: PrivateKey) -> Result<ServerConfig,
     let mut config = ServerConfig::with_crypto(Arc::new(config));
     config
         .transport_config(Arc::new(new_transport_config()))
-        .use_retry(true)
         .migration(false);
     Ok(config)
 }
@@ -224,17 +223,29 @@ async fn run_server(
     let stats = Arc::<RepairQuicStats>::default();
     let report_metrics_task =
         tokio::task::spawn(report_metrics_task("repair_quic_server", stats.clone()));
-    while let Some(connecting) = endpoint.accept().await {
-        tokio::task::spawn(handle_connecting_task(
-            endpoint.clone(),
-            connecting,
-            remote_request_sender.clone(),
-            bank_forks.clone(),
-            prune_cache_pending.clone(),
-            router.clone(),
-            cache.clone(),
-            stats.clone(),
-        ));
+    while let Some(incoming) = endpoint.accept().await {
+        let remote_addr: SocketAddr = incoming.remote_address();
+        let connecting = incoming.accept();
+        match connecting {
+            Ok(connecting) => {
+                tokio::task::spawn(handle_connecting_task(
+                    endpoint.clone(),
+                    connecting,
+                    remote_request_sender.clone(),
+                    bank_forks.clone(),
+                    prune_cache_pending.clone(),
+                    router.clone(),
+                    cache.clone(),
+                    stats.clone(),
+                ));
+            }
+            Err(error) => {
+                debug!(
+                    "Error while accepting incoming connection: {error:?} from {}",
+                    remote_addr
+                );
+            }
+        }
     }
     report_metrics_task.abort();
 }
@@ -783,6 +794,7 @@ struct RepairQuicStats {
     connection_error_timed_out: AtomicU64,
     connection_error_transport_error: AtomicU64,
     connection_error_version_mismatch: AtomicU64,
+    connection_error_connection_limit_exceeded: AtomicU64,
     invalid_identity: AtomicU64,
     no_response_received: AtomicU64,
     read_to_end_error_connection_lost: AtomicU64,
@@ -811,6 +823,9 @@ fn record_error(err: &Error, stats: &RepairQuicStats) {
     match err {
         Error::CertificateError(_) => (),
         Error::ChannelSendError => (),
+        Error::ConnectionError(ConnectionError::ConnectionLimitExceeded) => {
+            add_metric!(stats.connection_error_connection_limit_exceeded)
+        }
         Error::ConnectError(ConnectError::EndpointStopping) => {
             add_metric!(stats.connect_error_other)
         }
@@ -940,6 +955,11 @@ fn report_metrics(name: &'static str, stats: &RepairQuicStats) {
         (
             "connection_error_version_mismatch",
             reset_metric!(stats.connection_error_version_mismatch),
+            i64
+        ),
+        (
+            "connection_error_connection_limit_exceeded",
+            reset_metric!(stats.connection_error_connection_limit_exceeded),
             i64
         ),
         (

@@ -267,8 +267,8 @@ qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
 #quinn = "0.10.2"
 #quinn-proto = "0.10.5"
-quinn = {git = "https://github.com/lijunwangs/quinn.git", rev = "e8a9d93947f5e0881da734289e590d131e55a8dc"}
-quinn-proto = {git = "https://github.com/lijunwangs/quinn.git", rev = "e8a9d93947f5e0881da734289e590d131e55a8dc"}
+quinn = {git = "https://github.com/lijunwangs/quinn.git", rev = "ff9917692b9b2fa9b3099ca1143d28c240b68d9c"}
+quinn-proto = {git = "https://github.com/lijunwangs/quinn.git", rev = "ff9917692b9b2fa9b3099ca1143d28c240b68d9c"}
 quote = "1.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
