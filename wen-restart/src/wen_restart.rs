@@ -18,9 +18,14 @@ use {
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         restart_crds_values::RestartLastVotedForkSlots,
     },
-    solana_ledger::{ancestor_iterator::AncestorIterator, blockstore::Blockstore},
+    solana_ledger::{
+        ancestor_iterator::AncestorIterator,
+        blockstore::Blockstore,
+        blockstore_processor::{process_blockstore_from_root, ProcessOptions},
+        leader_schedule_cache::LeaderScheduleCache,
+    },
     solana_program::{clock::Slot, hash::Hash},
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{accounts_background_service::AbsRequestSender, bank_forks::BankForks},
     solana_sdk::timing::timestamp,
     solana_vote_program::vote_state::VoteTransaction,
     std::{
@@ -47,6 +52,7 @@ const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
     BlockNotFound(Slot),
+    BlockNotFrozenAfterReplay(Slot),
     BlockNotLinkedToExpectedParent(Slot, Option<Slot>, Slot),
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
     Exiting,
@@ -61,6 +67,9 @@ impl std::fmt::Display for WenRestartError {
         match self {
             WenRestartError::BlockNotFound(slot) => {
                 write!(f, "Block not found: {}", slot)
+            }
+            WenRestartError::BlockNotFrozenAfterReplay(slot) => {
+                write!(f, "Block not frozen after replay: {}", slot)
             }
             WenRestartError::BlockNotLinkedToExpectedParent(slot, parent, expected_parent) => {
                 write!(
@@ -247,9 +256,10 @@ pub(crate) fn find_heaviest_fork(
     blockstore: Arc<Blockstore>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Slot, Hash)> {
-    // Because everything else is stopped, it's okay to grab a big lock on bank_forks.
-    let my_bank_forks = bank_forks.read().unwrap();
-    let root_bank = my_bank_forks.root_bank().clone();
+    let root_bank;
+    {
+        root_bank = bank_forks.read().unwrap().root_bank().clone();
+    }
     let root_slot = root_bank.slot();
     // TODO: Should use better epoch_stakes later.
     let epoch_stake = root_bank.epoch_stakes(root_bank.epoch()).unwrap();
@@ -265,11 +275,11 @@ pub(crate) fn find_heaviest_fork(
         .collect::<Vec<Slot>>();
     slots.sort();
     let mut expected_parent = root_slot;
-    for slot in slots {
+    for slot in &slots {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
-        if let Ok(Some(block_meta)) = blockstore.meta(slot) {
+        if let Ok(Some(block_meta)) = blockstore.meta(*slot) {
             if block_meta.parent_slot != Some(expected_parent) {
                 if expected_parent == root_slot {
                     error!("First block {} in repair list not linked to local root {}, this could mean our root is too old",
@@ -281,18 +291,66 @@ pub(crate) fn find_heaviest_fork(
                     );
                 }
                 return Err(WenRestartError::BlockNotLinkedToExpectedParent(
-                    slot,
+                    *slot,
                     block_meta.parent_slot,
                     expected_parent,
                 )
                 .into());
             }
-            expected_parent = slot;
+            expected_parent = *slot;
         } else {
-            return Err(WenRestartError::BlockNotFound(slot).into());
+            return Err(WenRestartError::BlockNotFound(*slot).into());
         }
     }
-    Ok((expected_parent, Hash::default()))
+    // Now find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
+    let heaviest_fork_slot = expected_parent;
+    let mut heaviest_fork_bankhash;
+    {
+        heaviest_fork_bankhash = bank_forks
+            .read()
+            .unwrap()
+            .get(heaviest_fork_slot)
+            .map(|bank| bank.hash());
+    }
+    if heaviest_fork_bankhash.is_none() {
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
+        let opts = ProcessOptions {
+            skip_bankforks_checks_for_wen_restart: true,
+            ..ProcessOptions::default()
+        };
+        process_blockstore_from_root(
+            &blockstore,
+            &bank_forks,
+            &leader_schedule_cache,
+            &opts,
+            None,
+            None,
+            None,
+            &AbsRequestSender::default(),
+        )?;
+        // If everything works okay, we should have all the banks in slots frozen. Report error if any
+        // of them is missing.
+        {
+            let my_bank_forks = bank_forks.read().unwrap();
+            for slot in slots {
+                if my_bank_forks.get(slot).is_none() {
+                    return Err(WenRestartError::BlockNotFrozenAfterReplay(slot).into());
+                }
+            }
+            heaviest_fork_bankhash = my_bank_forks
+                .get(heaviest_fork_slot)
+                .map(|bank| bank.hash());
+        }
+    }
+    info!(
+        "Heaviest fork found: slot: {}, bankhash: {:?}",
+        heaviest_fork_slot, heaviest_fork_bankhash
+    );
+    if let Some(heaviest_fork_bankhash) = heaviest_fork_bankhash {
+        Ok((heaviest_fork_slot, heaviest_fork_bankhash))
+    } else {
+        Err(WenRestartError::BlockNotFound(heaviest_fork_slot).into())
+    }
 }
 
 pub fn wait_for_wen_restart(
@@ -577,6 +635,7 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         assert_matches::assert_matches,
+        solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         solana_gossip::{
             cluster_info::ClusterInfo,
             contact_info::ContactInfo,
@@ -586,18 +645,17 @@ mod tests {
             restart_crds_values::RestartLastVotedForkSlots,
         },
         solana_ledger::{
-            blockstore::{make_chaining_slot_entries, Blockstore},
+            blockstore::{create_new_ledger, Blockstore},
+            blockstore_options::LedgerColumnOptions,
+            blockstore_processor::{fill_blockstore_slot_with_ticks, test_process_blockstore},
             get_tmp_ledger_path_auto_delete,
         },
         solana_program::{
             hash::Hash,
             vote::state::{Vote, VoteStateUpdate},
         },
-        solana_runtime::{
-            bank::Bank,
-            genesis_utils::{
-                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
-            },
+        solana_runtime::genesis_utils::{
+            create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -609,7 +667,8 @@ mod tests {
     };
 
     const SHRED_VERSION: u16 = 2;
-    const EXPECTED_SLOTS: usize = 400;
+    const EXPECTED_SLOTS: Slot = 90;
+    const TICKS_PER_SLOT: u64 = 2;
 
     fn push_restart_last_voted_fork_slots(
         cluster_info: Arc<ClusterInfo>,
@@ -648,16 +707,29 @@ mod tests {
         pub bank_forks: Arc<RwLock<BankForks>>,
         pub last_voted_fork_slots: Vec<Slot>,
         pub wen_restart_proto_path: PathBuf,
+        pub last_blockhash: Hash,
     }
 
     fn insert_slots_into_blockstore(
         blockstore: Arc<Blockstore>,
         first_parent: Slot,
         slots_to_insert: &[Slot],
-    ) {
-        for (shreds, _) in make_chaining_slot_entries(slots_to_insert, 2, first_parent) {
-            blockstore.insert_shreds(shreds, None, false).unwrap();
+        entries_per_slot: u64,
+        start_blockhash: Hash,
+    ) -> Hash {
+        let mut last_hash = start_blockhash;
+        let mut last_parent = first_parent;
+        for i in slots_to_insert {
+            last_hash = fill_blockstore_slot_with_ticks(
+                &blockstore,
+                entries_per_slot,
+                *i,
+                last_parent,
+                last_hash,
+            );
+            last_parent = *i;
         }
+        last_hash
     }
 
     fn wen_restart_test_init(ledger_path: &TempDir) -> WenRestartTestInitResult {
@@ -674,26 +746,45 @@ mod tests {
             node_keypair.clone(),
             SocketAddrSpace::Unspecified,
         ));
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_vote_accounts(
             10_000,
             &validator_voting_keypairs,
             vec![100; validator_voting_keypairs.len()],
         );
-        let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let last_parent = (RestartLastVotedForkSlots::MAX_SLOTS >> 1)
-            .try_into()
-            .unwrap();
-        let mut last_voted_fork_slots = Vec::new();
-        last_voted_fork_slots.extend([1, last_parent]);
-        for i in 0..EXPECTED_SLOTS {
-            last_voted_fork_slots.push(
-                (RestartLastVotedForkSlots::MAX_SLOTS
-                    .saturating_add(i)
-                    .saturating_add(1)) as Slot,
-            );
-        }
-        insert_slots_into_blockstore(blockstore.clone(), 0, &last_voted_fork_slots);
+        genesis_config.ticks_per_slot = TICKS_PER_SLOT;
+        let start_blockhash = create_new_ledger(
+            ledger_path.path(),
+            &genesis_config,
+            MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            LedgerColumnOptions::default(),
+        )
+        .unwrap();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (bank_forks, ..) = test_process_blockstore(
+            &genesis_config,
+            &blockstore,
+            &ProcessOptions {
+                run_verification: true,
+                accounts_db_test_hash_calculation: true,
+                ..ProcessOptions::default()
+            },
+            Arc::default(),
+        );
+        let mut last_blockhash = start_blockhash;
+        // Skip block 1, 2 links directly to 0.
+        let last_parent: Slot = 2;
+        let mut last_voted_fork_slots: Vec<Slot> = Vec::new();
+        last_voted_fork_slots
+            .extend(last_parent..last_parent.saturating_add(EXPECTED_SLOTS).saturating_add(1));
+        last_blockhash = insert_slots_into_blockstore(
+            blockstore.clone(),
+            0,
+            &last_voted_fork_slots,
+            genesis_config.ticks_per_slot,
+            last_blockhash,
+        );
         last_voted_fork_slots.insert(0, 0);
         last_voted_fork_slots.reverse();
         let mut wen_restart_proto_path = ledger_path.path().to_path_buf();
@@ -706,6 +797,7 @@ mod tests {
             bank_forks,
             last_voted_fork_slots,
             wen_restart_proto_path,
+            last_blockhash,
         }
     }
 
@@ -847,10 +939,12 @@ mod tests {
         }
 
         // Simulating successful repair of missing blocks.
-        insert_slots_into_blockstore(
+        let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             last_vote_slot,
             &expected_slots_to_repair,
+            TICKS_PER_SLOT,
+            test_state.last_blockhash,
         );
 
         let _ = wen_restart_thread_handle.join();
@@ -867,7 +961,13 @@ mod tests {
             .collect();
         expected_slots_stake_map.extend(expected_slots_to_repair.iter().map(|slot| (*slot, 800)));
         let expected_heaviest_fork_slot = last_vote_slot + 2;
-        let expected_heaviest_fork_bankhash = Hash::default();
+        let expected_heaviest_fork_bankhash = test_state
+            .bank_forks
+            .read()
+            .unwrap()
+            .get(expected_heaviest_fork_slot)
+            .unwrap()
+            .hash();
         assert_eq!(
             progress,
             WenRestartProgress {
@@ -1197,10 +1297,12 @@ mod tests {
         }
 
         // Simulating successful repair of missing blocks.
-        insert_slots_into_blockstore(
+        let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             last_vote_slot,
             &expected_slots_to_repair,
+            TICKS_PER_SLOT,
+            test_state.last_blockhash,
         );
 
         let last_voted_fork_slots = test_state.last_voted_fork_slots.clone();
@@ -1407,7 +1509,7 @@ mod tests {
         assert_eq!(
             find_heaviest_fork(
                 LastVotedForkSlotsFinalResult {
-                    slots_stake_map: vec![(1, 900), (last_vote_slot, 900)].into_iter().collect(),
+                    slots_stake_map: vec![(2, 900), (last_vote_slot, 900)].into_iter().collect(),
                     total_active_stake: 900,
                 },
                 test_state.bank_forks.clone(),
@@ -1420,8 +1522,48 @@ mod tests {
             WenRestartError::BlockNotLinkedToExpectedParent(
                 last_vote_slot,
                 Some(last_vote_slot - 1),
-                1
+                2
             ),
+        );
+        // The following fails because we added two blocks at the end of the chain, they are full in blockstore
+        // but the parent of the first one is missing.
+        let missing_parent = last_vote_slot.saturating_add(1);
+        let new_slot = last_vote_slot.saturating_add(2);
+        let new_hash = insert_slots_into_blockstore(
+            test_state.blockstore.clone(),
+            last_vote_slot,
+            &[missing_parent],
+            1,
+            test_state.last_blockhash,
+        );
+        let _ = insert_slots_into_blockstore(
+            test_state.blockstore.clone(),
+            missing_parent,
+            &[new_slot],
+            TICKS_PER_SLOT,
+            new_hash,
+        );
+        let mut slots_stake_map: HashMap<Slot, u64> = test_state
+            .last_voted_fork_slots
+            .iter()
+            .map(|slot| (*slot, 900))
+            .collect();
+        slots_stake_map.insert(missing_parent, 800);
+        slots_stake_map.insert(new_slot, 800);
+        assert_eq!(
+            find_heaviest_fork(
+                LastVotedForkSlotsFinalResult {
+                    slots_stake_map,
+                    total_active_stake: 900,
+                },
+                test_state.bank_forks.clone(),
+                test_state.blockstore.clone(),
+                exit.clone(),
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::BlockNotFrozenAfterReplay(missing_parent),
         );
     }
 }
