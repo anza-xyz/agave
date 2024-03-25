@@ -1,6 +1,6 @@
 use {
     super::*,
-    solana_sdk::stake_history::{StakeHistoryEntry, StakeHistoryGetEntry},
+    solana_sdk::stake_history::{StakeHistory, StakeHistoryEntry, StakeHistoryGetEntry},
 };
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
@@ -161,14 +161,15 @@ declare_builtin_function!(
 );
 
 declare_builtin_function!(
-    /// Get a StakeHistoryEntry at a given epoch
-    SyscallGetStakeHistoryEntry,
+    /// Get a slice of a Sysvar in-memory representation
+    SyscallGetSysvar,
     fn rust(
         invoke_context: &mut InvokeContext,
+        // XXX stayhistory just for now
+        _sysvar_tag: u64,
+        length: u64,
+        offset: u64,
         var_addr: u64,
-        epoch: u64,
-        _arg3: u64,
-        _arg4: u64,
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
@@ -177,17 +178,32 @@ declare_builtin_function!(
             invoke_context
                 .get_compute_budget()
                 .sysvar_base_cost
-                .saturating_add(size_of::<Option<StakeHistoryEntry>>() as u64),
+                .saturating_add(length as u64),
         )?;
 
-        let stake_history = invoke_context.get_sysvar_cache().get_stake_history()?;
-        let var = translate_type_mut::<Option<StakeHistoryEntry>>(
+        let var = translate_slice_mut::<u8>(
             memory_mapping,
             var_addr,
+            length,
             invoke_context.get_check_aligned(),
         )?;
 
-        *var = stake_history.get_entry(epoch);
+        Clock
+
+        let length = length as usize;
+        let offset = offset as usize;
+
+        // XXX match sysvar_tag blah blah
+        let stake_history = invoke_context.get_sysvar_cache().get_stake_history()?;
+        if StakeHistory::size_of() < offset + length {
+            panic!("die");
+        }
+
+        let sysvar_ptr = stake_history.as_ref() as *const StakeHistory as *const u8;
+        unsafe {
+            let sysvar_u8 = std::slice::from_raw_parts(sysvar_ptr.wrapping_add(offset), length);
+            var.copy_from_slice(sysvar_u8);
+        }
 
         Ok(SUCCESS)
     }

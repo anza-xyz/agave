@@ -7,7 +7,7 @@ pub use self::{
     sysvar::{
         SyscallGetClockSysvar, SyscallGetEpochRewardsSysvar, SyscallGetEpochScheduleSysvar,
         SyscallGetFeesSysvar, SyscallGetLastRestartSlotSysvar, SyscallGetRentSysvar,
-        SyscallGetStakeHistoryEntry,
+        SyscallGetSysvar,
     },
 };
 #[allow(deprecated)]
@@ -39,7 +39,7 @@ use {
             disable_deploy_of_alloc_free_syscall, disable_fees_sysvar,
             enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall,
             enable_big_mod_exp_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
-            error_on_syscall_bpf_function_hash_collisions, get_stake_history_entry_syscall_enabled,
+            error_on_syscall_bpf_function_hash_collisions, get_sysvar_syscall_enabled,
             last_restart_slot_sysvar, reject_callx_r10, remaining_compute_units_syscall_enabled,
             switch_to_new_elf_parser,
         },
@@ -262,8 +262,8 @@ pub fn create_program_runtime_environment_v1<'a>(
     let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
     let remaining_compute_units_syscall_enabled =
         feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
-    let get_stake_history_entry_syscall_enabled =
-        feature_set.is_active(&get_stake_history_entry_syscall_enabled::id());
+    let get_sysvar_syscall_enabled =
+        feature_set.is_active(&get_sysvar_syscall_enabled::id());
     // !!! ATTENTION !!!
     // When adding new features for RBPF here,
     // also add them to `Bank::apply_builtin_program_feature_transitions()`.
@@ -450,12 +450,12 @@ pub fn create_program_runtime_environment_v1<'a>(
         SyscallAltBn128Compression::vm,
     )?;
 
-    // StakeHistoryEntry getter
+    // Sysvar getter
     register_feature_gated_function!(
         result,
-        get_stake_history_entry_syscall_enabled,
-        *b"sol_get_stake_history_entry",
-        SyscallGetStakeHistoryEntry::vm,
+        get_sysvar_syscall_enabled,
+        *b"sol_get_sysvar",
+        SyscallGetSysvar::vm,
     )?;
 
     // Log data
