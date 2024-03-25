@@ -209,7 +209,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer),
-            error => Err(AltBn128CompressionError::from(error)),
+            _ => Err(AltBn128CompressionError::UnexpectedError),
         }
     }
 
@@ -226,7 +226,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer),
-            error => Err(AltBn128CompressionError::from(error)),
+            _ => Err(AltBn128CompressionError::UnexpectedError),
         }
     }
 
@@ -245,7 +245,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer),
-            error => Err(AltBn128CompressionError::from(error)),
+            _ => Err(AltBn128CompressionError::UnexpectedError),
         }
     }
 
@@ -264,7 +264,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer),
-            error => Err(AltBn128CompressionError::from(error)),
+            _ => Err(AltBn128CompressionError::UnexpectedError),
         }
     }
 }

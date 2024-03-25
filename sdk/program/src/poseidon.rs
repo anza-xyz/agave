@@ -267,7 +267,7 @@ pub fn hashv(
 
         match result {
             0 => Ok(PoseidonHash::new(hash_result)),
-            e => Err(PoseidonSyscallError::from(e)),
+            _ => Err(PoseidonSyscallError::Unexpected),
         }
     }
 }

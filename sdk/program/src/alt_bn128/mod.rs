@@ -320,7 +320,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer.to_vec()),
-            error => Err(AltBn128Error::from(error)),
+            _ => Err(AltBn128Error::UnexpectedError),
         }
     }
 
@@ -340,7 +340,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer.to_vec()),
-            error => Err(AltBn128Error::from(error)),
+            _ => Err(AltBn128Error::UnexpectedError),
         }
     }
 
@@ -364,7 +364,7 @@ mod target_arch {
 
         match result {
             0 => Ok(result_buffer.to_vec()),
-            error => Err(AltBn128Error::from(error)),
+            _ => Err(AltBn128Error::UnexpectedError),
         }
     }
 }
