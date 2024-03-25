@@ -133,6 +133,7 @@ pub fn invoke_builtin_function(
             .transaction_context
             .get_current_instruction_context()?,
         true, // copy_account_data // There is no VM so direct mapping can not be implemented here
+        &invoke_context.feature_set,
     )?;
 
     // Deserialize data back into instruction params

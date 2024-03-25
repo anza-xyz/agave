@@ -1336,6 +1336,7 @@ fn execute<'a, 'b: 'a>(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
+        &invoke_context.feature_set,
     )?;
     serialize_time.stop();
 
