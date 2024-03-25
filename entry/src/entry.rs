@@ -20,6 +20,7 @@ use {
         recycler::Recycler,
         sigverify,
     },
+    solana_rayon_threadlimit::get_max_thread_count,
     solana_sdk::{
         hash::Hash,
         packet::Meta,
@@ -957,6 +958,14 @@ pub fn entry_thread_pool_for_tests() -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
         .num_threads(4)
         .thread_name(|i| format!("solEntryTest{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+}
+
+pub fn thread_pool_for_benches() -> ThreadPool {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(get_max_thread_count())
+        .thread_name(|i| format!("solEntryBnch{i:02}"))
         .build()
         .expect("new rayon threadpool")
 }
