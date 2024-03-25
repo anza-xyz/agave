@@ -143,6 +143,8 @@ pub struct StreamStats {
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
+    // The total incoming connections received which have not gone through full handshake yet
+    pub(crate) incoming_connections_received: AtomicUsize,
     pub(crate) num_evictions: AtomicUsize,
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
@@ -486,6 +488,12 @@ impl StreamStats {
             (
                 "stream_read_timeouts",
                 self.total_stream_read_timeouts.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "incoming_connections_received",
+                self.incoming_connections_received
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (

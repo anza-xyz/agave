@@ -184,10 +184,13 @@ async fn run_server(
         }
 
         if let Ok(Some(connection)) = timeout_connection {
+            stats
+                .incoming_connections_received
+                .fetch_add(1, Ordering::Relaxed);
             let remote_address = connection.remote_address();
-            info!("Got a connection {:?}", remote_address);
+            debug!("Got a connection {:?}", remote_address);
             if remote_address.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)) {
-                info!("Reject attacker connection from {:?}", remote_address);
+                debug!("Reject attacker connection from {:?}", remote_address);
                 continue;
             }
             let connection = connection.accept();
