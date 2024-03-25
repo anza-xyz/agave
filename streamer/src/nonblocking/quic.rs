@@ -33,7 +33,7 @@ use {
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
         iter::repeat_with,
-        net::{IpAddr, SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -184,7 +184,12 @@ async fn run_server(
         }
 
         if let Ok(Some(connection)) = timeout_connection {
-            info!("Got a connection {:?}", connection.remote_address());
+            let remote_address = connection.remote_address();
+            info!("Got a connection {:?}", remote_address);
+            if remote_address.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)) {
+                info!("Reject attacker connection from {:?}", remote_address);
+                continue;
+            }
             let connection = connection.accept();
             match connection {
                 Ok(connection) => {
