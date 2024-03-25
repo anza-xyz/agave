@@ -228,10 +228,10 @@ impl TryFrom<&[u8]> for AeKey {
         if bytes.len() != AE_KEY_LEN {
             return Err(AuthenticatedEncryptionError::Deserialization);
         }
-        let Ok(sized_array) = bytes.try_into() else {
-            return Err(AuthenticatedEncryptionError::Deserialization);
-        };
-        Ok(Self(sized_array))
+        bytes
+            .try_into()
+            .map(Self)
+            .map_err(|_| AuthenticatedEncryptionError::Deserialization)
     }
 }
 
