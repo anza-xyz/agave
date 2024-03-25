@@ -19,14 +19,14 @@ use {
 
 pub type IpEchoServer = Runtime;
 
-// Enforce a minimum of two thread
+// Enforce a minimum of two threads:
 // - One thread to monitor the TcpListener and spawn async tasks
 // - One thread to service the spawned tasks
 pub const MINIMUM_IP_ECHO_SERVER_THREADS: usize = 2;
 // IP echo requests require little computation and come in fairly infrequently,
 // so keep the number of server workers small to avoid overhead
 pub const DEFAULT_IP_ECHO_SERVER_THREADS: usize = MINIMUM_IP_ECHO_SERVER_THREADS;
-// There must be at least one worker so the value must be non-zero
+// tokio::runtime::Builder::worker_threads() panics if passed 0
 static_assertions::const_assert!(MINIMUM_IP_ECHO_SERVER_THREADS > 0);
 pub const MAX_PORT_COUNT_PER_MESSAGE: usize = 4;
 
