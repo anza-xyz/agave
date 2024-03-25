@@ -11910,6 +11910,7 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
     goto_end_of_slot(bank.clone());
     let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
     let current_env = bank
+        .transaction_processor
         .program_cache
         .read()
         .unwrap()
@@ -11917,6 +11918,7 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
         .program_runtime_v1
         .clone();
     let upcoming_env = bank
+        .transaction_processor
         .program_cache
         .read()
         .unwrap()
@@ -11926,7 +11928,7 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
 
     // Advance the bank to recompile the program.
     {
-        let program_cache = bank.program_cache.read().unwrap();
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 1);
         assert!(Arc::ptr_eq(
@@ -11937,7 +11939,7 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
     goto_end_of_slot(bank.clone());
     let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
     {
-        let program_cache = bank.program_cache.read().unwrap();
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 2);
         assert!(Arc::ptr_eq(
@@ -13791,4 +13793,245 @@ fn test_failed_simulation_compute_units() {
     let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
+}
+
+#[test]
+fn test_filter_program_errors_and_collect_fee_details() {
+    // TX  | EXECUTION RESULT            | is nonce | COLLECT            | ADDITIONAL          | COLLECT
+    //     |                             |          | (TX_FEE, PRIO_FEE) | WITHDRAW FROM PAYER | RESULT
+    // ------------------------------------------------------------------------------------------------------
+    // tx1 | not executed                | n/a      | (0    , 0)         | 0                   | Original Err
+    // tx2 | executed and no error       | n/a      | (5_000, 1_000)     | 0                   | Ok
+    // tx3 | executed has error          | true     | (5_000, 1_000)     | 0                   | Ok
+    // tx4 | executed has error          | false    | (5_000, 1_000)     | 6_000               | Ok
+    // tx5 | executed error,
+    //         payer insufficient fund   | false    | (0    , 0)         | 0                   | InsufficientFundsForFee
+    //
+    let initial_payer_balance = 7_000;
+    let additional_payer_withdraw = 6_000;
+    let expected_collected_fee_details = CollectorFeeDetails {
+        transaction_fee: 15_000,
+        priority_fee: 3_000,
+    };
+    let expected_collect_results = vec![
+        Err(TransactionError::AccountNotFound),
+        Ok(()),
+        Ok(()),
+        Ok(()),
+        Err(TransactionError::InsufficientFundsForFee),
+    ];
+
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_leader(initial_payer_balance, &Pubkey::new_unique(), 3);
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
+        &[
+            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 2),
+            ComputeBudgetInstruction::set_compute_unit_limit(1_000),
+            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+        ],
+        Some(&mint_keypair.pubkey()),
+        &[&mint_keypair],
+        genesis_config.hash(),
+    ));
+    let txs = vec![tx.clone(), tx.clone(), tx.clone(), tx.clone(), tx];
+
+    let results = vec![
+        TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
+        new_execution_result(Ok(()), None),
+        new_execution_result(
+            Err(TransactionError::InstructionError(
+                1,
+                SystemError::ResultWithNegativeLamports.into(),
+            )),
+            Some(&NonceFull::default()),
+        ),
+        new_execution_result(
+            Err(TransactionError::InstructionError(
+                1,
+                SystemError::ResultWithNegativeLamports.into(),
+            )),
+            None,
+        ),
+        new_execution_result(Err(TransactionError::AccountNotFound), None),
+    ];
+
+    let results = bank.filter_program_errors_and_collect_fee_details(&txs, &results);
+
+    assert_eq!(
+        expected_collected_fee_details,
+        *bank.collector_fee_details.read().unwrap()
+    );
+    assert_eq!(
+        initial_payer_balance - additional_payer_withdraw,
+        bank.get_balance(&mint_keypair.pubkey())
+    );
+    assert_eq!(expected_collect_results, results);
+}
+
+#[test]
+fn test_check_execution_status_and_charge_fee() {
+    let fee = 5000;
+    let initial_balance = fee - 1000;
+    let tx_error =
+        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature);
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_leader(initial_balance, &Pubkey::new_unique(), 3);
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let message = new_sanitized_message(Message::new(
+        &[system_instruction::transfer(
+            &mint_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            1,
+        )],
+        Some(&mint_keypair.pubkey()),
+    ));
+
+    [Ok(()), Err(tx_error)]
+        .iter()
+        .flat_map(|result| [true, false].iter().map(move |is_nonce| (result, is_nonce)))
+        .for_each(|(result, is_nonce)| {
+            if result.is_err() && !is_nonce {
+                assert_eq!(
+                    Err(TransactionError::InsufficientFundsForFee),
+                    bank.check_execution_status_and_charge_fee(&message, result, *is_nonce, fee)
+                );
+                assert_eq!(initial_balance, bank.get_balance(&mint_keypair.pubkey()));
+
+                let small_fee = 1;
+                assert!(bank
+                    .check_execution_status_and_charge_fee(&message, result, *is_nonce, small_fee)
+                    .is_ok());
+                assert_eq!(
+                    initial_balance - small_fee,
+                    bank.get_balance(&mint_keypair.pubkey())
+                );
+            } else {
+                assert!(bank
+                    .check_execution_status_and_charge_fee(&message, result, *is_nonce, fee)
+                    .is_ok());
+                assert_eq!(initial_balance, bank.get_balance(&mint_keypair.pubkey()));
+            }
+        });
+}
+#[test]
+fn test_deploy_last_epoch_slot() {
+    solana_logger::setup();
+
+    // Bank Setup
+    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    genesis_config
+        .accounts
+        .remove(&feature_set::reject_callx_r10::id());
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::reject_callx_r10::id());
+
+    // go to the last slot in the epoch
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let slots_in_epoch = bank.epoch_schedule().get_slots_in_epoch(0);
+    let bank = new_bank_from_parent_with_bank_forks(
+        &bank_forks,
+        bank,
+        &Pubkey::default(),
+        slots_in_epoch - 1,
+    );
+    eprintln!("now at slot {} epoch {}", bank.slot(), bank.epoch());
+
+    // deploy a program
+    let payer_keypair = Keypair::new();
+    let program_keypair = Keypair::new();
+    let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
+    let mut elf = Vec::new();
+    file.read_to_end(&mut elf).unwrap();
+    let min_program_balance =
+        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
+    let min_buffer_balance = bank
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(elf.len()));
+    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_programdata(elf.len()),
+    );
+    let buffer_address = Pubkey::new_unique();
+    let (programdata_address, _) = Pubkey::find_program_address(
+        &[program_keypair.pubkey().as_ref()],
+        &bpf_loader_upgradeable::id(),
+    );
+    let upgrade_authority_keypair = Keypair::new();
+
+    let buffer_account = {
+        let mut account = AccountSharedData::new(
+            min_buffer_balance,
+            UpgradeableLoaderState::size_of_buffer(elf.len()),
+            &bpf_loader_upgradeable::id(),
+        );
+        account
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(upgrade_authority_keypair.pubkey()),
+            })
+            .unwrap();
+        account
+            .data_as_mut_slice()
+            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+            .unwrap()
+            .copy_from_slice(&elf);
+        account
+    };
+
+    let payer_base_balance = LAMPORTS_PER_SOL;
+    let deploy_fees = {
+        let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
+        3 * fee_calculator.lamports_per_signature
+    };
+    let min_payer_balance = min_program_balance
+        .saturating_add(min_programdata_balance)
+        .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
+    bank.store_account(
+        &payer_keypair.pubkey(),
+        &AccountSharedData::new(
+            payer_base_balance.saturating_add(min_payer_balance),
+            0,
+            &system_program::id(),
+        ),
+    );
+    bank.store_account(&buffer_address, &buffer_account);
+    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
+    bank.store_account(&programdata_address, &AccountSharedData::default());
+    let message = Message::new(
+        &bpf_loader_upgradeable::deploy_with_max_program_len(
+            &payer_keypair.pubkey(),
+            &program_keypair.pubkey(),
+            &buffer_address,
+            &upgrade_authority_keypair.pubkey(),
+            min_program_balance,
+            elf.len(),
+        )
+        .unwrap(),
+        Some(&payer_keypair.pubkey()),
+    );
+    let signers = &[&payer_keypair, &program_keypair, &upgrade_authority_keypair];
+    let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
+    let ret = bank.process_transaction(&transaction);
+    assert!(ret.is_ok(), "ret: {:?}", ret);
+    goto_end_of_slot(bank.clone());
+
+    // go to the first slot in the new epoch
+    let bank =
+        new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slots_in_epoch);
+    eprintln!("now at slot {} epoch {}", bank.slot(), bank.epoch());
+
+    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let binding = mint_keypair.insecure_clone();
+    let signers = vec![&binding];
+    let transaction = Transaction::new(&signers, message, bank.last_blockhash());
+    let result_with_feature_enabled = bank.process_transaction(&transaction);
+    assert_eq!(result_with_feature_enabled, Ok(()));
 }
