@@ -41,6 +41,8 @@ mod consts {
     pub const ALT_BN128_PAIRING: u64 = 3;
 }
 
+// AltBn128Error must be removed once the
+// simplify_alt_bn128_syscall_error_codes fature gets activated
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AltBn128Error {
     #[error("The input data is invalid")]
