@@ -57,6 +57,19 @@ pub enum AltBn128Error {
     ProjectiveToG1Failed,
 }
 
+impl From<u64> for AltBn128Error {
+    fn from(v: u64) -> AltBn128Error {
+        match v {
+            1 => AltBn128Error::InvalidInputData,
+            2 => AltBn128Error::GroupError,
+            3 => AltBn128Error::SliceOutOfBounds,
+            4 => AltBn128Error::TryIntoVecError(Vec::new()),
+            5 => AltBn128Error::ProjectiveToG1Failed,
+            _ => AltBn128Error::UnexpectedError,
+        }
+    }
+}
+
 impl From<AltBn128Error> for u64 {
     fn from(v: AltBn128Error) -> u64 {
         // note: should never return 0, as it risks to be confused with syscall success

@@ -37,6 +37,25 @@ pub enum PoseidonSyscallError {
     Unexpected,
 }
 
+impl From<u64> for PoseidonSyscallError {
+    fn from(error: u64) -> Self {
+        match error {
+            1 => PoseidonSyscallError::InvalidParameters,
+            2 => PoseidonSyscallError::InvalidEndianness,
+            3 => PoseidonSyscallError::InvalidNumberOfInputs,
+            4 => PoseidonSyscallError::EmptyInput,
+            5 => PoseidonSyscallError::InvalidInputLength,
+            6 => PoseidonSyscallError::BytesToPrimeFieldElement,
+            7 => PoseidonSyscallError::InputLargerThanModulus,
+            8 => PoseidonSyscallError::VecToArray,
+            9 => PoseidonSyscallError::U64Tou8,
+            10 => PoseidonSyscallError::BytesToBigInt,
+            11 => PoseidonSyscallError::InvalidWidthCircom,
+            _ => PoseidonSyscallError::Unexpected,
+        }
+    }
+}
+
 impl From<PoseidonSyscallError> for u64 {
     fn from(error: PoseidonSyscallError) -> Self {
         match error {

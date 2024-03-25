@@ -36,6 +36,19 @@ pub enum AltBn128CompressionError {
     InvalidInputSize,
 }
 
+impl From<u64> for AltBn128CompressionError {
+    fn from(v: u64) -> AltBn128CompressionError {
+        match v {
+            1 => AltBn128CompressionError::G1DecompressionFailed,
+            2 => AltBn128CompressionError::G2DecompressionFailed,
+            3 => AltBn128CompressionError::G1CompressionFailed,
+            4 => AltBn128CompressionError::G2CompressionFailed,
+            5 => AltBn128CompressionError::InvalidInputSize,
+            _ => AltBn128CompressionError::UnexpectedError,
+        }
+    }
+}
+
 impl From<AltBn128CompressionError> for u64 {
     fn from(v: AltBn128CompressionError) -> u64 {
         // note: should never return 0, as it risks to be confused with syscall success
