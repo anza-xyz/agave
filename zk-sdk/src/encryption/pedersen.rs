@@ -89,7 +89,7 @@ impl PedersenOpening {
 
     pub fn from_bytes(bytes: &[u8]) -> Option<PedersenOpening> {
         match bytes.try_into() {
-            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(PedersenOpening),
+            Ok(bytes) => Option::from(Scalar::from_canonical_bytes(bytes)).map(PedersenOpening),
             _ => None,
         }
     }
@@ -183,9 +183,11 @@ impl PedersenCommitment {
             return None;
         }
 
-        Some(PedersenCommitment(
-            CompressedRistretto::from_slice(bytes).decompress()?,
-        ))
+        let Ok(compressed_ristretto) = CompressedRistretto::from_slice(bytes) else {
+            return None;
+        };
+
+        compressed_ristretto.decompress().map(PedersenCommitment)
     }
 }
 
