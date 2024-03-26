@@ -1,5 +1,6 @@
 use {
     crate::{
+        nonblocking::connection_rate_limiter::ConnectionRateLimiter,
         quic::{
             configure_server, PeerStats, QuicServerError, StreamStats, MAX_UNSTAKED_CONNECTIONS,
         },
@@ -33,7 +34,7 @@ use {
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
         iter::repeat_with,
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{IpAddr, SocketAddr, UdpSocket},
         // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -77,6 +78,8 @@ const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] = b"exceed_max_stre
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const STREAM_STOP_CODE_THROTTLING: u32 = 15;
+
+const CONNECTION_LIMIT_PER_SECOND: u32 = 4;
 
 // A sequence of bytes that is part of a packet
 // along with where in the packet it is
@@ -159,6 +162,7 @@ async fn run_server(
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
 ) {
+    let rate_limiter = ConnectionRateLimiter::new(CONNECTION_LIMIT_PER_SECOND);
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
@@ -189,8 +193,9 @@ async fn run_server(
                 .fetch_add(1, Ordering::Relaxed);
             let remote_address = connection.remote_address();
             debug!("Got a connection {:?}", remote_address);
-            if remote_address.ip() == IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)) {
+            if !rate_limiter.check(&remote_address.ip()) {
                 debug!("Reject attacker connection from {:?}", remote_address);
+                connection.reject();
                 continue;
             }
             let connection = connection.accept();
