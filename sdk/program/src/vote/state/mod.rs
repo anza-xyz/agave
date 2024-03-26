@@ -207,7 +207,7 @@ impl VoteStateUpdate {
     }
 }
 
-#[frozen_abi(digest = "GJN7cWqPM6aWBtyGQsLNEdLbqcf31Wa1NgjCM1SpXyut")]
+#[frozen_abi(digest = "5VUusSTenF9vZ9eHiCprVe9ABJUHCubeDNCCDxykybZY")]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone, AbiExample)]
 pub struct TowerSync {
     /// The proposed tower
@@ -218,8 +218,10 @@ pub struct TowerSync {
     pub hash: Hash,
     /// processing timestamp of last slot
     pub timestamp: Option<UnixTimestamp>,
-    /// The unique fork identifier for the last slot
-    pub fork_id: Hash,
+    /// the unique identifier for the chain up to and
+    /// including this block. Does not require replaying
+    /// in order to compute.
+    pub block_id: Hash,
 }
 
 impl From<Vec<(Slot, u32)>> for TowerSync {
@@ -235,19 +237,24 @@ impl From<Vec<(Slot, u32)>> for TowerSync {
             root: None,
             hash: Hash::default(),
             timestamp: None,
-            fork_id: Hash::default(),
+            block_id: Hash::default(),
         }
     }
 }
 
 impl TowerSync {
-    pub fn new(lockouts: VecDeque<Lockout>, root: Option<Slot>, hash: Hash, fork_id: Hash) -> Self {
+    pub fn new(
+        lockouts: VecDeque<Lockout>,
+        root: Option<Slot>,
+        hash: Hash,
+        block_id: Hash,
+    ) -> Self {
         Self {
             lockouts,
             root,
             hash,
             timestamp: None,
-            fork_id,
+            block_id,
         }
     }
 
@@ -982,7 +989,7 @@ pub mod serde_tower_sync {
         lockout_offsets: Vec<LockoutOffset>,
         hash: Hash,
         timestamp: Option<UnixTimestamp>,
-        fork_id: Hash,
+        block_id: Hash,
     }
 
     pub fn serialize<S>(tower_sync: &TowerSync, serializer: S) -> Result<S::Ok, S::Error>
@@ -1011,7 +1018,7 @@ pub mod serde_tower_sync {
             lockout_offsets: lockout_offsets.collect::<Result<_, _>>()?,
             hash: tower_sync.hash,
             timestamp: tower_sync.timestamp,
-            fork_id: tower_sync.fork_id,
+            block_id: tower_sync.block_id,
         };
         compact_tower_sync.serialize(serializer)
     }
@@ -1025,7 +1032,7 @@ pub mod serde_tower_sync {
             lockout_offsets,
             hash,
             timestamp,
-            fork_id,
+            block_id,
         } = CompactTowerSync::deserialize(deserializer)?;
         let root = (root != Slot::MAX).then_some(root);
         let lockouts =
@@ -1049,7 +1056,7 @@ pub mod serde_tower_sync {
             lockouts: lockouts.collect::<Result<_, _>>()?,
             hash,
             timestamp,
-            fork_id,
+            block_id,
         })
     }
 }

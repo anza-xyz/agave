@@ -28,7 +28,7 @@ use {
     },
 };
 
-#[frozen_abi(digest = "36NSPoda392XXxAHe133gCn5pcTWA1WGXQ55bT5pRYA9")]
+#[frozen_abi(digest = "EcS3xgfomytEAQ1eVd8R76ZejwyHp2Ed8dHqQWh6zi5v")]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, AbiEnumVisitor, AbiExample)]
 pub enum VoteTransaction {
     Vote(Vote),

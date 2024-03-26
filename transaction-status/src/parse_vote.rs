@@ -178,7 +178,7 @@ pub fn parse_vote(
                 "root": tower_sync.root,
                 "hash": tower_sync.hash.to_string(),
                 "timestamp": tower_sync.timestamp,
-                "forkId": tower_sync.fork_id,
+                "blockId": tower_sync.block_id,
             });
             Ok(ParsedInstructionEnum {
                 instruction_type: "towersync".to_string(),
@@ -196,7 +196,7 @@ pub fn parse_vote(
                 "root": tower_sync.root,
                 "hash": tower_sync.hash.to_string(),
                 "timestamp": tower_sync.timestamp,
-                "forkId": tower_sync.fork_id,
+                "blockId": tower_sync.block_id,
             });
             Ok(ParsedInstructionEnum {
                 instruction_type: "towersyncswitch".to_string(),

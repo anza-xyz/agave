@@ -232,7 +232,7 @@ pub(crate) enum BlockhashStatus {
     Blockhash(Hash),
 }
 
-#[frozen_abi(digest = "DZPfu5MvsgbBpU5jzVHNHxavJcSRfKurStFqPY4XtMCu")]
+#[frozen_abi(digest = "679XkZ4upGc389SwqAsjs5tr2qB4wisqjbwtei7fGhxC")]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, AbiExample)]
 pub struct Tower {
     pub node_pubkey: Pubkey,
