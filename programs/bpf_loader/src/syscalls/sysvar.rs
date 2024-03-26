@@ -1,7 +1,4 @@
-use {
-    super::*,
-    solana_sdk::stake_history::{StakeHistory, StakeHistoryEntry, StakeHistoryGetEntry},
-};
+use super::*;
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
