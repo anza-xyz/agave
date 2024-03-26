@@ -1,18 +1,19 @@
 //! Plain Old Data types for the ElGamal encryption scheme.
 
-#[cfg(not(target_os = "solana"))]
-use {
-    crate::encryption::elgamal::{self as decoded, ElGamalError},
-    curve25519_dalek::ristretto::CompressedRistretto,
-};
 use {
     crate::{
-        zk_token_elgamal::pod::{impl_from_str, pedersen::PEDERSEN_COMMITMENT_LEN, Pod, Zeroable},
+        encryption::elgamal::{self as decoded, ElGamalError},
+        zk_token_elgamal::pod::{impl_from_str, Pod, Zeroable},
         RISTRETTO_POINT_LEN,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     std::fmt,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::zk_token_elgamal::pod::pedersen::PEDERSEN_COMMITMENT_LEN;
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
+use curve25519_dalek::ristretto::CompressedRistretto;
 
 /// Byte length of an ElGamal public key
 const ELGAMAL_PUBKEY_LEN: usize = RISTRETTO_POINT_LEN;
@@ -21,51 +22,59 @@ const ELGAMAL_PUBKEY_LEN: usize = RISTRETTO_POINT_LEN;
 const ELGAMAL_PUBKEY_MAX_BASE64_LEN: usize = 44;
 
 /// Byte length of a decrypt handle
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DECRYPT_HANDLE_LEN: usize = RISTRETTO_POINT_LEN;
 
 /// Byte length of an ElGamal ciphertext
+#[cfg(not(target_arch = "wasm32"))]
 const ELGAMAL_CIPHERTEXT_LEN: usize = PEDERSEN_COMMITMENT_LEN + DECRYPT_HANDLE_LEN;
 
 /// Maximum length of a base64 encoded ElGamal ciphertext
+#[cfg(not(target_arch = "wasm32"))]
 const ELGAMAL_CIPHERTEXT_MAX_BASE64_LEN: usize = 88;
 
 /// The `ElGamalCiphertext` type as a `Pod`.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct ElGamalCiphertext(pub [u8; ELGAMAL_CIPHERTEXT_LEN]);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Debug for ElGamalCiphertext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.0)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Display for ElGamalCiphertext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", BASE64_STANDARD.encode(self.0))
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for ElGamalCiphertext {
     fn default() -> Self {
         Self::zeroed()
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl_from_str!(
     TYPE = ElGamalCiphertext,
     BYTES_LEN = ELGAMAL_CIPHERTEXT_LEN,
     BASE64_LEN = ELGAMAL_CIPHERTEXT_MAX_BASE64_LEN
 );
 
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 impl From<decoded::ElGamalCiphertext> for ElGamalCiphertext {
     fn from(decoded_ciphertext: decoded::ElGamalCiphertext) -> Self {
         Self(decoded_ciphertext.to_bytes())
     }
 }
 
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 impl TryFrom<ElGamalCiphertext> for decoded::ElGamalCiphertext {
     type Error = ElGamalError;
 
@@ -79,6 +88,7 @@ impl TryFrom<ElGamalCiphertext> for decoded::ElGamalCiphertext {
 #[repr(transparent)]
 pub struct ElGamalPubkey(pub [u8; ELGAMAL_PUBKEY_LEN]);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Debug for ElGamalPubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.0)
@@ -114,17 +124,19 @@ impl TryFrom<ElGamalPubkey> for decoded::ElGamalPubkey {
 }
 
 /// The `DecryptHandle` type as a `Pod`.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Default, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct DecryptHandle(pub [u8; DECRYPT_HANDLE_LEN]);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Debug for DecryptHandle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.0)
     }
 }
 
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 impl From<decoded::DecryptHandle> for DecryptHandle {
     fn from(decoded_handle: decoded::DecryptHandle) -> Self {
         Self(decoded_handle.to_bytes())
@@ -132,14 +144,14 @@ impl From<decoded::DecryptHandle> for DecryptHandle {
 }
 
 // For proof verification, interpret pod::DecryptHandle as CompressedRistretto
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 impl From<DecryptHandle> for CompressedRistretto {
     fn from(pod_handle: DecryptHandle) -> Self {
         Self(pod_handle.0)
     }
 }
 
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 impl TryFrom<DecryptHandle> for decoded::DecryptHandle {
     type Error = ElGamalError;
 

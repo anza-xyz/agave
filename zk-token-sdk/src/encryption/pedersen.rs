@@ -1,27 +1,31 @@
 //! Pedersen commitment implementation using the Ristretto prime-order group.
 
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 use rand::rngs::OsRng;
+#[cfg(not(target_arch = "wasm32"))]
 use {
     crate::{RISTRETTO_POINT_LEN, SCALAR_LEN},
     core::ops::{Add, Mul, Sub},
-    curve25519_dalek::{
-        constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_POINT},
-        ristretto::{CompressedRistretto, RistrettoPoint},
-        scalar::Scalar,
-        traits::MultiscalarMul,
-    },
+    curve25519_dalek::{ristretto::CompressedRistretto, scalar::Scalar, traits::MultiscalarMul},
     serde::{Deserialize, Serialize},
-    sha3::Sha3_512,
     std::convert::TryInto,
     subtle::{Choice, ConstantTimeEq},
     zeroize::Zeroize,
 };
+use {
+    curve25519_dalek::{
+        constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_POINT},
+        ristretto::RistrettoPoint,
+    },
+    sha3::Sha3_512,
+};
 
 /// Byte length of a Pedersen opening.
+#[cfg(not(target_arch = "wasm32"))]
 const PEDERSEN_OPENING_LEN: usize = SCALAR_LEN;
 
 /// Byte length of a Pedersen commitment.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const PEDERSEN_COMMITMENT_LEN: usize = RISTRETTO_POINT_LEN;
 
 lazy_static::lazy_static! {
@@ -33,7 +37,9 @@ lazy_static::lazy_static! {
 }
 
 /// Algorithm handle for the Pedersen commitment scheme.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Pedersen;
+#[cfg(not(target_arch = "wasm32"))]
 impl Pedersen {
     /// On input a message (numeric amount), the function returns a Pedersen commitment of the
     /// message and the corresponding opening.
@@ -72,9 +78,11 @@ impl Pedersen {
 /// Pedersen opening type.
 ///
 /// Instances of Pedersen openings are zeroized on drop.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Zeroize)]
 #[zeroize(drop)]
 pub struct PedersenOpening(Scalar);
+#[cfg(not(target_arch = "wasm32"))]
 impl PedersenOpening {
     pub fn new(scalar: Scalar) -> Self {
         Self(scalar)
@@ -104,18 +112,22 @@ impl PedersenOpening {
         }
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl Eq for PedersenOpening {}
+#[cfg(not(target_arch = "wasm32"))]
 impl PartialEq for PedersenOpening {
     fn eq(&self, other: &Self) -> bool {
         self.ct_eq(other).unwrap_u8() == 1u8
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl ConstantTimeEq for PedersenOpening {
     fn ct_eq(&self, other: &Self) -> Choice {
         self.0.ct_eq(&other.0)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Add<&'b PedersenOpening> for &'a PedersenOpening {
     type Output = PedersenOpening;
 
@@ -124,12 +136,14 @@ impl<'a, 'b> Add<&'b PedersenOpening> for &'a PedersenOpening {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_add_variants!(
     LHS = PedersenOpening,
     RHS = PedersenOpening,
     Output = PedersenOpening
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Sub<&'b PedersenOpening> for &'a PedersenOpening {
     type Output = PedersenOpening;
 
@@ -138,12 +152,14 @@ impl<'a, 'b> Sub<&'b PedersenOpening> for &'a PedersenOpening {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_sub_variants!(
     LHS = PedersenOpening,
     RHS = PedersenOpening,
     Output = PedersenOpening
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b Scalar> for &'a PedersenOpening {
     type Output = PedersenOpening;
 
@@ -152,12 +168,14 @@ impl<'a, 'b> Mul<&'b Scalar> for &'a PedersenOpening {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(
     LHS = PedersenOpening,
     RHS = Scalar,
     Output = PedersenOpening
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b PedersenOpening> for &'a Scalar {
     type Output = PedersenOpening;
 
@@ -166,6 +184,7 @@ impl<'a, 'b> Mul<&'b PedersenOpening> for &'a Scalar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(
     LHS = Scalar,
     RHS = PedersenOpening,
@@ -173,8 +192,10 @@ define_mul_variants!(
 );
 
 /// Pedersen commitment type.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PedersenCommitment(RistrettoPoint);
+#[cfg(not(target_arch = "wasm32"))]
 impl PedersenCommitment {
     pub fn new(point: RistrettoPoint) -> Self {
         Self(point)
@@ -199,6 +220,7 @@ impl PedersenCommitment {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Add<&'b PedersenCommitment> for &'a PedersenCommitment {
     type Output = PedersenCommitment;
 
@@ -207,12 +229,14 @@ impl<'a, 'b> Add<&'b PedersenCommitment> for &'a PedersenCommitment {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_add_variants!(
     LHS = PedersenCommitment,
     RHS = PedersenCommitment,
     Output = PedersenCommitment
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Sub<&'b PedersenCommitment> for &'a PedersenCommitment {
     type Output = PedersenCommitment;
 
@@ -221,12 +245,14 @@ impl<'a, 'b> Sub<&'b PedersenCommitment> for &'a PedersenCommitment {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_sub_variants!(
     LHS = PedersenCommitment,
     RHS = PedersenCommitment,
     Output = PedersenCommitment
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b Scalar> for &'a PedersenCommitment {
     type Output = PedersenCommitment;
 
@@ -235,12 +261,14 @@ impl<'a, 'b> Mul<&'b Scalar> for &'a PedersenCommitment {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(
     LHS = PedersenCommitment,
     RHS = Scalar,
     Output = PedersenCommitment
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b PedersenCommitment> for &'a Scalar {
     type Output = PedersenCommitment;
 
@@ -249,6 +277,7 @@ impl<'a, 'b> Mul<&'b PedersenCommitment> for &'a Scalar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(
     LHS = Scalar,
     RHS = PedersenCommitment,

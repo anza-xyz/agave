@@ -12,10 +12,12 @@ edition = { workspace = true }
 [dependencies]
 base64 = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
+js-sys = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 solana-program = { workspace = true }
 thiserror = { workspace = true }
+wasm-bindgen = { workspace = true }
 
 [dev-dependencies]
 tiny-bip39 = { workspace = true }
@@ -39,3 +41,7 @@ zeroize = { workspace = true, features = ["zeroize_derive"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = true
+opt-level = "s"

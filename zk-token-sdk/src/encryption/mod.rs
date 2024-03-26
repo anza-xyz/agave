@@ -10,8 +10,11 @@
 //! - Basic type-wrapper around the AES-GCM-SIV symmetric authenticated encryption scheme
 //! implemented by [aes-gcm-siv](https://docs.rs/aes-gcm-siv/latest/aes_gcm_siv/) crate.
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod auth_encryption;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod discrete_log;
 pub mod elgamal;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod grouped_elgamal;
 pub mod pedersen;

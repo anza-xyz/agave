@@ -14,23 +14,28 @@
 //! discrete log to recover the originally encrypted value.
 
 use {
-    crate::{
-        encryption::{
-            discrete_log::DiscreteLog,
-            pedersen::{
-                Pedersen, PedersenCommitment, PedersenOpening, G, H, PEDERSEN_COMMITMENT_LEN,
-            },
-        },
-        RISTRETTO_POINT_LEN, SCALAR_LEN,
-    },
-    base64::{prelude::BASE64_STANDARD, Engine},
-    core::ops::{Add, Mul, Sub},
+    crate::{encryption::pedersen::H, RISTRETTO_POINT_LEN, SCALAR_LEN},
     curve25519_dalek::{
         ristretto::{CompressedRistretto, RistrettoPoint},
         scalar::Scalar,
-        traits::Identity,
     },
+    rand::rngs::OsRng,
     serde::{Deserialize, Serialize},
+    subtle::{Choice, ConstantTimeEq},
+    thiserror::Error,
+    wasm_bindgen::prelude::*,
+    zeroize::Zeroize,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+use {
+    crate::encryption::{
+        discrete_log::DiscreteLog,
+        pedersen::{Pedersen, PedersenCommitment, PedersenOpening, G, PEDERSEN_COMMITMENT_LEN},
+    },
+    base64::{prelude::BASE64_STANDARD, Engine},
+    core::ops::{Add, Mul, Sub},
+    curve25519_dalek::traits::Identity,
     solana_sdk::{
         derivation_path::DerivationPath,
         signature::Signature,
@@ -40,13 +45,9 @@ use {
         },
     },
     std::convert::TryInto,
-    subtle::{Choice, ConstantTimeEq},
-    thiserror::Error,
-    zeroize::Zeroize,
 };
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 use {
-    rand::rngs::OsRng,
     sha3::{Digest, Sha3_512},
     std::{
         error, fmt,
@@ -56,9 +57,11 @@ use {
 };
 
 /// Byte length of a decrypt handle
+#[cfg(not(target_arch = "wasm32"))]
 const DECRYPT_HANDLE_LEN: usize = RISTRETTO_POINT_LEN;
 
 /// Byte length of an ElGamal ciphertext
+#[cfg(not(target_arch = "wasm32"))]
 const ELGAMAL_CIPHERTEXT_LEN: usize = PEDERSEN_COMMITMENT_LEN + DECRYPT_HANDLE_LEN;
 
 /// Byte length of an ElGamal public key
@@ -112,7 +115,10 @@ impl ElGamal {
 
         ElGamalKeypair { public, secret }
     }
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+impl ElGamal {
     /// On input an ElGamal public key and an amount to be encrypted, the function returns a
     /// corresponding ElGamal ciphertext.
     ///
@@ -178,6 +184,7 @@ impl ElGamal {
 /// A (twisted) ElGamal encryption keypair.
 ///
 /// The instances of the secret key are zeroized on drop.
+#[wasm_bindgen]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, Zeroize)]
 pub struct ElGamalKeypair {
     /// The public half of this keypair.
@@ -186,6 +193,51 @@ pub struct ElGamalKeypair {
     secret: ElGamalSecretKey,
 }
 
+#[wasm_bindgen]
+impl ElGamalKeypair {
+    /// Generates the public and secret keys for ElGamal encryption.
+    ///
+    /// This function is randomized. It internally samples a scalar element using `OsRng`.
+    #[cfg(not(target_os = "solana"))]
+    pub fn new_rand() -> Self {
+        ElGamal::keygen()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn pubkey_owned(&self) -> ElGamalPubkey {
+        self.public
+    }
+}
+
+impl ElGamalKeypair {
+    pub fn pubkey(&self) -> &ElGamalPubkey {
+        &self.public
+    }
+
+    pub fn secret(&self) -> &ElGamalSecretKey {
+        &self.secret
+    }
+
+    pub fn to_bytes(&self) -> [u8; ELGAMAL_KEYPAIR_LEN] {
+        let mut bytes = [0u8; ELGAMAL_KEYPAIR_LEN];
+        bytes[..ELGAMAL_PUBKEY_LEN].copy_from_slice(&self.public.to_bytes());
+        bytes[ELGAMAL_PUBKEY_LEN..].copy_from_slice(self.secret.as_bytes());
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != ELGAMAL_KEYPAIR_LEN {
+            return None;
+        }
+
+        Some(Self {
+            public: ElGamalPubkey::from_bytes(&bytes[..ELGAMAL_PUBKEY_LEN])?,
+            secret: ElGamalSecretKey::from_bytes(bytes[ELGAMAL_PUBKEY_LEN..].try_into().ok()?)?,
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl ElGamalKeypair {
     /// Create an ElGamal keypair from an ElGamal public key and an ElGamal secret key.
     ///
@@ -219,40 +271,6 @@ impl ElGamalKeypair {
         Ok(ElGamalKeypair { public, secret })
     }
 
-    /// Generates the public and secret keys for ElGamal encryption.
-    ///
-    /// This function is randomized. It internally samples a scalar element using `OsRng`.
-    #[cfg(not(target_os = "solana"))]
-    pub fn new_rand() -> Self {
-        ElGamal::keygen()
-    }
-
-    pub fn pubkey(&self) -> &ElGamalPubkey {
-        &self.public
-    }
-
-    pub fn secret(&self) -> &ElGamalSecretKey {
-        &self.secret
-    }
-
-    pub fn to_bytes(&self) -> [u8; ELGAMAL_KEYPAIR_LEN] {
-        let mut bytes = [0u8; ELGAMAL_KEYPAIR_LEN];
-        bytes[..ELGAMAL_PUBKEY_LEN].copy_from_slice(&self.public.to_bytes());
-        bytes[ELGAMAL_PUBKEY_LEN..].copy_from_slice(self.secret.as_bytes());
-        bytes
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != ELGAMAL_KEYPAIR_LEN {
-            return None;
-        }
-
-        Some(Self {
-            public: ElGamalPubkey::from_bytes(&bytes[..ELGAMAL_PUBKEY_LEN])?,
-            secret: ElGamalSecretKey::from_bytes(bytes[ELGAMAL_PUBKEY_LEN..].try_into().ok()?)?,
-        })
-    }
-
     /// Reads a JSON-encoded keypair from a `Reader` implementor
     pub fn read_json<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         let bytes: Vec<u8> = serde_json::from_reader(reader)?;
@@ -283,6 +301,7 @@ impl ElGamalKeypair {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKey for ElGamalKeypair {
     fn read<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         Self::read_json(reader)
@@ -293,6 +312,7 @@ impl EncodableKey for ElGamalKeypair {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SeedDerivable for ElGamalKeypair {
     fn from_seed(seed: &[u8]) -> Result<Self, Box<dyn error::Error>> {
         let secret = ElGamalSecretKey::from_seed(seed)?;
@@ -318,6 +338,7 @@ impl SeedDerivable for ElGamalKeypair {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKeypair for ElGamalKeypair {
     type Pubkey = ElGamalPubkey;
 
@@ -327,6 +348,7 @@ impl EncodableKeypair for ElGamalKeypair {
 }
 
 /// Public key for the ElGamal encryption scheme.
+#[wasm_bindgen]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Zeroize)]
 pub struct ElGamalPubkey(RistrettoPoint);
 impl ElGamalPubkey {
@@ -356,7 +378,10 @@ impl ElGamalPubkey {
             CompressedRistretto::from_slice(bytes).decompress()?,
         ))
     }
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+impl ElGamalPubkey {
     /// Encrypts an amount under the public key.
     ///
     /// This function is randomized. It internally samples a scalar element using `OsRng`.
@@ -381,6 +406,7 @@ impl ElGamalPubkey {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKey for ElGamalPubkey {
     fn read<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         let bytes: Vec<u8> = serde_json::from_reader(reader)?;
@@ -397,6 +423,7 @@ impl EncodableKey for ElGamalPubkey {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Display for ElGamalPubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", BASE64_STANDARD.encode(self.to_bytes()))
@@ -409,6 +436,31 @@ impl fmt::Display for ElGamalPubkey {
 #[derive(Clone, Debug, Deserialize, Serialize, Zeroize)]
 #[zeroize(drop)]
 pub struct ElGamalSecretKey(Scalar);
+impl ElGamalSecretKey {
+    /// Randomly samples an ElGamal secret key.
+    ///
+    /// This function is randomized. It internally samples a scalar element using `OsRng`.
+    pub fn new_rand() -> Self {
+        ElGamalSecretKey(Scalar::random(&mut OsRng))
+    }
+
+    pub fn as_bytes(&self) -> &[u8; ELGAMAL_SECRET_KEY_LEN] {
+        self.0.as_bytes()
+    }
+
+    pub fn to_bytes(&self) -> [u8; ELGAMAL_SECRET_KEY_LEN] {
+        self.0.to_bytes()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalSecretKey> {
+        match bytes.try_into() {
+            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(ElGamalSecretKey),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl ElGamalSecretKey {
     /// Deterministically derives an ElGamal secret key from a Solana signer and a public seed.
     ///
@@ -445,13 +497,6 @@ impl ElGamalSecretKey {
         Ok(result.to_vec())
     }
 
-    /// Randomly samples an ElGamal secret key.
-    ///
-    /// This function is randomized. It internally samples a scalar element using `OsRng`.
-    pub fn new_rand() -> Self {
-        ElGamalSecretKey(Scalar::random(&mut OsRng))
-    }
-
     /// Derive an ElGamal secret key from an entropy seed.
     pub fn from_seed(seed: &[u8]) -> Result<Self, ElGamalError> {
         const MINIMUM_SEED_LEN: usize = ELGAMAL_SECRET_KEY_LEN;
@@ -482,23 +527,9 @@ impl ElGamalSecretKey {
     pub fn decrypt_u32(&self, ciphertext: &ElGamalCiphertext) -> Option<u64> {
         ElGamal::decrypt_u32(self, ciphertext)
     }
-
-    pub fn as_bytes(&self) -> &[u8; ELGAMAL_SECRET_KEY_LEN] {
-        self.0.as_bytes()
-    }
-
-    pub fn to_bytes(&self) -> [u8; ELGAMAL_SECRET_KEY_LEN] {
-        self.0.to_bytes()
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalSecretKey> {
-        match bytes.try_into() {
-            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(ElGamalSecretKey),
-            _ => None,
-        }
-    }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKey for ElGamalSecretKey {
     fn read<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         let bytes: Vec<u8> = serde_json::from_reader(reader)?;
@@ -515,6 +546,7 @@ impl EncodableKey for ElGamalSecretKey {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SeedDerivable for ElGamalSecretKey {
     fn from_seed(seed: &[u8]) -> Result<Self, Box<dyn error::Error>> {
         let key = Self::from_seed(seed)?;
@@ -559,12 +591,14 @@ impl ConstantTimeEq for ElGamalSecretKey {
 }
 
 /// Ciphertext for the ElGamal encryption scheme.
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(non_snake_case)]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ElGamalCiphertext {
     pub commitment: PedersenCommitment,
     pub handle: DecryptHandle,
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl ElGamalCiphertext {
     pub fn add_amount<T: Into<Scalar>>(&self, amount: T) -> Self {
         let point = amount.into() * &(*G);
@@ -620,12 +654,14 @@ impl ElGamalCiphertext {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl fmt::Display for ElGamalCiphertext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", BASE64_STANDARD.encode(self.to_bytes()))
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Add<&'b ElGamalCiphertext> for &'a ElGamalCiphertext {
     type Output = ElGamalCiphertext;
 
@@ -637,12 +673,14 @@ impl<'a, 'b> Add<&'b ElGamalCiphertext> for &'a ElGamalCiphertext {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_add_variants!(
     LHS = ElGamalCiphertext,
     RHS = ElGamalCiphertext,
     Output = ElGamalCiphertext
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Sub<&'b ElGamalCiphertext> for &'a ElGamalCiphertext {
     type Output = ElGamalCiphertext;
 
@@ -654,12 +692,14 @@ impl<'a, 'b> Sub<&'b ElGamalCiphertext> for &'a ElGamalCiphertext {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_sub_variants!(
     LHS = ElGamalCiphertext,
     RHS = ElGamalCiphertext,
     Output = ElGamalCiphertext
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b Scalar> for &'a ElGamalCiphertext {
     type Output = ElGamalCiphertext;
 
@@ -671,12 +711,14 @@ impl<'a, 'b> Mul<&'b Scalar> for &'a ElGamalCiphertext {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(
     LHS = ElGamalCiphertext,
     RHS = Scalar,
     Output = ElGamalCiphertext
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b ElGamalCiphertext> for &'a Scalar {
     type Output = ElGamalCiphertext;
 
@@ -688,6 +730,7 @@ impl<'a, 'b> Mul<&'b ElGamalCiphertext> for &'a Scalar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(
     LHS = Scalar,
     RHS = ElGamalCiphertext,
@@ -695,8 +738,10 @@ define_mul_variants!(
 );
 
 /// Decryption handle for Pedersen commitment.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecryptHandle(RistrettoPoint);
+#[cfg(not(target_arch = "wasm32"))]
 impl DecryptHandle {
     pub fn new(public: &ElGamalPubkey, opening: &PedersenOpening) -> Self {
         Self(&public.0 * opening.get_scalar())
@@ -721,6 +766,7 @@ impl DecryptHandle {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Add<&'b DecryptHandle> for &'a DecryptHandle {
     type Output = DecryptHandle;
 
@@ -729,12 +775,14 @@ impl<'a, 'b> Add<&'b DecryptHandle> for &'a DecryptHandle {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_add_variants!(
     LHS = DecryptHandle,
     RHS = DecryptHandle,
     Output = DecryptHandle
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Sub<&'b DecryptHandle> for &'a DecryptHandle {
     type Output = DecryptHandle;
 
@@ -743,12 +791,14 @@ impl<'a, 'b> Sub<&'b DecryptHandle> for &'a DecryptHandle {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_sub_variants!(
     LHS = DecryptHandle,
     RHS = DecryptHandle,
     Output = DecryptHandle
 );
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b Scalar> for &'a DecryptHandle {
     type Output = DecryptHandle;
 
@@ -757,8 +807,10 @@ impl<'a, 'b> Mul<&'b Scalar> for &'a DecryptHandle {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(LHS = DecryptHandle, RHS = Scalar, Output = DecryptHandle);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, 'b> Mul<&'b DecryptHandle> for &'a Scalar {
     type Output = DecryptHandle;
 
@@ -767,6 +819,7 @@ impl<'a, 'b> Mul<&'b DecryptHandle> for &'a Scalar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 define_mul_variants!(LHS = Scalar, RHS = DecryptHandle, Output = DecryptHandle);
 
 #[cfg(test)]

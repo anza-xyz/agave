@@ -1,21 +1,29 @@
+#[cfg(not(target_arch = "wasm32"))]
 mod auth_encryption;
 mod elgamal;
+#[cfg(not(target_arch = "wasm32"))]
 mod grouped_elgamal;
+#[cfg(not(target_arch = "wasm32"))]
 mod instruction;
+#[cfg(not(target_arch = "wasm32"))]
 mod pedersen;
+#[cfg(not(target_arch = "wasm32"))]
 mod range_proof;
+#[cfg(not(target_arch = "wasm32"))]
 mod sigma_proofs;
+mod wasm;
 
+use thiserror::Error;
+#[cfg(not(target_arch = "wasm32"))]
 use {
     crate::zk_token_proof_instruction::ProofType,
     num_traits::{FromPrimitive, ToPrimitive},
     solana_program::instruction::InstructionError,
-    thiserror::Error,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use {
     auth_encryption::AeCiphertext,
-    bytemuck::{Pod, Zeroable},
-    elgamal::{DecryptHandle, ElGamalCiphertext, ElGamalPubkey},
+    elgamal::{DecryptHandle, ElGamalCiphertext},
     grouped_elgamal::{GroupedElGamalCiphertext2Handles, GroupedElGamalCiphertext3Handles},
     instruction::{FeeEncryption, FeeParameters, TransferAmountCiphertext},
     pedersen::PedersenCommitment,
@@ -26,6 +34,10 @@ pub use {
         PubkeyValidityProof, ZeroBalanceProof,
     },
 };
+pub use {
+    bytemuck::{Pod, Zeroable},
+    elgamal::ElGamalPubkey,
+};
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
@@ -35,42 +47,51 @@ pub enum ParseError {
     Invalid,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 #[repr(transparent)]
 pub struct PodU16([u8; 2]);
+#[cfg(not(target_arch = "wasm32"))]
 impl From<u16> for PodU16 {
     fn from(n: u16) -> Self {
         Self(n.to_le_bytes())
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl From<PodU16> for u16 {
     fn from(pod: PodU16) -> Self {
         Self::from_le_bytes(pod.0)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 #[repr(transparent)]
 pub struct PodU64([u8; 8]);
+#[cfg(not(target_arch = "wasm32"))]
 impl From<u64> for PodU64 {
     fn from(n: u64) -> Self {
         Self(n.to_le_bytes())
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl From<PodU64> for u64 {
     fn from(pod: PodU64) -> Self {
         Self::from_le_bytes(pod.0)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 #[repr(transparent)]
 pub struct PodProofType(u8);
+#[cfg(not(target_arch = "wasm32"))]
 impl From<ProofType> for PodProofType {
     fn from(proof_type: ProofType) -> Self {
         Self(ToPrimitive::to_u8(&proof_type).unwrap())
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl TryFrom<PodProofType> for ProofType {
     type Error = InstructionError;
 
@@ -79,6 +100,7 @@ impl TryFrom<PodProofType> for ProofType {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct CompressedRistretto(pub [u8; 32]);
