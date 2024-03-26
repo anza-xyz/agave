@@ -51,9 +51,14 @@
 //! #
 //! # use solana_program::sysvar::SysvarId;
 //! # let p = EpochRewards::id();
-//! # let l = &mut 1120560;
-//! # let d = &mut vec![0, 202, 154, 59, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0];
-//! # let a = AccountInfo::new(&p, false, false, l, d, &p, false, 0);
+//! # let l = &mut 1559040;
+//! # let mut epoch_rewards = EpochRewards::default();
+//! # epoch_rewards.distribution_starting_block_height = 42;
+//! # epoch_rewards.total_rewards = 100;
+//! # epoch_rewards.distributed_rewards = 10;
+//! # epoch_rewards.active = true;
+//! # let mut d: Vec<u8> = bincode::serialize(&epoch_rewards).unwrap();
+//! # let a = AccountInfo::new(&p, false, false, l, &mut d, &p, false, 0);
 //! # let accounts = &[a.clone(), a];
 //! # process_instruction(
 //! #     &Pubkey::new_unique(),
@@ -94,9 +99,14 @@
 //! #
 //! # use solana_program::sysvar::SysvarId;
 //! # let p = EpochRewards::id();
-//! # let l = &mut 1120560;
-//! # let d = &mut vec![0, 202, 154, 59, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0];
-//! # let a = AccountInfo::new(&p, false, false, l, d, &p, false, 0);
+//! # let l = &mut 1559040;
+//! # let mut epoch_rewards = EpochRewards::default();
+//! # epoch_rewards.distribution_starting_block_height = 42;
+//! # epoch_rewards.total_rewards = 100;
+//! # epoch_rewards.distributed_rewards = 10;
+//! # epoch_rewards.active = true;
+//! # let mut d: Vec<u8> = bincode::serialize(&epoch_rewards).unwrap();
+//! # let a = AccountInfo::new(&p, false, false, l, &mut d, &p, false, 0);
 //! # let accounts = &[a.clone(), a];
 //! # process_instruction(
 //! #     &Pubkey::new_unique(),
@@ -117,9 +127,15 @@
 //! # use anyhow::Result;
 //! #
 //! fn print_sysvar_epoch_rewards(client: &RpcClient) -> Result<()> {
+//! #   let mut epoch_rewards = EpochRewards::default();
+//! #   epoch_rewards.distribution_starting_block_height = 42;
+//! #   epoch_rewards.total_rewards = 100;
+//! #   epoch_rewards.distributed_rewards = 10;
+//! #   epoch_rewards.active = true;
+//! #   let data: Vec<u8> = bincode::serialize(&epoch_rewards)?;
 //! #   client.set_get_account_response(epoch_rewards::ID, Account {
 //! #       lamports: 1120560,
-//! #       data: vec![0, 202, 154, 59, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0],
+//! #       data,
 //! #       owner: solana_sdk::system_program::ID,
 //! #       executable: false,
 //! #       rent_epoch: 307,
