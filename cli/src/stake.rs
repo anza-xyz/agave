@@ -2562,7 +2562,7 @@ pub fn process_show_stake_account(
         with_rewards,
         use_csv,
     )?;
-    return Ok(config.output_format.formatted_string(&state));
+    Ok(config.output_format.formatted_string(&state))
 }
 
 pub fn get_account_stake_state(
@@ -2576,8 +2576,7 @@ pub fn get_account_stake_state(
     if stake_account.owner != stake::program::id() {
         return Err(CliError::RpcRequestError(format!(
             "{stake_account_address:?} is not a stake account",
-        ))
-        .into());
+        )));
     }
     match stake_account.state() {
         Ok(stake_state) => {
@@ -2620,8 +2619,7 @@ pub fn get_account_stake_state(
         }
         Err(err) => Err(CliError::RpcRequestError(format!(
             "Account data could not be deserialized to stake state: {err}"
-        ))
-        .into()),
+        ))),
     }
 }
 

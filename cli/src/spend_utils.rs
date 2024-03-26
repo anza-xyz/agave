@@ -45,10 +45,10 @@ impl SpendAmount {
         let s: Option<String> = value_of(matches, name);
         match s.unwrap_or(String::from("ALL")).as_str() {
             "ALL" if !sign_only => {
-                return SpendAmount::All;
+                SpendAmount::All
             },
             "AVAILABLE" if !sign_only => {
-                return SpendAmount::Available;
+                SpendAmount::Available
             },
             _ => panic!("ALL and AVAILABLE amount not supported for sign-only operations")
         }
