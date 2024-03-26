@@ -84,7 +84,7 @@ impl NonceSubCommands for App<'_, '_> {
                         .value_name("AMOUNT")
                         .takes_value(true)
                         .required(true)
-                        .validator(is_amount_or_all)
+                        .validator(is_amount_or_all_or_available)
                         .help(
                             "The amount to load the nonce account with, in SOL; accepts keyword \
                              ALL",
