@@ -262,8 +262,7 @@ pub fn create_program_runtime_environment_v1<'a>(
     let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
     let remaining_compute_units_syscall_enabled =
         feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
-    let get_sysvar_syscall_enabled =
-        feature_set.is_active(&get_sysvar_syscall_enabled::id());
+    let get_sysvar_syscall_enabled = feature_set.is_active(&get_sysvar_syscall_enabled::id());
     // !!! ATTENTION !!!
     // When adding new features for RBPF here,
     // also add them to `Bank::apply_builtin_program_feature_transitions()`.

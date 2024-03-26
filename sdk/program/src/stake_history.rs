@@ -101,32 +101,36 @@ impl StakeHistoryGetEntry for StakeHistory {
 impl StakeHistoryGetEntry for StakeHistorySyscall {
     fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
         // HANA im gonna be honest i dont understand why we cast to a u8 pointer
-        let mut var = [0; 8*4];
+        let mut var = [0; 32];
         let var_addr = &mut var as *mut _ as *mut u8;
 
         #[cfg(target_os = "solana")]
         {
-            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 8 * 4, 0, var_addr) };
+            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 32, 4, var_addr) };
             crate::msg!("HANA var: {:?}", var);
+            crate::msg!(
+                "HANA entry out: {:?}",
+                bincode::deserialize::<(Epoch, StakeHistoryEntry)>(&var).unwrap()
+            );
         }
 
         #[cfg(target_os = "solana")]
         println!("HANA we are NOT bpf");
 
         None
-/*
-        #[cfg(target_os = "solana")]
-        let result = unsafe { crate::syscalls::sol_get_stake_history_entry(var_addr, epoch) };
+        /*
+                #[cfg(target_os = "solana")]
+                let result = unsafe { crate::syscalls::sol_get_stake_history_entry(var_addr, epoch) };
 
-        #[cfg(not(target_os = "solana"))]
-        let result = crate::program_stubs::sol_get_stake_history_entry(var_addr, epoch);
+                #[cfg(not(target_os = "solana"))]
+                let result = crate::program_stubs::sol_get_stake_history_entry(var_addr, epoch);
 
-        // HANA i dislike how this swallows errors but im not sure we really want to return Result<Option<_>, _>
-        match result {
-            crate::entrypoint::SUCCESS => var,
-            _ => None,
-        }
-*/
+                // HANA i dislike how this swallows errors but im not sure we really want to return Result<Option<_>, _>
+                match result {
+                    crate::entrypoint::SUCCESS => var,
+                    _ => None,
+                }
+        */
     }
 }
 
