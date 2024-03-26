@@ -3723,7 +3723,7 @@ pub mod rpc_full {
                             units_consumed: Some(units_consumed),
                             return_data: return_data.map(|return_data| return_data.into()),
                             inner_instructions: None,
-                            blockhash: None,
+                            replacement_blockhash: None,
                         },
                     }
                     .into());
@@ -3867,7 +3867,7 @@ pub mod rpc_full {
                     units_consumed: Some(units_consumed),
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
-                    blockhash,
+                    replacement_blockhash: blockhash,
                 },
             ))
         }
