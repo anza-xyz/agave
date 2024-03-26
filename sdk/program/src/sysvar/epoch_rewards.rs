@@ -1,11 +1,19 @@
 //! Epoch rewards for current epoch
 //!
 //! The _epoch rewards_ sysvar provides access to the [`EpochRewards`] type,
-//! which tracks the progress of epoch rewards distribution. It includes the
-//!   - total rewards for the current epoch, in lamports
-//!   - rewards for the current epoch distributed so far, in lamports
-//!   - distribution completed block height, i.e. distribution of all staking rewards for the current
-//!     epoch will be completed at this block height
+//! which tracks whether the rewards period (including calculation and
+//! distribution) is in progress, as well as the details needed to resume
+//! distribution when starting from a snapshot during the rewards period. The
+//! sysvar is repopulated at the start of the first block of each epoch.
+//! Therefore, the sysvar contains data about the current epoch until a new
+//! epoch begins. Fields in the sysvar include:
+//!   - distribution starting block height
+//!   - the number of partitions in the distribution
+//!   - the parent-blockhash seed used to generate the partition hasher
+//!   - the total rewards points calculated for the epoch
+//!   - total rewards for epoch, in lamports
+//!   - rewards for the epoch distributed so far, in lamports
+//!   - whether the rewards period is active
 //!
 //! [`EpochRewards`] implements [`Sysvar::get`] and can be loaded efficiently without
 //! passing the sysvar account ID to the program.
