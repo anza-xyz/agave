@@ -99,38 +99,79 @@ impl StakeHistoryGetEntry for StakeHistory {
 }
 
 impl StakeHistoryGetEntry for StakeHistorySyscall {
-    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
-        // HANA im gonna be honest i dont understand why we cast to a u8 pointer
-        let mut var = [0; 32];
-        let var_addr = &mut var as *mut _ as *mut u8;
-
+    fn get_entry(&self, target_epoch: Epoch) -> Option<StakeHistoryEntry> {
         #[cfg(target_os = "solana")]
         {
-            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 32, 4, var_addr) };
-            crate::msg!("HANA var: {:?}", var);
-            crate::msg!(
-                "HANA entry out: {:?}",
-                bincode::deserialize::<(Epoch, StakeHistoryEntry)>(&var).unwrap()
-            );
+            let mut len_buf = [0; 4];
+            let len_buf_addr = &mut len_buf as *mut _ as *mut u8;
+
+            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 4, 0, len_buf_addr) };
+            if result != crate::entrypoint::SUCCESS {
+                panic!("no len???");
+            }
+
+            let stake_history_length = u32::from_le_bytes(len_buf);
+            crate::msg!("HANA stake history length: {}", stake_history_length);
+
+            if stake_history_length == 0 {
+                return None;
+            }
+
+            let mut entry_buf = [0; 32];
+            let entry_buf_addr = &mut entry_buf as *mut _ as *mut u8;
+
+            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 32, 4, entry_buf_addr) };
+            if result != crate::entrypoint::SUCCESS {
+                panic!("no entry?????");
+            }
+
+            let entry_epoch = bincode::deserialize::<Epoch>(&entry_buf).unwrap();
+            if entry_epoch == target_epoch {
+                let entry = bincode::deserialize::<StakeHistoryEntry>(&entry_buf[4..]).unwrap();
+                crate::msg!("HANA happy happy {} {:?}", entry_epoch, entry);
+                return Some(entry);
+            } else if entry_epoch > target_epoch {
+                // XXX if latest is 15 and target is 12 then delta is 3
+                // that means we want stake_history[3] because vec is newest first
+                // so delta must be lt length. length is vector length, not byte length
+                let epoch_delta = entry_epoch - target_epoch;
+
+                if epoch_delta >= stake_history_length as u64 {
+                    panic!("will read oob");
+                }
+
+                let offset = epoch_delta * 32 + 4;
+
+                entry_buf.iter_mut().for_each(|x| *x = 0);
+                let result =
+                    unsafe { crate::syscalls::sol_get_sysvar(0, 32, offset, entry_buf_addr) };
+                if result != crate::entrypoint::SUCCESS {
+                    panic!("no entry?????");
+                }
+
+                let entry_epoch = bincode::deserialize::<Epoch>(&entry_buf).unwrap();
+                if entry_epoch == target_epoch {
+                    let entry = bincode::deserialize::<StakeHistoryEntry>(&entry_buf[4..]).unwrap();
+                    crate::msg!("HANA moderately happy {} {:?}", entry_epoch, entry);
+                    return Some(entry);
+                } else {
+                    panic!(
+                        "something terrible has happened: target {}, got {}, delta: {}, offset: {}",
+                        target_epoch, entry_epoch, epoch_delta, offset
+                    );
+                }
+            } else {
+                panic!(
+                    "target epoch {} is newer that latest {}",
+                    target_epoch, entry_epoch
+                );
+            }
         }
 
-        #[cfg(target_os = "solana")]
-        println!("HANA we are NOT bpf");
-
-        None
-        /*
-                #[cfg(target_os = "solana")]
-                let result = unsafe { crate::syscalls::sol_get_stake_history_entry(var_addr, epoch) };
-
-                #[cfg(not(target_os = "solana"))]
-                let result = crate::program_stubs::sol_get_stake_history_entry(var_addr, epoch);
-
-                // HANA i dislike how this swallows errors but im not sure we really want to return Result<Option<_>, _>
-                match result {
-                    crate::entrypoint::SUCCESS => var,
-                    _ => None,
-                }
-        */
+        #[cfg(not(target_os = "solana"))]
+        {
+            panic!("we are NOT bpf");
+        }
     }
 }
 

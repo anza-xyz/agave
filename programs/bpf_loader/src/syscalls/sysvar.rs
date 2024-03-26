@@ -160,15 +160,6 @@ declare_builtin_function!(
     }
 );
 
-// XXX ok what am i doing
-// * turn tag into enum
-// * match on it to see what we are doing
-// * for stake history, match length/offset
-//   - if (4,0) then write length into a u32
-//   - else length must be mod 32 and offset must be mod 32 == 4
-//     length nonzero. length plus offset lte vec length times 32 plus 4
-//     then determine number of entires from those numbers
-//     loop through the vector we have writing them into the provided slice
 declare_builtin_function!(
     /// Get a slice of a Sysvar in-memory representation
     SyscallGetSysvar,
@@ -229,12 +220,20 @@ declare_builtin_function!(
                     let vec_length = length as usize / 32;
                     let vec_i0 = (offset as usize - 4) / 32;
 
-                    for i in vec_i0..vec_length {
+                    println!(
+                        "HANA veclen: {}, i0: {}, length: {}, offset: {}, sh len: {}",
+                        vec_length,
+                        vec_i0,
+                        length,
+                        offset,
+                        stake_history.len()
+                    );
+                    for i in vec_i0..vec_i0 + vec_length {
                         let (epoch, entry) = &stake_history[i];
                         let output_pos = (i - vec_i0) * 32;
 
                         println!(
-                            "HANA epoch: {}, entry: {:?}, pos: {}",
+                            "HANA inside syscall epoch: {}, entry: {:?}, pos: {}",
                             epoch, entry, output_pos
                         );
 
