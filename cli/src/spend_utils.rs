@@ -42,15 +42,14 @@ impl SpendAmount {
         if amount.is_some() {
             return SpendAmount::new(amount, sign_only);
         }
-        let s: Option<String> = value_of(matches, name);
-        match s.unwrap_or(String::from("ALL")).as_str() {
+        match matches.value_of(name).unwrap_or("ALL") {
             "ALL" if !sign_only => {
                 SpendAmount::All
             },
             "AVAILABLE" if !sign_only => {
                 SpendAmount::Available
             },
-            _ => panic!("ALL and AVAILABLE amount not supported for sign-only operations")
+            _ => panic!("Only specific amounts are supported for sign-only operations")
         }
 
 
