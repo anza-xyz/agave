@@ -274,6 +274,10 @@ pub(crate) fn find_heaviest_fork(
         .map(|(slot, _)| *slot)
         .collect::<Vec<Slot>>();
     slots.sort();
+
+    // The heaviest slot we selected will always be the last of the slots list, or root if the list is empty.
+    let heaviest_fork_slot = slots.last().map_or(root_slot, |x| *x);
+
     let mut expected_parent = root_slot;
     for slot in &slots {
         if exit.load(Ordering::Relaxed) {
@@ -303,7 +307,6 @@ pub(crate) fn find_heaviest_fork(
         }
     }
     // Now find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
-    let heaviest_fork_slot = expected_parent;
     let mut heaviest_fork_bankhash;
     {
         heaviest_fork_bankhash = bank_forks
