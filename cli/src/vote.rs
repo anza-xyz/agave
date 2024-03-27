@@ -385,7 +385,7 @@ impl VoteSubCommands for App<'_, '_> {
                         .value_name("AMOUNT")
                         .takes_value(true)
                         .required(true)
-                        .validator(is_amount_or_all_or_available)
+                        .validator(is_amount_or_all)
                         .help(
                             "The amount to withdraw, in SOL; accepts keyword ALL, which for this \
                              command means account balance minus rent-exempt minimum",
