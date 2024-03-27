@@ -7,7 +7,7 @@ use {
     },
     clap::ArgMatches,
     solana_clap_utils::{
-        compute_budget::ComputeUnitLimit, input_parsers::{lamports_of_sol, value_of}, offline::SIGN_ONLY_ARG,
+        compute_budget::ComputeUnitLimit, input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG,
     },
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
@@ -48,16 +48,10 @@ impl SpendAmount {
             return SpendAmount::new(amount, sign_only);
         }
         match matches.value_of(name).unwrap_or("ALL") {
-            "ALL" if !sign_only => {
-                SpendAmount::All
-            },
-            "AVAILABLE" if !sign_only => {
-                SpendAmount::Available
-            },
-            _ => panic!("Only specific amounts are supported for sign-only operations")
+            "ALL" if !sign_only => SpendAmount::All,
+            "AVAILABLE" if !sign_only => SpendAmount::Available,
+            _ => panic!("Only specific amounts are supported for sign-only operations"),
         }
-
-
     }
 }
 
@@ -131,23 +125,23 @@ where
         };
         if amount == SpendAmount::Available {
             if let Some(account) = rpc_client
-            .get_account_with_commitment(from_pubkey, commitment)?
-            .value
-        {
-            if account.owner == solana_sdk::stake::program::id() {
-                let state = stake::get_account_stake_state(
-                    rpc_client,
-                    from_pubkey,
-                    account,
-                    true,
-                    None,
-                    false,
-                )?;
-                if let Some(active_stake) = state.active_stake {
-                    from_balance = from_balance.saturating_sub(active_stake);
+                .get_account_with_commitment(from_pubkey, commitment)?
+                .value
+            {
+                if account.owner == solana_sdk::stake::program::id() {
+                    let state = stake::get_account_stake_state(
+                        rpc_client,
+                        from_pubkey,
+                        account,
+                        true,
+                        None,
+                        false,
+                    )?;
+                    if let Some(active_stake) = state.active_stake {
+                        from_balance = from_balance.saturating_sub(active_stake);
+                    }
                 }
             }
-        }
         }
         let (message, SpendAndFee { spend, fee }) = resolve_spend_message(
             rpc_client,
