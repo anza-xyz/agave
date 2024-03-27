@@ -954,7 +954,7 @@ pub fn next_versioned_entry(
     }
 }
 
-pub fn entry_thread_pool_for_tests() -> ThreadPool {
+pub fn thread_pool_for_tests() -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
         .num_threads(4)
         .thread_name(|i| format!("solEntryTest{i:02}"))
@@ -1061,7 +1061,7 @@ mod tests {
 
     #[test]
     fn test_entry_gpu_verify() {
-        let thread_pool = entry_thread_pool_for_tests();
+        let thread_pool = thread_pool_for_tests();
 
         let verify_transaction = {
             move |versioned_tx: VersionedTransaction,
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn test_transaction_signing() {
-        let thread_pool = entry_thread_pool_for_tests();
+        let thread_pool = thread_pool_for_tests();
 
         use solana_sdk::signature::Signature;
         let zero = Hash::default();
@@ -1203,7 +1203,7 @@ mod tests {
     #[test]
     fn test_verify_slice1() {
         solana_logger::setup();
-        let thread_pool = entry_thread_pool_for_tests();
+        let thread_pool = thread_pool_for_tests();
 
         let zero = Hash::default();
         let one = hash(zero.as_ref());
@@ -1225,7 +1225,7 @@ mod tests {
     #[test]
     fn test_verify_slice_with_hashes1() {
         solana_logger::setup();
-        let thread_pool = entry_thread_pool_for_tests();
+        let thread_pool = thread_pool_for_tests();
 
         let zero = Hash::default();
         let one = hash(zero.as_ref());
@@ -1252,7 +1252,7 @@ mod tests {
     #[test]
     fn test_verify_slice_with_hashes_and_transactions() {
         solana_logger::setup();
-        let thread_pool = entry_thread_pool_for_tests();
+        let thread_pool = thread_pool_for_tests();
 
         let zero = Hash::default();
         let one = hash(zero.as_ref());
@@ -1421,7 +1421,7 @@ mod tests {
 
             info!("done.. {}", time);
             let mut time = Measure::start("poh");
-            let res = entries.verify(&Hash::default(), &entry_thread_pool_for_tests());
+            let res = entries.verify(&Hash::default(), &thread_pool_for_tests());
             assert_eq!(res, !modified);
             time.stop();
             info!("{} {}", time, res);

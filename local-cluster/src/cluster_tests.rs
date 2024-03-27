@@ -180,7 +180,7 @@ pub fn send_many_transactions(
 
 pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
     let ledger = Blockstore::open(ledger_path).unwrap();
-    let thread_pool = entry::entry_thread_pool_for_tests();
+    let thread_pool = entry::thread_pool_for_tests();
 
     let zeroth_slot = ledger.get_slot_entries(0, 0).unwrap();
     let last_id = zeroth_slot.last().unwrap().hash;
