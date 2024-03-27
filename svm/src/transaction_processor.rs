@@ -107,6 +107,8 @@ pub trait TransactionProcessingCallback {
     fn get_program_match_criteria(&self, _program: &Pubkey) -> LoadedProgramMatchCriteria {
         LoadedProgramMatchCriteria::NoCriteria
     }
+
+    fn insert_old_written_account(&self, key: &Pubkey, account: &AccountSharedData);
 }
 
 #[derive(Debug)]
@@ -1018,6 +1020,8 @@ mod tests {
         fn get_feature_set(&self) -> Arc<FeatureSet> {
             self.feature_set.clone()
         }
+
+        fn insert_old_written_account(&self, _key: &Pubkey, _account: &AccountSharedData) {}
     }
 
     #[test]

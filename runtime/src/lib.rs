@@ -17,6 +17,7 @@ pub mod genesis_utils;
 pub mod inline_spl_associated_token_account;
 pub mod installed_scheduler_pool;
 pub mod loader_utils;
+mod lthash_cache;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;

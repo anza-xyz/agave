@@ -14035,3 +14035,108 @@ fn test_deploy_last_epoch_slot() {
     let result_with_feature_enabled = bank.process_transaction(&transaction);
     assert_eq!(result_with_feature_enabled, Ok(()));
 }
+
+#[test]
+fn test_lt_hash_on_banks() {
+    solana_logger::setup();
+    let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+
+    // Helper fn to compute full lattice hash from accounts db.
+    let compute_full_lt_hash = |bank: &Arc<Bank>| {
+        bank.rc
+            .accounts
+            .accounts_db
+            .calculate_accounts_lt_hash_from_index(Some(&bank.ancestors), None)
+    };
+
+    // Test genesis bank with default system accounts.
+    //
+    // Check that lattice hash is computed after `freeze`.
+    let bank0 = Bank::new_for_tests(&genesis_config);
+    let bank0 = Arc::new(bank0);
+    bank0.freeze();
+    let lt_hash0 = *bank0.accumulated_accounts_hash.read().unwrap();
+    assert!(lt_hash0.is_some());
+
+    // Test bank1 with no user account update.
+    // In this case, it is simulating a bank with no transaction (i.e. full of
+    // empty ticks).
+    //
+    // 1. Check that lattice hash for bank1 is different from bank0 due to
+    //    sysvar accounts changes.
+    // 2. Check that lattice hash computed in bank1 is the same as the full
+    //    lattice hash computed from accounts db.
+    let bank1 = Arc::new(new_from_parent(bank0.clone()));
+    bank1.freeze();
+    let lt_hash1 = *bank1.accumulated_accounts_hash.read().unwrap();
+    assert_ne!(lt_hash1.unwrap(), lt_hash0.unwrap());
+    assert_eq!(lt_hash1.unwrap(), compute_full_lt_hash(&bank1));
+
+    // Test bank2 with simulated user account update.
+    //
+    // Check that lattice hash computed in bank2 is the same as the full lattice
+    // hash computed from accounts db.
+    let bank2 = Arc::new(new_from_parent(bank1.clone()));
+    let key = solana_sdk::pubkey::new_rand();
+    let account = AccountSharedData::new(100, 0, &system_program::id());
+    bank2.store_account(&key, &account);
+    bank2.freeze();
+    let lt_hash2 = *bank2.accumulated_accounts_hash.read().unwrap();
+    assert_eq!(lt_hash2.unwrap(), compute_full_lt_hash(&bank2));
+
+    // Test bank3 with account overwrite.
+    //
+    // bank3 store the same account as bank2 did. But it stored the same
+    // `account` twice, with the final account be the same as bank2. Check that
+    // bank3's final lattice hash should be the same as `bank2`.
+    let bank3 = Arc::new(new_from_parent(bank1.clone()));
+    let account = AccountSharedData::new(200, 0, &system_program::id());
+    bank3.store_account(&key, &account);
+    let account = AccountSharedData::new(100, 0, &system_program::id());
+    bank3.store_account(&key, &account);
+    bank3.freeze();
+    let lt_hash3 = *bank3.accumulated_accounts_hash.read().unwrap();
+    assert_eq!(lt_hash3.unwrap(), compute_full_lt_hash(&bank3));
+    assert_eq!(lt_hash3.unwrap(), lt_hash2.unwrap());
+
+    // Test bank4 with multiple user account update.
+    //
+    // Check that lattice hash computed in bank4 is the same as the full lattice
+    // hash computed from accounts db.
+    let bank4 = Arc::new(new_from_parent(bank1.clone()));
+    for i in 0..10 {
+        let key = solana_sdk::pubkey::new_rand();
+        let account = AccountSharedData::new(100 * i, 0, &system_program::id());
+        bank4.store_account(&key, &account);
+    }
+    bank4.freeze();
+    let lt_hash4 = *bank4.accumulated_accounts_hash.read().unwrap();
+    assert_eq!(lt_hash4.unwrap(), compute_full_lt_hash(&bank4));
+}
+
+#[test]
+fn test_lt_hash_cache_insert() {
+    solana_logger::setup();
+    let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank0 = Bank::new_for_tests(&genesis_config);
+
+    let key = solana_sdk::pubkey::new_rand();
+    let account = AccountSharedData::new(100, 0, &system_program::id());
+    let hash = AccountLTHash::default();
+
+    // Put a hash value in the cache
+    let mut old_written_accounts = bank0.lt_hash_cache.written_accounts_before.write().unwrap();
+    old_written_accounts
+        .entry(key)
+        .or_insert(LTHashCacheValue::Hash(Box::new(hash)));
+    drop(old_written_accounts);
+
+    // Try to insert an account with the same key. The insert should fail and
+    // NOT overwrite the the existing hash value in the cache.
+    bank0.insert_old_written_account(&key, &account);
+
+    // Assert that the hash value is still in the cache.
+    let old_written_accounts = bank0.lt_hash_cache.written_accounts_before.read().unwrap();
+    let hash2 = old_written_accounts.get(&key).unwrap();
+    assert_eq!(*hash2, LTHashCacheValue::Hash(Box::new(hash)))
+}

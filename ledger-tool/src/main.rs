@@ -603,6 +603,13 @@ fn main() {
                  bank delta hash calculation",
             )
             .hidden(hidden_unless_forced());
+
+    let accounts_db_enable_accumulate_account_hash_calculation =
+        Arg::with_name("enable_accumulate_account_hash_calculation")
+            .long("enable-accumulate-account-hash-calculation")
+            .help("Enable accumulate account hash calculation")
+            .hidden(hidden_unless_forced());
+
     let account_paths_arg = Arg::with_name("account_paths")
         .long("accounts")
         .value_name("PATHS")
@@ -947,6 +954,7 @@ fn main() {
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&use_snapshot_archives_at_startup),
         )
         .subcommand(
@@ -960,6 +968,7 @@ fn main() {
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&use_snapshot_archives_at_startup),
         )
         .subcommand(
@@ -977,6 +986,7 @@ fn main() {
                 .arg(&accountsdb_skip_shrink)
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&verify_index_arg)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&ancient_append_vecs)
@@ -1096,6 +1106,7 @@ fn main() {
                 .arg(&disable_disk_index)
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
@@ -1137,6 +1148,7 @@ fn main() {
                 .arg(&disable_disk_index)
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&accountsdb_skip_shrink)
                 .arg(&ancient_append_vecs)
@@ -1354,6 +1366,7 @@ fn main() {
                 .arg(&disable_disk_index)
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
@@ -1415,6 +1428,7 @@ fn main() {
                 .arg(&disable_disk_index)
                 .arg(&accountsdb_verify_refcounts)
                 .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
+                .arg(&accounts_db_enable_accumulate_account_hash_calculation)
                 .arg(&accounts_db_skip_initial_hash_calc_arg)
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
