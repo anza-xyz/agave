@@ -156,7 +156,7 @@ impl StakeSubCommands for App<'_, '_> {
                         .index(2)
                         .value_name("AMOUNT")
                         .takes_value(true)
-                        .validator(is_amount_or_all_or_available)
+                        .validator(is_amount_or_all)
                         .required(true)
                         .help(
                             "The amount to send to the stake account, in SOL; accepts keyword ALL",
@@ -249,7 +249,7 @@ impl StakeSubCommands for App<'_, '_> {
                         .index(2)
                         .value_name("AMOUNT")
                         .takes_value(true)
-                        .validator(is_amount_or_all_or_available)
+                        .validator(is_amount_or_all)
                         .required(true)
                         .help(
                             "The amount to send to the stake account, in SOL; accepts keyword ALL",
