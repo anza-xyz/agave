@@ -226,6 +226,7 @@ dependencies = [
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
+ "solana-inline-spl",
  "solana-ledger",
  "solana-logger",
  "solana-metrics",
@@ -5364,6 +5365,7 @@ dependencies = [
  "solana-core",
  "solana-faucet",
  "solana-gossip",
+ "solana-inline-spl",
  "solana-local-cluster",
  "solana-logger",
  "solana-measure",
@@ -5417,6 +5419,7 @@ dependencies = [
  "solana-bucket-map",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-inline-spl",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
@@ -6293,6 +6296,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-inline-spl"
+version = "2.0.0"
+dependencies = [
+ "bytemuck",
+ "rustc_version 0.4.0",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-keygen"
 version = "2.0.0"
 dependencies = [
@@ -6724,6 +6736,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-banks-server",
  "solana-bpf-loader-program",
+ "solana-inline-spl",
  "solana-logger",
  "solana-program-runtime",
  "solana-runtime",
@@ -6845,6 +6858,7 @@ dependencies = [
  "solana-entry",
  "solana-faucet",
  "solana-gossip",
+ "solana-inline-spl",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -7023,6 +7037,7 @@ dependencies = [
  "solana-cost-model",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-inline-spl",
  "solana-loader-v4-program",
  "solana-logger",
  "solana-measure",
