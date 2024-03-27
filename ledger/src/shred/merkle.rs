@@ -193,7 +193,7 @@ impl ShredData {
         Self::get_chained_merkle_root_offset(proof_size, resigned)
     }
 
-    pub(crate) fn get_chained_merkle_root_offset(
+    pub(super) fn get_chained_merkle_root_offset(
         proof_size: u8,
         resigned: bool,
     ) -> Result<usize, Error> {
@@ -379,7 +379,7 @@ impl ShredCode {
         Self::get_chained_merkle_root_offset(proof_size, resigned)
     }
 
-    pub(crate) fn get_chained_merkle_root_offset(
+    pub(super) fn get_chained_merkle_root_offset(
         proof_size: u8,
         resigned: bool,
     ) -> Result<usize, Error> {
