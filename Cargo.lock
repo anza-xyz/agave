@@ -6952,7 +6952,6 @@ dependencies = [
  "libc",
  "libsecp256k1",
  "log",
- "lru",
  "lz4",
  "memmap2",
  "memoffset 0.9.0",
