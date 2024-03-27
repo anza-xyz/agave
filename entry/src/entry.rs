@@ -955,6 +955,10 @@ pub fn next_versioned_entry(
 }
 
 pub fn thread_pool_for_tests() -> ThreadPool {
+    // Allocate fewer threads for unit tests
+    // Unit tests typically aren't creating massive blocks to verify, and
+    // multiple tests could be running in parallel so any further parallelism
+    // will do more harm than good
     rayon::ThreadPoolBuilder::new()
         .num_threads(4)
         .thread_name(|i| format!("solEntryTest{i:02}"))
