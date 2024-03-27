@@ -223,6 +223,29 @@ impl<'a> Iterator for AccountsFileIter<'a> {
     }
 }
 
+/// A trait that creates AccountsFile instance with the specified format.
+pub trait AccountsFileProvider {
+    fn new_writable(path: impl Into<PathBuf>, file_size: u64) -> AccountsFile;
+}
+
+/// A struct that creates AccountsFile instance under AppendVec format.
+#[derive(Debug)]
+pub struct AppendVecProvider;
+impl AccountsFileProvider for AppendVecProvider {
+    fn new_writable(path: impl Into<PathBuf>, file_size: u64) -> AccountsFile {
+        AccountsFile::AppendVec(AppendVec::new(path, true, file_size as usize))
+    }
+}
+
+/// A struct that creates AccountsFile instance under HotStorage format.
+#[derive(Debug)]
+pub struct HotStorageProvider;
+impl AccountsFileProvider for HotStorageProvider {
+    fn new_writable(path: impl Into<PathBuf>, _file_size: u64) -> AccountsFile {
+        AccountsFile::TieredStorage(TieredStorage::new_writable(path))
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use crate::accounts_file::AccountsFile;

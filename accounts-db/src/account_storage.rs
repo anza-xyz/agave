@@ -276,7 +276,7 @@ impl Default for AccountStorageStatus {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use {super::*, std::path::Path};
+    use {super::*, crate::accounts_file::AppendVecProvider, std::path::Path};
 
     #[test]
     fn test_shrink_in_progress() {
@@ -292,13 +292,13 @@ pub(crate) mod tests {
         let store_file_size = 4000;
         let store_file_size2 = store_file_size * 2;
         // 2 append vecs with same id, but different sizes
-        let entry = Arc::new(AccountStorageEntry::new(
+        let entry = Arc::new(AccountStorageEntry::new::<AppendVecProvider>(
             common_store_path,
             slot,
             id,
             store_file_size,
         ));
-        let entry2 = Arc::new(AccountStorageEntry::new(
+        let entry2 = Arc::new(AccountStorageEntry::new::<AppendVecProvider>(
             common_store_path,
             slot,
             id,
@@ -348,7 +348,7 @@ pub(crate) mod tests {
             // add a map store
             let common_store_path = Path::new("");
             let store_file_size = 4000;
-            Arc::new(AccountStorageEntry::new(
+            Arc::new(AccountStorageEntry::new::<AppendVecProvider>(
                 common_store_path,
                 slot,
                 id,
