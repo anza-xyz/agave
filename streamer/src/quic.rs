@@ -163,6 +163,7 @@ pub struct StreamStats {
     pub(crate) connection_setup_error_locally_closed: AtomicUsize,
     pub(crate) connection_removed: AtomicUsize,
     pub(crate) connection_remove_failed: AtomicUsize,
+    pub(crate) connection_throttled: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
     pub(crate) process_sampled_packets_us_hist: Mutex<histogram::Histogram>,
     pub(crate) perf_track_overhead_us: AtomicU64,
@@ -372,6 +373,12 @@ impl StreamStats {
             (
                 "connection_setup_error_locally_closed",
                 self.connection_setup_error_locally_closed
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_throttled",
+                self.connection_throttled
                     .swap(0, Ordering::Relaxed),
                 i64
             ),

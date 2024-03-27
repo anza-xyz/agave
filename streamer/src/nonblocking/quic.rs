@@ -195,6 +195,7 @@ async fn run_server(
             debug!("Got a connection {:?}", remote_address);
             if !rate_limiter.check(&remote_address.ip()) {
                 debug!("Reject attacker connection from {:?}", remote_address);
+                stats.connection_throttled.fetch_add(1, Ordering::Relaxed);
                 connection.reject();
                 continue;
             }
