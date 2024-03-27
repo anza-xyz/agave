@@ -544,12 +544,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         return ret;
                     }
                 }
-                // Figure out which program needs to be loaded next.
+                // Figure out which programs are already loaded and which aren't.
                 let program_to_load = program_cache.extract(
                     &mut missing_programs,
                     loaded_programs_for_txs.as_mut().unwrap(),
                     is_first_round,
                 );
+                if let Some((key, _usage_counter)) = &program_to_load {
+                    // Tell the others that we selected this loading task.
+                    program_cache.begin_cooperative_loading_task(self.slot, *key);
+                }
                 let task_waiter = Arc::clone(&program_cache.loading_task_waiter);
                 (program_to_load, task_waiter.cookie(), task_waiter)
                 // Unlock the global cache again.
