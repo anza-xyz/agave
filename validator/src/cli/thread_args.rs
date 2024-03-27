@@ -110,6 +110,8 @@ impl ThreadArg for ReplayTransactionsThreadsArg {
     const HELP: &'static str = "Number of threads to use for transaction replay";
 
     fn default() -> usize {
-        get_max_thread_count()
+        // Limit to 16 threads, larger values have empirically been found to
+        // not offer any benefit on machines with more cores
+        get_max_thread_count().min(16)
     }
 }
