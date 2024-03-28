@@ -14,6 +14,7 @@ use {
     anyhow::Result,
     log::*,
     prost::Message,
+    solana_entry::entry::VerifyRecyclers,
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         restart_crds_values::RestartLastVotedForkSlots,
@@ -21,11 +22,12 @@ use {
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::Blockstore,
-        blockstore_processor::{process_blockstore_from_root, ProcessOptions},
+        blockstore_processor::{process_single_slot, ConfirmationProgress, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_program::{clock::Slot, hash::Hash},
-    solana_runtime::{accounts_background_service::AbsRequestSender, bank_forks::BankForks},
+    solana_program_runtime::timings::ExecuteTimings,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::timing::timestamp,
     solana_vote_program::vote_state::VoteTransaction,
     std::{
@@ -306,54 +308,101 @@ pub(crate) fn find_heaviest_fork(
             return Err(WenRestartError::BlockNotFound(*slot).into());
         }
     }
-    // Now find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
-    let mut heaviest_fork_bankhash;
-    {
-        heaviest_fork_bankhash = bank_forks
-            .read()
-            .unwrap()
-            .get(heaviest_fork_slot)
-            .map(|bank| bank.hash());
-    }
-    if heaviest_fork_bankhash.is_none() {
-        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
-        let opts = ProcessOptions {
-            skip_bankforks_checks_for_wen_restart: true,
-            ..ProcessOptions::default()
-        };
-        process_blockstore_from_root(
-            &blockstore,
-            &bank_forks,
-            &leader_schedule_cache,
-            &opts,
-            None,
-            None,
-            None,
-            &AbsRequestSender::default(),
-        )?;
-        // If everything works okay, we should have all the banks in slots frozen. Report error if any
-        // of them is missing.
-        {
-            let my_bank_forks = bank_forks.read().unwrap();
-            for slot in slots {
-                if my_bank_forks.get(slot).is_none() {
-                    return Err(WenRestartError::BlockNotFrozenAfterReplay(slot).into());
-                }
-            }
-            heaviest_fork_bankhash = my_bank_forks
-                .get(heaviest_fork_slot)
-                .map(|bank| bank.hash());
-        }
-    }
+    let heaviest_fork_bankhash = find_bankhash_of_heaviest_fork(
+        heaviest_fork_slot,
+        slots,
+        blockstore.clone(),
+        bank_forks.clone(),
+        root_bank,
+        &exit,
+    )?;
     info!(
         "Heaviest fork found: slot: {}, bankhash: {:?}",
         heaviest_fork_slot, heaviest_fork_bankhash
     );
-    if let Some(heaviest_fork_bankhash) = heaviest_fork_bankhash {
-        Ok((heaviest_fork_slot, heaviest_fork_bankhash))
-    } else {
-        Err(WenRestartError::BlockNotFound(heaviest_fork_slot).into())
+    Ok((heaviest_fork_slot, heaviest_fork_bankhash))
+}
+
+fn find_bankhash_of_heaviest_fork(
+    heaviest_fork_slot: Slot,
+    slots: Vec<Slot>,
+    blockstore: Arc<Blockstore>,
+    bank_forks: Arc<RwLock<BankForks>>,
+    root_bank: Arc<Bank>,
+    exit: &Arc<AtomicBool>,
+) -> Result<Hash> {
+    // Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
+    let heaviest_fork_bankhash = bank_forks
+        .read()
+        .unwrap()
+        .get(heaviest_fork_slot)
+        .map(|bank| bank.hash());
+    if let Some(hash) = heaviest_fork_bankhash {
+        return Ok(hash);
     }
+
+    let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
+    let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .thread_name(|i| format!("solReplayTx{i:02}"))
+        .build()
+        .expect("new rayon threadpool");
+    let recyclers = VerifyRecyclers::default();
+    let mut timing = ExecuteTimings::default();
+    let opts = ProcessOptions::default();
+    let mut parent_bank = root_bank;
+    // Grab a big lock because we are the only person touching bankforks now.
+    let mut my_bankforks = bank_forks.write().unwrap();
+    for slot in slots {
+        if exit.load(Ordering::Relaxed) {
+            return Err(WenRestartError::Exiting.into());
+        }
+        let bank = match my_bankforks.get(slot) {
+            Some(cur_bank) => cur_bank,
+            None => {
+                let new_bank = Bank::new_from_parent(
+                    parent_bank.clone(),
+                    &leader_schedule_cache
+                        .slot_leader_at(slot, Some(&parent_bank))
+                        .unwrap(),
+                    slot,
+                );
+                let bank_with_scheduler = my_bankforks.insert_from_ledger(new_bank);
+                let mut progress = ConfirmationProgress::new(parent_bank.last_blockhash());
+                if process_single_slot(
+                    &blockstore,
+                    &bank_with_scheduler,
+                    &replay_tx_thread_pool,
+                    &opts,
+                    &recyclers,
+                    &mut progress,
+                    None,
+                    None,
+                    None,
+                    None,
+                    &mut timing,
+                )
+                .is_err()
+                {
+                    return Err(WenRestartError::BlockNotFrozenAfterReplay(slot).into());
+                }
+                my_bankforks.get(slot).unwrap()
+            }
+        };
+        if !bank.is_frozen() {
+            return Err(WenRestartError::BlockNotFrozenAfterReplay(slot).into());
+        }
+        if bank.parent_slot() != parent_bank.slot() {
+            return Err(WenRestartError::BlockNotLinkedToExpectedParent(
+                slot,
+                Some(bank.parent_slot()),
+                parent_bank.slot(),
+            )
+            .into());
+        }
+        parent_bank = bank;
+    }
+    Ok(parent_bank.hash())
 }
 
 pub fn wait_for_wen_restart(

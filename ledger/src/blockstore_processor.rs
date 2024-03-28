@@ -717,10 +717,6 @@ pub struct ProcessOptions {
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
-    // Normally when we process blocks in blockstore we start from a snapshot where the bankforks only holds
-    // one bank. But during wen_restart we may need to replay the new blocks repaired, and the bankforks may
-    // hold any number of frozen banks.
-    pub skip_bankforks_checks_for_wen_restart: bool,
 }
 
 pub fn test_process_blockstore(
@@ -852,9 +848,7 @@ pub fn process_blockstore_from_root(
 ) -> result::Result<(), BlockstoreProcessorError> {
     let (start_slot, start_slot_hash) = {
         // Starting slot must be a root, and thus has no parents
-        if !opts.skip_bankforks_checks_for_wen_restart {
-            assert_eq!(bank_forks.read().unwrap().banks().len(), 1);
-        }
+        assert_eq!(bank_forks.read().unwrap().banks().len(), 1);
         let bank = bank_forks.read().unwrap().root_bank();
         assert!(bank.parent().is_none());
         (bank.slot(), bank.hash())
@@ -1802,7 +1796,7 @@ fn supermajority_root_from_vote_accounts(
 // Processes and replays the contents of a single slot, returns Error
 // if failed to play the slot
 #[allow(clippy::too_many_arguments)]
-fn process_single_slot(
+pub fn process_single_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
