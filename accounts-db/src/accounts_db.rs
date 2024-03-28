@@ -6467,13 +6467,34 @@ impl AccountsDb {
         mut write_version_producer: P,
         store_to: &StoreTo,
         transactions: Option<&[Option<&'a SanitizedTransaction>]>,
+        remove_from_read_cache: bool,
     ) -> Vec<AccountInfo> {
         let mut calc_stored_meta_time = Measure::start("calc_stored_meta");
         let slot = accounts.target_slot();
-        (0..accounts.len()).for_each(|index| {
-            let pubkey = accounts.pubkey(index);
-            self.read_only_accounts_cache.remove(*pubkey, slot);
-        });
+        if remove_from_read_cache {
+            (0..accounts.len()).for_each(|index| {
+                let pubkey = accounts.pubkey(index);
+                self.read_only_accounts_cache.remove(*pubkey, slot);
+            });
+        } else {
+            // Debugging assertion. Will remove once we are confident...
+            (0..accounts.len()).for_each(|index| {
+                let pubkey = accounts.pubkey(index);
+                let cached = self.read_only_accounts_cache.load(*pubkey, slot);
+                if let Some(cached_account) = cached {
+                    let account = accounts.account(index).to_account_shared_data();
+                    if account != cached_account {
+                        panic!(
+                            "{:?} to store is different from read_cache \n >{:?} \n <{:?}",
+                            (pubkey, slot),
+                            account,
+                            cached_account
+                        );
+                    }
+                }
+            });
+        }
+
         calc_stored_meta_time.stop();
         self.stats
             .calc_stored_meta
@@ -8409,6 +8430,7 @@ impl AccountsDb {
             transactions,
             reclaim,
             update_index_thread_selection,
+            true,
         );
     }
 
@@ -8433,9 +8455,11 @@ impl AccountsDb {
             None,
             reclaim,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn store_accounts_custom<'a, T: ReadableAccount + Sync + ZeroLamport + 'a>(
         &self,
         accounts: impl StorableAccounts<'a, T>,
@@ -8446,6 +8470,7 @@ impl AccountsDb {
         transactions: Option<&[Option<&SanitizedTransaction>]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        remove_from_read_cache: bool,
     ) -> StoreAccountsTiming {
         let write_version_producer: Box<dyn Iterator<Item = u64>> = write_version_producer
             .unwrap_or_else(|| {
@@ -8467,6 +8492,7 @@ impl AccountsDb {
             write_version_producer,
             store_to,
             transactions,
+            remove_from_read_cache,
         );
         store_accounts_time.stop();
         self.stats
