@@ -153,6 +153,7 @@ dependencies = [
  "itertools",
  "log",
  "num_cpus",
+ "rayon",
  "regex",
  "serde",
  "serde_json",
@@ -6571,6 +6572,7 @@ dependencies = [
  "solana-logger",
  "solana-measure",
  "solana-perf",
+ "solana-rayon-threadlimit",
  "solana-sdk",
  "solana-version",
 ]
