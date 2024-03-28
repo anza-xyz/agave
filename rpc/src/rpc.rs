@@ -3645,8 +3645,11 @@ pub mod rpc_full {
             let (wire_transaction, unsanitized_tx) =
                 decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
-            let preflight_commitment =
-                preflight_commitment.map(|commitment| CommitmentConfig { commitment });
+            let preflight_commitment = if skip_preflight {
+                Some(CommitmentConfig::processed())
+            } else {
+                preflight_commitment.map(|commitment| CommitmentConfig { commitment })
+            };
             let preflight_bank = &*meta.get_bank_with_config(RpcContextConfig {
                 commitment: preflight_commitment,
                 min_context_slot,
