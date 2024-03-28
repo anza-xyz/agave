@@ -338,7 +338,7 @@ fn test_stake_account_lifetime() {
             },
             vote_balance,
             vote_instruction::CreateVoteAccountConfig {
-                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                space: VoteState::size_of() as u64,
                 ..vote_instruction::CreateVoteAccountConfig::default()
             },
         ),
@@ -613,7 +613,7 @@ fn test_create_stake_account_from_seed() {
             },
             10,
             vote_instruction::CreateVoteAccountConfig {
-                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                space: VoteState::size_of() as u64,
                 ..vote_instruction::CreateVoteAccountConfig::default()
             },
         ),

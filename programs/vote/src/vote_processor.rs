@@ -1758,7 +1758,10 @@ mod tests {
                 commission: 0,
             },
             101,
-            CreateVoteAccountConfig::default(),
+            CreateVoteAccountConfig {
+                space: vote_state::VoteState1_14_11::size_of() as u64,
+                with_seed: None,
+            },
         );
         // grab the `space` value from SystemInstruction::CreateAccount by directly indexing, for
         // expediency
@@ -1773,15 +1776,15 @@ mod tests {
             (sysvar::rent::id(), create_default_rent_account()),
         ];
 
-        // should succeed when vote_state_add_vote_latency is disabled
+        // should fail
         process_instruction_disabled_features(
             &instructions[1].data,
             transaction_accounts.clone(),
             instructions[1].accounts.clone(),
-            Ok(()),
+            Err(InstructionError::InvalidAccountData),
         );
 
-        // should fail, if vote_state_add_vote_latency is enabled
+        // should fail
         process_instruction(
             &instructions[1].data,
             transaction_accounts,
@@ -1822,15 +1825,15 @@ mod tests {
             (sysvar::rent::id(), create_default_rent_account()),
         ];
 
-        // should fail, if vote_state_add_vote_latency is disabled
+        // succeeds
         process_instruction_disabled_features(
             &instructions[1].data,
             transaction_accounts.clone(),
             instructions[1].accounts.clone(),
-            Err(InstructionError::InvalidAccountData),
+            Ok(()),
         );
 
-        // succeeds, since vote_state_add_vote_latency is enabled
+        // succeeds
         process_instruction(
             &instructions[1].data,
             transaction_accounts,

@@ -31,14 +31,14 @@ use {
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
-        account::Account, commitment_config::CommitmentConfig, feature, message::Message,
+        account::Account, commitment_config::CommitmentConfig, message::Message,
         native_token::lamports_to_sol, pubkey::Pubkey, system_instruction::SystemError,
         transaction::Transaction,
     },
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteState, VoteStateVersions},
+        vote_state::{VoteAuthorize, VoteInit, VoteState},
     },
     std::rc::Rc,
 };
@@ -821,12 +821,7 @@ pub fn process_create_vote_account(
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
 
-    let is_feature_active = (!sign_only)
-        .then(solana_sdk::feature_set::vote_state_add_vote_latency::id)
-        .and_then(|feature_address| rpc_client.get_account(&feature_address).ok())
-        .and_then(|account| feature::from_account(&account))
-        .map_or(false, |feature| feature.activated_at.is_some());
-    let space = VoteStateVersions::vote_state_size_of(is_feature_active) as u64;
+    let space = VoteState::size_of() as u64;
 
     let build_message = |lamports| {
         let vote_init = VoteInit {

@@ -162,33 +162,22 @@ pub fn to<T: WritableAccount>(versioned: &VoteStateVersions, account: &mut T) ->
 fn set_vote_account_state(
     vote_account: &mut BorrowedAccount,
     vote_state: VoteState,
-    feature_set: &FeatureSet,
+    _feature_set: &FeatureSet,
 ) -> Result<(), InstructionError> {
-    // Only if vote_state_add_vote_latency feature is enabled should the new version of vote state be stored
-    if feature_set.is_active(&feature_set::vote_state_add_vote_latency::id()) {
-        // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
-        // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
-        if (vote_account.get_data().len() < VoteStateVersions::vote_state_size_of(true))
-            && (!vote_account
-                .is_rent_exempt_at_data_length(VoteStateVersions::vote_state_size_of(true))
-                || vote_account
-                    .set_data_length(VoteStateVersions::vote_state_size_of(true))
-                    .is_err())
-        {
-            // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
-            // resized for other reasons.  So store the V1_14_11 version.
-            return vote_account.set_state(&VoteStateVersions::V1_14_11(Box::new(
-                VoteState1_14_11::from(vote_state),
-            )));
-        }
-        // Vote account is large enough to store the newest version of vote state
-        vote_account.set_state(&VoteStateVersions::new_current(vote_state))
-    // Else when the vote_state_add_vote_latency feature is not enabled, then the V1_14_11 version is stored
-    } else {
-        vote_account.set_state(&VoteStateVersions::V1_14_11(Box::new(
+    // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
+    // The realloc can only proceed if the vote account has balance sufficient for rent exemption at the new size.
+    if (vote_account.get_data().len() < VoteState::size_of())
+        && (!vote_account.is_rent_exempt_at_data_length(VoteState::size_of())
+            || vote_account.set_data_length(VoteState::size_of()).is_err())
+    {
+        // Account cannot be resized to the size of a vote state as it will not be rent exempt, or failed to be
+        // resized for other reasons.  So store the V1_14_11 version.
+        return vote_account.set_state(&VoteStateVersions::V1_14_11(Box::new(
             VoteState1_14_11::from(vote_state),
-        )))
+        )));
     }
+    // Vote account is large enough to store the newest version of vote state
+    vote_account.set_state(&VoteStateVersions::new_current(vote_state))
 }
 
 fn check_update_vote_state_slots_are_valid(
@@ -1055,11 +1044,7 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     clock: &Clock,
     feature_set: &FeatureSet,
 ) -> Result<(), InstructionError> {
-    if vote_account.get_data().len()
-        != VoteStateVersions::vote_state_size_of(
-            feature_set.is_active(&feature_set::vote_state_add_vote_latency::id()),
-        )
-    {
+    if vote_account.get_data().len() != VoteState::size_of() {
         return Err(InstructionError::InvalidAccountData);
     }
     let versioned = vote_account.get_state::<VoteStateVersions>()?;
@@ -1255,7 +1240,7 @@ mod tests {
 
     #[test]
     fn test_vote_state_upgrade_from_1_14_11() {
-        let mut feature_set = FeatureSet::default();
+        let feature_set = FeatureSet::default();
 
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
         // required lamports for rent exempt minimum at that size
@@ -1368,7 +1353,6 @@ mod tests {
 
         // Test that when the feature is enabled, if the vote account does not have sufficient lamports to realloc,
         // the old vote state is written out
-        feature_set.activate(&feature_set::vote_state_add_vote_latency::id(), 1);
         assert_eq!(
             set_vote_account_state(&mut borrowed_account, vote_state.clone(), &feature_set),
             Ok(())
