@@ -17,10 +17,10 @@ use {
     },
     log::*,
     memmap2::MmapMut,
-    solana_sdk::hash::Hash,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         clock::Slot,
+        hash::Hash,
         pubkey::Pubkey,
         stake_history::Epoch,
     },
