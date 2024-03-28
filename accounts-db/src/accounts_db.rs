@@ -5976,11 +5976,6 @@ impl AccountsDb {
         AccountHash(Hash::new_from_array(hasher.finalize().into()))
     }
 
-    fn bulk_assign_write_version(&self, count: usize) -> StoredMetaWriteVersion {
-        self.write_version
-            .fetch_add(count as StoredMetaWriteVersion, Ordering::AcqRel)
-    }
-
     fn write_accounts_to_storage<
         'a,
         'b,
@@ -8446,15 +8441,8 @@ impl AccountsDb {
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
-        let write_version_producer: Box<dyn Iterator<Item = u64>> = write_version_producer
-            .unwrap_or_else(|| {
-                let mut current_version = self.bulk_assign_write_version(accounts.len());
-                Box::new(std::iter::from_fn(move || {
-                    let ret = current_version;
-                    current_version += 1;
-                    Some(ret)
-                }))
-            });
+        let write_version_producer: Box<dyn Iterator<Item = u64>> =
+            write_version_producer.unwrap_or_else(|| Box::new(std::iter::repeat(0)));
 
         self.stats
             .store_num_accounts
