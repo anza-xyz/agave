@@ -3665,7 +3665,7 @@ pub mod rpc_full {
             let durable_nonce_info = transaction
                 .get_durable_nonce()
                 .map(|&pubkey| (pubkey, *transaction.message().recent_blockhash()));
-            if durable_nonce_info.is_some() {
+            if durable_nonce_info.is_some() || (skip_preflight && last_valid_block_height == 0) {
                 // While it uses a defined constant, this last_valid_block_height value is chosen arbitrarily.
                 // It provides a fallback timeout for durable-nonce transaction retries in case of
                 // malicious packing of the retry queue. Durable-nonce transactions are otherwise
