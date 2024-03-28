@@ -18,7 +18,7 @@ use {
     },
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         ops::Add,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
@@ -227,23 +227,25 @@ impl Stakes<StakeAccount> {
     /// cached.
     pub(crate) fn new<F>(stakes: Stakes<Delegation>, get_account: F) -> Result<Self, Error>
     where
-        F: Fn(&Pubkey) -> Option<AccountSharedData>,
+        F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
-        let mut voter_pubkeys = HashSet::new();
-        let stake_delegations = stakes
-            .stake_delegations
-            .into_iter()
-            .map(|(pubkey, delegation)| {
+        // im::HashMap doesn't support rayon so we manually build a temporary vector. Note this is
+        // what std HashMap::par_iter() does internally too.
+        let stake_delegations_vec = stakes.stake_delegations.into_iter().collect::<Vec<_>>();
+        let stake_delegations = stake_delegations_vec
+            .into_par_iter()
+            // We use fold/reduce to aggregate the results, which does a bit more work than calling
+            // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
+            // but it does it in background threads, so effectively it's faster.
+            .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
                 let Some(stake_account) = get_account(&pubkey) else {
                     return Err(Error::StakeAccountNotFound(pubkey));
                 };
 
-                // Assert that all valid vote-accounts referenced in
-                // stake delegations are already cached.
+                // Assert that all valid vote-accounts referenced in stake delegations are already
+                // contained in `stakes.vote_account`.
                 let voter_pubkey = &delegation.voter_pubkey;
-                if stakes.vote_accounts.get(voter_pubkey).is_none()
-                    && voter_pubkeys.insert(*voter_pubkey)
-                {
+                if stakes.vote_accounts.get(voter_pubkey).is_none() {
                     if let Some(account) = get_account(voter_pubkey) {
                         if VoteStateVersions::is_correct_size_and_initialized(account.data())
                             && VoteAccount::try_from(account.clone()).is_ok()
@@ -258,13 +260,18 @@ impl Stakes<StakeAccount> {
                 // Sanity check that the delegation is consistent with what is
                 // stored in the account.
                 if stake_account.delegation() == delegation {
-                    Ok((pubkey, stake_account))
+                    map.insert(pubkey, stake_account);
+                    Ok(map)
                 } else {
                     Err(Error::InvalidDelegation(pubkey))
                 }
             })
-            .collect::<Result<_, _>>()?;
+            .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;
+
         // Assert that cached vote accounts are consistent with accounts-db.
+        //
+        // This currently includes ~5500 accounts, parallelizing brings minor
+        // (sub 2s) improvements.
         for (pubkey, vote_account) in stakes.vote_accounts.iter() {
             let Some(account) = get_account(pubkey) else {
                 return Err(Error::VoteAccountNotFound(*pubkey));
