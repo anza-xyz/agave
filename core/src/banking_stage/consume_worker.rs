@@ -5,6 +5,7 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
+    solana_measure::measure_us,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
     solana_sdk::timing::AtomicInterval,
@@ -66,15 +67,33 @@ impl ConsumeWorker {
     }
 
     fn consume_loop(&self, work: ConsumeWork) -> Result<(), ConsumeWorkerError> {
-        let Some(mut bank) = self.get_consume_bank() else {
+        let (maybe_consume_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+        let Some(mut bank) = maybe_consume_bank else {
+            self.metrics
+                .timing_metrics
+                .failed_bank_waiting_us
+                .fetch_add(get_bank_us, Ordering::Relaxed);
             return self.retry_drain(work);
         };
+        self.metrics
+            .timing_metrics
+            .successful_bank_waiting_us
+            .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
             if bank.is_complete() {
-                if let Some(new_bank) = self.get_consume_bank() {
+                let (maybe_new_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+                if let Some(new_bank) = maybe_new_bank {
+                    self.metrics
+                        .timing_metrics
+                        .successful_bank_waiting_us
+                        .fetch_add(get_bank_us, Ordering::Relaxed);
                     bank = new_bank;
                 } else {
+                    self.metrics
+                        .timing_metrics
+                        .failed_bank_waiting_us
+                        .fetch_add(get_bank_us, Ordering::Relaxed);
                     return self.retry_drain(work);
                 }
             }
@@ -472,6 +491,8 @@ struct ConsumeWorkerTimingMetrics {
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
+    successful_bank_waiting_us: AtomicU64,
+    failed_bank_waiting_us: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
@@ -509,6 +530,16 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "find_and_send_votes_us",
                 self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "successful_bank_waiting_us",
+                self.successful_bank_waiting_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "failed_bank_waiting_us",
+                self.failed_bank_waiting_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
