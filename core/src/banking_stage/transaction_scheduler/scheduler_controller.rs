@@ -56,14 +56,14 @@ pub(crate) struct SchedulerController {
     container: TransactionStateContainer,
     /// State for scheduling and communicating with worker threads.
     scheduler: PrioGraphScheduler,
+    /// Metrics tracking time for leader bank detection.
+    leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
     /// over an interval and during a leader slot.
     count_metrics: SchedulerCountMetrics,
     /// Metrics tracking time spent in difference code sections
     /// over an interval and during a leader slot.
     timing_metrics: SchedulerTimingMetrics,
-    /// Metrics tracking time for leader bank detection.
-    leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
 }
@@ -83,9 +83,9 @@ impl SchedulerController {
             transaction_id_generator: TransactionIdGenerator::default(),
             container: TransactionStateContainer::with_capacity(TOTAL_BUFFERED_PACKETS),
             scheduler,
+            leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
-            leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             worker_metrics,
         }
     }
