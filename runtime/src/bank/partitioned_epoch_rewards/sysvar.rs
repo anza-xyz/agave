@@ -74,6 +74,20 @@ impl Bank {
 
         self.log_epoch_rewards_sysvar("update");
     }
+
+    pub(in crate::bank) fn destroy_epoch_rewards_sysvar(&self) {
+        if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
+            if account.lamports() > 0 {
+                info!(
+                    "burning {} extra lamports in EpochRewards sysvar account at slot {}",
+                    account.lamports(),
+                    self.slot()
+                );
+                self.log_epoch_rewards_sysvar("burn");
+                self.burn_and_purge_account(&sysvar::epoch_rewards::id(), account);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
