@@ -11,7 +11,7 @@ use {
 
 impl Bank {
     /// Helper fn to log epoch_rewards sysvar
-    pub(in crate::bank) fn log_epoch_rewards_sysvar(&self, prefix: &str) {
+    fn log_epoch_rewards_sysvar(&self, prefix: &str) {
         if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
             let epoch_rewards: sysvar::epoch_rewards::EpochRewards =
                 from_account(&account).unwrap();
