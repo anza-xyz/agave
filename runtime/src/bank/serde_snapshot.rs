@@ -3,8 +3,8 @@ mod tests {
     use {
         crate::{
             bank::{
-                epoch_accounts_hash_utils, test_utils as bank_test_utils, Bank, EpochRewardStatus,
-                StartBlockHeightAndRewards,
+                epoch_accounts_hash_utils, partitioned_epoch_rewards::StartBlockHeightAndRewards,
+                test_utils as bank_test_utils, Bank, EpochRewardStatus,
             },
             genesis_utils::activate_all_features,
             serde_snapshot::{
