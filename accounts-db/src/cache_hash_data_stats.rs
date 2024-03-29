@@ -1,6 +1,7 @@
 //! Cached data for hashing accounts
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+// trigger ci
 #[derive(Default, Debug)]
 pub struct CacheHashDataStats {
     pub cache_file_size: AtomicUsize,
