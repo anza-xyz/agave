@@ -234,24 +234,6 @@ mod tests {
         assert!(bank.is_partitioned_rewards_feature_enabled());
     }
 
-    #[test]
-    fn test_deactivate_epoch_reward_status() {
-        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-
-        let expected_num = 100;
-
-        let stake_rewards = (0..expected_num)
-            .map(|_| StakeReward::new_random())
-            .collect::<Vec<_>>();
-
-        bank.set_epoch_reward_status_active(vec![stake_rewards]);
-
-        assert!(bank.get_reward_interval() == RewardInterval::InsideInterval);
-        bank.deactivate_epoch_reward_status();
-        assert!(bank.get_reward_interval() == RewardInterval::OutsideInterval);
-    }
-
     /// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during small epoch
     /// The num_credit_blocks should be cap to 10% of the total number of blocks in the epoch.
     #[test]

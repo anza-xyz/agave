@@ -1477,17 +1477,6 @@ impl Bank {
         );
     }
 
-    /// partitioned reward distribution is complete.
-    /// So, deactivate the epoch rewards sysvar.
-    fn deactivate_epoch_reward_status(&mut self) {
-        assert!(matches!(
-            self.epoch_reward_status,
-            EpochRewardStatus::Active(_)
-        ));
-        self.epoch_reward_status = EpochRewardStatus::Inactive;
-        self.destroy_epoch_rewards_sysvar();
-    }
-
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     fn begin_partitioned_rewards(
@@ -1561,7 +1550,12 @@ impl Bank {
                 ("start_block_height", start_block_height, i64),
             );
 
-            self.deactivate_epoch_reward_status();
+            assert!(matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Active(_)
+            ));
+            self.epoch_reward_status = EpochRewardStatus::Inactive;
+            self.destroy_epoch_rewards_sysvar();
         }
     }
 
