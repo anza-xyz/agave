@@ -28,6 +28,11 @@ struct AccountReadLocks {
     lock_counts: [LockCount; MAX_THREADS],
 }
 
+/// Account locks.
+/// Write Locks - only one thread can hold a write lock at a time.
+///     Contains how many write locks are held by the thread.
+/// Read Locks - multiple threads can hold a read lock at a time.
+///     Contains thread-set for easily checking which threads are scheduled.
 #[derive(Default)]
 struct AccountLocks {
     pub write_locks: Option<AccountWriteLocks>,
@@ -41,11 +46,8 @@ struct AccountLocks {
 pub(crate) struct ThreadAwareAccountLocks {
     /// Number of threads.
     num_threads: usize, // 0..MAX_THREADS
-    /// Account locks.
-    /// Write Locks - only one thread can hold a write lock at a time.
-    ///     Contains how many write locks are held by the thread.
-    /// Read Locks - multiple threads can hold a read lock at a time.
-    ///     Contains thread-set for easily checking which threads are scheduled.
+    /// Locks for each account. An account should only have an entry if there
+    /// is at least one lock.
     locks: HashMap<Pubkey, AccountLocks>,
 }
 
