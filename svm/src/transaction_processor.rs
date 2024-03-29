@@ -401,7 +401,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let mut loaded_program =
-            match self.load_program_accounts(callbacks, pubkey, environments) {
+            match self.load_program_accounts(callbacks, pubkey) {
                 None | Some(ProgramAccountLoadResult::InvalidAccountData) => Ok(LoadedProgram::new_tombstone(
                     self.slot,
                     LoadedProgramType::Closed,
@@ -836,7 +836,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         callbacks: &CB,
         pubkey: &Pubkey,
-        _environments: &solana_program_runtime::loaded_programs::ProgramRuntimeEnvironments,
     ) -> Option<ProgramAccountLoadResult> {
         let program_account = callbacks.get_account_shared_data(pubkey)?;
 
@@ -1078,10 +1077,9 @@ mod tests {
     fn test_load_program_accounts_account_not_found() {
         let mut mock_bank = MockBankCallback::default();
         let key = Pubkey::new_unique();
-        let environment = ProgramRuntimeEnvironments::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(result.is_none());
 
         let mut account_data = AccountSharedData::default();
@@ -1094,7 +1092,7 @@ mod tests {
             .account_shared_data
             .insert(key, account_data.clone());
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
             Some(ProgramAccountLoadResult::InvalidAccountData)
@@ -1103,7 +1101,7 @@ mod tests {
         account_data.set_data(Vec::new());
         mock_bank.account_shared_data.insert(key, account_data);
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
 
         assert!(matches!(
             result,
@@ -1117,13 +1115,12 @@ mod tests {
         let mut mock_bank = MockBankCallback::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(loader_v4::id());
-        let environment = ProgramRuntimeEnvironments::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         mock_bank
             .account_shared_data
             .insert(key, account_data.clone());
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
             Some(ProgramAccountLoadResult::InvalidAccountData)
@@ -1133,7 +1130,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .insert(key, account_data.clone());
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
             Some(ProgramAccountLoadResult::InvalidAccountData)
@@ -1154,7 +1151,7 @@ mod tests {
             .account_shared_data
             .insert(key, account_data.clone());
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
 
         match result {
             Some(ProgramAccountLoadResult::ProgramOfLoaderV4(data, slot)) => {
@@ -1172,13 +1169,12 @@ mod tests {
         let mut mock_bank = MockBankCallback::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
-        let environment = ProgramRuntimeEnvironments::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         mock_bank
             .account_shared_data
             .insert(key, account_data.clone());
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key);
         match result {
             Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(data)) => {
                 assert_eq!(data, account_data);
@@ -1192,7 +1188,6 @@ mod tests {
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let mut mock_bank = MockBankCallback::default();
-        let environment = ProgramRuntimeEnvironments::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
         let mut account_data = AccountSharedData::default();
@@ -1216,7 +1211,7 @@ mod tests {
             .account_shared_data
             .insert(key2, account_data2.clone());
 
-        let result = batch_processor.load_program_accounts(&mock_bank, &key1, &environment);
+        let result = batch_processor.load_program_accounts(&mock_bank, &key1);
 
         match result {
             Some(ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, slot)) => {
