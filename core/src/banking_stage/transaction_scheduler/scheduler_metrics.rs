@@ -342,8 +342,8 @@ pub struct SchedulerLeaderDetectionMetrics {
 
 struct SchedulerLeaderDetectionMetricsInner {
     slot: Slot,
+    bank_creation_time: Instant,
     bank_detected_time: Instant,
-    bank_detected_delay_us: u64,
 }
 
 impl SchedulerLeaderDetectionMetrics {
@@ -361,30 +361,30 @@ impl SchedulerLeaderDetectionMetrics {
 
     fn initialize_inner(&mut self, bank_start: &BankStart) {
         let bank_detected_time = Instant::now();
-        let bank_detected_delay_us = bank_detected_time
-            .duration_since(*bank_start.bank_creation_time)
-            .as_micros()
-            .try_into()
-            .unwrap_or(u64::MAX);
         self.inner = Some(SchedulerLeaderDetectionMetricsInner {
             slot: bank_start.working_bank.slot(),
+            bank_creation_time: *bank_start.bank_creation_time,
             bank_detected_time,
-            bank_detected_delay_us,
         });
     }
 
     fn report_and_reset(&mut self) {
         let SchedulerLeaderDetectionMetricsInner {
             slot,
+            bank_creation_time,
             bank_detected_time,
-            bank_detected_delay_us,
         } = self.inner.take().expect("inner must be present");
 
+        let bank_detected_delay_us = bank_detected_time
+            .duration_since(bank_creation_time)
+            .as_micros()
+            .try_into()
+            .unwrap_or(i64::MAX);
         let bank_detected_to_slot_end_detected_us = bank_detected_time
             .elapsed()
             .as_micros()
             .try_into()
-            .unwrap_or(u64::MAX);
+            .unwrap_or(i64::MAX);
         datapoint_info!(
             "banking_stage_scheduler_leader_detection",
             ("slot", slot, i64),
