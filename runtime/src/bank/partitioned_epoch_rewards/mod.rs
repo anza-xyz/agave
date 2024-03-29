@@ -1,4 +1,5 @@
 mod calculation;
+mod compare;
 mod distribution;
 mod epoch_rewards_hasher;
 mod sysvar;
