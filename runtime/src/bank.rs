@@ -220,6 +220,7 @@ pub mod builtins;
 pub mod epoch_accounts_hash_utils;
 mod fee_distribution;
 mod metrics;
+mod partitioned_epoch_rewards;
 mod serde_snapshot;
 mod sysvar_cache;
 #[cfg(test)]
