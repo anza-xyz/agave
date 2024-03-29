@@ -108,12 +108,13 @@ where
         let mut from_balance = rpc_client
             .get_balance_with_commitment(from_pubkey, commitment)?
             .value;
-        let from_rent_exempt_minimum = if amount == SpendAmount::RentExempt {
-            let data = rpc_client.get_account_data(from_pubkey)?;
-            rpc_client.get_minimum_balance_for_rent_exemption(data.len())?
-        } else {
-            0
-        };
+        let from_rent_exempt_minimum =
+            if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
+                let data = rpc_client.get_account_data(from_pubkey)?;
+                rpc_client.get_minimum_balance_for_rent_exemption(data.len())?
+            } else {
+                0
+            };
         if amount == SpendAmount::Available {
             if let Some(account) = rpc_client
                 .get_account_with_commitment(from_pubkey, commitment)?
@@ -201,12 +202,27 @@ where
                 fee,
             },
         )),
-        SpendAmount::All | SpendAmount::Available => {
+        SpendAmount::All => {
             let lamports = if from_pubkey == fee_pubkey {
                 from_balance.saturating_sub(fee)
             } else {
                 from_balance
             };
+            Ok((
+                build_message(lamports),
+                SpendAndFee {
+                    spend: lamports,
+                    fee,
+                },
+            ))
+        }
+        SpendAmount::Available => {
+            let mut lamports = if from_pubkey == fee_pubkey {
+                from_balance.saturating_sub(fee)
+            } else {
+                from_balance
+            };
+            lamports = lamports.saturating_sub(from_rent_exempt_minimum);
             Ok((
                 build_message(lamports),
                 SpendAndFee {
