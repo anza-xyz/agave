@@ -394,11 +394,6 @@ impl SchedulerLeaderDetectionMetrics {
                 bank_detected_to_slot_end_detected_us,
                 i64
             ),
-            (
-                "bank_creation_to_slot_end_detected_us",
-                bank_detected_to_slot_end_detected_us + bank_detected_delay_us,
-                i64
-            ),
         );
     }
 }
