@@ -1,5 +1,6 @@
 mod calculation;
 mod distribution;
+mod epoch_rewards_hasher;
 mod sysvar;
 
 use {
