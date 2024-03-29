@@ -3,7 +3,7 @@ use {
     solana_sdk::{epoch_rewards_hasher::EpochRewardsHasher, hash::Hash},
 };
 
-pub(crate) fn hash_rewards_into_partitions(
+pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
     stake_rewards: StakeRewards,
     parent_blockhash: &Hash,
     num_partitions: usize,
