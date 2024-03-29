@@ -1,10 +1,12 @@
 use {
     super::Bank,
     crate::{stake_account::StakeAccount, stake_history::StakeHistory},
-    solana_accounts_db::stake_rewards::StakeReward,
+    solana_accounts_db::{
+        partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
+    },
     solana_sdk::{
-        account::AccountSharedData, pubkey::Pubkey, reward_info::RewardInfo,
-        stake::state::Delegation,
+        account::AccountSharedData, clock::Slot, feature_set, pubkey::Pubkey,
+        reward_info::RewardInfo, stake::state::Delegation,
     },
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
@@ -89,3 +91,91 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
+
+impl Bank {
+    pub(super) fn is_partitioned_rewards_feature_enabled(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::enable_partitioned_epoch_reward::id())
+    }
+
+    pub(crate) fn set_epoch_reward_status_active(
+        &mut self,
+        stake_rewards_by_partition: Vec<StakeRewards>,
+    ) {
+        self.epoch_reward_status = EpochRewardStatus::Active(StartBlockHeightAndRewards {
+            start_block_height: self.block_height,
+            stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
+        });
+    }
+
+    pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
+        &self
+            .rc
+            .accounts
+            .accounts_db
+            .partitioned_epoch_rewards_config
+    }
+
+    /// # stake accounts to store in one block during partitioned reward interval
+    pub(super) fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
+        self.partitioned_epoch_rewards_config()
+            .stake_account_stores_per_block
+    }
+
+    /// reward calculation happens synchronously during the first block of the epoch boundary.
+    /// So, # blocks for reward calculation is 1.
+    pub(super) fn get_reward_calculation_num_blocks(&self) -> Slot {
+        self.partitioned_epoch_rewards_config()
+            .reward_calculation_num_blocks
+    }
+
+    /// Calculate the number of blocks required to distribute rewards to all stake accounts.
+    pub(super) fn get_reward_distribution_num_blocks(&self, rewards: &StakeRewards) -> u64 {
+        let total_stake_accounts = rewards.len();
+        if self.epoch_schedule.warmup && self.epoch < self.first_normal_epoch() {
+            1
+        } else {
+            const MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH: u64 = 10;
+            let num_chunks = solana_accounts_db::accounts_hash::AccountsHasher::div_ceil(
+                total_stake_accounts,
+                self.partitioned_rewards_stake_account_stores_per_block() as usize,
+            ) as u64;
+
+            // Limit the reward credit interval to 10% of the total number of slots in a epoch
+            num_chunks.clamp(
+                1,
+                (self.epoch_schedule.slots_per_epoch / MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH).max(1),
+            )
+        }
+    }
+
+    /// Return `RewardInterval` enum for current bank
+    pub(super) fn get_reward_interval(&self) -> RewardInterval {
+        if matches!(self.epoch_reward_status, EpochRewardStatus::Active(_)) {
+            RewardInterval::InsideInterval
+        } else {
+            RewardInterval::OutsideInterval
+        }
+    }
+
+    /// true if it is ok to run partitioned rewards code.
+    /// This means the feature is activated or certain testing situations.
+    pub(super) fn is_partitioned_rewards_code_enabled(&self) -> bool {
+        self.is_partitioned_rewards_feature_enabled()
+            || self
+                .partitioned_epoch_rewards_config()
+                .test_enable_partitioned_rewards
+    }
+
+    /// For testing only
+    pub fn force_reward_interval_end_for_tests(&mut self) {
+        self.epoch_reward_status = EpochRewardStatus::Inactive;
+    }
+
+    pub(super) fn force_partition_rewards_in_first_block_of_epoch(&self) -> bool {
+        self.partitioned_epoch_rewards_config()
+            .test_enable_partitioned_rewards
+            && self.get_reward_calculation_num_blocks() == 0
+            && self.partitioned_rewards_stake_account_stores_per_block() == u64::MAX
+    }
+}
