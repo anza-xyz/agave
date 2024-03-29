@@ -400,72 +400,70 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ..LoadProgramMetrics::default()
         };
 
-        let mut loaded_program =
-            match self.load_program_accounts(callbacks, pubkey) {
-                None | Some(ProgramAccountLoadResult::InvalidAccountData) => Ok(LoadedProgram::new_tombstone(
-                    self.slot,
-                    LoadedProgramType::Closed,
-                )),
+        let mut loaded_program = match self.load_program_accounts(callbacks, pubkey) {
+            None | Some(ProgramAccountLoadResult::InvalidAccountData) => Ok(
+                LoadedProgram::new_tombstone(self.slot, LoadedProgramType::Closed),
+            ),
 
-                Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account)) => {
+            Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account)) => {
+                Self::load_program_from_bytes(
+                    &mut load_program_metrics,
+                    program_account.data(),
+                    program_account.owner(),
+                    program_account.data().len(),
+                    0,
+                    environments.program_runtime_v1.clone(),
+                    reload,
+                )
+                .map_err(|_| (0, environments.program_runtime_v1.clone()))
+            }
+
+            Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
+                program_account,
+                programdata_account,
+                slot,
+            )) => programdata_account
+                .data()
+                .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+                .ok_or(Box::new(InstructionError::InvalidAccountData).into())
+                .and_then(|programdata| {
                     Self::load_program_from_bytes(
                         &mut load_program_metrics,
-                        program_account.data(),
+                        programdata,
                         program_account.owner(),
-                        program_account.data().len(),
-                        0,
+                        program_account
+                            .data()
+                            .len()
+                            .saturating_add(programdata_account.data().len()),
+                        slot,
                         environments.program_runtime_v1.clone(),
                         reload,
                     )
-                    .map_err(|_| (0, environments.program_runtime_v1.clone()))
-                }
+                })
+                .map_err(|_| (slot, environments.program_runtime_v1.clone())),
 
-                Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
-                    program_account,
-                    programdata_account,
-                    slot,
-                )) => programdata_account
+            Some(ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot)) => {
+                program_account
                     .data()
-                    .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+                    .get(LoaderV4State::program_data_offset()..)
                     .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-                    .and_then(|programdata| {
+                    .and_then(|elf_bytes| {
                         Self::load_program_from_bytes(
                             &mut load_program_metrics,
-                            programdata,
-                            program_account.owner(),
-                            program_account
-                                .data()
-                                .len()
-                                .saturating_add(programdata_account.data().len()),
+                            elf_bytes,
+                            &loader_v4::id(),
+                            program_account.data().len(),
                             slot,
-                            environments.program_runtime_v1.clone(),
+                            environments.program_runtime_v2.clone(),
                             reload,
                         )
                     })
-                    .map_err(|_| (slot, environments.program_runtime_v1.clone())),
-
-                Some(ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot)) => {
-                    program_account
-                        .data()
-                        .get(LoaderV4State::program_data_offset()..)
-                        .ok_or(Box::new(InstructionError::InvalidAccountData).into())
-                        .and_then(|elf_bytes| {
-                            Self::load_program_from_bytes(
-                                &mut load_program_metrics,
-                                elf_bytes,
-                                &loader_v4::id(),
-                                program_account.data().len(),
-                                slot,
-                                environments.program_runtime_v2.clone(),
-                                reload,
-                            )
-                        })
-                        .map_err(|_| (slot, environments.program_runtime_v2.clone()))
-                }
+                    .map_err(|_| (slot, environments.program_runtime_v2.clone()))
             }
-            .unwrap_or_else(|(slot, env)| {
-                LoadedProgram::new_tombstone(slot, LoadedProgramType::FailedVerification(env))
-            });
+        }
+        .unwrap_or_else(|(slot, env)| {
+            LoadedProgram::new_tombstone(slot, LoadedProgramType::FailedVerification(env))
+        });
 
         let mut timings = ExecuteDetailsTimings::default();
         load_program_metrics.submit_datapoint(&mut timings);
@@ -844,17 +842,21 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         ));
 
         if loader_v4::check_id(program_account.owner()) {
-            return Some(solana_loader_v4_program::get_state(program_account.data())
-                .ok()
-                .and_then(|state| {
-                    (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
-                })
-                .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-                .unwrap_or(ProgramAccountLoadResult::InvalidAccountData));
+            return Some(
+                solana_loader_v4_program::get_state(program_account.data())
+                    .ok()
+                    .and_then(|state| {
+                        (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
+                    })
+                    .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
+                    .unwrap_or(ProgramAccountLoadResult::InvalidAccountData),
+            );
         }
 
         if !bpf_loader_upgradeable::check_id(program_account.owner()) {
-            return Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account));
+            return Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(
+                program_account,
+            ));
         }
 
         if let Ok(UpgradeableLoaderState::Program {
