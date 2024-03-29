@@ -54,7 +54,7 @@ const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
     BlockNotFound(Slot),
-    BlockNotFrozenAfterReplay(Slot),
+    BlockNotFrozenAfterReplay(Slot, Option<String>),
     BlockNotLinkedToExpectedParent(Slot, Option<Slot>, Slot),
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
     Exiting,
@@ -70,8 +70,8 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::BlockNotFound(slot) => {
                 write!(f, "Block not found: {}", slot)
             }
-            WenRestartError::BlockNotFrozenAfterReplay(slot) => {
-                write!(f, "Block not frozen after replay: {}", slot)
+            WenRestartError::BlockNotFrozenAfterReplay(slot, err) => {
+                write!(f, "Block not frozen after replay: {} {:?}", slot, err)
             }
             WenRestartError::BlockNotLinkedToExpectedParent(slot, parent, expected_parent) => {
                 write!(
@@ -369,7 +369,7 @@ fn find_bankhash_of_heaviest_fork(
                 );
                 let bank_with_scheduler = my_bankforks.insert_from_ledger(new_bank);
                 let mut progress = ConfirmationProgress::new(parent_bank.last_blockhash());
-                if process_single_slot(
+                if let Err(e) = process_single_slot(
                     &blockstore,
                     &bank_with_scheduler,
                     &replay_tx_thread_pool,
@@ -381,16 +381,18 @@ fn find_bankhash_of_heaviest_fork(
                     None,
                     None,
                     &mut timing,
-                )
-                .is_err()
-                {
-                    return Err(WenRestartError::BlockNotFrozenAfterReplay(slot).into());
+                ) {
+                    return Err(WenRestartError::BlockNotFrozenAfterReplay(
+                        slot,
+                        Some(e.to_string()),
+                    )
+                    .into());
                 }
                 my_bankforks.get(slot).unwrap()
             }
         };
         if !bank.is_frozen() {
-            return Err(WenRestartError::BlockNotFrozenAfterReplay(slot).into());
+            return Err(WenRestartError::BlockNotFrozenAfterReplay(slot, None).into());
         }
         if bank.parent_slot() != parent_bank.slot() {
             return Err(WenRestartError::BlockNotLinkedToExpectedParent(
@@ -1615,7 +1617,10 @@ mod tests {
             .unwrap_err()
             .downcast::<WenRestartError>()
             .unwrap(),
-            WenRestartError::BlockNotFrozenAfterReplay(missing_parent),
+            WenRestartError::BlockNotFrozenAfterReplay(
+                missing_parent,
+                Some("invalid block error: incomplete block".to_string())
+            ),
         );
     }
 }
