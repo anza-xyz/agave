@@ -340,7 +340,7 @@ pub struct SchedulerLeaderDetectionMetrics {
     inner: Option<SchedulerLeaderDetectionMetricsInner>,
 }
 
-pub struct SchedulerLeaderDetectionMetricsInner {
+struct SchedulerLeaderDetectionMetricsInner {
     slot: Slot,
     bank_detected_time: Instant,
     bank_detected_delay_us: u64,
