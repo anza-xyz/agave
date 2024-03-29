@@ -1485,17 +1485,7 @@ impl Bank {
             EpochRewardStatus::Active(_)
         ));
         self.epoch_reward_status = EpochRewardStatus::Inactive;
-        if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
-            if account.lamports() > 0 {
-                info!(
-                    "burning {} extra lamports in EpochRewards sysvar account at slot {}",
-                    account.lamports(),
-                    self.slot()
-                );
-                self.log_epoch_rewards_sysvar("burn");
-                self.burn_and_purge_account(&sysvar::epoch_rewards::id(), account);
-            }
-        }
+        self.destroy_epoch_rewards_sysvar();
     }
 
     /// Begin the process of calculating and distributing rewards.
