@@ -11,6 +11,7 @@ use {
     solana_sdk::{
         bpf_loader_deprecated,
         entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
+        feature_set::{bpf_serialize_account_executable_false, FeatureSet},
         instruction::InstructionError,
         pubkey::Pubkey,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
@@ -191,6 +192,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    feature_set: &FeatureSet,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -239,6 +241,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
+            feature_set,
         )
     } else {
         serialize_parameters_aligned(
@@ -246,6 +249,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
+            feature_set,
         )
     }
 }
@@ -281,11 +285,24 @@ pub fn deserialize_parameters(
     }
 }
 
+fn serialize_account_executable(
+    s: &mut Serializer,
+    account: &BorrowedAccount,
+    feature_set: &FeatureSet,
+) {
+    if feature_set.is_active(&bpf_serialize_account_executable_false::id()) {
+        s.write::<u8>(false as u8);
+    } else {
+        s.write::<u8>(account.is_executable() as u8);
+    }
+}
+
 fn serialize_parameters_unaligned(
     accounts: Vec<SerializeAccount>,
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
+    feature_set: &FeatureSet,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -338,7 +355,7 @@ fn serialize_parameters_unaligned(
                 s.write::<u64>((account.get_data().len() as u64).to_le());
                 let vm_data_addr = s.write_account(&mut account)?;
                 let vm_owner_addr = s.write_all(account.get_owner().as_ref());
-                s.write::<u8>(account.is_executable() as u8);
+                serialize_account_executable(&mut s, &account, feature_set);
                 s.write::<u64>((account.get_rent_epoch()).to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
                     original_data_len: account.get_data().len(),
@@ -417,6 +434,7 @@ fn serialize_parameters_aligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
+    feature_set: &FeatureSet,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -466,7 +484,7 @@ fn serialize_parameters_aligned(
                 s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
-                s.write::<u8>(borrowed_account.is_executable() as u8);
+                serialize_account_executable(&mut s, &borrowed_account, feature_set);
                 s.write_all(&[0u8, 0, 0, 0]);
                 let vm_key_addr = s.write_all(borrowed_account.get_key().as_ref());
                 let vm_owner_addr = s.write_all(borrowed_account.get_owner().as_ref());
@@ -728,6 +746,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
+                    &invoke_context.feature_set,
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -882,6 +901,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                &invoke_context.feature_set,
             )
             .unwrap();
 
@@ -973,6 +993,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                &invoke_context.feature_set,
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
