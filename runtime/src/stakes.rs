@@ -225,21 +225,21 @@ impl Stakes<StakeAccount> {
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
     /// cached.
-    pub(crate) fn new<F>(stakes: Stakes<Delegation>, get_account: F) -> Result<Self, Error>
+    pub(crate) fn new<F>(stakes: &Stakes<Delegation>, get_account: F) -> Result<Self, Error>
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
         // im::HashMap doesn't support rayon so we manually build a temporary vector. Note this is
         // what std HashMap::par_iter() does internally too.
-        let stake_delegations_vec = stakes.stake_delegations.into_iter().collect::<Vec<_>>();
+        let stake_delegations_vec = stakes.stake_delegations.iter().collect::<Vec<_>>();
         let stake_delegations = stake_delegations_vec
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
             // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
             .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
-                let Some(stake_account) = get_account(&pubkey) else {
-                    return Err(Error::StakeAccountNotFound(pubkey));
+                let Some(stake_account) = get_account(pubkey) else {
+                    return Err(Error::StakeAccountNotFound(*pubkey));
                 };
 
                 // Assert that all valid vote-accounts referenced in stake delegations are already
@@ -259,11 +259,11 @@ impl Stakes<StakeAccount> {
                 let stake_account = StakeAccount::try_from(stake_account)?;
                 // Sanity check that the delegation is consistent with what is
                 // stored in the account.
-                if stake_account.delegation() == delegation {
-                    map.insert(pubkey, stake_account);
+                if stake_account.delegation() == *delegation {
+                    map.insert(*pubkey, stake_account);
                     Ok(map)
                 } else {
-                    Err(Error::InvalidDelegation(pubkey))
+                    Err(Error::InvalidDelegation(*pubkey))
                 }
             })
             .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;
@@ -284,11 +284,11 @@ impl Stakes<StakeAccount> {
         }
 
         Ok(Self {
-            vote_accounts: stakes.vote_accounts,
+            vote_accounts: stakes.vote_accounts.clone(),
             stake_delegations,
             unused: stakes.unused,
             epoch: stakes.epoch,
-            stake_history: stakes.stake_history,
+            stake_history: stakes.stake_history.clone(),
         })
     }
 
