@@ -79,7 +79,7 @@ const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const STREAM_STOP_CODE_THROTTLING: u32 = 15;
 
-const CONNECTION_LIMIT_PER_SECOND: u32 = 4;
+const CONNECTIONS_LIMIT_PER_SECOND: u32 = 8;
 
 // A sequence of bytes that is part of a packet
 // along with where in the packet it is
@@ -162,7 +162,7 @@ async fn run_server(
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
 ) {
-    let rate_limiter = ConnectionRateLimiter::new(CONNECTION_LIMIT_PER_SECOND);
+    let rate_limiter = ConnectionRateLimiter::new(CONNECTIONS_LIMIT_PER_SECOND);
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
@@ -195,7 +195,10 @@ async fn run_server(
             debug!("Got a connection {:?}", remote_address);
             let do_rate_limiting = true;
             if do_rate_limiting && !rate_limiter.check(&remote_address.ip()) {
-                debug!("Reject attacker connection from {:?}", remote_address);
+                debug!(
+                    "Reject attacker connection from {:?} -- rate limiting exceeded",
+                    remote_address
+                );
                 stats.connection_throttled.fetch_add(1, Ordering::Relaxed);
                 connection.reject();
                 continue;
