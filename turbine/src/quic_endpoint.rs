@@ -637,7 +637,7 @@ impl<T> From<crossbeam_channel::SendError<T>> for Error {
 struct TurbineQuicStats {
     connect_error_invalid_remote_address: AtomicU64,
     connect_error_other: AtomicU64,
-    connect_error_too_many_connections: AtomicU64,
+    connect_error_cids_exhausted: AtomicU64,
     connection_error_application_closed: AtomicU64,
     connection_error_connection_closed: AtomicU64,
     connection_error_locally_closed: AtomicU64,
@@ -645,7 +645,7 @@ struct TurbineQuicStats {
     connection_error_timed_out: AtomicU64,
     connection_error_transport_error: AtomicU64,
     connection_error_version_mismatch: AtomicU64,
-    connection_error_connection_limit_exceeded: AtomicU64,
+    connection_error_cids_exhausted: AtomicU64,
     invalid_identity: AtomicU64,
     router_try_send_error_full: AtomicU64,
     send_datagram_error_connection_lost: AtomicU64,
@@ -664,14 +664,8 @@ fn record_error(err: &Error, stats: &TurbineQuicStats) {
     match err {
         Error::CertificateError(_) => (),
         Error::ChannelSendError => (),
-        Error::ConnectionError(ConnectionError::ConnectionLimitExceeded) => {
-            add_metric!(stats.connection_error_connection_limit_exceeded)
-        }
         Error::ConnectError(ConnectError::EndpointStopping) => {
             add_metric!(stats.connect_error_other)
-        }
-        Error::ConnectError(ConnectError::TooManyConnections) => {
-            add_metric!(stats.connect_error_too_many_connections)
         }
         Error::ConnectError(ConnectError::InvalidDnsName(_)) => {
             add_metric!(stats.connect_error_other)
@@ -684,6 +678,12 @@ fn record_error(err: &Error, stats: &TurbineQuicStats) {
         }
         Error::ConnectError(ConnectError::UnsupportedVersion) => {
             add_metric!(stats.connect_error_other)
+        }
+        Error::ConnectError(ConnectError::CidsExhausted) => {
+            add_metric!(stats.connect_error_cids_exhausted)
+        }
+        Error::ConnectionError(ConnectionError::CidsExhausted) => {
+            add_metric!(stats.connection_error_cids_exhausted)
         }
         Error::ConnectionError(ConnectionError::VersionMismatch) => {
             add_metric!(stats.connection_error_version_mismatch)
@@ -739,11 +739,6 @@ fn report_metrics(name: &'static str, stats: &TurbineQuicStats) {
             i64
         ),
         (
-            "connect_error_too_many_connections",
-            reset_metric!(stats.connect_error_too_many_connections),
-            i64
-        ),
-        (
             "connection_error_application_closed",
             reset_metric!(stats.connection_error_application_closed),
             i64
@@ -764,6 +759,11 @@ fn report_metrics(name: &'static str, stats: &TurbineQuicStats) {
             i64
         ),
         (
+            "connect_error_cids_exhausted",
+            reset_metric!(stats.connect_error_cids_exhausted),
+            i64
+        ),
+        (
             "connection_error_timed_out",
             reset_metric!(stats.connection_error_timed_out),
             i64
@@ -779,8 +779,8 @@ fn report_metrics(name: &'static str, stats: &TurbineQuicStats) {
             i64
         ),
         (
-            "connection_error_connection_limit_exceeded",
-            reset_metric!(stats.connection_error_connection_limit_exceeded),
+            "connection_error_cids_exhausted",
+            reset_metric!(stats.connection_error_cids_exhausted),
             i64
         ),
         (
