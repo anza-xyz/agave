@@ -200,7 +200,7 @@ async fn run_server(
                     remote_address
                 );
                 stats.connection_throttled.fetch_add(1, Ordering::Relaxed);
-                connection.reject();
+                // connection.reject();
                 continue;
             }
             let connection = connection.accept();
