@@ -187,11 +187,11 @@ async fn run_server(
             last_datapoint = Instant::now();
         }
 
-        if let Ok(Some(connection)) = timeout_connection {
+        if let Ok(Some(incoming)) = timeout_connection {
             stats
                 .incoming_connections_received
                 .fetch_add(1, Ordering::Relaxed);
-            let remote_address = connection.remote_address();
+            let remote_address = incoming.remote_address();
             debug!("Got a connection {:?}", remote_address);
             let do_rate_limiting = true;
             if do_rate_limiting && !rate_limiter.check(&remote_address.ip()) {
@@ -200,14 +200,14 @@ async fn run_server(
                     remote_address
                 );
                 stats.connection_throttled.fetch_add(1, Ordering::Relaxed);
-                // connection.reject();
+                incoming.ignore();
                 continue;
             }
-            let connection = connection.accept();
-            match connection {
-                Ok(connection) => {
+            let connecting = incoming.accept();
+            match connecting {
+                Ok(connecting) => {
                     tokio::spawn(setup_connection(
-                        connection,
+                        connecting,
                         unstaked_connection_table.clone(),
                         staked_connection_table.clone(),
                         sender.clone(),
