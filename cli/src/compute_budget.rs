@@ -1,5 +1,6 @@
 use {
     solana_client::rpc_config::RpcSimulateTransactionConfig,
+    solana_program_runtime::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
@@ -71,6 +72,27 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     Ok(UpdateComputeUnitLimitResult::UpdatedInstructionIndex(
         compute_unit_limit_ix_index,
     ))
+}
+
+pub(crate) fn set_compute_budget_ixs_if_needed(
+    ixs: &mut Vec<Instruction>,
+    compute_unit_price: Option<u64>,
+) {
+    let Some(compute_unit_price) = compute_unit_price else {
+        return;
+    };
+
+    // Default to the max compute unit limit because later transactions will be
+    // simulated to get the exact compute units consumed.
+    ixs.insert(
+        0,
+        ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT),
+    );
+
+    ixs.insert(
+        0,
+        ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
+    );
 }
 
 pub(crate) trait WithComputeUnitPrice {

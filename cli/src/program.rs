@@ -7,7 +7,10 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
-        compute_budget::{simulate_and_update_compute_unit_limit, UpdateComputeUnitLimitResult},
+        compute_budget::{
+            set_compute_budget_ixs_if_needed, simulate_and_update_compute_unit_limit,
+            UpdateComputeUnitLimitResult,
+        },
     },
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -37,10 +40,7 @@ use {
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
-    solana_program_runtime::{
-        compute_budget::ComputeBudget, compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
-        invoke_context::InvokeContext,
-    },
+    solana_program_runtime::{compute_budget::ComputeBudget, invoke_context::InvokeContext},
     solana_rbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -55,7 +55,7 @@ use {
         account_utils::StateMut,
         bpf_loader, bpf_loader_deprecated,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        compute_budget::{self, ComputeBudgetInstruction},
+        compute_budget,
         feature_set::FeatureSet,
         instruction::{Instruction, InstructionError},
         loader_instruction,
@@ -2862,24 +2862,6 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
     eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
     eprintln!("Or to recover the account's lamports, pass it as the");
     eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
-}
-
-fn set_compute_budget_ixs_if_needed(ixs: &mut Vec<Instruction>, compute_unit_price: Option<u64>) {
-    let Some(compute_unit_price) = compute_unit_price else {
-        return;
-    };
-
-    // Default to the max compute unit limit because later transactions will be
-    // simulated to get the exact compute units consumed.
-    ixs.insert(
-        0,
-        ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT),
-    );
-
-    ixs.insert(
-        0,
-        ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
-    );
 }
 
 #[cfg(test)]
