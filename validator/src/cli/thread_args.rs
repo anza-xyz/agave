@@ -102,10 +102,10 @@ impl ThreadArg for IpEchoServerThreadsArg {
     const HELP: &'static str = "Number of threads to use for the IP echo server";
 
     fn default() -> usize {
-        solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS
+        solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS.get()
     }
     fn min() -> usize {
-        solana_net_utils::MINIMUM_IP_ECHO_SERVER_THREADS
+        solana_net_utils::MINIMUM_IP_ECHO_SERVER_THREADS.get()
     }
 }
 

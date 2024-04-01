@@ -22,10 +22,11 @@ fn main() {
         .unwrap_or_else(|_| panic!("Unable to parse {port}"));
     let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let tcp_listener = TcpListener::bind(bind_addr).expect("unable to start tcp listener");
-    let num_threads =
-        std::num::NonZeroUsize::new(DEFAULT_IP_ECHO_SERVER_THREADS).expect("non-zero num threads");
-    let _runtime =
-        solana_net_utils::ip_echo_server(tcp_listener, num_threads, /*shred_version=*/ None);
+    let _runtime = solana_net_utils::ip_echo_server(
+        tcp_listener,
+        DEFAULT_IP_ECHO_SERVER_THREADS,
+        /*shred_version=*/ None,
+    );
     loop {
         std::thread::park();
     }

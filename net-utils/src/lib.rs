@@ -583,10 +583,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        std::{net::Ipv4Addr, num::NonZeroUsize},
-    };
+    use {super::*, std::net::Ipv4Addr};
 
     #[test]
     fn test_response_length() {
@@ -752,7 +749,7 @@ mod tests {
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
-            NonZeroUsize::new(DEFAULT_IP_ECHO_SERVER_THREADS).expect("non-zero num workers"),
+            DEFAULT_IP_ECHO_SERVER_THREADS,
             /*shred_version=*/ Some(42),
         );
 
@@ -776,7 +773,7 @@ mod tests {
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
-            NonZeroUsize::new(DEFAULT_IP_ECHO_SERVER_THREADS).expect("non-zero num workers"),
+            DEFAULT_IP_ECHO_SERVER_THREADS,
             /*shred_version=*/ Some(65535),
         );
 

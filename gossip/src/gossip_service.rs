@@ -22,7 +22,6 @@ use {
     std::{
         collections::HashSet,
         net::{SocketAddr, TcpListener, UdpSocket},
-        num::NonZeroUsize,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -162,10 +161,12 @@ pub fn discover(
         info!("Gossip Address: {:?}", my_gossip_addr);
     }
 
-    let num_threads =
-        NonZeroUsize::new(DEFAULT_IP_ECHO_SERVER_THREADS).expect("non-zero num threads");
     let _ip_echo_server = ip_echo.map(|tcp_listener| {
-        solana_net_utils::ip_echo_server(tcp_listener, num_threads, Some(my_shred_version))
+        solana_net_utils::ip_echo_server(
+            tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            Some(my_shred_version),
+        )
     });
     let (met_criteria, elapsed, all_peers, tvu_peers) = spy(
         spy_ref.clone(),
