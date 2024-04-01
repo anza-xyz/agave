@@ -14,7 +14,7 @@ pub use self::{
 use {
     solana_program_runtime::{
         compute_budget::ComputeBudget, ic_logger_msg, ic_msg, invoke_context::InvokeContext,
-        stable_log, timings::ExecuteTimings,
+        stable_log, sysvar_cache::CachedSysvar, timings::ExecuteTimings,
     },
     solana_rbpf::{
         declare_builtin_function,
@@ -61,7 +61,6 @@ use {
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
-        sync::Arc,
     },
     thiserror::Error as ThisError,
 };
@@ -3315,15 +3314,19 @@ mod tests {
         src_rewards.distribution_complete_block_height = 42;
 
         let mut sysvar_cache = SysvarCache::default();
-        /* XXX TODO FIXME HANA these are the only uses of set_clock in the whole codebase
-           define a lambda that can be passed to fill_missing_entries instead
-
-            sysvar_cache.set_clock(src_clock.clone());
-            sysvar_cache.set_epoch_schedule(src_epochschedule.clone());
-            sysvar_cache.set_fees(src_fees.clone());
-            sysvar_cache.set_rent(src_rent.clone());
-            sysvar_cache.set_epoch_rewards(src_rewards);
-        */
+        sysvar_cache.fill_missing_entries(|pubkey, callback| {
+            if *pubkey == sysvar::clock::id() {
+                callback(&bincode::serialize(&src_clock.clone()).unwrap())
+            } else if *pubkey == sysvar::epoch_schedule::id() {
+                callback(&bincode::serialize(&src_epochschedule.clone()).unwrap())
+            } else if *pubkey == sysvar::fees::id() {
+                callback(&bincode::serialize(&src_fees.clone()).unwrap())
+            } else if *pubkey == sysvar::rent::id() {
+                callback(&bincode::serialize(&src_rent.clone()).unwrap())
+            } else if *pubkey == sysvar::epoch_rewards::id() {
+                callback(&bincode::serialize(&src_rewards.clone()).unwrap())
+            }
+        });
 
         let transaction_accounts = vec![
             (

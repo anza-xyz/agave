@@ -99,18 +99,30 @@ impl StakeHistoryGetEntry for StakeHistory {
 }
 
 impl StakeHistoryGetEntry for StakeHistorySyscall {
+    // HANA this is just a reference implementation and could be improved to make fewer syscalls
+    // * we dont need to get the length via syscall. SysvarCache contains the full account data
+    //   eg, stake_history is 16kb regardless of how many epochs have passed since genesis. so we know how long it is
+    // * the stake program fetches stake history entries of three kinds:
+    //   - current epoch
+    //   - delegation activation epoch
+    //   - delegation deactivation epoch
+    //   if our function can be changed to accept the current epoch (ie we assume all callers have a Clock)
+    //   then we can fetch any stake history entry in *one* syscall. stake_history[0].epoch == clock.epoch - 1
+    // * this function could do *zero* syscalls for a (de)activation epoch more than 512 in the past
+    //   the panics in it are meant to be replaced with None returns after dev work is done
+    //   so the return would be fine. but, as above, we can just calculate this without SysvarCache
     fn get_entry(&self, target_epoch: Epoch) -> Option<StakeHistoryEntry> {
         #[cfg(target_os = "solana")]
         {
-            let mut len_buf = [0; 4];
+            let mut len_buf = [0; 8];
             let len_buf_addr = &mut len_buf as *mut _ as *mut u8;
 
-            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 4, 0, len_buf_addr) };
+            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 8, 0, len_buf_addr) };
             if result != crate::entrypoint::SUCCESS {
                 panic!("no len???");
             }
 
-            let stake_history_length = u32::from_le_bytes(len_buf);
+            let stake_history_length = u64::from_le_bytes(len_buf);
             crate::msg!("HANA stake history length: {}", stake_history_length);
 
             if stake_history_length == 0 {
@@ -120,27 +132,31 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
             let mut entry_buf = [0; 32];
             let entry_buf_addr = &mut entry_buf as *mut _ as *mut u8;
 
-            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 32, 4, entry_buf_addr) };
+            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 32, 8, entry_buf_addr) };
             if result != crate::entrypoint::SUCCESS {
                 panic!("no entry?????");
             }
 
             let entry_epoch = bincode::deserialize::<Epoch>(&entry_buf).unwrap();
             if entry_epoch == target_epoch {
-                let entry = bincode::deserialize::<StakeHistoryEntry>(&entry_buf[4..]).unwrap();
+                let entry = bincode::deserialize::<StakeHistoryEntry>(&entry_buf[8..]).unwrap();
                 crate::msg!("HANA happy happy {} {:?}", entry_epoch, entry);
                 return Some(entry);
             } else if entry_epoch > target_epoch {
-                // XXX if latest is 15 and target is 12 then delta is 3
+                // HANA if latest is 15 and target is 12 then delta is 3
                 // that means we want stake_history[3] because vec is newest first
                 // so delta must be lt length. length is vector length, not byte length
                 let epoch_delta = entry_epoch - target_epoch;
 
+                // HANA this is just for testing, in reality a target epoch more than 512 in the past is assumed good
+                // thus None would be returned. anyway the current design assumes all panics are replaced by None
+                // but perhaps we want to return Result<Option<StakeHistoryEntry, _>> instead
+                // since syscall failures bubble up as error codes instead of causing the program to halt
                 if epoch_delta >= stake_history_length as u64 {
-                    panic!("will read oob");
+                    panic!("will read oob. entry: {}, target: {}, delta: {}, length: {}, full entry: {:#?}", entry_epoch, target_epoch, epoch_delta, stake_history_length, entry_buf);
                 }
 
-                let offset = epoch_delta * 32 + 4;
+                let offset = epoch_delta * 32 + 8;
 
                 entry_buf.iter_mut().for_each(|x| *x = 0);
                 let result =
@@ -151,12 +167,12 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
 
                 let entry_epoch = bincode::deserialize::<Epoch>(&entry_buf).unwrap();
                 if entry_epoch == target_epoch {
-                    let entry = bincode::deserialize::<StakeHistoryEntry>(&entry_buf[4..]).unwrap();
+                    let entry = bincode::deserialize::<StakeHistoryEntry>(&entry_buf[8..]).unwrap();
                     crate::msg!("HANA moderately happy {} {:?}", entry_epoch, entry);
                     return Some(entry);
                 } else {
                     panic!(
-                        "something terrible has happened: target {}, got {}, delta: {}, offset: {}",
+                        "gone beyond the pale: target {}, got {}, delta: {}, offset: {}",
                         target_epoch, entry_epoch, epoch_delta, offset
                     );
                 }
@@ -170,6 +186,7 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
 
         #[cfg(not(target_os = "solana"))]
         {
+            let _ = target_epoch;
             panic!("we are NOT bpf");
         }
     }

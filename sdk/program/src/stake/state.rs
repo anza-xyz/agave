@@ -655,6 +655,10 @@ impl Delegation {
         history: &T,
         new_rate_activation_epoch: Option<Epoch>,
     ) -> StakeActivationStatus {
+        println!(
+            "HANA act/deact, target: {}, deactivation: {}",
+            target_epoch, self.deactivation_epoch
+        );
         // first, calculate an effective and activating stake
         let (effective_stake, activating_stake) =
             self.stake_and_activating(target_epoch, history, new_rate_activation_epoch);

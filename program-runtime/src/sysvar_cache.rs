@@ -1,7 +1,5 @@
 #[allow(deprecated)]
-use solana_sdk::sysvar::{
-    fees::Fees, last_restart_slot::LastRestartSlot, recent_blockhashes::RecentBlockhashes,
-};
+use solana_sdk::sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::invoke_context::InvokeContext,
     serde::de::DeserializeOwned,
@@ -9,12 +7,12 @@ use {
         instruction::InstructionError,
         pubkey::Pubkey,
         sysvar::{
-            clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule, rent::Rent,
-            slot_hashes::SlotHashes, stake_history::StakeHistory, Sysvar, SysvarId,
+            clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
+            last_restart_slot::LastRestartSlot, rent::Rent, slot_hashes::SlotHashes,
+            stake_history::StakeHistory, Sysvar, SysvarId,
         },
         transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
-    std::sync::Arc,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -28,6 +26,18 @@ pub enum CachedSysvar {
     LastRestartSlot,
 }
 
+#[cfg(RUSTC_WITH_SPECIALIZATION)]
+impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
+    fn example() -> Self {
+        // SysvarCache is not Serialize so just rely on Default.
+        SysvarCache::default()
+    }
+}
+
+// note that these vectors represent the *full account data*
+// in other words, the setters MUST NOT be changed to serialize an object representation
+// it is required that the syscall be able to access the full buffer, even if its all zeros
+// TODO enforce this in tests
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {
     clock: Option<Vec<u8>>,
@@ -37,6 +47,11 @@ pub struct SysvarCache {
     slot_hashes: Option<Vec<u8>>,
     stake_history: Option<Vec<u8>>,
     last_restart_slot: Option<Vec<u8>>,
+
+    #[allow(deprecated)]
+    fees: Option<Fees>,
+    #[allow(deprecated)]
+    recent_blockhashes: Option<RecentBlockhashes>,
 }
 
 impl SysvarCache {
@@ -111,24 +126,28 @@ impl SysvarCache {
         self.get_sysvar_obj(CachedSysvar::LastRestartSlot)
     }
 
-    // XXX remove after fixing callsites
+    // HANA remove after fixing callsites
     pub fn get_stake_history(&self) -> Result<StakeHistory, InstructionError> {
         self.get_sysvar_obj(CachedSysvar::StakeHistory)
     }
 
-    // XXX remove after fixing callsites
+    // HANA remove after fixing callsites
     pub fn get_slot_hashes(&self) -> Result<SlotHashes, InstructionError> {
         self.get_sysvar_obj(CachedSysvar::SlotHashes)
     }
 
-    // XXX investigate if we can actually nix this
+    #[deprecated]
+    #[allow(deprecated)]
     pub fn get_fees(&self) -> Result<Fees, InstructionError> {
-        Err(InstructionError::UnsupportedSysvar)
+        self.fees.clone().ok_or(InstructionError::UnsupportedSysvar)
     }
 
-    // XXX investigate if we can actually nix this
+    #[deprecated]
+    #[allow(deprecated)]
     pub fn get_recent_blockhashes(&self) -> Result<RecentBlockhashes, InstructionError> {
-        Err(InstructionError::UnsupportedSysvar)
+        self.recent_blockhashes
+            .clone()
+            .ok_or(InstructionError::UnsupportedSysvar)
     }
 
     pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
@@ -137,56 +156,76 @@ impl SysvarCache {
     ) {
         if self.clock.is_none() {
             get_account_data(&Clock::id(), &mut |data: &[u8]| {
-                if let Ok(clock) = bincode::deserialize(data) {
-                    self.clock = Some(clock);
+                if bincode::deserialize::<Clock>(data).is_ok() {
+                    self.clock = Some(data.to_vec());
                 }
             });
         }
 
         if self.epoch_schedule.is_none() {
             get_account_data(&EpochSchedule::id(), &mut |data: &[u8]| {
-                if let Ok(epoch_schedule) = bincode::deserialize(data) {
-                    self.epoch_schedule = Some(epoch_schedule);
+                if bincode::deserialize::<EpochSchedule>(data).is_ok() {
+                    self.epoch_schedule = Some(data.to_vec());
                 }
             });
         }
 
         if self.epoch_rewards.is_none() {
             get_account_data(&EpochRewards::id(), &mut |data: &[u8]| {
-                if let Ok(epoch_rewards) = bincode::deserialize(data) {
-                    self.epoch_rewards = Some(epoch_rewards);
+                if bincode::deserialize::<EpochRewards>(data).is_ok() {
+                    self.epoch_rewards = Some(data.to_vec());
                 }
             });
         }
 
         if self.rent.is_none() {
             get_account_data(&Rent::id(), &mut |data: &[u8]| {
-                if let Ok(rent) = bincode::deserialize(data) {
-                    self.rent = Some(rent);
+                if bincode::deserialize::<Rent>(data).is_ok() {
+                    self.rent = Some(data.to_vec());
                 }
             });
         }
 
         if self.slot_hashes.is_none() {
             get_account_data(&SlotHashes::id(), &mut |data: &[u8]| {
-                if let Ok(slot_hashes) = bincode::deserialize(data) {
-                    self.slot_hashes = Some(slot_hashes);
+                // HANA could skip if expensive
+                if bincode::deserialize::<SlotHashes>(data).is_ok() {
+                    self.slot_hashes = Some(data.to_vec());
                 }
             });
         }
 
         if self.stake_history.is_none() {
             get_account_data(&StakeHistory::id(), &mut |data: &[u8]| {
-                if let Ok(stake_history) = bincode::deserialize(data) {
-                    self.stake_history = Some(stake_history);
+                // HANA could skip if expensive
+                if bincode::deserialize::<StakeHistory>(data).is_ok() {
+                    self.stake_history = Some(data.to_vec());
                 }
             });
         }
 
         if self.last_restart_slot.is_none() {
             get_account_data(&LastRestartSlot::id(), &mut |data: &[u8]| {
-                if let Ok(last_restart_slot) = bincode::deserialize(data) {
-                    self.last_restart_slot = Some(last_restart_slot);
+                if bincode::deserialize::<LastRestartSlot>(data).is_ok() {
+                    self.last_restart_slot = Some(data.to_vec());
+                }
+            });
+        }
+
+        #[allow(deprecated)]
+        if self.fees.is_none() {
+            get_account_data(&Fees::id(), &mut |data: &[u8]| {
+                if let Ok(fees) = bincode::deserialize(data) {
+                    self.fees = Some(fees);
+                }
+            });
+        }
+
+        #[allow(deprecated)]
+        if self.recent_blockhashes.is_none() {
+            get_account_data(&RecentBlockhashes::id(), &mut |data: &[u8]| {
+                if let Ok(recent_blockhashes) = bincode::deserialize(data) {
+                    self.recent_blockhashes = Some(recent_blockhashes);
                 }
             });
         }
