@@ -443,19 +443,33 @@ mod tests {
                 } else {
                     assert_eq!(post_cap, pre_cap);
                 }
-            } else if slot == num_slots_in_epoch + 1 || slot == num_slots_in_epoch + 2 {
-                // 1. when curr_slot == num_slots_in_epoch + 1, the 2nd block of epoch 1, reward distribution should happen in this block.
-                // however, all stake rewards are paid at the this block therefore reward_status should have transitioned to inactive. And since
-                // rewards are transferred from epoch_rewards sysvar to stake accounts. The cap should stay the same.
-                // 2. when curr_slot == num_slots_in_epoch+2, the 3rd block of epoch 1. reward distribution should have already completed. Therefore,
-                // reward_status should stay inactive and cap should stay the same.
+            } else if slot == num_slots_in_epoch + 1 {
+                // 1. when curr_slot == num_slots_in_epoch + 1, the 2nd block of
+                // epoch 1, reward distribution should happen in this block.
+                // however, all stake rewards are paid at the this block
+                // therefore reward_status should have transitioned to inactive.
+                // The cap should increase accordingly.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
 
-                assert_eq!(post_cap, pre_cap);
+                let account = curr_bank
+                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .unwrap();
+                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
+                    solana_sdk::account::from_account(&account).unwrap();
+                assert_eq!(post_cap, pre_cap + epoch_rewards.distributed_rewards);
             } else {
+                // 2. when curr_slot == num_slots_in_epoch+2, the 3rd block of
+                // epoch 1 (or any other slot). reward distribution should have
+                // already completed. Therefore, reward_status should stay
+                // inactive and cap should stay the same.
+                assert_matches!(
+                    curr_bank.get_reward_interval(),
+                    RewardInterval::OutsideInterval
+                );
+
                 // slot is not in rewards, cap should not change
                 assert_eq!(post_cap, pre_cap);
             }
@@ -528,6 +542,14 @@ mod tests {
         // simulate block progress
         for slot in 2..=num_slots_in_epoch + 3 {
             let pre_cap = previous_bank.capitalization();
+
+            let pre_sysvar_account = previous_bank
+                .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                .unwrap_or_default();
+            let pre_epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
+                solana_sdk::account::from_account(&pre_sysvar_account).unwrap_or_default();
+            let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
+
             let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
             let post_cap = curr_bank.capitalization();
 
@@ -566,27 +588,53 @@ mod tests {
                 // cap should increase because of new epoch rewards
                 assert!(post_cap > pre_cap);
             } else if slot == num_slots_in_epoch + 1 {
-                // When curr_slot == num_slots_in_epoch + 1, the 2nd block of epoch 1, reward distribution should happen in this block.
-                // however, since rewards are transferred from epoch_rewards sysvar to stake accounts. The cap should stay the same.
+                // When curr_slot == num_slots_in_epoch + 1, the 2nd block of
+                // epoch 1, reward distribution should happen in this block. The
+                // cap should increase accordingly.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::InsideInterval
                 );
 
-                assert_eq!(post_cap, pre_cap);
-            } else if slot == num_slots_in_epoch + 2 || slot == num_slots_in_epoch + 3 {
-                // 1. when curr_slot == num_slots_in_epoch + 2, the 3nd block of epoch 1, reward distribution should happen in this block.
-                // however, all stake rewards are paid at the this block therefore reward_status should have transitioned to inactive. And since
-                // rewards are transferred from epoch_rewards sysvar to stake accounts. The cap should stay the same.
-                // 2. when curr_slot == num_slots_in_epoch+2, the 3rd block of epoch 1. reward distribution should have already completed. Therefore,
-                // reward_status should stay inactive and cap should stay the same.
+                let account = curr_bank
+                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .unwrap();
+                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
+                    solana_sdk::account::from_account(&account).unwrap();
+                assert_eq!(
+                    post_cap,
+                    pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
+                );
+            } else if slot == num_slots_in_epoch + 2 {
+                // When curr_slot == num_slots_in_epoch + 2, the 3nd block of
+                // epoch 1, reward distribution should happen in this block.
+                // however, all stake rewards are paid at the this block
+                // therefore reward_status should have transitioned to inactive.
+                // The cap should increase accordingly.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
                 );
 
-                assert_eq!(post_cap, pre_cap);
+                let account = curr_bank
+                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .unwrap();
+                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
+                    solana_sdk::account::from_account(&account).unwrap();
+                assert_eq!(
+                    post_cap,
+                    pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
+                );
             } else {
+                // When curr_slot == num_slots_in_epoch + 3, the 4th block of
+                // epoch 1 (or any other slot). reward distribution should have
+                // already completed. Therefore, reward_status should stay
+                // inactive and cap should stay the same.
+                assert_matches!(
+                    curr_bank.get_reward_interval(),
+                    RewardInterval::OutsideInterval
+                );
+
                 // slot is not in rewards, cap should not change
                 assert_eq!(post_cap, pre_cap);
             }

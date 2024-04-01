@@ -135,18 +135,17 @@ mod tests {
 
         bank.create_epoch_rewards_sysvar(total_rewards, 10, 42);
         let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-        // Expected balance is the starting balance (1) + total_rewards -
-        // distributed_rewards (10)
-        assert_eq!(account.lamports(), 1 + total_rewards - 10);
+        let expected_balance = bank.get_minimum_balance_for_rent_exemption(account.data().len());
+        // Expected balance is the sysvar rent-exempt balance
+        assert_eq!(account.lamports(), expected_balance);
         let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
         assert_eq!(epoch_rewards, expected_epoch_rewards);
 
         // make a distribution from epoch rewards sysvar
         bank.update_epoch_rewards_sysvar(10);
         let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-        // Expected balance is the starting balance (1) + total_rewards -
-        // distributed_rewards (10)
-        assert_eq!(account.lamports(), 1 + total_rewards - 20);
+        // Balance should not change
+        assert_eq!(account.lamports(), expected_balance);
         let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
         let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height: 42,
