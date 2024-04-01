@@ -708,7 +708,7 @@ async fn packet_batch_sender(
                 break;
             }
 
-            let timeout_res = timeout(Duration::from_micros(250), packet_receiver.recv()).await;
+            let timeout_res = timeout(Duration::from_millis(25), packet_receiver.recv()).await;
 
             if let Ok(Ok(packet_accumulator)) = timeout_res {
                 // Start the timeout from when the packet batch first becomes non-empty
