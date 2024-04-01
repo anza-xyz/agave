@@ -23,7 +23,7 @@ use {
     solana_sdk::{account::ReadableAccount, clock::Slot, saturating_add_assign},
     std::{
         collections::HashMap,
-        num::NonZeroU64,
+        num::{NonZeroU64, Saturating},
         sync::{atomic::Ordering, Arc, Mutex},
     },
 };
@@ -441,13 +441,14 @@ impl AccountsDb {
             StoreReclaims::Ignore,
         ));
 
-        write_ancient_accounts.metrics.accumulate(&ShrinkStatsSub {
+        let shrink_stats = ShrinkStatsSub {
             store_accounts_timing,
-            rewrite_elapsed_us,
-            create_and_insert_store_elapsed_us,
-            unpackable_slots_count: 0,
-            newest_alive_packed_count: 0,
-        });
+            rewrite_elapsed_us: Saturating(rewrite_elapsed_us),
+            create_and_insert_store_elapsed_us: Saturating(create_and_insert_store_elapsed_us),
+            ..ShrinkStatsSub::default()
+        };
+        write_ancient_accounts.metrics.accumulate(&shrink_stats);
+
         write_ancient_accounts
             .shrinks_in_progress
             .insert(target_slot, shrink_in_progress);

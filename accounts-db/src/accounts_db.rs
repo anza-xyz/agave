@@ -89,7 +89,6 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         rent_collector::RentCollector,
-        saturating_add_assign,
         timing::AtomicInterval,
         transaction::SanitizedTransaction,
     },
@@ -1885,26 +1884,20 @@ pub(crate) struct ShrinkAncientStats {
 #[derive(Debug, Default)]
 pub(crate) struct ShrinkStatsSub {
     pub(crate) store_accounts_timing: StoreAccountsTiming,
-    pub(crate) rewrite_elapsed_us: u64,
-    pub(crate) create_and_insert_store_elapsed_us: u64,
-    pub(crate) unpackable_slots_count: usize,
-    pub(crate) newest_alive_packed_count: usize,
+    pub(crate) rewrite_elapsed_us: Saturating<u64>,
+    pub(crate) create_and_insert_store_elapsed_us: Saturating<u64>,
+    pub(crate) unpackable_slots_count: Saturating<usize>,
+    pub(crate) newest_alive_packed_count: Saturating<usize>,
 }
 
 impl ShrinkStatsSub {
     pub(crate) fn accumulate(&mut self, other: &Self) {
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
-        saturating_add_assign!(self.rewrite_elapsed_us, other.rewrite_elapsed_us);
-        saturating_add_assign!(
-            self.create_and_insert_store_elapsed_us,
-            other.create_and_insert_store_elapsed_us
-        );
-        saturating_add_assign!(self.unpackable_slots_count, other.unpackable_slots_count);
-        saturating_add_assign!(
-            self.newest_alive_packed_count,
-            other.newest_alive_packed_count
-        );
+        self.rewrite_elapsed_us += other.rewrite_elapsed_us;
+        self.create_and_insert_store_elapsed_us += other.create_and_insert_store_elapsed_us;
+        self.unpackable_slots_count += other.unpackable_slots_count;
+        self.newest_alive_packed_count += other.newest_alive_packed_count;
     }
 }
 #[derive(Debug, Default)]
@@ -3995,7 +3988,7 @@ impl AccountsDb {
             let (shrink_in_progress, time_us) = measure_us!(
                 self.get_store_for_shrink(slot, shrink_collect.alive_total_bytes as u64)
             );
-            stats_sub.create_and_insert_store_elapsed_us = time_us;
+            stats_sub.create_and_insert_store_elapsed_us += time_us;
 
             // here, we're writing back alive_accounts. That should be an atomic operation
             // without use of rather wide locks in this whole function, because we're
@@ -4008,7 +4001,7 @@ impl AccountsDb {
             );
 
             rewrite_elapsed.stop();
-            stats_sub.rewrite_elapsed_us = rewrite_elapsed.as_us();
+            stats_sub.rewrite_elapsed_us += rewrite_elapsed.as_us();
 
             // `store_accounts_frozen()` above may have purged accounts from some
             // other storage entries (the ones that were just overwritten by this
@@ -4040,7 +4033,7 @@ impl AccountsDb {
                 .fetch_add(1, Ordering::Relaxed);
         }
         shrink_stats.create_and_insert_store_elapsed.fetch_add(
-            stats_sub.create_and_insert_store_elapsed_us,
+            stats_sub.create_and_insert_store_elapsed_us.0,
             Ordering::Relaxed,
         );
         shrink_stats.store_accounts_elapsed.fetch_add(
@@ -4057,12 +4050,12 @@ impl AccountsDb {
         );
         shrink_stats
             .rewrite_elapsed
-            .fetch_add(stats_sub.rewrite_elapsed_us, Ordering::Relaxed);
+            .fetch_add(stats_sub.rewrite_elapsed_us.0, Ordering::Relaxed);
         shrink_stats
             .unpackable_slots_count
-            .fetch_add(stats_sub.unpackable_slots_count as u64, Ordering::Relaxed);
+            .fetch_add(stats_sub.unpackable_slots_count.0 as u64, Ordering::Relaxed);
         shrink_stats.newest_alive_packed_count.fetch_add(
-            stats_sub.newest_alive_packed_count as u64,
+            stats_sub.newest_alive_packed_count.0 as u64,
             Ordering::Relaxed,
         );
     }
@@ -4470,7 +4463,7 @@ impl AccountsDb {
         let (mut shrink_in_progress, create_and_insert_store_elapsed_us) = measure_us!(
             current_ancient.create_if_necessary(slot, self, shrink_collect.alive_total_bytes)
         );
-        stats_sub.create_and_insert_store_elapsed_us = create_and_insert_store_elapsed_us;
+        stats_sub.create_and_insert_store_elapsed_us += create_and_insert_store_elapsed_us;
         let available_bytes = current_ancient.accounts_file().accounts.remaining_bytes();
         // split accounts in 'slot' into:
         // 'Primary', which can fit in 'current_ancient'
@@ -4532,7 +4525,7 @@ impl AccountsDb {
         }
         assert_eq!(bytes_remaining_to_write, 0);
         rewrite_elapsed.stop();
-        stats_sub.rewrite_elapsed_us = rewrite_elapsed.as_us();
+        stats_sub.rewrite_elapsed_us += rewrite_elapsed.as_us();
 
         if slot != current_ancient.slot() {
             // all append vecs in this slot have been combined into an ancient append vec
@@ -6306,7 +6299,8 @@ impl AccountsDb {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
             // will be able to find the account in storage
-            let flushed_store = self.create_and_insert_store(slot, flush_stats.total_size.0, "flush_slot_cache");
+            let flushed_store =
+                self.create_and_insert_store(slot, flush_stats.total_size.0, "flush_slot_cache");
             let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
                 .store_accounts_frozen(
                     (slot, &accounts[..]),
