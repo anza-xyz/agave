@@ -131,6 +131,7 @@ where
                     )?;
                     if let Some(active_stake) = state.active_stake {
                         from_balance = from_balance.saturating_sub(active_stake);
+                        from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
                     }
                 }
             }
@@ -202,27 +203,12 @@ where
                 fee,
             },
         )),
-        SpendAmount::All => {
+        SpendAmount::All | SpendAmount::Available => {
             let lamports = if from_pubkey == fee_pubkey {
                 from_balance.saturating_sub(fee)
             } else {
                 from_balance
             };
-            Ok((
-                build_message(lamports),
-                SpendAndFee {
-                    spend: lamports,
-                    fee,
-                },
-            ))
-        }
-        SpendAmount::Available => {
-            let mut lamports = if from_pubkey == fee_pubkey {
-                from_balance.saturating_sub(fee)
-            } else {
-                from_balance
-            };
-            lamports = lamports.saturating_sub(from_rent_exempt_minimum);
             Ok((
                 build_message(lamports),
                 SpendAndFee {
