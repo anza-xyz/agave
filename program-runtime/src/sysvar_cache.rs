@@ -16,6 +16,71 @@ use {
     std::sync::Arc,
 };
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CachedSysvar {
+    Clock,
+    EpochSchedule,
+    EpochRewards,
+    Rent,
+    SlotHashes,
+    StakeHistory,
+    LastRestartSlot,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct SysvarDataCache {
+    clock: Option<Vec<u8>>,
+    epoch_schedule: Option<Vec<u8>>,
+    epoch_rewards: Option<Vec<u8>>,
+    rent: Option<Vec<u8>>,
+    slot_hashes: Option<Vec<u8>>,
+    stake_history: Option<Vec<u8>>,
+    last_restart_slot: Option<Vec<u8>>,
+}
+
+impl SysvarDataCache {
+    fn vec_for_enum(&self, sysvar_type: CachedSysvar) -> &Option<Vec<u8>> {
+        match sysvar_type {
+            CachedSysvar::Clock => &self.clock,
+            CachedSysvar::EpochSchedule => &self.epoch_schedule,
+            CachedSysvar::EpochRewards => &self.epoch_rewards,
+            CachedSysvar::Rent => &self.rent,
+            CachedSysvar::SlotHashes => &self.slot_hashes,
+            CachedSysvar::StakeHistory => &self.stake_history,
+            CachedSysvar::LastRestartSlot => &self.last_restart_slot,
+        }
+    }
+
+    pub fn read_sysvar_into(&self, sysvar_type: CachedSysvar, length: usize, offset: usize, out_buf: &mut [u8])
+    -> Result<(), InstructionError> {
+        if let Some(ref sysvar_buf) = self.vec_for_enum(sysvar_type) {
+            if length == 0 {
+                panic!("zero length error");
+            }
+
+            if length + offset > sysvar_buf.len() {
+                panic!("overrun error");
+            }
+
+            if length != out_buf.len() {
+                panic!("bad out_buf error");
+            }
+
+            out_buf.copy_from_slice(&sysvar_buf[offset..offset+length]);
+
+            Ok(())
+        } else {
+            panic!("not found err");
+        }
+    }
+
+    // TODO can do cute wrappers for get_clock, get_rent etc when we expect to always get the full object
+}
+
+// HANA this whole struct will be deprecated and can go away
+// sysvar cache serves sysvars to bpf programs via syscall and to builtins directly
+// the syscalls will be changed to use the new buffer-based interface
+// and the builtins will be ported to bpf. thus in the future the parsed objects have no value
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
     fn example() -> Self {
