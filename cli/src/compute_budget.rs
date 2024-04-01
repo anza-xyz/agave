@@ -4,6 +4,7 @@ use {
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
         compute_budget::{self, ComputeBudgetInstruction},
+        instruction::Instruction,
         transaction::Transaction,
     },
 };
@@ -70,4 +71,19 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     Ok(UpdateComputeUnitLimitResult::UpdatedInstructionIndex(
         compute_unit_limit_ix_index,
     ))
+}
+
+pub(crate) trait WithComputeUnitPrice {
+    fn with_compute_unit_price(self, compute_unit_price: Option<&u64>) -> Self;
+}
+
+impl WithComputeUnitPrice for Vec<Instruction> {
+    fn with_compute_unit_price(mut self, compute_unit_price: Option<&u64>) -> Self {
+        if let Some(compute_unit_price) = compute_unit_price {
+            self.push(ComputeBudgetInstruction::set_compute_unit_price(
+                *compute_unit_price,
+            ));
+        }
+        self
+    }
 }
