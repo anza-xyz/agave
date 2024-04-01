@@ -2,7 +2,7 @@ use {
     crate::{
         nonblocking::connection_rate_limiter::ConnectionRateLimiter,
         quic::{
-            configure_server, PeerStats, QuicServerError, StreamStats, MAX_UNSTAKED_CONNECTIONS,
+            configure_server, PeerStats, QuicServerError, StreamStats,
         },
         streamer::StakedNodes,
         tls_certificates::get_pubkey_from_tls_certificate,
@@ -355,6 +355,7 @@ fn handle_and_cache_new_connection(
     connection_table: Arc<Mutex<ConnectionTable>>,
     params: &NewConnectionHandlerParams,
     wait_for_chunk_timeout: Duration,
+    max_unstaked_connections: usize,
 ) -> Result<(), ConnectionHandlerError> {
     if let Ok(max_uni_streams) = VarInt::from_u64(compute_max_allowed_uni_streams(
         connection_table_l.peer_type,
@@ -405,6 +406,7 @@ fn handle_and_cache_new_connection(
                 params.clone(),
                 peer_type,
                 wait_for_chunk_timeout,
+                max_unstaked_connections
             ));
             Ok(())
         } else {
@@ -445,6 +447,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
             connection_table_clone,
             params,
             wait_for_chunk_timeout,
+            max_connections
         )
     } else {
         connection.close(
@@ -555,6 +558,7 @@ async fn setup_connection(
                             staked_connection_table.clone(),
                             &params,
                             wait_for_chunk_timeout,
+                            max_unstaked_connections,
                         ) {
                             stats
                                 .connection_added_from_staked_peer
@@ -750,11 +754,16 @@ fn max_streams_for_connection_in_100ms(
     connection_type: ConnectionPeerType,
     stake: u64,
     total_stake: u64,
+    max_unstaked_connections: usize,
 ) -> u64 {
     if matches!(connection_type, ConnectionPeerType::Unstaked) || stake == 0 {
-        Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT)
-            .apply_to(MAX_STREAMS_PER_100MS)
-            .saturating_div(MAX_UNSTAKED_CONNECTIONS as u64)
+        if max_unstaked_connections == 0 {
+            0
+        } else {
+            Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT)
+                .apply_to(MAX_STREAMS_PER_100MS)
+                .saturating_div(max_unstaked_connections as u64)
+        }
     } else {
         const MIN_STAKED_STREAMS: u64 = 8;
         let max_total_staked_streams: u64 = MAX_STREAMS_PER_100MS
@@ -810,6 +819,7 @@ async fn handle_connection(
     params: NewConnectionHandlerParams,
     peer_type: ConnectionPeerType,
     wait_for_chunk_timeout: Duration,
+    max_unstaked_connections: usize,
 ) {
     let stats = params.stats;
     debug!(
@@ -821,7 +831,7 @@ async fn handle_connection(
     let stable_id = connection.stable_id();
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
     let max_streams_per_100ms =
-        max_streams_for_connection_in_100ms(peer_type, params.stake, params.total_stake);
+        max_streams_for_connection_in_100ms(peer_type, params.stake, params.total_stake, max_unstaked_connections);
     let mut last_throttling_instant = tokio::time::Instant::now();
     let mut streams_in_current_interval = 0;
     let peer = ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey);
