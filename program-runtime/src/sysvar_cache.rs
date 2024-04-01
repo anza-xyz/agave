@@ -4,6 +4,7 @@ use solana_sdk::sysvar::{
 };
 use {
     crate::invoke_context::InvokeContext,
+    serde::de::DeserializeOwned,
     solana_sdk::{
         instruction::InstructionError,
         pubkey::Pubkey,
@@ -51,8 +52,13 @@ impl SysvarDataCache {
         }
     }
 
-    pub fn read_sysvar_into(&self, sysvar_type: CachedSysvar, length: usize, offset: usize, out_buf: &mut [u8])
-    -> Result<(), InstructionError> {
+    pub fn read_sysvar_into(
+        &self,
+        sysvar_type: CachedSysvar,
+        length: usize,
+        offset: usize,
+        out_buf: &mut [u8],
+    ) -> Result<(), InstructionError> {
         if let Some(ref sysvar_buf) = self.vec_for_enum(sysvar_type) {
             if length == 0 {
                 panic!("zero length error");
@@ -66,7 +72,7 @@ impl SysvarDataCache {
                 panic!("bad out_buf error");
             }
 
-            out_buf.copy_from_slice(&sysvar_buf[offset..offset+length]);
+            out_buf.copy_from_slice(&sysvar_buf[offset..offset + length]);
 
             Ok(())
         } else {
@@ -74,13 +80,107 @@ impl SysvarDataCache {
         }
     }
 
-    // TODO can do cute wrappers for get_clock, get_rent etc when we expect to always get the full object
+    fn get_sysvar_obj<T: DeserializeOwned>(
+        &self,
+        sysvar_type: CachedSysvar,
+    ) -> Result<T, InstructionError> {
+        if let Some(ref sysvar_buf) = self.vec_for_enum(sysvar_type) {
+            bincode::deserialize(sysvar_buf).map_err(|_| InstructionError::UnsupportedSysvar)
+        } else {
+            Err(InstructionError::UnsupportedSysvar)
+        }
+    }
+
+    pub fn get_clock(&self) -> Result<Clock, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::Clock)
+    }
+
+    pub fn get_epoch_schedule(&self) -> Result<EpochSchedule, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::EpochSchedule)
+    }
+
+    pub fn get_epoch_rewards(&self) -> Result<EpochRewards, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::EpochRewards)
+    }
+
+    pub fn get_rent(&self) -> Result<Rent, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::Rent)
+    }
+
+    pub fn get_last_restart_slot(&self) -> Result<LastRestartSlot, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::LastRestartSlot)
+    }
+
+    // TODO we dont need functions that deserialize the vector sysvars, just return vector slices
+    // oh wait i alredy implemented that lmao
+
+    pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
+        &mut self,
+        mut get_account_data: F,
+    ) {
+        if self.clock.is_none() {
+            get_account_data(&Clock::id(), &mut |data: &[u8]| {
+                if let Ok(clock) = bincode::deserialize(data) {
+                    self.clock = Some(clock);
+                }
+            });
+        }
+
+        if self.epoch_schedule.is_none() {
+            get_account_data(&EpochSchedule::id(), &mut |data: &[u8]| {
+                if let Ok(epoch_schedule) = bincode::deserialize(data) {
+                    self.epoch_schedule = Some(epoch_schedule);
+                }
+            });
+        }
+
+        if self.epoch_rewards.is_none() {
+            get_account_data(&EpochRewards::id(), &mut |data: &[u8]| {
+                if let Ok(epoch_rewards) = bincode::deserialize(data) {
+                    self.epoch_rewards = Some(epoch_rewards);
+                }
+            });
+        }
+
+        if self.rent.is_none() {
+            get_account_data(&Rent::id(), &mut |data: &[u8]| {
+                if let Ok(rent) = bincode::deserialize(data) {
+                    self.rent = Some(rent);
+                }
+            });
+        }
+
+        if self.slot_hashes.is_none() {
+            get_account_data(&SlotHashes::id(), &mut |data: &[u8]| {
+                if let Ok(slot_hashes) = bincode::deserialize(data) {
+                    self.slot_hashes = Some(slot_hashes);
+                }
+            });
+        }
+
+        if self.stake_history.is_none() {
+            get_account_data(&StakeHistory::id(), &mut |data: &[u8]| {
+                if let Ok(stake_history) = bincode::deserialize(data) {
+                    self.stake_history = Some(stake_history);
+                }
+            });
+        }
+
+        if self.last_restart_slot.is_none() {
+            get_account_data(&LastRestartSlot::id(), &mut |data: &[u8]| {
+                if let Ok(last_restart_slot) = bincode::deserialize(data) {
+                    self.last_restart_slot = Some(last_restart_slot);
+                }
+            });
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = SysvarDataCache::default();
+    }
 }
 
-// HANA this whole struct will be deprecated and can go away
-// sysvar cache serves sysvars to bpf programs via syscall and to builtins directly
-// the syscalls will be changed to use the new buffer-based interface
-// and the builtins will be ported to bpf. thus in the future the parsed objects have no value
+// HANA i have no idea why this is frozen because it doesnt need to be binary-compat with anything
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
     fn example() -> Self {
@@ -89,6 +189,10 @@ impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
     }
 }
 
+// HANA this can all be deprecated and can go away i think? it seems useless to us now
+// sysvar cache serves sysvars to bpf programs via syscall and to builtins directly
+// the syscalls will be changed to use the new buffer-based interface
+// and the builtins will be ported to bpf. thus in the future the parsed objects have no value
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {
     clock: Option<Arc<Clock>>,
