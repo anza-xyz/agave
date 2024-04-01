@@ -33,6 +33,8 @@ impl Bank {
     ) {
         assert!(self.is_partitioned_rewards_code_enabled());
 
+        assert!(total_rewards >= distributed_rewards);
+
         let epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             total_rewards,
             distributed_rewards,
@@ -42,13 +44,10 @@ impl Bank {
         };
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            let mut inherited_account_fields =
-                self.inherit_specially_retained_account_fields(account);
-
-            assert!(total_rewards >= distributed_rewards);
-            // set the account lamports to the undistributed rewards
-            inherited_account_fields.0 += total_rewards - distributed_rewards;
-            create_account(&epoch_rewards, inherited_account_fields)
+            create_account(
+                &epoch_rewards,
+                self.inherit_specially_retained_account_fields(account),
+            )
         });
 
         self.log_epoch_rewards_sysvar("create");
@@ -66,13 +65,10 @@ impl Bank {
         epoch_rewards.distribute(distributed);
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            let mut inherited_account_fields =
-                self.inherit_specially_retained_account_fields(account);
-
-            let lamports = inherited_account_fields.0;
-            assert!(lamports >= distributed);
-            inherited_account_fields.0 = lamports - distributed;
-            create_account(&epoch_rewards, inherited_account_fields)
+            create_account(
+                &epoch_rewards,
+                self.inherit_specially_retained_account_fields(account),
+            )
         });
 
         self.log_epoch_rewards_sysvar("update");
