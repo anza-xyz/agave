@@ -100,6 +100,7 @@ use {
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
+        num::Saturating,
         ops::{Range, RangeBounds},
         path::{Path, PathBuf},
         sync::{
@@ -1742,21 +1743,21 @@ impl SplitAncientStorages {
 
 #[derive(Debug, Default)]
 struct FlushStats {
-    num_flushed: usize,
-    num_purged: usize,
-    total_size: u64,
+    num_flushed: Saturating<usize>,
+    num_purged: Saturating<usize>,
+    total_size: Saturating<u64>,
     store_accounts_timing: StoreAccountsTiming,
-    store_accounts_total_us: u64,
+    store_accounts_total_us: Saturating<u64>,
 }
 
 impl FlushStats {
     fn accumulate(&mut self, other: &Self) {
-        saturating_add_assign!(self.num_flushed, other.num_flushed);
-        saturating_add_assign!(self.num_purged, other.num_purged);
-        saturating_add_assign!(self.total_size, other.total_size);
+        self.num_flushed += other.num_flushed;
+        self.num_purged += other.num_purged;
+        self.total_size += other.total_size;
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
-        saturating_add_assign!(self.store_accounts_total_us, other.store_accounts_total_us);
+        self.store_accounts_total_us += other.store_accounts_total_us;
     }
 }
 
@@ -6131,9 +6132,9 @@ impl AccountsDb {
             });
             datapoint_info!(
                 "accounts_db-flush_accounts_cache_aggressively",
-                ("num_flushed", flush_stats.num_flushed, i64),
-                ("num_purged", flush_stats.num_purged, i64),
-                ("total_flush_size", flush_stats.total_size, i64),
+                ("num_flushed", flush_stats.num_flushed.0, i64),
+                ("num_purged", flush_stats.num_purged.0, i64),
+                ("total_flush_size", flush_stats.total_size.0, i64),
                 ("total_cache_size", self.accounts_cache.size(), i64),
                 ("total_frozen_slots", excess_slot_count, i64),
                 ("total_slots", self.accounts_cache.num_slots(), i64),
@@ -6161,7 +6162,7 @@ impl AccountsDb {
             ("num_accounts_saved", num_accounts_saved, i64),
             (
                 "store_accounts_total_us",
-                flush_stats.store_accounts_total_us,
+                flush_stats.store_accounts_total_us.0,
                 i64
             ),
             (
@@ -6250,9 +6251,7 @@ impl AccountsDb {
         mut should_flush_f: Option<&mut impl FnMut(&Pubkey, &AccountSharedData) -> bool>,
         max_clean_root: Option<Slot>,
     ) -> FlushStats {
-        let mut num_purged = 0;
-        let mut total_size = 0;
-        let mut num_flushed = 0;
+        let mut flush_stats = FlushStats::default();
         let iter_items: Vec<_> = slot_cache.iter().collect();
         let mut purged_slot_pubkeys: HashSet<(Slot, Pubkey)> = HashSet::new();
         let mut pubkey_to_slot_set: Vec<(Pubkey, Slot)> = vec![];
@@ -6278,15 +6277,15 @@ impl AccountsDb {
                     .unwrap_or(true);
                 if should_flush {
                     let hash = iter_item.value().hash();
-                    total_size += aligned_stored_size(account.data().len()) as u64;
-                    num_flushed += 1;
+                    flush_stats.total_size += aligned_stored_size(account.data().len()) as u64;
+                    flush_stats.num_flushed += 1;
                     Some(((key, account), hash))
                 } else {
                     // If we don't flush, we have to remove the entry from the
                     // index, since it's equivalent to purging
                     purged_slot_pubkeys.insert((slot, *key));
                     pubkey_to_slot_set.push((*key, slot));
-                    num_purged += 1;
+                    flush_stats.num_purged += 1;
                     None
                 }
             })
@@ -6303,13 +6302,11 @@ impl AccountsDb {
             &HashSet::default(),
         );
 
-        let mut store_accounts_timing = StoreAccountsTiming::default();
-        let mut store_accounts_total_us = 0;
         if !is_dead_slot {
             // This ensures that all updates are written to an AppendVec, before any
             // updates to the index happen, so anybody that sees a real entry in the index,
             // will be able to find the account in storage
-            let flushed_store = self.create_and_insert_store(slot, total_size, "flush_slot_cache");
+            let flushed_store = self.create_and_insert_store(slot, flush_stats.total_size.0, "flush_slot_cache");
             let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
                 .store_accounts_frozen(
                     (slot, &accounts[..]),
@@ -6317,8 +6314,8 @@ impl AccountsDb {
                     &flushed_store,
                     StoreReclaims::Default,
                 ));
-            store_accounts_timing = store_accounts_timing_inner;
-            store_accounts_total_us = store_accounts_total_inner_us;
+            flush_stats.store_accounts_timing = store_accounts_timing_inner;
+            flush_stats.store_accounts_total_us += store_accounts_total_inner_us;
 
             // If the above sizing function is correct, just one AppendVec is enough to hold
             // all the data for the slot
@@ -6330,13 +6327,8 @@ impl AccountsDb {
         // There is some racy condition for existing readers who just has read exactly while
         // flushing. That case is handled by retry_to_get_account_accessor()
         assert!(self.accounts_cache.remove_slot(slot).is_some());
-        FlushStats {
-            num_flushed,
-            num_purged,
-            total_size,
-            store_accounts_timing,
-            store_accounts_total_us,
-        }
+
+        flush_stats
     }
 
     /// flush all accounts in this slot
