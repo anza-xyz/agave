@@ -45,7 +45,6 @@ impl Bank {
                 EpochRewardStatus::Active(_)
             ));
             self.epoch_reward_status = EpochRewardStatus::Inactive;
-            self.destroy_epoch_rewards_sysvar();
         }
     }
 
