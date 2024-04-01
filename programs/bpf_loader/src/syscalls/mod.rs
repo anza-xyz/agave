@@ -3315,11 +3315,15 @@ mod tests {
         src_rewards.distribution_complete_block_height = 42;
 
         let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.set_clock(src_clock.clone());
-        sysvar_cache.set_epoch_schedule(src_epochschedule.clone());
-        sysvar_cache.set_fees(src_fees.clone());
-        sysvar_cache.set_rent(src_rent.clone());
-        sysvar_cache.set_epoch_rewards(src_rewards);
+        /* XXX TODO FIXME HANA these are the only uses of set_clock in the whole codebase
+           define a lambda that can be passed to fill_missing_entries instead
+
+            sysvar_cache.set_clock(src_clock.clone());
+            sysvar_cache.set_epoch_schedule(src_epochschedule.clone());
+            sysvar_cache.set_fees(src_fees.clone());
+            sysvar_cache.set_rent(src_rent.clone());
+            sysvar_cache.set_epoch_rewards(src_rewards);
+        */
 
         let transaction_accounts = vec![
             (

@@ -1,7 +1,7 @@
 use super::*;
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
-    sysvar: Result<Arc<T>, InstructionError>,
+    sysvar: Result<T, InstructionError>,
     var_addr: u64,
     check_aligned: bool,
     memory_mapping: &mut MemoryMapping,
@@ -16,8 +16,7 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     )?;
     let var = translate_type_mut::<T>(memory_mapping, var_addr, check_aligned)?;
 
-    let sysvar: Arc<T> = sysvar?;
-    *var = T::clone(sysvar.as_ref());
+    *var = sysvar?;
 
     Ok(SUCCESS)
 }

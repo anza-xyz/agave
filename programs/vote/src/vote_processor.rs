@@ -145,8 +145,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &mut me,
                 commission,
                 &signers,
-                sysvar_cache.get_epoch_schedule()?.as_ref(),
-                sysvar_cache.get_clock()?.as_ref(),
+                &sysvar_cache.get_epoch_schedule()?,
+                &sysvar_cache.get_clock()?,
                 &invoke_context.feature_set,
             )
         }

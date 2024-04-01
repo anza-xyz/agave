@@ -29,7 +29,7 @@ pub enum CachedSysvar {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct SysvarDataCache {
+pub struct SysvarCache {
     clock: Option<Vec<u8>>,
     epoch_schedule: Option<Vec<u8>>,
     epoch_rewards: Option<Vec<u8>>,
@@ -39,7 +39,7 @@ pub struct SysvarDataCache {
     last_restart_slot: Option<Vec<u8>>,
 }
 
-impl SysvarDataCache {
+impl SysvarCache {
     fn vec_for_enum(&self, sysvar_type: CachedSysvar) -> &Option<Vec<u8>> {
         match sysvar_type {
             CachedSysvar::Clock => &self.clock,
@@ -111,8 +111,25 @@ impl SysvarDataCache {
         self.get_sysvar_obj(CachedSysvar::LastRestartSlot)
     }
 
-    // TODO we dont need functions that deserialize the vector sysvars, just return vector slices
-    // oh wait i alredy implemented that lmao
+    // XXX remove after fixing callsites
+    pub fn get_stake_history(&self) -> Result<StakeHistory, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::StakeHistory)
+    }
+
+    // XXX remove after fixing callsites
+    pub fn get_slot_hashes(&self) -> Result<SlotHashes, InstructionError> {
+        self.get_sysvar_obj(CachedSysvar::SlotHashes)
+    }
+
+    // XXX investigate if we can actually nix this
+    pub fn get_fees(&self) -> Result<Fees, InstructionError> {
+        Err(InstructionError::UnsupportedSysvar)
+    }
+
+    // XXX investigate if we can actually nix this
+    pub fn get_recent_blockhashes(&self) -> Result<RecentBlockhashes, InstructionError> {
+        Err(InstructionError::UnsupportedSysvar)
+    }
 
     pub fn fill_missing_entries<F: FnMut(&Pubkey, &mut dyn FnMut(&[u8]))>(
         &mut self,
@@ -176,16 +193,16 @@ impl SysvarDataCache {
     }
 
     pub fn reset(&mut self) {
-        *self = SysvarDataCache::default();
+        *self = Self::default();
     }
 }
 
 // HANA i have no idea why this is frozen because it doesnt need to be binary-compat with anything
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
-impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
+impl ::solana_frozen_abi::abi_example::AbiExample for OldSysvarCache {
     fn example() -> Self {
-        // SysvarCache is not Serialize so just rely on Default.
-        SysvarCache::default()
+        // OldSysvarCache is not Serialize so just rely on Default.
+        OldSysvarCache::default()
     }
 }
 
@@ -194,7 +211,7 @@ impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
 // the syscalls will be changed to use the new buffer-based interface
 // and the builtins will be ported to bpf. thus in the future the parsed objects have no value
 #[derive(Default, Clone, Debug)]
-pub struct SysvarCache {
+pub struct OldSysvarCache {
     clock: Option<Arc<Clock>>,
     epoch_schedule: Option<Arc<EpochSchedule>>,
     epoch_rewards: Option<Arc<EpochRewards>>,
@@ -208,7 +225,7 @@ pub struct SysvarCache {
     last_restart_slot: Option<Arc<LastRestartSlot>>,
 }
 
-impl SysvarCache {
+impl OldSysvarCache {
     pub fn get_clock(&self) -> Result<Arc<Clock>, InstructionError> {
         self.clock
             .clone()
@@ -377,7 +394,7 @@ impl SysvarCache {
     }
 
     pub fn reset(&mut self) {
-        *self = SysvarCache::default();
+        *self = OldSysvarCache::default();
     }
 }
 
@@ -406,7 +423,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<Clock>, InstructionError> {
+    ) -> Result<Clock, InstructionError> {
         check_sysvar_account::<Clock>(
             invoke_context.transaction_context,
             instruction_context,
@@ -419,7 +436,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<Rent>, InstructionError> {
+    ) -> Result<Rent, InstructionError> {
         check_sysvar_account::<Rent>(
             invoke_context.transaction_context,
             instruction_context,
@@ -432,7 +449,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<SlotHashes>, InstructionError> {
+    ) -> Result<SlotHashes, InstructionError> {
         check_sysvar_account::<SlotHashes>(
             invoke_context.transaction_context,
             instruction_context,
@@ -446,7 +463,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<RecentBlockhashes>, InstructionError> {
+    ) -> Result<RecentBlockhashes, InstructionError> {
         check_sysvar_account::<RecentBlockhashes>(
             invoke_context.transaction_context,
             instruction_context,
@@ -459,7 +476,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<StakeHistory>, InstructionError> {
+    ) -> Result<StakeHistory, InstructionError> {
         check_sysvar_account::<StakeHistory>(
             invoke_context.transaction_context,
             instruction_context,
@@ -472,7 +489,7 @@ pub mod get_sysvar_with_account_check {
         invoke_context: &InvokeContext,
         instruction_context: &InstructionContext,
         instruction_account_index: IndexOfAccount,
-    ) -> Result<Arc<LastRestartSlot>, InstructionError> {
+    ) -> Result<LastRestartSlot, InstructionError> {
         check_sysvar_account::<LastRestartSlot>(
             invoke_context.transaction_context,
             instruction_context,

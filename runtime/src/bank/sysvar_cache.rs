@@ -172,7 +172,7 @@ mod tests {
             bank1_cached_slot_hashes
         );
         assert_eq!(
-            *bank1_sysvar_cache.get_epoch_rewards().unwrap(),
+            bank1_sysvar_cache.get_epoch_rewards().unwrap(),
             expected_epoch_rewards,
         );
     }

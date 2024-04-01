@@ -65,7 +65,7 @@ pub(crate) fn new_warmup_cooldown_rate_epoch(invoke_context: &InvokeContext) -> 
         .unwrap();
     invoke_context
         .feature_set
-        .new_warmup_cooldown_rate_epoch(epoch_schedule.as_ref())
+        .new_warmup_cooldown_rate_epoch(&epoch_schedule)
 }
 
 fn get_stake_status(
