@@ -211,7 +211,8 @@ mod tests {
         let total_rewards = 1_000_000_000;
         bank.create_epoch_rewards_sysvar(total_rewards, 0, 42);
         let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-        assert_eq!(pre_epoch_rewards_account.lamports(), total_rewards);
+        // Expected balance is the starting balance (1) + total_rewards
+        assert_eq!(pre_epoch_rewards_account.lamports(), 1 + total_rewards);
 
         // Set up a partition of rewards to distribute
         let expected_num = 100;
@@ -230,8 +231,9 @@ mod tests {
         bank.distribute_epoch_rewards_in_partition(&all_rewards, 0);
         let post_cap = bank.capitalization();
         let post_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
+        // Expected balance is the starting balance (1) + total_rewards
         let expected_epoch_rewards_sysvar_lamports_remaining =
-            total_rewards - rewards_to_distribute;
+            1 + total_rewards - rewards_to_distribute;
 
         // Assert that epoch rewards sysvar lamports decreases by the distributed rewards
         assert_eq!(

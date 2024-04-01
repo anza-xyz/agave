@@ -139,14 +139,18 @@ mod tests {
 
         bank.create_epoch_rewards_sysvar(total_rewards, 10, 42);
         let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-        assert_eq!(account.lamports(), total_rewards - 10);
+        // Expected balance is the starting balance (1) + total_rewards -
+        // distributed_rewards (10)
+        assert_eq!(account.lamports(), 1 + total_rewards - 10);
         let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
         assert_eq!(epoch_rewards, expected_epoch_rewards);
 
         // make a distribution from epoch rewards sysvar
         bank.update_epoch_rewards_sysvar(10);
         let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-        assert_eq!(account.lamports(), total_rewards - 20);
+        // Expected balance is the starting balance (1) + total_rewards -
+        // distributed_rewards (10)
+        assert_eq!(account.lamports(), 1 + total_rewards - 20);
         let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
         let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height: 42,
@@ -158,10 +162,5 @@ mod tests {
             active: true,
         };
         assert_eq!(epoch_rewards, expected_epoch_rewards);
-
-        // burn epoch rewards sysvar
-        bank.burn_and_purge_account(&sysvar::epoch_rewards::id(), account);
-        let account = bank.get_account(&sysvar::epoch_rewards::id());
-        assert!(account.is_none());
     }
 }
