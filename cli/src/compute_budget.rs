@@ -1,4 +1,5 @@
 use {
+    solana_clap_utils::compute_budget::ComputeUnitLimit,
     solana_client::rpc_config::RpcSimulateTransactionConfig,
     solana_compute_budget::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
     solana_rpc_client::rpc_client::RpcClient,
@@ -76,6 +77,11 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     ))
 }
 
+pub(crate) struct ComputeUnitConfig<'a> {
+    pub(crate) compute_unit_price: Option<&'a u64>,
+    pub(crate) compute_unit_limit: ComputeUnitLimit,
+}
+
 pub(crate) trait WithComputeUnitPrice {
     fn with_compute_unit_price(self, compute_unit_price: Option<&u64>) -> Self;
 }
@@ -91,10 +97,6 @@ impl WithComputeUnitPrice for Vec<Instruction> {
     }
 }
 
-pub(crate) struct ComputeUnitConfig {
-    pub(crate) compute_unit_price: Option<u64>,
-}
-
 pub(crate) trait WithComputeUnitConfig {
     fn with_compute_unit_config(self, config: &ComputeUnitConfig) -> Self;
 }
@@ -103,14 +105,23 @@ impl WithComputeUnitConfig for Vec<Instruction> {
     fn with_compute_unit_config(mut self, config: &ComputeUnitConfig) -> Self {
         if let Some(compute_unit_price) = config.compute_unit_price {
             self.push(ComputeBudgetInstruction::set_compute_unit_price(
-                compute_unit_price,
+                *compute_unit_price,
             ));
-
-            // Default to the max compute unit limit because later transactions will be
-            // simulated to get the exact compute units consumed.
-            self.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                MAX_COMPUTE_UNIT_LIMIT,
-            ));
+            match config.compute_unit_limit {
+                ComputeUnitLimit::Default => {}
+                ComputeUnitLimit::Static(compute_unit_limit) => {
+                    self.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                        compute_unit_limit,
+                    ));
+                }
+                ComputeUnitLimit::Simulated => {
+                    // Default to the max compute unit limit because later transactions will be
+                    // simulated to get the exact compute units consumed.
+                    self.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                        MAX_COMPUTE_UNIT_LIMIT,
+                    ));
+                }
+            }
         }
         self
     }

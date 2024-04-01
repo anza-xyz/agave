@@ -5,13 +5,13 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
-        compute_budget::WithComputeUnitPrice,
+        compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         memo::WithMemo,
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
     clap::{App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::{
-        compute_unit_price::{compute_unit_price_arg, COMPUTE_UNIT_PRICE_ARG},
+        compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         input_parsers::*,
         input_validators::*,
         keypair::{CliSigners, DefaultSigner, SignerIndex},
@@ -419,7 +419,10 @@ pub fn process_authorize_nonce_account(
         new_authority,
     )]
     .with_memo(memo)
-    .with_compute_unit_price(compute_unit_price);
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Default,
+    });
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
@@ -470,7 +473,10 @@ pub fn process_create_nonce_account(
                 lamports,
             )
             .with_memo(memo)
-            .with_compute_unit_price(compute_unit_price)
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit: ComputeUnitLimit::Default,
+            })
         } else {
             create_nonce_account(
                 &config.signers[0].pubkey(),
@@ -479,7 +485,10 @@ pub fn process_create_nonce_account(
                 lamports,
             )
             .with_memo(memo)
-            .with_compute_unit_price(compute_unit_price)
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit: ComputeUnitLimit::Default,
+            })
         };
         Message::new(&ixs, Some(&config.signers[0].pubkey()))
     };
@@ -560,7 +569,10 @@ pub fn process_new_nonce(
         &nonce_authority.pubkey(),
     )]
     .with_memo(memo)
-    .with_compute_unit_price(compute_unit_price);
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Default,
+    });
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
@@ -626,7 +638,10 @@ pub fn process_withdraw_from_nonce_account(
         lamports,
     )]
     .with_memo(memo)
-    .with_compute_unit_price(compute_unit_price);
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Default,
+    });
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
@@ -651,7 +666,10 @@ pub(crate) fn process_upgrade_nonce_account(
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
     let ixs = vec![upgrade_nonce_account(nonce_account)]
         .with_memo(memo)
-        .with_compute_unit_price(compute_unit_price);
+        .with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Default,
+        });
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;

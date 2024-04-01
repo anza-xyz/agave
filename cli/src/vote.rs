@@ -5,7 +5,7 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
-        compute_budget::WithComputeUnitPrice,
+        compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         memo::WithMemo,
         nonce::check_nonce_account,
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
@@ -13,7 +13,7 @@ use {
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::{
-        compute_unit_price::{compute_unit_price_arg, COMPUTE_UNIT_PRICE_ARG},
+        compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
         input_parsers::*,
         input_validators::*,
@@ -853,7 +853,10 @@ pub fn process_create_vote_account(
             create_vote_account_config,
         )
         .with_memo(memo)
-        .with_compute_unit_price(compute_unit_price);
+        .with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Default,
+        });
 
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
@@ -1004,7 +1007,10 @@ pub fn process_vote_authorize(
     };
     let ixs = vec![vote_ix]
         .with_memo(memo)
-        .with_compute_unit_price(compute_unit_price);
+        .with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Default,
+        });
 
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
@@ -1083,7 +1089,10 @@ pub fn process_vote_update_validator(
         &new_identity_pubkey,
     )]
     .with_memo(memo)
-    .with_compute_unit_price(compute_unit_price);
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Default,
+    });
     let nonce_authority = config.signers[nonce_authority];
     let fee_payer = config.signers[fee_payer];
 
@@ -1153,7 +1162,10 @@ pub fn process_vote_update_commission(
         commission,
     )]
     .with_memo(memo)
-    .with_compute_unit_price(compute_unit_price);
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Default,
+    });
     let nonce_authority = config.signers[nonce_authority];
     let fee_payer = config.signers[fee_payer];
 
@@ -1318,7 +1330,10 @@ pub fn process_withdraw_from_vote_account(
             destination_account_pubkey,
         )]
         .with_memo(memo)
-        .with_compute_unit_price(compute_unit_price);
+        .with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Default,
+        });
 
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
@@ -1435,7 +1450,10 @@ pub fn process_close_vote_account(
         destination_account_pubkey,
     )]
     .with_memo(memo)
-    .with_compute_unit_price(compute_unit_price);
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Default,
+    });
 
     let message = Message::new(&ixs, Some(&fee_payer.pubkey()));
     let mut tx = Transaction::new_unsigned(message);

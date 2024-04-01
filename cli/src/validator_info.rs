@@ -362,7 +362,10 @@ pub fn process_set_validator_info(
                 lamports,
                 keys.clone(),
             )
-            .with_compute_unit_price(compute_unit_price);
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit: ComputeUnitLimit::Default,
+            });
             instructions.extend_from_slice(&[config_instruction::store(
                 &info_pubkey,
                 true,
@@ -382,7 +385,10 @@ pub fn process_set_validator_info(
                 keys,
                 &validator_info,
             )]
-            .with_compute_unit_price(compute_unit_price);
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit: ComputeUnitLimit::Default,
+            });
             Message::new(&instructions, Some(&config.signers[0].pubkey()))
         }
     };
