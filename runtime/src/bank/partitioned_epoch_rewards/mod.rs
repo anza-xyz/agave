@@ -379,15 +379,19 @@ mod tests {
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![2_000_000_000; expected_num_delegations],
         );
+        let slots_per_epoch = 32;
+        genesis_config.epoch_schedule = EpochSchedule::new(slots_per_epoch);
 
         let bank0 = Bank::new_for_tests(&genesis_config);
         let num_slots_in_epoch = bank0.get_slots_in_epoch(bank0.epoch());
-        assert_eq!(num_slots_in_epoch, 32);
+        assert_eq!(num_slots_in_epoch, slots_per_epoch);
 
         let mut previous_bank = Arc::new(Bank::new_from_parent(
             Arc::new(bank0),
@@ -396,7 +400,7 @@ mod tests {
         ));
 
         // simulate block progress
-        for slot in 2..=num_slots_in_epoch + 2 {
+        for slot in 2..=(2 * slots_per_epoch) + 2 {
             let pre_cap = previous_bank.capitalization();
             let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
             let post_cap = curr_bank.capitalization();
@@ -425,7 +429,7 @@ mod tests {
                 curr_bank.store_account_and_update_capitalization(&vote_id, &vote_account);
             }
 
-            if slot == num_slots_in_epoch {
+            if slot % num_slots_in_epoch == 0 {
                 // This is the first block of epoch 1. Reward computation should happen in this block.
                 // assert reward compute status activated at epoch boundary
                 assert_matches!(
@@ -433,8 +437,12 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
-                // cap should increase because of new epoch rewards
-                assert!(post_cap > pre_cap);
+                if slot == num_slots_in_epoch {
+                    // cap should increase because of new epoch rewards
+                    assert!(post_cap > pre_cap);
+                } else {
+                    assert_eq!(post_cap, pre_cap);
+                }
             } else if slot == num_slots_in_epoch + 1 || slot == num_slots_in_epoch + 2 {
                 // 1. when curr_slot == num_slots_in_epoch + 1, the 2nd block of epoch 1, reward distribution should happen in this block.
                 // however, all stake rewards are paid at the this block therefore reward_status should have transitioned to inactive. And since
@@ -450,6 +458,13 @@ mod tests {
             } else {
                 // slot is not in rewards, cap should not change
                 assert_eq!(post_cap, pre_cap);
+            }
+            // EpochRewards sysvar is created in the first block of epoch 1.
+            // Ensure the sysvar persists thereafter.
+            if slot > num_slots_in_epoch {
+                let epoch_rewards_lamports =
+                    curr_bank.get_balance(&solana_sdk::sysvar::epoch_rewards::id());
+                assert!(epoch_rewards_lamports > 0);
             }
             previous_bank = Arc::new(curr_bank);
         }
