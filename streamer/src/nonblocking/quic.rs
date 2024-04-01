@@ -867,7 +867,7 @@ async fn handle_connection(
                             }
                         }
                         peer_stat.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                        info!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
+                        debug!("Throttled stream from {remote_addr:?}, peer type: {peer_type:?}, stake: {}, total stake: {}",
                             params.stake, params.total_stake);
                         let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
                         update_peer_stats(&params.remote_pubkey, &stats, &peer_stat).await;
