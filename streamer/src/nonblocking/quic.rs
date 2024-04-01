@@ -79,7 +79,7 @@ const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const STREAM_STOP_CODE_THROTTLING: u32 = 15;
 
-const CONNECTIONS_LIMIT_PER_SECOND: u32 = 8;
+const CONNECTIONS_LIMIT_PER_SECOND: u32 = 16;
 
 // A sequence of bytes that is part of a packet
 // along with where in the packet it is
@@ -196,7 +196,7 @@ async fn run_server(
             let do_rate_limiting = true;
             if do_rate_limiting && !rate_limiter.check(&remote_address.ip()) {
                 debug!(
-                    "Reject attacker connection from {:?} -- rate limiting exceeded",
+                    "Reject connection from {:?} -- rate limiting exceeded",
                     remote_address
                 );
                 stats.connection_throttled.fetch_add(1, Ordering::Relaxed);
