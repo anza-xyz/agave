@@ -47,7 +47,7 @@ impl Bank {
 
             assert!(total_rewards >= distributed_rewards);
             // set the account lamports to the undistributed rewards
-            inherited_account_fields.0 = total_rewards - distributed_rewards;
+            inherited_account_fields.0 += total_rewards - distributed_rewards;
             create_account(&epoch_rewards, inherited_account_fields)
         });
 
