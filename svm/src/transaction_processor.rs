@@ -49,7 +49,7 @@ use {
     },
     std::{
         cell::RefCell,
-        collections::{hash_map::Entry, HashMap},
+        collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
         sync::{atomic::Ordering, Arc, RwLock},
@@ -108,6 +108,8 @@ pub trait TransactionProcessingCallback {
     fn get_program_match_criteria(&self, _program: &Pubkey) -> LoadedProgramMatchCriteria {
         LoadedProgramMatchCriteria::NoCriteria
     }
+
+    fn add_builtin_account(&self, name: &str, program_id: &Pubkey, must_replace: bool);
 }
 
 #[derive(Debug)]
@@ -142,6 +144,9 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
 
     /// Programs required for transaction batch processing
     pub program_cache: Arc<RwLock<ProgramCache<FG>>>,
+
+    /// Builtin program ids
+    pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -171,6 +176,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
                 Slot::default(),
                 Epoch::default(),
             ))),
+            builtin_program_ids: RwLock::new(HashSet::new()),
         }
     }
 }
@@ -183,6 +189,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_structure: FeeStructure,
         runtime_config: Arc<RuntimeConfig>,
         program_cache: Arc<RwLock<ProgramCache<FG>>>,
+        builtin_program_ids: HashSet<Pubkey>,
     ) -> Self {
         Self {
             slot,
@@ -192,12 +199,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             runtime_config,
             sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache,
+            builtin_program_ids: RwLock::new(builtin_program_ids),
         }
     }
 
     /// Main entrypoint to the SVM.
     #[allow(clippy::too_many_arguments)]
-    pub fn load_and_execute_sanitized_transactions<'a, CB: TransactionProcessingCallback>(
+    pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
         sanitized_txs: &[SanitizedTransaction],
@@ -206,7 +214,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         account_overrides: Option<&AccountOverrides>,
-        builtin_programs: impl Iterator<Item = &'a Pubkey>,
         log_messages_bytes_limit: Option<usize>,
         limit_to_load_programs: bool,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
@@ -218,7 +225,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             PROGRAM_OWNERS,
         );
         let native_loader = native_loader::id();
-        for builtin_program in builtin_programs {
+        for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
             program_accounts_map.insert(*builtin_program, (&native_loader, 0));
         }
 
@@ -954,6 +961,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     pub fn get_sysvar_cache_for_tests(&self) -> SysvarCache {
         self.sysvar_cache.read().unwrap().clone()
     }
+
+    /// Add a built-in program
+    pub fn add_builtin<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        program_id: Pubkey,
+        name: &str,
+        builtin: LoadedProgram,
+    ) {
+        debug!("Adding program {} under {:?}", name, program_id);
+        callbacks.add_builtin_account(name, &program_id, false);
+        self.builtin_program_ids.write().unwrap().insert(program_id);
+        self.program_cache
+            .write()
+            .unwrap()
+            .assign_program(program_id, Arc::new(builtin));
+        debug!("Added program {} under {:?}", name, program_id);
+    }
 }
 
 #[cfg(test)]
@@ -1024,6 +1049,10 @@ mod tests {
 
         fn get_feature_set(&self) -> Arc<FeatureSet> {
             self.feature_set.clone()
+        }
+
+        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey, _must_replace: bool) {
+            todo!()
         }
     }
 

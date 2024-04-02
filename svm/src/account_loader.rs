@@ -528,6 +528,10 @@ mod tests {
         fn get_feature_set(&self) -> Arc<FeatureSet> {
             self.feature_set.clone()
         }
+
+        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey, _must_replace: bool) {
+            todo!()
+        }
     }
 
     fn load_accounts_with_fee_and_rent(
