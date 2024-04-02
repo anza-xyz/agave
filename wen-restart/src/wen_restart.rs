@@ -343,7 +343,6 @@ fn find_bankhash_of_heaviest_fork(
 
     let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
     let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
         .thread_name(|i| format!("solReplayTx{i:02}"))
         .build()
         .expect("new rayon threadpool");
