@@ -1,38 +1,12 @@
-use {
-    super::Bank, solana_program_runtime::sysvar_cache::SysvarCache,
-    solana_sdk::account::ReadableAccount,
-};
-
-impl Bank {
-    pub(crate) fn fill_missing_sysvar_cache_entries(&self) {
-        let mut sysvar_cache = self.transaction_processor.sysvar_cache.write().unwrap();
-        sysvar_cache.fill_missing_entries(|pubkey, callback| {
-            if let Some(account) = self.get_account_with_fixed_root(pubkey) {
-                callback(account.data());
-            }
-        });
-    }
-
-    pub(crate) fn reset_sysvar_cache(&self) {
-        let mut sysvar_cache = self.transaction_processor.sysvar_cache.write().unwrap();
-        sysvar_cache.reset();
-    }
-
-    pub fn get_sysvar_cache_for_tests(&self) -> SysvarCache {
-        self.transaction_processor
-            .sysvar_cache
-            .read()
-            .unwrap()
-            .clone()
-    }
-}
+#[cfg(test)]
+use super::Bank;
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         solana_sdk::{
-            feature_set, genesis_config::create_genesis_config, pubkey::Pubkey,
+            feature_set, genesis_config::create_genesis_config, hash::Hash, pubkey::Pubkey,
             sysvar::epoch_rewards::EpochRewards,
         },
         std::sync::Arc,
@@ -132,7 +106,7 @@ mod tests {
         assert!(bank1_cached_epoch_rewards.is_err());
 
         drop(bank1_sysvar_cache);
-        bank1.reset_sysvar_cache();
+        bank1.transaction_processor.reset_sysvar_cache();
 
         let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache.read().unwrap();
         assert!(bank1_sysvar_cache.get_clock().is_err());
@@ -147,17 +121,23 @@ mod tests {
         // inject a reward sysvar for test
         bank1.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
         let expected_epoch_rewards = EpochRewards {
+            distribution_starting_block_height: 42,
+            num_partitions: 0,
+            parent_blockhash: Hash::default(),
+            total_points: 0,
             total_rewards: 100,
             distributed_rewards: 10,
-            distribution_complete_block_height: 42,
+            active: true,
         };
         bank1.create_epoch_rewards_sysvar(
             expected_epoch_rewards.total_rewards,
             expected_epoch_rewards.distributed_rewards,
-            expected_epoch_rewards.distribution_complete_block_height,
+            expected_epoch_rewards.distribution_starting_block_height,
         );
 
-        bank1.fill_missing_sysvar_cache_entries();
+        bank1
+            .transaction_processor
+            .fill_missing_sysvar_cache_entries(&bank1);
 
         let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache.read().unwrap();
         assert_eq!(bank1_sysvar_cache.get_clock(), bank1_cached_clock);

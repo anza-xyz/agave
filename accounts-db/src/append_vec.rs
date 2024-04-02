@@ -29,7 +29,7 @@ use {
         fs::{remove_file, OpenOptions},
         io::{Seek, SeekFrom, Write},
         mem,
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
             Mutex,
@@ -197,6 +197,15 @@ impl<'append_vec> ReadableAccount for AppendVecStoredAccountMeta<'append_vec> {
     }
 }
 
+/// offsets to help navigate the persisted format of `AppendVec`
+#[derive(Debug)]
+struct AccountOffsets {
+    /// offset to the end of the &[u8] data
+    offset_to_end_of_data: usize,
+    /// offset to the next account. This will be aligned.
+    next_account_offset: usize,
+}
+
 /// A thread-safe, file-backed block of memory used to store `Account` instances. Append operations
 /// are serialized such that only one thread updates the internal `append_lock` at a time. No
 /// restrictions are placed on reading. That is, one may read items from one thread while another
@@ -237,19 +246,20 @@ impl Drop for AppendVec {
 }
 
 impl AppendVec {
-    pub fn new(file: &Path, create: bool, size: usize) -> Self {
+    pub fn new(file: impl Into<PathBuf>, create: bool, size: usize) -> Self {
+        let file = file.into();
         let initial_len = 0;
         AppendVec::sanitize_len_and_size(initial_len, size).unwrap();
 
         if create {
-            let _ignored = remove_file(file);
+            let _ignored = remove_file(&file);
         }
 
         let mut data = OpenOptions::new()
             .read(true)
             .write(true)
             .create(create)
-            .open(file)
+            .open(&file)
             .map_err(|e| {
                 panic!(
                     "Unable to {} data file {} in current dir({:?}): {:?}",
@@ -282,7 +292,7 @@ impl AppendVec {
         APPEND_VEC_MMAPPED_FILES_OPEN.fetch_add(1, Ordering::Relaxed);
 
         AppendVec {
-            path: file.to_path_buf(),
+            path: file,
             map,
             // This mutex forces append to be single threaded, but concurrent with reads
             // See UNSAFE usage in `append_ptr`
@@ -347,15 +357,16 @@ impl AppendVec {
         format!("{slot}.{id}")
     }
 
-    pub fn new_from_file<P: AsRef<Path>>(path: P, current_len: usize) -> Result<(Self, usize)> {
-        let new = Self::new_from_file_unchecked(&path, current_len)?;
+    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
+        let path = path.into();
+        let new = Self::new_from_file_unchecked(path, current_len)?;
 
         let (sanitized, num_accounts) = new.sanitize_layout_and_length();
         if !sanitized {
             // This info show the failing accountvec file path.  It helps debugging
             // the appendvec data corrupution issues related to recycling.
             return Err(AccountsFileError::AppendVecError(
-                AppendVecError::IncorrectLayout(path.as_ref().to_path_buf()),
+                AppendVecError::IncorrectLayout(new.path.clone()),
             ));
         }
 
@@ -363,7 +374,8 @@ impl AppendVec {
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
-    pub fn new_from_file_unchecked<P: AsRef<Path>>(path: P, current_len: usize) -> Result<Self> {
+    pub fn new_from_file_unchecked(path: impl Into<PathBuf>, current_len: usize) -> Result<Self> {
+        let path = path.into();
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
 
@@ -384,7 +396,7 @@ impl AppendVec {
         APPEND_VEC_MMAPPED_FILES_OPEN.fetch_add(1, Ordering::Relaxed);
 
         Ok(AppendVec {
-            path: path.as_ref().to_path_buf(),
+            path,
             map,
             append_lock: Mutex::new(()),
             current_len: AtomicUsize::new(current_len),
@@ -547,6 +559,47 @@ impl AppendVec {
 
     pub fn get_path(&self) -> PathBuf {
         self.path.clone()
+    }
+
+    /// help with the math of offsets when navigating the on-disk layout in an AppendVec.
+    /// data is at the end of each account and is variable sized
+    /// the next account is then aligned on a 64 bit boundary.
+    /// With these helpers, we can skip over reading some of the data depending on what the caller wants.
+    fn next_account_offset(start_offset: usize, stored_meta: &StoredMeta) -> AccountOffsets {
+        let start_of_data = start_offset
+            + std::mem::size_of::<StoredMeta>()
+            + std::mem::size_of::<AccountMeta>()
+            + std::mem::size_of::<AccountHash>();
+        let aligned_data_len = u64_align!(stored_meta.data_len as usize);
+        let next_account_offset = start_of_data + aligned_data_len;
+        let offset_to_end_of_data = start_of_data + stored_meta.data_len as usize;
+
+        AccountOffsets {
+            next_account_offset,
+            offset_to_end_of_data,
+        }
+    }
+
+    /// iterate over all pubkeys and call `callback`.
+    /// This iteration does not deserialize and populate each field in `StoredAccountMeta`.
+    /// `data` is completely ignored, for example.
+    /// Also, no references have to be maintained/returned from an iterator function.
+    /// This fn can operate on a batch of data at once.
+    pub(crate) fn scan_pubkeys(&self, mut callback: impl FnMut(&Pubkey)) {
+        let mut offset = 0;
+        loop {
+            let Some((stored_meta, _)) = self.get_type::<StoredMeta>(offset) else {
+                // eof
+                break;
+            };
+            let next = Self::next_account_offset(offset, stored_meta);
+            if next.offset_to_end_of_data > self.len() {
+                // data doesn't fit, so don't include this pubkey
+                break;
+            }
+            callback(&stored_meta.pubkey);
+            offset = next.next_account_offset;
+        }
     }
 
     /// Return iterator for account metadata

@@ -239,6 +239,24 @@ macro_rules! register_feature_gated_function {
     };
 }
 
+pub fn morph_into_deployment_environment_v1(
+    from: Arc<BuiltinProgram<InvokeContext>>,
+) -> Result<BuiltinProgram<InvokeContext>, Error> {
+    let mut config = *from.get_config();
+    config.reject_broken_elfs = true;
+
+    let mut result = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
+
+    for (key, (name, value)) in from.get_function_registry().iter() {
+        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
+        if name != *b"sol_alloc_free_" {
+            result.register_function(key, name, value)?;
+        }
+    }
+
+    Ok(BuiltinProgram::new_loader(config, result))
+}
+
 pub fn create_program_runtime_environment_v1<'a>(
     feature_set: &FeatureSet,
     compute_budget: &ComputeBudget,
@@ -3299,16 +3317,20 @@ mod tests {
         src_rent.burn_percent = 3;
 
         let mut src_rewards = create_filled_type::<EpochRewards>(false);
+        src_rewards.distribution_starting_block_height = 42;
+        src_rewards.num_partitions = 2;
+        src_rewards.parent_blockhash = Hash::new(&[3; 32]);
+        src_rewards.total_points = 4;
         src_rewards.total_rewards = 100;
         src_rewards.distributed_rewards = 10;
-        src_rewards.distribution_complete_block_height = 42;
+        src_rewards.active = true;
 
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.set_clock(src_clock.clone());
         sysvar_cache.set_epoch_schedule(src_epochschedule.clone());
         sysvar_cache.set_fees(src_fees.clone());
         sysvar_cache.set_rent(src_rent.clone());
-        sysvar_cache.set_epoch_rewards(src_rewards);
+        sysvar_cache.set_epoch_rewards(src_rewards.clone());
 
         let transaction_accounts = vec![
             (
@@ -3501,10 +3523,14 @@ mod tests {
             assert_eq!(got_rewards, src_rewards);
 
             let mut clean_rewards = create_filled_type::<EpochRewards>(true);
+            clean_rewards.distribution_starting_block_height =
+                src_rewards.distribution_starting_block_height;
+            clean_rewards.num_partitions = src_rewards.num_partitions;
+            clean_rewards.parent_blockhash = src_rewards.parent_blockhash;
+            clean_rewards.total_points = src_rewards.total_points;
             clean_rewards.total_rewards = src_rewards.total_rewards;
             clean_rewards.distributed_rewards = src_rewards.distributed_rewards;
-            clean_rewards.distribution_complete_block_height =
-                src_rewards.distribution_complete_block_height;
+            clean_rewards.active = src_rewards.active;
             assert!(are_bytes_equal(&got_rewards, &clean_rewards));
         }
     }

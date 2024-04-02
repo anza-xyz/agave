@@ -33,9 +33,9 @@ use {
         },
         accounts_partition::{self, PartitionIndex, RentPayingAccountsByPartition},
         ancestors::Ancestors,
-        inline_spl_token,
         partitioned_rewards::TestPartitionedEpochRewards,
     },
+    solana_inline_spl::token,
     solana_logger,
     solana_program_runtime::{
         compute_budget::ComputeBudget,
@@ -191,7 +191,7 @@ fn create_genesis_config_no_tx_fee(lamports: u64) -> (GenesisConfig, Keypair) {
     (genesis_config, mint_keypair)
 }
 
-fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
+pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
     solana_sdk::genesis_config::create_genesis_config(lamports)
 }
 
@@ -7099,15 +7099,10 @@ fn test_reconfigure_token2_native_mint() {
     let genesis_config =
         create_genesis_config_with_leader(5, &solana_sdk::pubkey::new_rand(), 0).genesis_config;
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(
-        bank.get_balance(&inline_spl_token::native_mint::id()),
-        1000000000
-    );
-    let native_mint_account = bank
-        .get_account(&inline_spl_token::native_mint::id())
-        .unwrap();
+    assert_eq!(bank.get_balance(&token::native_mint::id()), 1000000000);
+    let native_mint_account = bank.get_account(&token::native_mint::id()).unwrap();
     assert_eq!(native_mint_account.data().len(), 82);
-    assert_eq!(native_mint_account.owner(), &inline_spl_token::id());
+    assert_eq!(native_mint_account.owner(), &token::id());
 }
 
 #[test]
@@ -11910,14 +11905,16 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
     goto_end_of_slot(bank.clone());
     let bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), 16);
     let current_env = bank
-        .loaded_programs_cache
+        .transaction_processor
+        .program_cache
         .read()
         .unwrap()
         .get_environments_for_epoch(0)
         .program_runtime_v1
         .clone();
     let upcoming_env = bank
-        .loaded_programs_cache
+        .transaction_processor
+        .program_cache
         .read()
         .unwrap()
         .get_environments_for_epoch(1)
@@ -11926,9 +11923,8 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
 
     // Advance the bank to recompile the program.
     {
-        let loaded_programs_cache = bank.loaded_programs_cache.read().unwrap();
-        let slot_versions =
-            loaded_programs_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 1);
         assert!(Arc::ptr_eq(
             slot_versions[0].program.get_environment().unwrap(),
@@ -11938,9 +11934,8 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
     goto_end_of_slot(bank.clone());
     let bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
     {
-        let loaded_programs_cache = bank.loaded_programs_cache.read().unwrap();
-        let slot_versions =
-            loaded_programs_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 2);
         assert!(Arc::ptr_eq(
             slot_versions[0].program.get_environment().unwrap(),
@@ -12230,34 +12225,6 @@ fn test_rewards_point_calculation_empty() {
     assert!(point_value.is_none());
 }
 
-#[test]
-fn test_force_reward_interval_end() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-
-    let expected_num = 100;
-
-    let stake_rewards = (0..expected_num)
-        .map(|_| StakeReward::new_random())
-        .collect::<Vec<_>>();
-
-    bank.set_epoch_reward_status_active(vec![stake_rewards]);
-    assert!(bank.get_reward_interval() == RewardInterval::InsideInterval);
-
-    bank.force_reward_interval_end_for_tests();
-    assert!(bank.get_reward_interval() == RewardInterval::OutsideInterval);
-}
-
-#[test]
-fn test_is_partitioned_reward_feature_enable() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    assert!(!bank.is_partitioned_rewards_feature_enabled());
-    bank.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
-    assert!(bank.is_partitioned_rewards_feature_enabled());
-}
-
 /// Test that reward partition range panics when passing out of range partition index
 #[test]
 #[should_panic(expected = "index out of bounds: the len is 10 but the index is 15")]
@@ -12279,24 +12246,6 @@ fn test_get_stake_rewards_partition_range_panic() {
 
     // This call should panic, i.e. 15 is out of the num_credit_blocks
     let _range = &stake_rewards_bucket[15];
-}
-
-#[test]
-fn test_deactivate_epoch_reward_status() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-
-    let expected_num = 100;
-
-    let stake_rewards = (0..expected_num)
-        .map(|_| StakeReward::new_random())
-        .collect::<Vec<_>>();
-
-    bank.set_epoch_reward_status_active(vec![stake_rewards]);
-
-    assert!(bank.get_reward_interval() == RewardInterval::InsideInterval);
-    bank.deactivate_epoch_reward_status();
-    assert!(bank.get_reward_interval() == RewardInterval::OutsideInterval);
 }
 
 #[test]
@@ -12699,49 +12648,6 @@ fn test_rewards_computation_and_partitioned_distribution_two_blocks() {
         }
         previous_bank = Arc::new(curr_bank);
     }
-}
-
-/// Test `EpochRewards` sysvar creation, distribution, and burning.
-/// This test covers the following epoch_rewards_sysvar bank member functions, i.e.
-/// `create_epoch_rewards_sysvar`, `update_epoch_rewards_sysvar`, `burn_and_purge_account`.
-#[test]
-fn test_epoch_rewards_sysvar() {
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
-
-    let total_rewards = 1_000_000_000; // a large rewards so that the sysvar account is rent-exempted.
-
-    // create epoch rewards sysvar
-    let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
-        total_rewards,
-        distributed_rewards: 10,
-        distribution_complete_block_height: 42,
-    };
-
-    bank.create_epoch_rewards_sysvar(total_rewards, 10, 42);
-    let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-    assert_eq!(account.lamports(), total_rewards - 10);
-    let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
-    assert_eq!(epoch_rewards, expected_epoch_rewards);
-
-    // make a distribution from epoch rewards sysvar
-    bank.update_epoch_rewards_sysvar(10);
-    let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
-    assert_eq!(account.lamports(), total_rewards - 20);
-    let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
-    let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
-        total_rewards,
-        distributed_rewards: 20,
-        distribution_complete_block_height: 42,
-    };
-    assert_eq!(epoch_rewards, expected_epoch_rewards);
-
-    // burn epoch rewards sysvar
-    bank.burn_and_purge_account(&sysvar::epoch_rewards::id(), account);
-    let account = bank.get_account(&sysvar::epoch_rewards::id());
-    assert!(account.is_none());
 }
 
 /// Test that program execution that involves stake accounts should fail during reward period.
@@ -13283,127 +13189,6 @@ fn test_calc_vote_accounts_to_store_normal() {
     }
 }
 
-impl Bank {
-    /// Return the total number of blocks in reward interval (including both calculation and crediting).
-    fn get_reward_total_num_blocks(&self, rewards: &StakeRewards) -> u64 {
-        self.get_reward_calculation_num_blocks() + self.get_reward_distribution_num_blocks(rewards)
-    }
-}
-
-/// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during normal epoch gives the expected result
-#[test]
-fn test_get_reward_distribution_num_blocks_normal() {
-    solana_logger::setup();
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    // Given 8k rewards, it will take 2 blocks to credit all the rewards
-    let expected_num = 8192;
-    let stake_rewards = (0..expected_num)
-        .map(|_| StakeReward::new_random())
-        .collect::<Vec<_>>();
-
-    assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);
-    assert_eq!(bank.get_reward_calculation_num_blocks(), 1);
-    assert_eq!(
-        bank.get_reward_total_num_blocks(&stake_rewards),
-        bank.get_reward_distribution_num_blocks(&stake_rewards)
-            + bank.get_reward_calculation_num_blocks(),
-    );
-}
-
-/// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during small epoch
-/// The num_credit_blocks should be cap to 10% of the total number of blocks in the epoch.
-#[test]
-fn test_get_reward_distribution_num_blocks_cap() {
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
-
-    // Config stake reward distribution to be 10 per block
-    let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-    accounts_db_config.test_partitioned_epoch_rewards =
-        TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-            reward_calculation_num_blocks: 1,
-            stake_account_stores_per_block: 10,
-        };
-
-    let bank = Bank::new_with_paths(
-        &genesis_config,
-        Arc::new(RuntimeConfig::default()),
-        Vec::new(),
-        None,
-        None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-        false,
-        Some(accounts_db_config),
-        None,
-        Some(Pubkey::new_unique()),
-        Arc::default(),
-    );
-
-    let stake_account_stores_per_block = bank.partitioned_rewards_stake_account_stores_per_block();
-    assert_eq!(stake_account_stores_per_block, 10);
-
-    let check_num_reward_distribution_blocks =
-        |num_stakes: u64,
-         expected_num_reward_distribution_blocks: u64,
-         expected_num_reward_computation_blocks: u64| {
-            // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
-            let stake_rewards = (0..num_stakes)
-                .map(|_| StakeReward::new_random())
-                .collect::<Vec<_>>();
-
-            assert_eq!(
-                bank.get_reward_distribution_num_blocks(&stake_rewards),
-                expected_num_reward_distribution_blocks
-            );
-            assert_eq!(
-                bank.get_reward_calculation_num_blocks(),
-                expected_num_reward_computation_blocks
-            );
-            assert_eq!(
-                bank.get_reward_total_num_blocks(&stake_rewards),
-                bank.get_reward_distribution_num_blocks(&stake_rewards)
-                    + bank.get_reward_calculation_num_blocks(),
-            );
-        };
-
-    for test_record in [
-        // num_stakes, expected_num_reward_distribution_blocks, expected_num_reward_computation_blocks
-        (0, 1, 1),
-        (1, 1, 1),
-        (stake_account_stores_per_block, 1, 1),
-        (2 * stake_account_stores_per_block - 1, 2, 1),
-        (2 * stake_account_stores_per_block, 2, 1),
-        (3 * stake_account_stores_per_block - 1, 3, 1),
-        (3 * stake_account_stores_per_block, 3, 1),
-        (4 * stake_account_stores_per_block, 3, 1), // cap at 3
-        (5 * stake_account_stores_per_block, 3, 1), //cap at 3
-    ] {
-        check_num_reward_distribution_blocks(test_record.0, test_record.1, test_record.2);
-    }
-}
-
-/// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during warm up epoch gives the expected result.
-/// The num_credit_blocks should be 1 during warm up epoch.
-#[test]
-fn test_get_reward_distribution_num_blocks_warmup() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    let rewards = vec![];
-    assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
-    assert_eq!(bank.get_reward_calculation_num_blocks(), 1);
-    assert_eq!(
-        bank.get_reward_total_num_blocks(&rewards),
-        bank.get_reward_distribution_num_blocks(&rewards)
-            + bank.get_reward_calculation_num_blocks(),
-    );
-}
-
 #[test]
 fn test_calculate_stake_vote_rewards() {
     solana_logger::setup();
@@ -13793,4 +13578,245 @@ fn test_failed_simulation_compute_units() {
     let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
+}
+
+#[test]
+fn test_filter_program_errors_and_collect_fee_details() {
+    // TX  | EXECUTION RESULT            | is nonce | COLLECT            | ADDITIONAL          | COLLECT
+    //     |                             |          | (TX_FEE, PRIO_FEE) | WITHDRAW FROM PAYER | RESULT
+    // ------------------------------------------------------------------------------------------------------
+    // tx1 | not executed                | n/a      | (0    , 0)         | 0                   | Original Err
+    // tx2 | executed and no error       | n/a      | (5_000, 1_000)     | 0                   | Ok
+    // tx3 | executed has error          | true     | (5_000, 1_000)     | 0                   | Ok
+    // tx4 | executed has error          | false    | (5_000, 1_000)     | 6_000               | Ok
+    // tx5 | executed error,
+    //         payer insufficient fund   | false    | (0    , 0)         | 0                   | InsufficientFundsForFee
+    //
+    let initial_payer_balance = 7_000;
+    let additional_payer_withdraw = 6_000;
+    let expected_collected_fee_details = CollectorFeeDetails {
+        transaction_fee: 15_000,
+        priority_fee: 3_000,
+    };
+    let expected_collect_results = vec![
+        Err(TransactionError::AccountNotFound),
+        Ok(()),
+        Ok(()),
+        Ok(()),
+        Err(TransactionError::InsufficientFundsForFee),
+    ];
+
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_leader(initial_payer_balance, &Pubkey::new_unique(), 3);
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+    let bank = Bank::new_for_tests(&genesis_config);
+
+    let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
+        &[
+            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 2),
+            ComputeBudgetInstruction::set_compute_unit_limit(1_000),
+            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+        ],
+        Some(&mint_keypair.pubkey()),
+        &[&mint_keypair],
+        genesis_config.hash(),
+    ));
+    let txs = vec![tx.clone(), tx.clone(), tx.clone(), tx.clone(), tx];
+
+    let results = vec![
+        TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
+        new_execution_result(Ok(()), None),
+        new_execution_result(
+            Err(TransactionError::InstructionError(
+                1,
+                SystemError::ResultWithNegativeLamports.into(),
+            )),
+            Some(&NonceFull::default()),
+        ),
+        new_execution_result(
+            Err(TransactionError::InstructionError(
+                1,
+                SystemError::ResultWithNegativeLamports.into(),
+            )),
+            None,
+        ),
+        new_execution_result(Err(TransactionError::AccountNotFound), None),
+    ];
+
+    let results = bank.filter_program_errors_and_collect_fee_details(&txs, &results);
+
+    assert_eq!(
+        expected_collected_fee_details,
+        *bank.collector_fee_details.read().unwrap()
+    );
+    assert_eq!(
+        initial_payer_balance - additional_payer_withdraw,
+        bank.get_balance(&mint_keypair.pubkey())
+    );
+    assert_eq!(expected_collect_results, results);
+}
+
+#[test]
+fn test_check_execution_status_and_charge_fee() {
+    let fee = 5000;
+    let initial_balance = fee - 1000;
+    let tx_error =
+        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature);
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_leader(initial_balance, &Pubkey::new_unique(), 3);
+    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let message = new_sanitized_message(Message::new(
+        &[system_instruction::transfer(
+            &mint_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            1,
+        )],
+        Some(&mint_keypair.pubkey()),
+    ));
+
+    [Ok(()), Err(tx_error)]
+        .iter()
+        .flat_map(|result| [true, false].iter().map(move |is_nonce| (result, is_nonce)))
+        .for_each(|(result, is_nonce)| {
+            if result.is_err() && !is_nonce {
+                assert_eq!(
+                    Err(TransactionError::InsufficientFundsForFee),
+                    bank.check_execution_status_and_charge_fee(&message, result, *is_nonce, fee)
+                );
+                assert_eq!(initial_balance, bank.get_balance(&mint_keypair.pubkey()));
+
+                let small_fee = 1;
+                assert!(bank
+                    .check_execution_status_and_charge_fee(&message, result, *is_nonce, small_fee)
+                    .is_ok());
+                assert_eq!(
+                    initial_balance - small_fee,
+                    bank.get_balance(&mint_keypair.pubkey())
+                );
+            } else {
+                assert!(bank
+                    .check_execution_status_and_charge_fee(&message, result, *is_nonce, fee)
+                    .is_ok());
+                assert_eq!(initial_balance, bank.get_balance(&mint_keypair.pubkey()));
+            }
+        });
+}
+#[test]
+fn test_deploy_last_epoch_slot() {
+    solana_logger::setup();
+
+    // Bank Setup
+    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    genesis_config
+        .accounts
+        .remove(&feature_set::reject_callx_r10::id());
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.activate_feature(&feature_set::reject_callx_r10::id());
+
+    // go to the last slot in the epoch
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let slots_in_epoch = bank.epoch_schedule().get_slots_in_epoch(0);
+    let bank = new_bank_from_parent_with_bank_forks(
+        &bank_forks,
+        bank,
+        &Pubkey::default(),
+        slots_in_epoch - 1,
+    );
+    eprintln!("now at slot {} epoch {}", bank.slot(), bank.epoch());
+
+    // deploy a program
+    let payer_keypair = Keypair::new();
+    let program_keypair = Keypair::new();
+    let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
+    let mut elf = Vec::new();
+    file.read_to_end(&mut elf).unwrap();
+    let min_program_balance =
+        bank.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
+    let min_buffer_balance = bank
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(elf.len()));
+    let min_programdata_balance = bank.get_minimum_balance_for_rent_exemption(
+        UpgradeableLoaderState::size_of_programdata(elf.len()),
+    );
+    let buffer_address = Pubkey::new_unique();
+    let (programdata_address, _) = Pubkey::find_program_address(
+        &[program_keypair.pubkey().as_ref()],
+        &bpf_loader_upgradeable::id(),
+    );
+    let upgrade_authority_keypair = Keypair::new();
+
+    let buffer_account = {
+        let mut account = AccountSharedData::new(
+            min_buffer_balance,
+            UpgradeableLoaderState::size_of_buffer(elf.len()),
+            &bpf_loader_upgradeable::id(),
+        );
+        account
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(upgrade_authority_keypair.pubkey()),
+            })
+            .unwrap();
+        account
+            .data_as_mut_slice()
+            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+            .unwrap()
+            .copy_from_slice(&elf);
+        account
+    };
+
+    let payer_base_balance = LAMPORTS_PER_SOL;
+    let deploy_fees = {
+        let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
+        3 * fee_calculator.lamports_per_signature
+    };
+    let min_payer_balance = min_program_balance
+        .saturating_add(min_programdata_balance)
+        .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
+    bank.store_account(
+        &payer_keypair.pubkey(),
+        &AccountSharedData::new(
+            payer_base_balance.saturating_add(min_payer_balance),
+            0,
+            &system_program::id(),
+        ),
+    );
+    bank.store_account(&buffer_address, &buffer_account);
+    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
+    bank.store_account(&programdata_address, &AccountSharedData::default());
+    let message = Message::new(
+        &bpf_loader_upgradeable::deploy_with_max_program_len(
+            &payer_keypair.pubkey(),
+            &program_keypair.pubkey(),
+            &buffer_address,
+            &upgrade_authority_keypair.pubkey(),
+            min_program_balance,
+            elf.len(),
+        )
+        .unwrap(),
+        Some(&payer_keypair.pubkey()),
+    );
+    let signers = &[&payer_keypair, &program_keypair, &upgrade_authority_keypair];
+    let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
+    let ret = bank.process_transaction(&transaction);
+    assert!(ret.is_ok(), "ret: {:?}", ret);
+    goto_end_of_slot(bank.clone());
+
+    // go to the first slot in the new epoch
+    let bank =
+        new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slots_in_epoch);
+    eprintln!("now at slot {} epoch {}", bank.slot(), bank.epoch());
+
+    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let binding = mint_keypair.insecure_clone();
+    let signers = vec![&binding];
+    let transaction = Transaction::new(&signers, message, bank.last_blockhash());
+    let result_with_feature_enabled = bank.process_transaction(&transaction);
+    assert_eq!(result_with_feature_enabled, Ok(()));
 }

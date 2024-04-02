@@ -1,7 +1,7 @@
 //! Manage the map of slot -> append vec
 
 use {
-    crate::accounts_db::{AccountStorageEntry, AppendVecId},
+    crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
     solana_sdk::clock::Slot,
     std::sync::Arc,
@@ -15,7 +15,7 @@ pub struct AccountStorageReference {
     pub storage: Arc<AccountStorageEntry>,
     /// id can be read from 'storage', but it is an atomic read.
     /// id will never change while a storage is held, so we store it separately here for faster runtime lookup in 'get_account_storage_entry'
-    pub id: AppendVecId,
+    pub id: AccountsFileId,
 }
 
 pub type AccountStorageMap = DashMap<Slot, AccountStorageReference>;
@@ -50,7 +50,7 @@ impl AccountStorage {
     pub(crate) fn get_account_storage_entry(
         &self,
         slot: Slot,
-        store_id: AppendVecId,
+        store_id: AccountsFileId,
     ) -> Option<Arc<AccountStorageEntry>> {
         let lookup_in_map = || {
             self.map
@@ -276,7 +276,7 @@ impl Default for AccountStorageStatus {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use {super::*, std::path::Path};
+    use {super::*, crate::accounts_file::AccountsFileProvider, std::path::Path};
 
     #[test]
     fn test_shrink_in_progress() {
@@ -297,12 +297,14 @@ pub(crate) mod tests {
             slot,
             id,
             store_file_size,
+            AccountsFileProvider::AppendVec,
         ));
         let entry2 = Arc::new(AccountStorageEntry::new(
             common_store_path,
             slot,
             id,
             store_file_size2,
+            AccountsFileProvider::AppendVec,
         ));
         storage
             .map
@@ -343,7 +345,7 @@ pub(crate) mod tests {
     }
 
     impl AccountStorage {
-        fn get_test_storage_with_id(&self, id: AppendVecId) -> Arc<AccountStorageEntry> {
+        fn get_test_storage_with_id(&self, id: AccountsFileId) -> Arc<AccountStorageEntry> {
             let slot = 0;
             // add a map store
             let common_store_path = Path::new("");
@@ -353,6 +355,7 @@ pub(crate) mod tests {
                 slot,
                 id,
                 store_file_size,
+                AccountsFileProvider::AppendVec,
             ))
         }
         fn get_test_storage(&self) -> Arc<AccountStorageEntry> {

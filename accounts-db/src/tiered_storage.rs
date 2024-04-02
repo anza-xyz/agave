@@ -27,7 +27,7 @@ use {
     solana_sdk::account::ReadableAccount,
     std::{
         borrow::Borrow,
-        fs::{self, OpenOptions},
+        fs, io,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -37,6 +37,8 @@ use {
 };
 
 pub type TieredStorageResult<T> = Result<T, TieredStorageError>;
+
+const MAX_TIERED_STORAGE_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB;
 
 /// The struct that defines the formats of all building blocks of a
 /// TieredStorage.
@@ -63,10 +65,14 @@ pub struct TieredStorage {
 impl Drop for TieredStorage {
     fn drop(&mut self) {
         if let Err(err) = fs::remove_file(&self.path) {
-            panic!(
-                "TieredStorage failed to remove backing storage file '{}': {err}",
-                self.path.display(),
-            );
+            // Here we bypass NotFound error as the focus of the panic is to
+            // detect any leakage of storage resource.
+            if err.kind() != io::ErrorKind::NotFound {
+                panic!(
+                    "TieredStorage failed to remove backing storage file '{}': {err}",
+                    self.path.display(),
+                );
+            }
         }
     }
 }
@@ -155,13 +161,18 @@ impl TieredStorage {
     }
 
     /// Returns the size of the underlying accounts file.
-    pub fn file_size(&self) -> TieredStorageResult<u64> {
-        let file = OpenOptions::new().read(true).open(&self.path);
+    pub fn len(&self) -> usize {
+        self.reader().map_or(0, |reader| reader.len())
+    }
 
-        Ok(file
-            .and_then(|file| file.metadata())
-            .map(|metadata| metadata.len())
-            .unwrap_or(0))
+    /// Returns whether the underlying storage is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn capacity(&self) -> u64 {
+        self.reader()
+            .map_or(MAX_TIERED_STORAGE_FILE_SIZE, |reader| reader.capacity())
     }
 }
 
@@ -183,7 +194,7 @@ mod tests {
             mem::ManuallyDrop,
         },
         tempfile::tempdir,
-        test_utils::{create_test_account, verify_test_account},
+        test_utils::{create_test_account, verify_test_account_with_footer},
     };
 
     impl TieredStorage {
@@ -225,7 +236,7 @@ mod tests {
 
         assert!(tiered_storage.is_read_only());
         assert_eq!(
-            tiered_storage.file_size().unwrap() as usize,
+            tiered_storage.len(),
             std::mem::size_of::<TieredStorageFooter>()
                 + std::mem::size_of::<TieredStorageMagicNumber>()
         );
@@ -243,7 +254,7 @@ mod tests {
 
             assert!(!tiered_storage.is_read_only());
             assert_eq!(tiered_storage.path(), tiered_storage_path);
-            assert_eq!(tiered_storage.file_size().unwrap(), 0);
+            assert_eq!(tiered_storage.len(), 0);
 
             write_zero_accounts(&tiered_storage, Ok(vec![]));
         }
@@ -257,7 +268,7 @@ mod tests {
         assert_eq!(footer.index_block_format, HOT_FORMAT.index_block_format);
         assert_eq!(footer.account_block_format, HOT_FORMAT.account_block_format);
         assert_eq!(
-            tiered_storage_readonly.file_size().unwrap() as usize,
+            tiered_storage_readonly.len(),
             std::mem::size_of::<TieredStorageFooter>()
                 + std::mem::size_of::<TieredStorageMagicNumber>()
         );
@@ -368,13 +379,33 @@ mod tests {
 
         let mut index_offset = IndexOffset(0);
         let mut verified_accounts = HashSet::new();
+        let footer = reader.footer();
+
+        const MIN_PUBKEY: Pubkey = Pubkey::new_from_array([0x00u8; 32]);
+        const MAX_PUBKEY: Pubkey = Pubkey::new_from_array([0xFFu8; 32]);
+        let mut min_pubkey_ref = &MAX_PUBKEY;
+        let mut max_pubkey_ref = &MIN_PUBKEY;
+
         while let Some((stored_meta, next)) = reader.get_account(index_offset).unwrap() {
             if let Some(account) = expected_accounts_map.get(stored_meta.pubkey()) {
-                verify_test_account(&stored_meta, *account, stored_meta.pubkey());
+                verify_test_account_with_footer(
+                    &stored_meta,
+                    *account,
+                    stored_meta.pubkey(),
+                    footer,
+                );
                 verified_accounts.insert(stored_meta.pubkey());
+                if *min_pubkey_ref > *stored_meta.pubkey() {
+                    min_pubkey_ref = stored_meta.pubkey();
+                }
+                if *max_pubkey_ref < *stored_meta.pubkey() {
+                    max_pubkey_ref = stored_meta.pubkey();
+                }
             }
             index_offset = next;
         }
+        assert_eq!(footer.min_account_address, *min_pubkey_ref);
+        assert_eq!(footer.max_account_address, *max_pubkey_ref);
         assert!(!verified_accounts.is_empty());
         assert_eq!(verified_accounts.len(), expected_accounts_map.len())
     }
