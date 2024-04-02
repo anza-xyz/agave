@@ -256,7 +256,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .default_value("5")
                                 .help(
                                     "Maximum number of attempts to sign or resign transactions \
-                                    after blockhash expiration.
+                                    after blockhash expiration. \
                                     If any transactions sent during the program deploy are still \
                                     unconfirmed after the initially chosen recent blockhash \
                                     expires, those transactions will be resigned with a new \
@@ -349,7 +349,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .default_value("5")
                                 .help(
                                     "Maximum number of attempts to sign or resign transactions \
-                                    after blockhash expiration.
+                                    after blockhash expiration. \
                                     If any transactions sent during the program deploy are still \
                                     unconfirmed after the initially chosen recent blockhash \
                                     expires, those transactions will be resigned with a new \
