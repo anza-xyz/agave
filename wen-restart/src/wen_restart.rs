@@ -350,9 +350,31 @@ fn find_bankhash_of_heaviest_fork(
     let recyclers = VerifyRecyclers::default();
     let mut timing = ExecuteTimings::default();
     let opts = ProcessOptions::default();
-    let mut parent_bank = root_bank;
     // Grab a big lock because we are the only person touching bankforks now.
     let mut my_bankforks = bank_forks.write().unwrap();
+    // Check that the existing banks are frozen and link to the expected parent.
+    let mut parent_slot = root_bank.slot();
+    for slot in &slots {
+        if exit.load(Ordering::Relaxed) {
+            return Err(WenRestartError::Exiting.into());
+        }
+        if let Some(bank) = my_bankforks.get(*slot) {
+            if !bank.is_frozen() {
+                return Err(WenRestartError::BlockNotFrozenAfterReplay(*slot, None).into());
+            }
+            if bank.parent_slot() != parent_slot {
+                return Err(WenRestartError::BlockNotLinkedToExpectedParent(
+                    *slot,
+                    Some(bank.parent_slot()),
+                    parent_slot,
+                )
+                .into());
+            }
+        }
+        parent_slot = *slot;
+    }
+    // Now replay all the missing blocks.
+    let mut parent_bank = root_bank;
     for slot in slots {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
@@ -391,17 +413,6 @@ fn find_bankhash_of_heaviest_fork(
                 my_bankforks.get(slot).unwrap()
             }
         };
-        if !bank.is_frozen() {
-            return Err(WenRestartError::BlockNotFrozenAfterReplay(slot, None).into());
-        }
-        if bank.parent_slot() != parent_bank.slot() {
-            return Err(WenRestartError::BlockNotLinkedToExpectedParent(
-                slot,
-                Some(bank.parent_slot()),
-                parent_bank.slot(),
-            )
-            .into());
-        }
         parent_bank = bank;
     }
     Ok(parent_bank.hash())
