@@ -136,6 +136,7 @@ mod tests {
             compute_budget::ComputeBudgetInstruction,
             instruction::Instruction,
             message::Message,
+            reserved_account_keys::ReservedAccountKeys,
             signer::{keypair::Keypair, Signer},
             transaction::{SimpleAddressLoader, Transaction, VersionedTransaction},
         },
@@ -260,6 +261,7 @@ mod tests {
         let dynamically_loaded_transaction = RuntimeTransaction::<SanitizedMessage>::try_from(
             statically_loaded_transaction,
             SimpleAddressLoader::Disabled,
+            &ReservedAccountKeys::empty_key_set(),
         );
         let dynamically_loaded_transaction =
             dynamically_loaded_transaction.expect("created from statically loaded tx");

@@ -446,7 +446,11 @@ mod tests {
         };
 
         assert_eq!(
-            SanitizedMessage::try_from_legacy_message(legacy_message_with_no_signers).err(),
+            SanitizedMessage::try_from_legacy_message(
+                legacy_message_with_no_signers,
+                &HashSet::default(),
+            )
+            .err(),
             Some(SanitizeMessageError::IndexOutOfBounds),
         );
     }
@@ -470,6 +474,7 @@ mod tests {
                 Hash::default(),
                 instructions,
             ),
+            &HashSet::default(),
         )
         .unwrap();
 
@@ -487,15 +492,18 @@ mod tests {
         let key4 = Pubkey::new_unique();
         let key5 = Pubkey::new_unique();
 
-        let legacy_message = SanitizedMessage::try_from_legacy_message(legacy::Message {
-            header: MessageHeader {
-                num_required_signatures: 2,
-                num_readonly_signed_accounts: 1,
-                num_readonly_unsigned_accounts: 1,
+        let legacy_message = SanitizedMessage::try_from_legacy_message(
+            legacy::Message {
+                header: MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 1,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![key0, key1, key2, key3],
+                ..legacy::Message::default()
             },
-            account_keys: vec![key0, key1, key2, key3],
-            ..legacy::Message::default()
-        })
+            &HashSet::default(),
+        )
         .unwrap();
 
         assert_eq!(legacy_message.num_readonly_accounts(), 2);
@@ -514,6 +522,7 @@ mod tests {
                 writable: vec![key4],
                 readonly: vec![key5],
             },
+            &HashSet::default(),
         ));
 
         assert_eq!(v0_message.num_readonly_accounts(), 3);
@@ -540,6 +549,7 @@ mod tests {
                 Hash::default(),
                 instructions,
             ),
+            &HashSet::default(),
         )
         .unwrap();
 
@@ -571,15 +581,18 @@ mod tests {
         let key4 = Pubkey::new_unique();
         let key5 = Pubkey::new_unique();
 
-        let legacy_message = SanitizedMessage::try_from_legacy_message(legacy::Message {
-            header: MessageHeader {
-                num_required_signatures: 2,
-                num_readonly_signed_accounts: 1,
-                num_readonly_unsigned_accounts: 1,
+        let legacy_message = SanitizedMessage::try_from_legacy_message(
+            legacy::Message {
+                header: MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 1,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![key0, key1, key2, key3],
+                ..legacy::Message::default()
             },
-            account_keys: vec![key0, key1, key2, key3],
-            ..legacy::Message::default()
-        })
+            &HashSet::default(),
+        )
         .unwrap();
         match legacy_message {
             SanitizedMessage::Legacy(message) => {
@@ -611,6 +624,7 @@ mod tests {
                 writable: vec![key4],
                 readonly: vec![key5],
             },
+            &HashSet::default(),
         ));
         match v0_message {
             SanitizedMessage::V0(message) => {
@@ -661,6 +675,7 @@ mod tests {
                     mock_secp256k1_instr,
                 ],
             ),
+            &HashSet::new(),
         )
         .unwrap();
 

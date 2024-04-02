@@ -308,7 +308,10 @@ impl SanitizedTransaction {
 mod tests {
     use {
         super::*,
-        crate::signer::{keypair::Keypair, Signer},
+        crate::{
+            reserved_account_keys::ReservedAccountKeys,
+            signer::{keypair::Keypair, Signer},
+        },
         solana_program::vote::{self, state::Vote},
     };
 
@@ -333,6 +336,7 @@ mod tests {
                 MessageHash::Compute,
                 None,
                 SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set(),
             )
             .unwrap();
             assert!(vote_transaction.is_simple_vote_transaction());
@@ -345,6 +349,7 @@ mod tests {
                 MessageHash::Compute,
                 Some(false),
                 SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set(),
             )
             .unwrap();
             assert!(!vote_transaction.is_simple_vote_transaction());
@@ -359,6 +364,7 @@ mod tests {
                 MessageHash::Compute,
                 None,
                 SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set(),
             )
             .unwrap();
             assert!(!vote_transaction.is_simple_vote_transaction());
@@ -371,6 +377,7 @@ mod tests {
                 MessageHash::Compute,
                 Some(true),
                 SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set(),
             )
             .unwrap();
             assert!(vote_transaction.is_simple_vote_transaction());

@@ -213,6 +213,7 @@ mod tests {
                 writable: vec![key4],
                 readonly: vec![key5],
             },
+            &HashSet::default(),
         );
 
         (message, [key0, key1, key2, key3, key4, key5])
@@ -237,6 +238,7 @@ mod tests {
                     writable: keys.split_off(2),
                     readonly: keys,
                 },
+                &HashSet::default(),
             )
         };
 
@@ -269,6 +271,8 @@ mod tests {
     #[test]
     fn test_is_writable() {
         solana_logger::setup();
+
+        let reserved_account_keys = HashSet::from_iter([sysvar::clock::id(), system_program::id()]);
         let create_message_with_keys = |keys: Vec<Pubkey>| {
             LoadedMessage::new(
                 v0::Message {
@@ -284,6 +288,7 @@ mod tests {
                     writable: keys[2..=2].to_vec(),
                     readonly: keys[3..].to_vec(),
                 },
+                &reserved_account_keys,
             )
         };
 
@@ -333,6 +338,7 @@ mod tests {
                 writable: vec![key1, key2],
                 readonly: vec![],
             },
+            &HashSet::default(),
         );
 
         assert!(message.is_writable_index(2));
