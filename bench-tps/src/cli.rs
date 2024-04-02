@@ -27,6 +27,8 @@ pub enum ExternalClientType {
     // Submits transactions directly to leaders using a TpuClient, broadcasting to upcoming leaders
     // via TpuClient default configuration
     TpuClient,
+
+    HighTpsClient,
 }
 
 impl Default for ExternalClientType {
@@ -339,6 +341,13 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .help("Submit transactions with a TpuClient")
         )
         .arg(
+            Arg::with_name("high_tps_client")
+                .long("use-high-tps-client")
+                .conflicts_with("rpc_client")
+                .takes_value(false)
+                .help("Submit transactions with a HighTpsClient")
+        )
+        .arg(
             Arg::with_name("tpu_disable_quic")
                 .long("tpu-disable-quic")
                 .takes_value(false)
@@ -477,6 +486,10 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
 
     if matches.is_present("rpc_client") {
         args.external_client_type = ExternalClientType::RpcClient;
+    }
+
+    if matches.is_present("high_tps_client") {
+        args.external_client_type = ExternalClientType::HighTpsClient;
     }
 
     if matches.is_present("tpu_disable_quic") {
