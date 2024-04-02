@@ -3,7 +3,10 @@ use {
     log::*,
     solana_bench_tps::{
         bench::{do_bench_tps, max_lamports_for_prioritization},
-        bench_tps_client::BenchTpsClient,
+        bench_tps_client::{
+            high_tps_client::{HighTpsClient, HighTpsClientConfig},
+            BenchTpsClient,
+        },
         cli::{self, ExternalClientType},
         keypairs::get_keypairs,
         send_batch::{generate_durable_nonce_accounts, generate_keypairs},
@@ -157,6 +160,32 @@ fn create_client(
                     )
                     .unwrap_or_else(|err| {
                         eprintln!("Could not create TpuClient {err:?}");
+                        exit(1);
+                    }),
+                ),
+            }
+        }
+        ExternalClientType::HighTpsClient => {
+            let rpc_client = Arc::new(RpcClient::new_with_commitment(
+                json_rpc_url.to_string(),
+                commitment_config,
+            ));
+            match connection_cache {
+                ConnectionCache::Udp(_) => {
+                    unimplemented!("UDP protocol is not supported.");
+                }
+                ConnectionCache::Quic(cache) => Arc::new(
+                    HighTpsClient::new(
+                        rpc_client,
+                        websocket_url,
+                        HighTpsClientConfig {
+                            fanout_slots: 1,
+                            send_batch_size: 64,
+                        },
+                        cache,
+                    )
+                    .unwrap_or_else(|err| {
+                        eprintln!("Could not create HighTpsClient {err:?}");
                         exit(1);
                     }),
                 ),
