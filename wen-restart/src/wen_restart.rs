@@ -49,11 +49,15 @@ use {
 const REPAIR_THRESHOLD: f64 = 0.42;
 // When counting Heaviest Fork, only count those with no less than
 // 67% - 5% - (100% - active_stake) = active_stake - 38% stake.
+// 67% is the supermajority threshold (2/3), 5% is the assumption we
+// made regarding how much non-conforming/offline validators the
+// algorithm can tolerate.
 const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
     BlockNotFound(Slot),
+    BlockNotFull(Slot),
     BlockNotFrozenAfterReplay(Slot, Option<String>),
     BlockNotLinkedToExpectedParent(Slot, Option<Slot>, Slot),
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
@@ -69,6 +73,9 @@ impl std::fmt::Display for WenRestartError {
         match self {
             WenRestartError::BlockNotFound(slot) => {
                 write!(f, "Block not found: {}", slot)
+            }
+            WenRestartError::BlockNotFull(slot) => {
+                write!(f, "Block not full: {}", slot)
             }
             WenRestartError::BlockNotFrozenAfterReplay(slot, err) => {
                 write!(f, "Block not frozen after replay: {} {:?}", slot, err)
@@ -156,10 +163,7 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
     exit: Arc<AtomicBool>,
     progress: &mut WenRestartProgress,
 ) -> Result<LastVotedForkSlotsFinalResult> {
-    let root_bank;
-    {
-        root_bank = bank_forks.read().unwrap().root_bank().clone();
-    }
+    let root_bank = bank_forks.read().unwrap().root_bank();
     let root_slot = root_bank.slot();
     let mut last_voted_fork_slots_aggregate = LastVotedForkSlotsAggregate::new(
         root_slot,
@@ -303,6 +307,9 @@ pub(crate) fn find_heaviest_fork(
                 )
                 .into());
             }
+            if !block_meta.is_full() {
+                return Err(WenRestartError::BlockNotFull(*slot).into());
+            }
             expected_parent = *slot;
         } else {
             return Err(WenRestartError::BlockNotFound(*slot).into());
@@ -349,7 +356,7 @@ fn find_bankhash_of_heaviest_fork(
     let recyclers = VerifyRecyclers::default();
     let mut timing = ExecuteTimings::default();
     let opts = ProcessOptions::default();
-    // Grab a big lock because we are the only person touching bankforks now.
+    // Grab one write lock until end of function because we are the only one touching bankforks now.
     let mut my_bankforks = bank_forks.write().unwrap();
     // Check that the existing banks are frozen and link to the expected parent.
     let mut parent_slot = root_bank.slot();
@@ -700,6 +707,7 @@ mod tests {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         assert_matches::assert_matches,
         solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        solana_entry::entry::create_ticks,
         solana_gossip::{
             cluster_info::ClusterInfo,
             contact_info::ContactInfo,
@@ -709,7 +717,7 @@ mod tests {
             restart_crds_values::RestartLastVotedForkSlots,
         },
         solana_ledger::{
-            blockstore::{create_new_ledger, Blockstore},
+            blockstore::{create_new_ledger, entries_to_test_shreds, Blockstore},
             blockstore_options::LedgerColumnOptions,
             blockstore_processor::{fill_blockstore_slot_with_ticks, test_process_blockstore},
             get_tmp_ledger_path_auto_delete,
@@ -1588,6 +1596,46 @@ mod tests {
                 Some(last_vote_slot - 1),
                 2
             ),
+        );
+        // The following fails because the new slot is not full.
+        let not_full_slot = last_vote_slot + 5;
+        let parent_slot = last_vote_slot;
+        let num_slots = (not_full_slot - parent_slot).max(1);
+        let mut entries = create_ticks(num_slots * TICKS_PER_SLOT, 0, test_state.last_blockhash);
+        assert!(entries.len() > 1);
+        entries.pop();
+        let shreds = entries_to_test_shreds(
+            &entries,
+            not_full_slot,
+            parent_slot,
+            false,
+            0,
+            true, // merkle_variant
+        );
+        test_state
+            .blockstore
+            .insert_shreds(shreds, None, false)
+            .unwrap();
+        let mut slots_stake_map: HashMap<Slot, u64> = test_state
+            .last_voted_fork_slots
+            .iter()
+            .map(|slot| (*slot, 900))
+            .collect();
+        slots_stake_map.insert(not_full_slot, 800);
+        assert_eq!(
+            find_heaviest_fork(
+                LastVotedForkSlotsFinalResult {
+                    slots_stake_map,
+                    total_active_stake: 900,
+                },
+                test_state.bank_forks.clone(),
+                test_state.blockstore.clone(),
+                exit.clone(),
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::BlockNotFull(not_full_slot)
         );
         // The following fails because we added two blocks at the end of the chain, they are full in blockstore
         // but the parent of the first one is missing.
