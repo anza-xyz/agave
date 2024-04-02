@@ -2702,12 +2702,8 @@ fn send_deploy_messages(
     initial_signer: Option<&dyn Signer>,
     write_signer: Option<&dyn Signer>,
     final_signers: Option<&[&dyn Signer]>,
-<<<<<<< HEAD
-) -> Result<(), Box<dyn std::error::Error>> {
-=======
     max_sign_attempts: usize,
-) -> Result<Option<Signature>, Box<dyn std::error::Error>> {
->>>>>>> 2643ae85c3 (cli: Customize max sign attempts for deploy and write-buffer (#526))
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
