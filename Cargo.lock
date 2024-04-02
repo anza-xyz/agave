@@ -5553,6 +5553,7 @@ dependencies = [
 name = "solana-bench-tps"
 version = "2.0.0"
 dependencies = [
+ "bincode",
  "chrono",
  "clap 2.33.3",
  "crossbeam-channel",
@@ -5592,6 +5593,7 @@ dependencies = [
  "spl-instruction-padding",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
