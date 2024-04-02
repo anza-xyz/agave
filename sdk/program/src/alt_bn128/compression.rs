@@ -21,7 +21,7 @@ mod alt_bn128_compression_size {
 }
 
 // AltBn128CompressionError must be removed once the
-// simplify_alt_bn128_syscall_error_codes fature gets activated
+// simplify_alt_bn128_syscall_error_codes feature gets activated
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AltBn128CompressionError {
     #[error("Unexpected error")]

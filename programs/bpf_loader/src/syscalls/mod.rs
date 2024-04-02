@@ -1589,7 +1589,7 @@ declare_builtin_function!(
         };
 
         // This can never happen and should be removed when the
-        // simplify_alt_bn128_syscall_error_codes fature gets activated
+        // simplify_alt_bn128_syscall_error_codes feature gets activated
         if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
             return Ok(AltBn128Error::SliceOutOfBounds.into());
         }

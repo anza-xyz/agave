@@ -8,7 +8,7 @@ use thiserror::Error;
 pub const HASH_BYTES: usize = 32;
 
 // PoseidonSyscallError must be removed once the
-// simplify_alt_bn128_syscall_error_codes fature gets activated
+// simplify_alt_bn128_syscall_error_codes feature gets activated
 #[derive(Error, Debug)]
 pub enum PoseidonSyscallError {
     #[error("Invalid parameters.")]
