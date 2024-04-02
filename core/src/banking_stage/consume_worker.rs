@@ -71,13 +71,13 @@ impl ConsumeWorker {
         let Some(mut bank) = maybe_consume_bank else {
             self.metrics
                 .timing_metrics
-                .failed_bank_waiting_us
+                .wait_for_bank_failure_us
                 .fetch_add(get_bank_us, Ordering::Relaxed);
             return self.retry_drain(work);
         };
         self.metrics
             .timing_metrics
-            .successful_bank_waiting_us
+            .wait_for_bank_success_us
             .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
@@ -86,13 +86,13 @@ impl ConsumeWorker {
                 if let Some(new_bank) = maybe_new_bank {
                     self.metrics
                         .timing_metrics
-                        .successful_bank_waiting_us
+                        .wait_for_bank_success_us
                         .fetch_add(get_bank_us, Ordering::Relaxed);
                     bank = new_bank;
                 } else {
                     self.metrics
                         .timing_metrics
-                        .failed_bank_waiting_us
+                        .wait_for_bank_failure_us
                         .fetch_add(get_bank_us, Ordering::Relaxed);
                     return self.retry_drain(work);
                 }
@@ -491,8 +491,8 @@ struct ConsumeWorkerTimingMetrics {
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
-    successful_bank_waiting_us: AtomicU64,
-    failed_bank_waiting_us: AtomicU64,
+    wait_for_bank_success_us: AtomicU64,
+    wait_for_bank_failure_us: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
@@ -533,13 +533,13 @@ impl ConsumeWorkerTimingMetrics {
                 i64
             ),
             (
-                "successful_bank_waiting_us",
-                self.successful_bank_waiting_us.swap(0, Ordering::Relaxed),
+                "wait_for_bank_success_us",
+                self.wait_for_bank_success_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "failed_bank_waiting_us",
-                self.failed_bank_waiting_us.swap(0, Ordering::Relaxed),
+                "wait_for_bank_failure_us",
+                self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
