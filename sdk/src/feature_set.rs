@@ -785,6 +785,14 @@ pub mod deprecate_unused_legacy_vote_plumbing {
     solana_sdk::declare_id!("6Uf8S75PVh91MYgPQSHnjRAPQq6an5BDv9vomrCwDqLe");
 }
 
+pub mod dont_load_executable_accounts {
+    solana_sdk::declare_id!("SeanGLG9chXD7bUF42nxUkyhhasZ38RauPFSK5txEkE");
+}
+
+pub mod dont_load_executable_accounts_no_exceptions {
+    solana_sdk::declare_id!("Seanx5tafZesNtxNeayrDHj5WFyzfCnsDse2ucj6ATz");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -976,6 +984,8 @@ lazy_static! {
         (enable_chained_merkle_shreds::id(), "Enable chained Merkle shreds #34916"),
         (remove_rounding_in_fee_calculation::id(), "Removing unwanted rounding in fee calculation #34982"),
         (deprecate_unused_legacy_vote_plumbing::id(), "Deprecate unused legacy vote tx plumbing"),
+        (dont_load_executable_accounts::id(), "executable ro accounts should do not need to be loaded"),
+        (dont_load_executable_accounts_no_exceptions::id(), "executable ro accounts should not be loaded program_id exceptions"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

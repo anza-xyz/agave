@@ -8,15 +8,18 @@ use {
     log::warn,
     solana_program_runtime::{
         compute_budget_processor::process_compute_budget_instructions,
-        loaded_programs::LoadedProgramsForTxBatch,
+        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch},
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        bpf_loader_upgradeable,
         feature_set::{
-            self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation,
+            self, dont_load_executable_accounts,
+            include_loaded_accounts_data_size_in_fee_calculation,
+            remove_rounding_in_fee_calculation, FeatureSet,
         },
         fee::FeeStructure,
+        loader_v4,
         message::SanitizedMessage,
         native_loader,
         nonce::State as NonceState,
@@ -31,7 +34,7 @@ use {
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::{collections::HashMap, num::NonZeroUsize},
+    std::{collections::HashMap, num::NonZeroUsize, sync::Arc},
 };
 
 // for the load instructions
@@ -114,7 +117,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     error_counters: &mut TransactionErrorMetrics,
     fee_structure: &FeeStructure,
     account_overrides: Option<&AccountOverrides>,
-    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64, bool)>,
     loaded_programs: &LoadedProgramsForTxBatch,
 ) -> Vec<TransactionLoadResult> {
     let feature_set = callbacks.get_feature_set();
@@ -182,7 +185,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     fee: u64,
     error_counters: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
-    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64, bool)>,
     loaded_programs: &LoadedProgramsForTxBatch,
 ) -> Result<LoadedTransaction> {
     let feature_set = callbacks.get_feature_set();
@@ -223,52 +226,69 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     account_overrides.and_then(|overrides| overrides.get(key))
                 {
                     (account_override.data().len(), account_override.clone(), 0)
-                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
-                    .then_some(())
-                    .and_then(|_| loaded_programs.find(key))
-                {
-                    // Optimization to skip loading of accounts which are only used as
-                    // programs in top-level instructions and not passed as instruction accounts.
-                    account_shared_data_from_program(key, program_accounts)
-                        .map(|program_account| (program.account_size, program_account, 0))?
-                } else {
-                    callbacks
-                        .get_account_shared_data(key)
-                        .map(|mut account| {
-                            if message.is_writable(i) {
-                                if !feature_set
-                                    .is_active(&feature_set::disable_rent_fees_collection::id())
-                                {
-                                    let rent_due = rent_collector
-                                        .collect_from_existing_account(key, &mut account)
-                                        .rent_amount;
+                } else if feature_set.is_active(&dont_load_executable_accounts::id()) {
+                    if let Some(program) = (!message.is_writable(i))
+                        .then_some(())
+                        .and_then(|_| loaded_programs.find(key))
+                    {
+                        let (program_owner, _count, load) = program_accounts
+                            .get(key)
+                            .ok_or(TransactionError::AccountNotFound)?;
 
-                                    (account.data().len(), account, rent_due)
-                                } else {
-                                    // When rent fee collection is disabled, we won't collect rent for any account. If there
-                                    // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
-                                    // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
-                                    // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
-                                    if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
-                                        && rent_collector.get_rent_due(&account) == RentDue::Exempt
-                                    {
-                                        account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                                    }
-                                    (account.data().len(), account, 0)
-                                }
-                            } else {
-                                (account.data().len(), account, 0)
-                            }
-                        })
-                        .unwrap_or_else(|| {
-                            account_found = false;
-                            let mut default_account = AccountSharedData::default();
-                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
-                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
-                            // with this field already set would allow us to skip rent collection for these accounts.
-                            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                            (default_account.data().len(), default_account, 0)
-                        })
+                        if !instruction_account || (!load && !program.is_tombstone()) {
+                            let program_account = account_shared_data_from_program(
+                                program,
+                                program_owner,
+                                instruction_account,
+                            );
+
+                            (program_account.data().len(), program_account, 0)
+                        } else {
+                            load_account(
+                                callbacks,
+                                key,
+                                message,
+                                i,
+                                &feature_set,
+                                rent_collector,
+                                &mut account_found,
+                            )
+                        }
+                    } else {
+                        load_account(
+                            callbacks,
+                            key,
+                            message,
+                            i,
+                            &feature_set,
+                            rent_collector,
+                            &mut account_found,
+                        )
+                    }
+                } else {
+                    if let Some(program) = (!instruction_account && !message.is_writable(i))
+                        .then_some(())
+                        .and_then(|_| loaded_programs.find(key))
+                    {
+                        let (program_owner, _count, _load) = program_accounts
+                            .get(key)
+                            .ok_or(TransactionError::AccountNotFound)?;
+
+                        let program_account =
+                            account_shared_data_from_program(program, program_owner, false);
+
+                        (program_account.data().len(), program_account, 0)
+                    } else {
+                        load_account(
+                            callbacks,
+                            key,
+                            message,
+                            i,
+                            &feature_set,
+                            rent_collector,
+                            &mut account_found,
+                        )
+                    }
                 };
                 accumulate_and_check_loaded_account_data_size(
                     &mut accumulated_accounts_data_size,
@@ -407,19 +427,64 @@ fn get_requested_loaded_accounts_data_size_limit(
 }
 
 fn account_shared_data_from_program(
-    key: &Pubkey,
-    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
-) -> Result<AccountSharedData> {
+    program: Arc<LoadedProgram>,
+    program_owner: &Pubkey,
+    instruction_account: bool,
+) -> AccountSharedData {
     // It's an executable program account. The program is already loaded in the cache.
     // So the account data is not needed. Return a dummy AccountSharedData with meta
     // information.
     let mut program_account = AccountSharedData::default();
-    let (program_owner, _count) = program_accounts
-        .get(key)
-        .ok_or(TransactionError::AccountNotFound)?;
-    program_account.set_owner(**program_owner);
+    program_account.set_owner(*program_owner);
     program_account.set_executable(true);
-    Ok(program_account)
+    if instruction_account {
+        let mut data = create_executable_meta(program_owner).to_vec();
+        data.resize(program.account_size, 0);
+        program_account.set_data_from_slice(&data);
+    }
+    program_account.set_rent_epoch(program.rent_epoch);
+    program_account.set_lamports(program.lamports);
+
+    program_account
+}
+
+const LOADER_V4_STATUS_BYTE_OFFSET: usize = 40;
+
+/// Create executable account meta data based on account's `owner`.
+///
+/// This function is only used for testing and an optimization during
+/// transaction loading.
+///
+/// When the program account is already present in the program cache, we don't
+/// need to load the full account data during transaction loading. Instead, all
+/// we need is a minimal executable account meta data, which is what this
+/// function returns.
+fn create_executable_meta(owner: &Pubkey) -> &[u8] {
+    // For upgradable program account, only `UpgradeableLoaderState::Program`
+    // variant (i.e. discriminant = 2) should *executable*, which means the
+    // discriminant for the enum at byte offset 0 in account data is 2.
+    const EXECUTABLE_META_FOR_BPF_LOADER_UPGRADABLE: [u8; 1] = [2];
+
+    // For loader v4 program, when LoaderV4Status (byte_offset = 40 in account
+    // data) is set, the program is executable.
+    const fn get_executable_meta_for_loader_v4() -> [u8; 41] {
+        let mut v = [0; LOADER_V4_STATUS_BYTE_OFFSET + 1];
+        v[LOADER_V4_STATUS_BYTE_OFFSET] = 1;
+        v
+    }
+    const EXECUTABLE_META_FOR_LOADER_V4: [u8; LOADER_V4_STATUS_BYTE_OFFSET + 1] =
+        get_executable_meta_for_loader_v4();
+
+    // For other owners, simple returns a 1 byte array would make it executable.
+    const DEFAULT_EXECUTABLE_META: [u8; 1] = [1];
+
+    if bpf_loader_upgradeable::check_id(owner) {
+        &EXECUTABLE_META_FOR_BPF_LOADER_UPGRADABLE
+    } else if loader_v4::check_id(owner) {
+        &EXECUTABLE_META_FOR_LOADER_V4
+    } else {
+        &DEFAULT_EXECUTABLE_META
+    }
 }
 
 /// Accumulate loaded account data size into `accumulated_accounts_data_size`.
@@ -453,27 +518,77 @@ fn construct_instructions_account(message: &SanitizedMessage) -> AccountSharedDa
     })
 }
 
+fn load_account<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    key: &Pubkey,
+    message: &SanitizedMessage,
+    i: usize,
+    feature_set: &Arc<FeatureSet>,
+    rent_collector: &RentCollector,
+    account_found: &mut bool,
+) -> (usize, AccountSharedData, u64) {
+    callbacks
+        .get_account_shared_data(key)
+        .map(|mut account| {
+            if message.is_writable(i) {
+                if !feature_set.is_active(&feature_set::disable_rent_fees_collection::id()) {
+                    let rent_due = rent_collector
+                        .collect_from_existing_account(key, &mut account)
+                        .rent_amount;
+
+                    (account.data().len(), account, rent_due)
+                } else {
+                    // When rent fee collection is disabled, we won't collect rent for any account. If there
+                    // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
+                    // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
+                    // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
+                    if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
+                        && rent_collector.get_rent_due(&account) == RentDue::Exempt
+                    {
+                        account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                    }
+                    (account.data().len(), account, 0)
+                }
+            } else {
+                (account.data().len(), account, 0)
+            }
+        })
+        .unwrap_or_else(|| {
+            *account_found = false;
+            let mut default_account = AccountSharedData::default();
+            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+            // with this field already set would allow us to skip rent collection for these accounts.
+            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+            (default_account.data().len(), default_account, 0)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::{
             transaction_account_state_info::TransactionAccountStateInfo,
-            transaction_processor::TransactionProcessingCallback,
+            transaction_processor::{TransactionBatchProcessor, TransactionProcessingCallback},
         },
         nonce::state::Versions as NonceVersions,
         solana_program_runtime::{
             compute_budget::ComputeBudget,
             compute_budget_processor,
-            loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch},
+            loaded_programs::{
+                BlockRelation, ForkGraph, LoadedProgram, LoadedProgramType,
+                LoadedProgramsForTxBatch,
+            },
             prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
+            solana_rbpf::program::BuiltinProgram,
         },
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
-            bpf_loader_upgradeable,
+            clock::Slot,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
-            feature_set::FeatureSet,
+            feature_set::{dont_load_executable_accounts_no_exceptions, FeatureSet},
             fee::FeeStructure,
             hash::Hash,
             instruction::CompiledInstruction,
@@ -494,7 +609,12 @@ mod tests {
             transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
             transaction_context::{TransactionAccount, TransactionContext},
         },
-        std::{borrow::Cow, collections::HashMap, convert::TryFrom, sync::Arc},
+        std::{
+            borrow::Cow,
+            collections::HashMap,
+            convert::TryFrom,
+            sync::{atomic::AtomicU64, Arc},
+        },
     };
 
     #[derive(Default)]
@@ -505,8 +625,16 @@ mod tests {
     }
 
     impl TransactionProcessingCallback for TestCallbacks {
-        fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {
-            None
+        fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
+            if let Some(data) = self.accounts_map.get(account) {
+                if data.lamports() == 0 {
+                    None
+                } else {
+                    owners.iter().position(|entry| data.owner() == entry)
+                }
+            } else {
+                None
+            }
         }
 
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
@@ -1408,22 +1536,27 @@ mod tests {
 
     #[test]
     fn test_account_shared_data_from_program() {
-        let key = Keypair::new().pubkey();
-        let other_key = Keypair::new().pubkey();
+        let program = Arc::new(LoadedProgram {
+            program: LoadedProgramType::Builtin(BuiltinProgram::new_mock()),
+            account_size: 0,
+            deployment_slot: 0,
+            effective_slot: 0,
+            tx_usage_counter: AtomicU64::default(),
+            ix_usage_counter: AtomicU64::default(),
+            latest_access_slot: AtomicU64::default(),
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
+            lamports: 0,
+        });
 
-        let mut accounts: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
+        let owner = Keypair::new().pubkey();
 
-        let result = account_shared_data_from_program(&key, &accounts);
-        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
-
-        accounts.insert(key, (&other_key, 32));
-
-        let result = account_shared_data_from_program(&key, &accounts);
+        let account = account_shared_data_from_program(program, &owner, false);
         let mut expected = AccountSharedData::default();
-        expected.set_owner(other_key);
+        expected.set_owner(owner);
         expected.set_executable(true);
+        expected.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
 
-        assert_eq!(result.unwrap(), expected);
+        assert_eq!(account, expected);
     }
 
     #[test]
@@ -2264,5 +2397,340 @@ mod tests {
             result,
             vec![(Err(TransactionError::InvalidWritableAccount), None)]
         );
+    }
+
+    pub struct MockForkGraph {}
+
+    impl ForkGraph for MockForkGraph {
+        fn relationship(&self, _a: Slot, _b: Slot) -> BlockRelation {
+            todo!()
+        }
+    }
+
+    const DESERVING_KEY: Pubkey =
+        solana_sdk::pubkey!("4Kj9GZC6FZeWZKYxR3EJLPAWtFaHXN72M1XZp8CUp9cr");
+    const PAYER_KEY: Pubkey = solana_sdk::pubkey!("C9k3ng1f4fYGcPQXbvvwzSGrs5FDXayKWYNrKgmnxqsY");
+    // NEEDY_KEY is one of the programs that requires all executable accounts to be loaded, see must_load_all_programs_for_instruction
+    const NEEDY_KEY: Pubkey = solana_sdk::pubkey!("sspUE1vrh7xRoXxGsg7vR1zde2WdGtJRbyK9uRumBDy");
+
+    #[test]
+    fn test_dont_load_executable_accounts() {
+        // needy -> program that requires all executables to loaded (IRL programs in the must_load_all_programs_for_instruction list)
+        // deserving -> regular program that does not require executables to be loaded.
+
+        // if an executable only appears in the message accounts/program_ids then it does not need to be loaded, it will never
+        // be serialized
+
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&dont_load_executable_accounts_no_exceptions::id());
+
+        let (mock_bank, loaded_programs) = setup_dont_load_executable_accounts(feature_set);
+
+        // a transaction that has a needy and deserving key, and the needy is passed
+        // in as an instruction account
+        let message = Message {
+            account_keys: vec![PAYER_KEY, NEEDY_KEY, DESERVING_KEY],
+            header: MessageHeader {
+                num_readonly_unsigned_accounts: 2,
+                ..Default::default()
+            },
+            instructions: vec![CompiledInstruction {
+                program_id_index: 2,
+                accounts: vec![1],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        message_dont_load_executable_accounts(
+            &mock_bank,
+            &loaded_programs,
+            message,
+            true,
+            true,
+            false,
+            false,
+        );
+
+        // a program that requires executables to be loaded
+        // needy requires deserving to be loaded, but needy itself it not passed
+        let message = Message {
+            account_keys: vec![PAYER_KEY, NEEDY_KEY, DESERVING_KEY],
+            header: MessageHeader {
+                num_readonly_unsigned_accounts: 2,
+                ..Default::default()
+            },
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![2],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        message_dont_load_executable_accounts(
+            &mock_bank,
+            &loaded_programs,
+            message,
+            false,
+            false,
+            true,
+            true,
+        );
+
+        // needy does not have any accounts passed in -> nothing should be loaded
+        let message = Message {
+            account_keys: vec![PAYER_KEY, NEEDY_KEY, DESERVING_KEY],
+            header: MessageHeader {
+                num_readonly_unsigned_accounts: 3,
+                ..Default::default()
+            },
+            instructions: vec![
+                CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![],
+                    data: vec![],
+                },
+                CompiledInstruction {
+                    program_id_index: 2,
+                    accounts: vec![],
+                    data: vec![],
+                },
+            ],
+            recent_blockhash: Hash::default(),
+        };
+
+        message_dont_load_executable_accounts(
+            &mock_bank,
+            &loaded_programs,
+            message,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        // needy does have any accounts passed in -> nothing should be loaded
+        let message = Message {
+            account_keys: vec![PAYER_KEY, NEEDY_KEY, DESERVING_KEY],
+            header: MessageHeader {
+                num_readonly_unsigned_accounts: 3,
+                ..Default::default()
+            },
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![2],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        message_dont_load_executable_accounts(
+            &mock_bank,
+            &loaded_programs,
+            message,
+            false,
+            false,
+            true,
+            true,
+        );
+
+        let feature_set = FeatureSet::all_enabled();
+
+        let (mock_bank, loaded_programs) = setup_dont_load_executable_accounts(feature_set);
+
+        let message = Message {
+            account_keys: vec![PAYER_KEY, NEEDY_KEY, DESERVING_KEY],
+            header: MessageHeader {
+                num_readonly_unsigned_accounts: 3,
+                ..Default::default()
+            },
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![1, 2],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        message_dont_load_executable_accounts(
+            &mock_bank,
+            &loaded_programs,
+            message,
+            false,
+            true,
+            false,
+            true,
+        );
+
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&dont_load_executable_accounts_no_exceptions::id());
+        feature_set.deactivate(&dont_load_executable_accounts::id());
+
+        let (mock_bank, loaded_programs) = setup_dont_load_executable_accounts(feature_set);
+
+        let message = Message {
+            account_keys: vec![PAYER_KEY, NEEDY_KEY, DESERVING_KEY],
+            header: MessageHeader {
+                num_readonly_unsigned_accounts: 3,
+                ..Default::default()
+            },
+            instructions: vec![CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![1, 2],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        message_dont_load_executable_accounts(
+            &mock_bank,
+            &loaded_programs,
+            message,
+            true,
+            true,
+            true,
+            true,
+        );
+    }
+
+    fn setup_dont_load_executable_accounts(
+        feature_set: FeatureSet,
+    ) -> (TestCallbacks, LoadedProgramsForTxBatch) {
+        let mut mock_bank = TestCallbacks {
+            feature_set: Arc::new(feature_set),
+            ..Default::default()
+        };
+        let mut loaded_programs = LoadedProgramsForTxBatch::default();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200000);
+        mock_bank.accounts_map.insert(PAYER_KEY, account_data);
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_rent_epoch(1105);
+        account_data.set_lamports(1002);
+        account_data.set_owner(native_loader::id());
+        account_data.set_data_from_slice(b"Iamsoneedy");
+        mock_bank.accounts_map.insert(NEEDY_KEY, account_data);
+
+        let needy_program: LoadedProgram = LoadedProgram {
+            program: LoadedProgramType::Builtin(BuiltinProgram::new_mock()),
+            rent_epoch: 105,
+            account_size: 100,
+            lamports: 2,
+            ..Default::default()
+        };
+
+        loaded_programs.replenish(NEEDY_KEY, Arc::new(needy_program));
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_executable(true);
+        account_data.set_rent_epoch(1106);
+        account_data.set_lamports(1003);
+        account_data.set_owner(native_loader::id());
+        account_data.set_data_from_slice(b"Iamsodeserving");
+        mock_bank.accounts_map.insert(DESERVING_KEY, account_data);
+
+        let deserving_program = LoadedProgram {
+            program: LoadedProgramType::Builtin(BuiltinProgram::new_mock()),
+            rent_epoch: 106,
+            account_size: 4,
+            lamports: 3,
+            ..Default::default()
+        };
+        loaded_programs.replenish(DESERVING_KEY, Arc::new(deserving_program));
+
+        (mock_bank, loaded_programs)
+    }
+
+    fn message_dont_load_executable_accounts(
+        mock_bank: &TestCallbacks,
+        loaded_programs: &LoadedProgramsForTxBatch,
+        message: Message,
+        load_needy: bool,
+        needy_padding: bool,
+        load_deserving: bool,
+        deserving_padding: bool,
+    ) {
+        let legacy = LegacyMessage::new(message);
+        let sanitized_message = SanitizedMessage::Legacy(legacy);
+
+        let sanitized_transaction = [SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        )];
+        let mut lock_results =
+            [(Ok(()), Some(NoncePartial::default()), Some(20u64)) as TransactionCheckResult];
+
+        let program_owners = [native_loader::id()];
+        let mut error_counter = TransactionErrorMetrics::default();
+
+        let program_accounts =
+            TransactionBatchProcessor::<MockForkGraph>::filter_executable_program_accounts(
+                mock_bank,
+                &sanitized_transaction,
+                &mut lock_results,
+                &program_owners,
+            );
+
+        let results = load_accounts(
+            mock_bank,
+            &sanitized_transaction,
+            &lock_results,
+            &mut error_counter,
+            &FeeStructure::default(),
+            None,
+            &program_accounts,
+            loaded_programs,
+        );
+
+        assert_eq!(results.len(), 1);
+
+        let accounts = &results[0].0.as_ref().unwrap().accounts;
+
+        assert_eq!(accounts.len(), 3);
+
+        assert_eq!(accounts[0].0, PAYER_KEY);
+        assert_eq!(accounts[0].1.rent_epoch(), 0);
+        assert_eq!(accounts[0].1.lamports(), 200000);
+        assert_eq!(accounts[0].1.data(), b"");
+
+        if load_needy {
+            assert_eq!(accounts[1].0, NEEDY_KEY);
+            assert_eq!(accounts[1].1.rent_epoch(), 1105);
+            assert_eq!(accounts[1].1.lamports(), 1002);
+            assert_eq!(accounts[1].1.data(), b"Iamsoneedy");
+        } else {
+            assert_eq!(accounts[1].0, NEEDY_KEY);
+            assert_eq!(accounts[1].1.rent_epoch(), 105);
+            assert_eq!(accounts[1].1.lamports(), 2);
+            let mut data = vec![];
+            if needy_padding {
+                data = vec![1];
+                data.resize(100, 0);
+            }
+            assert_eq!(accounts[1].1.data(), data);
+        }
+
+        if load_deserving {
+            assert_eq!(accounts[2].0, DESERVING_KEY);
+            assert_eq!(accounts[2].1.rent_epoch(), 1106);
+            assert_eq!(accounts[2].1.lamports(), 1003);
+            assert_eq!(accounts[2].1.data(), b"Iamsodeserving");
+        } else {
+            assert_eq!(accounts[2].0, DESERVING_KEY);
+            assert_eq!(accounts[2].1.rent_epoch(), 106);
+            assert_eq!(accounts[2].1.lamports(), 3);
+            let mut data = vec![];
+            //  The zero-padding happens when the account is an instruction account
+            if deserving_padding {
+                data = vec![1];
+                data.resize(4, 0);
+            }
+            assert_eq!(accounts[2].1.data(), data);
+        }
     }
 }

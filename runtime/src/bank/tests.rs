@@ -7146,10 +7146,9 @@ fn test_bank_load_program() {
     bank.store_account_and_update_capitalization(&programdata_key, &programdata_account);
     let program = bank.load_program(&key1, false, bank.epoch());
     assert_matches!(program.program, LoadedProgramType::LegacyV1(_));
-    assert_eq!(
-        program.account_size,
-        program_account.data().len() + programdata_account.data().len()
-    );
+    assert_eq!(program.account_size, program_account.data().len());
+    assert_eq!(program.lamports, 40);
+    assert_eq!(program.rent_epoch, 1);
 }
 
 #[test]
@@ -7300,6 +7299,13 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     }
 
     let loaded_program = bank.load_program(&program_keypair.pubkey(), false, bank.epoch());
+
+    assert_eq!(
+        loaded_program.account_size,
+        post_program_account.data().len()
+    );
+    assert_eq!(loaded_program.lamports, post_program_account.lamports());
+    assert_eq!(loaded_program.rent_epoch, post_program_account.rent_epoch());
 
     // Invoke deployed program
     mock_process_instruction(

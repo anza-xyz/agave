@@ -33,7 +33,7 @@ use {
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Epoch, Slot},
         epoch_schedule::EpochSchedule,
-        feature_set::FeatureSet,
+        feature_set::{dont_load_executable_accounts_no_exceptions, FeatureSet},
         fee::FeeStructure,
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -55,6 +55,24 @@ use {
         sync::{atomic::Ordering, Arc, RwLock},
     },
 };
+
+// Mainnet-beta program_ids that need executable accounts to be loaded
+solana_sdk::pubkeys!(
+    must_load_all_programs_for_instruction,
+    [
+        "sspUE1vrh7xRoXxGsg7vR1zde2WdGtJRbyK9uRumBDy",
+        // Program log: Wrong account. Expected: 11111111111111111111111111111111, Got: EmiU8AQkB2sswTxVB6aCmsAJftoowZGGDXuytm6X65R3
+        "sp1V4h2gWorkGhVcazBc22Hfo2f5sd7jcjT4EDPrWFF",
+        // Program mare3SCyfZkAndpBRBeonETmkCCB3TJTTrz8ZN2dnhP failed: custom program error: 0x3ee
+        "mare3SCyfZkAndpBRBeonETmkCCB3TJTTrz8ZN2dnhP",
+        // Program 1idUSy4MGGKyKhvjSnGZ6Zc7Q4eKQcibym4BkEEw9KR failed: custom program error: 0x3ee
+        "1idUSy4MGGKyKhvjSnGZ6Zc7Q4eKQcibym4BkEEw9KR",
+        // Program log: AnchorError caused by account: program. Error Code: AdminOnly. Error Number: 6016. Error Message: This is an admin only function.
+        "RAFFLv4sQoBPqLLqQvSHLRSFNnnoNekAbXfSegbQygF",
+        // Program log: AnchorError caused by account: program. Error Code: AdminOnly. Error Number: 6012. Error Message: This is an admin only action.
+        "CNVRTNSn2fcmaVKRYRyXHFQaASXXDf1kvewfqTotve9c"
+    ]
+);
 
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
@@ -219,7 +237,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
         let native_loader = native_loader::id();
         for builtin_program in builtin_programs {
-            program_accounts_map.insert(*builtin_program, (&native_loader, 0));
+            program_accounts_map.insert(*builtin_program, (&native_loader, 0, false));
         }
 
         let programs_loaded_for_tx_batch = Rc::new(RefCell::new(self.replenish_program_cache(
@@ -340,30 +358,44 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     /// Returns a hash map of executable program accounts (program accounts that are not writable
     /// in the given transactions), and their owners, for the transactions with a valid
     /// blockhash or nonce.
-    fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
+    pub fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
         callbacks: &CB,
         txs: &[SanitizedTransaction],
         check_results: &mut [TransactionCheckResult],
         program_owners: &'a [Pubkey],
-    ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
-        let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
+    ) -> HashMap<Pubkey, (&'a Pubkey, u64, bool)> {
+        let check_for_exceptions = !callbacks
+            .get_feature_set()
+            .is_active(&dont_load_executable_accounts_no_exceptions::id());
+
+        let mut result: HashMap<Pubkey, (&'a Pubkey, u64, bool)> = HashMap::new();
         check_results.iter_mut().zip(txs).for_each(|etx| {
             if let ((Ok(()), _nonce, lamports_per_signature), tx) = etx {
                 if lamports_per_signature.is_some() {
+                    // if any of the programs is in the exception list, then all programs for this transaction
+                    // should be loaded
+                    let load_all_programs = check_for_exceptions
+                        && tx
+                            .message()
+                            .account_keys()
+                            .iter()
+                            .any(|key| must_load_all_programs_for_instruction().contains(key));
+
                     tx.message()
                         .account_keys()
                         .iter()
                         .for_each(|key| match result.entry(*key) {
                             Entry::Occupied(mut entry) => {
-                                let (_, count) = entry.get_mut();
+                                let (_, count, load) = entry.get_mut();
                                 saturating_add_assign!(*count, 1);
+                                *load |= load_all_programs;
                             }
                             Entry::Vacant(entry) => {
                                 if let Some(index) =
                                     callbacks.account_matches_owners(key, program_owners)
                                 {
                                     if let Some(owner) = program_owners.get(index) {
-                                        entry.insert((owner, 1));
+                                        entry.insert((owner, 1, load_all_programs));
                                     }
                                 }
                             }
@@ -410,6 +442,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_account.data(),
                         program_account.owner(),
                         program_account.data().len(),
+                        program_account.rent_epoch(),
+                        program_account.lamports(),
                         0,
                         environments.program_runtime_v1.clone(),
                         reload,
@@ -430,10 +464,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             &mut load_program_metrics,
                             programdata,
                             program_account.owner(),
-                            program_account
-                                .data()
-                                .len()
-                                .saturating_add(programdata_account.data().len()),
+                            program_account.data().len(),
+                            program_account.rent_epoch(),
+                            program_account.lamports(),
                             slot,
                             environments.program_runtime_v1.clone(),
                             reload,
@@ -452,6 +485,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 elf_bytes,
                                 &loader_v4::id(),
                                 program_account.data().len(),
+                                program_account.rent_epoch(),
+                                program_account.lamports(),
                                 slot,
                                 environments.program_runtime_v2.clone(),
                                 reload,
@@ -488,13 +523,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
+        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64, bool)>,
         limit_to_load_programs: bool,
     ) -> LoadedProgramsForTxBatch {
         let mut missing_programs: Vec<(Pubkey, (LoadedProgramMatchCriteria, u64))> =
             program_accounts_map
                 .iter()
-                .map(|(pubkey, (_, count))| {
+                .map(|(pubkey, (_, count, _))| {
                     (
                         *pubkey,
                         (callback.get_program_match_criteria(pubkey), *count),
@@ -799,6 +834,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         programdata: &[u8],
         loader_key: &Pubkey,
         account_size: usize,
+        rent_epoch: u64,
+        lamports: u64,
         deployment_slot: Slot,
         program_runtime_environment: ProgramRuntimeEnvironment,
         reloading: bool,
@@ -813,6 +850,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                     programdata,
                     account_size,
+                    rent_epoch,
+                    lamports,
                     load_program_metrics,
                 )
             }
@@ -824,6 +863,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
                 programdata,
                 account_size,
+                rent_epoch,
+                lamports,
                 load_program_metrics,
             )
         }
@@ -971,6 +1012,7 @@ mod tests {
             bpf_loader,
             fee_calculator::FeeCalculator,
             message::{LegacyMessage, Message, MessageHeader},
+            rent_collector::RENT_EXEMPT_RENT_EPOCH,
             rent_debits::RentDebits,
             signature::{Keypair, Signature},
             sysvar::{self, rent::Rent},
@@ -1258,6 +1300,8 @@ mod tests {
             &buffer,
             &loader,
             size,
+            RENT_EXEMPT_RENT_EPOCH,
+            0,
             slot,
             environment.clone(),
             false,
@@ -1270,6 +1314,8 @@ mod tests {
             &buffer,
             &loader,
             size,
+            RENT_EXEMPT_RENT_EPOCH,
+            0,
             slot,
             environment,
             true,
@@ -1360,6 +1406,8 @@ mod tests {
             account_data.data(),
             account_data.owner(),
             account_data.data().len(),
+            RENT_EXEMPT_RENT_EPOCH,
+            0,
             0,
             environments.program_runtime_v1.clone(),
             false,
@@ -1441,6 +1489,8 @@ mod tests {
             account_data.data(),
             account_data.owner(),
             account_data.data().len(),
+            RENT_EXEMPT_RENT_EPOCH,
+            0,
             0,
             environments.program_runtime_v1.clone(),
             false,
@@ -1513,6 +1563,8 @@ mod tests {
             account_data.data(),
             account_data.owner(),
             account_data.data().len(),
+            RENT_EXEMPT_RENT_EPOCH,
+            0,
             0,
             environments.program_runtime_v1.clone(),
             false,
@@ -1834,10 +1886,10 @@ mod tests {
         account_data.set_owner(bpf_loader::id());
         mock_bank.account_shared_data.insert(key2, account_data);
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key1, (&owner, 2));
+        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64, bool)> = HashMap::new();
+        account_maps.insert(key1, (&owner, 2, false));
 
-        account_maps.insert(key2, (&owner, 4));
+        account_maps.insert(key2, (&owner, 4, false));
         let result = batch_processor.replenish_program_cache(&mock_bank, &account_maps, false);
 
         let program1 = result.find(&key1).unwrap();
@@ -1947,8 +1999,8 @@ mod tests {
             (Err(TransactionError::BlockhashNotFound), None, None)
         );
         assert_eq!(result.len(), 2);
-        assert_eq!(result[&key1], (&owner1, 2));
-        assert_eq!(result[&key2], (&owner2, 1));
+        assert_eq!(result[&key1], (&owner1, 2, false));
+        assert_eq!(result[&key2], (&owner2, 1, false));
     }
 
     #[test]
@@ -2034,13 +2086,13 @@ mod tests {
             programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &(&program1_pubkey, 2)
+            &(&program1_pubkey, 2, false)
         );
         assert_eq!(
             programs
                 .get(&account4_pubkey)
                 .expect("failed to find the program account"),
-            &(&program2_pubkey, 1)
+            &(&program2_pubkey, 1, false)
         );
     }
 
@@ -2129,7 +2181,7 @@ mod tests {
             programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &(&program1_pubkey, 1)
+            &(&program1_pubkey, 1, false)
         );
         assert_eq!(lock_results[1].0, Err(TransactionError::BlockhashNotFound));
     }

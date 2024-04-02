@@ -6953,7 +6953,7 @@ impl Bank {
         self.add_builtin(
             program_id,
             "mockup".to_string(),
-            LoadedProgram::new_builtin(self.slot, 0, builtin_function),
+            LoadedProgram::new_builtin(self.slot, 1, builtin_function),
         );
     }
 
