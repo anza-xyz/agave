@@ -254,7 +254,19 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_parsable::<u64>)
                                 .default_value("5")
-                                .help("Maximum number of attempts to sign or resign transactions after blockhash expiration")
+                                .help(
+                                    "Maximum number of attempts to sign or resign transactions \
+                                    after blockhash expiration.
+                                    If any transactions sent during the program deploy are still \
+                                    unconfirmed after the initially chosen recent blockhash \
+                                    expires, those transactions will be resigned with a new \
+                                    recent blockhash and resent. Use this setting to adjust \
+                                    the maximum number of transaction signing iterations. Each \
+                                    blockhash is valid for about 60 seconds, which means using \
+                                    the default value of 5 will lead to sending transactions \
+                                    for at least 5 minutes or until all transactions are confirmed,\
+                                    whichever comes first.",
+                                ),
                         )
                         .arg(compute_unit_price_arg()),
                 )
@@ -335,7 +347,19 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_parsable::<u64>)
                                 .default_value("5")
-                                .help("Maximum number of attempts to sign or resign transactions after blockhash expiration")
+                                .help(
+                                    "Maximum number of attempts to sign or resign transactions \
+                                    after blockhash expiration.
+                                    If any transactions sent during the program deploy are still \
+                                    unconfirmed after the initially chosen recent blockhash \
+                                    expires, those transactions will be resigned with a new \
+                                    recent blockhash and resent. Use this setting to adjust \
+                                    the maximum number of transaction signing iterations. Each \
+                                    blockhash is valid for about 60 seconds, which means using \
+                                    the default value of 5 will lead to sending transactions \
+                                    for at least 5 minutes or until all transactions are confirmed,\
+                                    whichever comes first.",
+                                ),
                         )
                         .arg(compute_unit_price_arg()),
                 )
