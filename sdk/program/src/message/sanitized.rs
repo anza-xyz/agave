@@ -17,7 +17,7 @@ use {
         solana_program::{system_instruction::SystemInstruction, system_program},
         sysvar::instructions::{BorrowedAccountMeta, BorrowedInstruction},
     },
-    std::{borrow::Cow, convert::TryFrom},
+    std::{borrow::Cow, collections::HashSet, convert::TryFrom},
     thiserror::Error,
 };
 
@@ -31,12 +31,16 @@ pub struct LegacyMessage<'a> {
 }
 
 impl<'a> LegacyMessage<'a> {
-    pub fn new(message: legacy::Message) -> Self {
+    pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
         let is_writable_account_cache = message
             .account_keys
             .iter()
             .enumerate()
-            .map(|(i, _key)| message.is_writable(i))
+            .map(|(i, _key)| {
+                message.is_writable_index(i)
+                    && !reserved_account_keys.contains(&message.account_keys[i])
+                    && !message.demote_program_id(i)
+            })
             .collect::<Vec<_>>();
         Self {
             message: Cow::Owned(message),
@@ -105,23 +109,34 @@ impl SanitizedMessage {
     pub fn try_new(
         sanitized_msg: SanitizedVersionedMessage,
         address_loader: impl AddressLoader,
+        reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self, SanitizeMessageError> {
         Ok(match sanitized_msg.message {
             VersionedMessage::Legacy(message) => {
-                SanitizedMessage::Legacy(LegacyMessage::new(message))
+                SanitizedMessage::Legacy(LegacyMessage::new(message, reserved_account_keys))
             }
             VersionedMessage::V0(message) => {
                 let loaded_addresses =
                     address_loader.load_addresses(&message.address_table_lookups)?;
-                SanitizedMessage::V0(v0::LoadedMessage::new(message, loaded_addresses))
+                SanitizedMessage::V0(v0::LoadedMessage::new(
+                    message,
+                    loaded_addresses,
+                    reserved_account_keys,
+                ))
             }
         })
     }
 
     /// Create a sanitized legacy message
-    pub fn try_from_legacy_message(message: legacy::Message) -> Result<Self, SanitizeMessageError> {
+    pub fn try_from_legacy_message(
+        message: legacy::Message,
+        reserved_account_keys: &HashSet<Pubkey>,
+    ) -> Result<Self, SanitizeMessageError> {
         message.sanitize()?;
-        Ok(Self::Legacy(LegacyMessage::new(message)))
+        Ok(Self::Legacy(LegacyMessage::new(
+            message,
+            reserved_account_keys,
+        )))
     }
 
     /// Return true if this message contains duplicate account keys

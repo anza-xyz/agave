@@ -17,10 +17,12 @@ use {
     solana_sdk::{
         hash::Hash,
         message::{AddressLoader, SanitizedMessage, SanitizedVersionedMessage},
+        pubkey::Pubkey,
         signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
         transaction::{Result, SanitizedVersionedTransaction},
     },
+    std::collections::HashSet,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -101,12 +103,14 @@ impl RuntimeTransaction<SanitizedMessage> {
     pub fn try_from(
         statically_loaded_runtime_tx: RuntimeTransaction<SanitizedVersionedMessage>,
         address_loader: impl AddressLoader,
+        reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
         let mut tx = Self {
             signatures: statically_loaded_runtime_tx.signatures,
             message: SanitizedMessage::try_new(
                 statically_loaded_runtime_tx.message,
                 address_loader,
+                reserved_account_keys,
             )?,
             meta: statically_loaded_runtime_tx.meta,
         };

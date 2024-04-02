@@ -1,7 +1,7 @@
 use {
     crate::{
         bpf_loader_upgradeable,
-        message::{legacy::is_builtin_key_or_sysvar, v0, AccountKeys},
+        message::{v0, AccountKeys},
         pubkey::Pubkey,
     },
     std::{borrow::Cow, collections::HashSet},
@@ -55,32 +55,40 @@ impl LoadedAddresses {
 }
 
 impl<'a> LoadedMessage<'a> {
-    pub fn new(message: v0::Message, loaded_addresses: LoadedAddresses) -> Self {
+    pub fn new(
+        message: v0::Message,
+        loaded_addresses: LoadedAddresses,
+        reserved_account_keys: &HashSet<Pubkey>,
+    ) -> Self {
         let mut loaded_message = Self {
             message: Cow::Owned(message),
             loaded_addresses: Cow::Owned(loaded_addresses),
             is_writable_account_cache: Vec::default(),
         };
-        loaded_message.set_is_writable_account_cache();
+        loaded_message.set_is_writable_account_cache(reserved_account_keys);
         loaded_message
     }
 
-    pub fn new_borrowed(message: &'a v0::Message, loaded_addresses: &'a LoadedAddresses) -> Self {
+    pub fn new_borrowed(
+        message: &'a v0::Message,
+        loaded_addresses: &'a LoadedAddresses,
+        reserved_account_keys: &HashSet<Pubkey>,
+    ) -> Self {
         let mut loaded_message = Self {
             message: Cow::Borrowed(message),
             loaded_addresses: Cow::Borrowed(loaded_addresses),
             is_writable_account_cache: Vec::default(),
         };
-        loaded_message.set_is_writable_account_cache();
+        loaded_message.set_is_writable_account_cache(reserved_account_keys);
         loaded_message
     }
 
-    fn set_is_writable_account_cache(&mut self) {
+    fn set_is_writable_account_cache(&mut self, reserved_account_keys: &HashSet<Pubkey>) {
         let is_writable_account_cache = self
             .account_keys()
             .iter()
             .enumerate()
-            .map(|(i, _key)| self.is_writable_internal(i))
+            .map(|(i, _key)| self.is_writable_internal(i, reserved_account_keys))
             .collect::<Vec<_>>();
         let _ = std::mem::replace(
             &mut self.is_writable_account_cache,
@@ -127,10 +135,14 @@ impl<'a> LoadedMessage<'a> {
     }
 
     /// Returns true if the account at the specified index was loaded as writable
-    fn is_writable_internal(&self, key_index: usize) -> bool {
+    fn is_writable_internal(
+        &self,
+        key_index: usize,
+        reserved_account_keys: &HashSet<Pubkey>,
+    ) -> bool {
         if self.is_writable_index(key_index) {
             if let Some(key) = self.account_keys().get(key_index) {
-                return !(is_builtin_key_or_sysvar(key) || self.demote_program_id(key_index));
+                return !(reserved_account_keys.contains(key) || self.demote_program_id(key_index));
             }
         }
         false
