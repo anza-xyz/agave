@@ -791,6 +791,7 @@ mod tests {
         assert_eq!(57_u64, secret.decrypt_u32(&ciphertext).unwrap());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_encrypt_decrypt_correctness_multithreaded() {
         let ElGamalKeypair { public, secret } = ElGamalKeypair::new_rand();
@@ -798,7 +799,7 @@ mod tests {
         let ciphertext = ElGamal::encrypt(&public, amount);
 
         let mut instance = ElGamal::decrypt(&secret, &ciphertext);
-        instance.num_threads(4).unwrap();
+        instance.num_threads(4.try_into().unwrap()).unwrap();
         assert_eq!(57_u64, instance.decode_u32().unwrap());
     }
 

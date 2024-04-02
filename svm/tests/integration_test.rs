@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use {
-    crate::mock_bank::MockBankCallback,
+    crate::{mock_bank::MockBankCallback, transaction_builder::SanitizedTransactionBuilder},
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallInvokeSignedRust, SyscallLog, SyscallMemcpy,
         SyscallMemset, SyscallSetReturnData,
@@ -21,18 +21,17 @@ use {
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader,
+        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, Epoch, Slot, UnixTimestamp},
         epoch_schedule::EpochSchedule,
         fee::FeeStructure,
         hash::Hash,
-        instruction::CompiledInstruction,
-        message::{Message, MessageHeader},
+        instruction::AccountMeta,
         native_loader,
         pubkey::Pubkey,
         signature::Signature,
         sysvar::SysvarId,
-        transaction::{SanitizedTransaction, Transaction},
+        transaction::{SanitizedTransaction, TransactionError},
     },
     solana_svm::{
         account_loader::TransactionCheckResult,
@@ -40,9 +39,11 @@ use {
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingCallback,
         },
+        transaction_results::TransactionExecutionResult,
     },
     std::{
         cmp::Ordering,
+        collections::HashMap,
         env,
         fs::{self, File},
         io::Read,
@@ -53,8 +54,9 @@ use {
 
 // This module contains the implementation of TransactionProcessingCallback
 mod mock_bank;
+mod transaction_builder;
 
-const BPF_LOADER_NAME: &str = "solana_bpf_loader_program";
+const BPF_LOADER_NAME: &str = "solana_bpf_loader_upgradeable_program";
 const SYSTEM_PROGRAM_NAME: &str = "system_program";
 const DEPLOYMENT_SLOT: u64 = 0;
 const EXECUTION_SLOT: u64 = 5; // The execution slot must be greater than the deployment slot
@@ -144,11 +146,11 @@ fn create_executable_environment(
     );
     mock_bank
         .account_shared_data
-        .insert(bpf_loader::id(), account_data);
+        .insert(bpf_loader_upgradeable::id(), account_data);
 
     // The bpf loader needs an executable as well
     program_cache.assign_program(
-        bpf_loader::id(),
+        bpf_loader_upgradeable::id(),
         Arc::new(LoadedProgram::new_builtin(
             DEPLOYMENT_SLOT,
             BPF_LOADER_NAME.len(),
@@ -205,7 +207,7 @@ fn create_executable_environment(
         .insert(Clock::id(), account_data);
 
     // Inform SVM of the registered builins
-    let registered_built_ins = vec![bpf_loader::id(), solana_system_program::id()];
+    let registered_built_ins = vec![bpf_loader_upgradeable::id(), solana_system_program::id()];
     (program_cache, registered_built_ins)
 }
 
@@ -224,50 +226,63 @@ fn load_program(name: String) -> Vec<u8> {
     buffer
 }
 
+fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
+    let program_account = Pubkey::new_unique();
+    let program_data_account = Pubkey::new_unique();
+    let state = UpgradeableLoaderState::Program {
+        programdata_address: program_data_account,
+    };
+
+    // The program account must have funds and hold the executable binary
+    let mut account_data = AccountSharedData::default();
+    account_data.set_data(bincode::serialize(&state).unwrap());
+    account_data.set_lamports(25);
+    account_data.set_owner(bpf_loader_upgradeable::id());
+    mock_bank
+        .account_shared_data
+        .insert(program_account, account_data);
+
+    let mut account_data = AccountSharedData::default();
+    let state = UpgradeableLoaderState::ProgramData {
+        slot: DEPLOYMENT_SLOT,
+        upgrade_authority_address: None,
+    };
+    let mut header = bincode::serialize(&state).unwrap();
+    let mut complement = vec![
+        0;
+        std::cmp::max(
+            0,
+            UpgradeableLoaderState::size_of_programdata_metadata().saturating_sub(header.len())
+        )
+    ];
+    let mut buffer = load_program(name);
+    header.append(&mut complement);
+    header.append(&mut buffer);
+    account_data.set_data(header);
+    mock_bank
+        .account_shared_data
+        .insert(program_data_account, account_data);
+
+    program_account
+}
+
 fn prepare_transactions(
     mock_bank: &mut MockBankCallback,
 ) -> (Vec<SanitizedTransaction>, Vec<TransactionCheckResult>) {
+    let mut transaction_builder = SanitizedTransactionBuilder::default();
     let mut all_transactions = Vec::new();
     let mut transaction_checks = Vec::new();
 
     // A transaction that works without any account
-    let key1 = Pubkey::new_unique();
+    let hello_program = deploy_program("hello-solana".to_string(), mock_bank);
     let fee_payer = Pubkey::new_unique();
-    let message = Message {
-        account_keys: vec![fee_payer, key1],
-        header: MessageHeader {
-            num_required_signatures: 1,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 0,
-        },
-        instructions: vec![CompiledInstruction {
-            program_id_index: 1,
-            accounts: vec![],
-            data: vec![],
-        }],
-        recent_blockhash: Hash::default(),
-    };
+    transaction_builder.create_instruction(hello_program, Vec::new(), HashMap::new(), Vec::new());
 
-    let transaction = Transaction {
-        signatures: vec![Signature::new_unique()],
-        message,
-    };
     let sanitized_transaction =
-        SanitizedTransaction::try_from_legacy_transaction(transaction).unwrap();
+        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()));
+
     all_transactions.push(sanitized_transaction);
     transaction_checks.push((Ok(()), None, Some(20)));
-
-    // Loading the program file
-    let buffer = load_program("hello-solana".to_string());
-
-    // The program account must have funds and hold the executable binary
-    let mut account_data = AccountSharedData::default();
-    // The executable account owner must be one of the loaders.
-    account_data.set_owner(bpf_loader::id());
-    account_data.set_data(buffer);
-    account_data.set_executable(true);
-    account_data.set_lamports(25);
-    mock_bank.account_shared_data.insert(key1, account_data);
 
     // The transaction fee payer must have enough funds
     let mut account_data = AccountSharedData::default();
@@ -277,41 +292,37 @@ fn prepare_transactions(
         .insert(fee_payer, account_data);
 
     // A simple funds transfer between accounts
-    let program_account = Pubkey::new_unique();
+    let transfer_program_account = deploy_program("simple-transfer".to_string(), mock_bank);
     let sender = Pubkey::new_unique();
     let recipient = Pubkey::new_unique();
     let fee_payer = Pubkey::new_unique();
     let system_account = Pubkey::from([0u8; 32]);
-    let message = Message {
-        account_keys: vec![
-            fee_payer,
-            sender,
-            program_account,
-            recipient,
-            system_account,
-        ],
-        header: MessageHeader {
-            // The signers must appear in the `account_keys` vector in positions whose index is
-            // less than `num_required_signatures`
-            num_required_signatures: 2,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 0,
-        },
-        instructions: vec![CompiledInstruction {
-            program_id_index: 2,
-            accounts: vec![1, 3, 4],
-            data: vec![0, 0, 0, 0, 0, 0, 0, 10],
-        }],
-        recent_blockhash: Hash::default(),
-    };
 
-    let transaction = Transaction {
-        signatures: vec![Signature::new_unique(), Signature::new_unique()],
-        message,
-    };
+    transaction_builder.create_instruction(
+        transfer_program_account,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        vec![0, 0, 0, 0, 0, 0, 0, 10],
+    );
 
     let sanitized_transaction =
-        SanitizedTransaction::try_from_legacy_transaction(transaction).unwrap();
+        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()));
     all_transactions.push(sanitized_transaction);
     transaction_checks.push((Ok(()), None, Some(20)));
 
@@ -323,19 +334,6 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .insert(fee_payer, account_data);
-
-    let buffer = load_program("simple-transfer".to_string());
-
-    // The program account must have funds and hold the executable binary
-    let mut account_data = AccountSharedData::default();
-    // The executable account owner must be one of the loaders.
-    account_data.set_owner(bpf_loader::id());
-    account_data.set_data(buffer);
-    account_data.set_executable(true);
-    account_data.set_lamports(25);
-    mock_bank
-        .account_shared_data
-        .insert(program_account, account_data);
 
     // sender
     let mut account_data = AccountSharedData::default();
@@ -349,32 +347,16 @@ fn prepare_transactions(
         .account_shared_data
         .insert(recipient, account_data);
 
-    // The program account is set in `create_executable_environment`
+    // The system account is set in `create_executable_environment`
 
     // A program that utilizes a Sysvar
-    let program_account = Pubkey::new_unique();
+    let program_account = deploy_program("clock-sysvar".to_string(), mock_bank);
     let fee_payer = Pubkey::new_unique();
-    let message = Message {
-        account_keys: vec![fee_payer, program_account],
-        header: MessageHeader {
-            num_required_signatures: 1,
-            num_readonly_signed_accounts: 0,
-            num_readonly_unsigned_accounts: 0,
-        },
-        instructions: vec![CompiledInstruction {
-            program_id_index: 1,
-            accounts: vec![],
-            data: vec![],
-        }],
-        recent_blockhash: Hash::default(),
-    };
+    transaction_builder.create_instruction(program_account, Vec::new(), HashMap::new(), Vec::new());
 
-    let transaction = Transaction {
-        signatures: vec![Signature::new_unique()],
-        message,
-    };
     let sanitized_transaction =
-        SanitizedTransaction::try_from_legacy_transaction(transaction).unwrap();
+        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()));
+
     all_transactions.push(sanitized_transaction);
     transaction_checks.push((Ok(()), None, Some(20)));
 
@@ -384,22 +366,62 @@ fn prepare_transactions(
         .account_shared_data
         .insert(fee_payer, account_data);
 
-    let buffer = load_program("clock-sysvar".to_string());
+    // A transaction that fails
+    let sender = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let fee_payer = Pubkey::new_unique();
+    let system_account = Pubkey::new_from_array([0; 32]);
+    let data = 900050u64.to_be_bytes().to_vec();
+    transaction_builder.create_instruction(
+        transfer_program_account,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        data,
+    );
 
-    // The program account must have funds and hold the executable binary
+    let sanitized_transaction =
+        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()));
+    all_transactions.push(sanitized_transaction.clone());
+    transaction_checks.push((Ok(()), None, Some(20)));
+
+    // fee payer
     let mut account_data = AccountSharedData::default();
-    // The executable account owner must be one of the loaders.
-    account_data.set_owner(bpf_loader::id());
-    account_data.set_data(buffer);
-    account_data.set_executable(true);
-    account_data.set_lamports(25);
+    account_data.set_lamports(80000);
     mock_bank
         .account_shared_data
-        .insert(program_account, account_data);
+        .insert(fee_payer, account_data);
 
-    // TODO: Include these examples as well:
-    // A transaction that fails
+    // Sender without enough funds
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(900000);
+    mock_bank.account_shared_data.insert(sender, account_data);
+
+    // recipient
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(900000);
+    mock_bank
+        .account_shared_data
+        .insert(recipient, account_data);
+
     // A transaction whose verification has already failed
+    all_transactions.push(sanitized_transaction);
+    transaction_checks.push((Err(TransactionError::BlockhashNotFound), None, Some(20)));
 
     (all_transactions, transaction_checks)
 }
@@ -420,15 +442,7 @@ fn svm_integration() {
     );
 
     // The sysvars must be put in the cache
-    batch_processor
-        .sysvar_cache
-        .write()
-        .unwrap()
-        .fill_missing_entries(|pubkey, callback| {
-            if let Some(account) = mock_bank.get_account_shared_data(pubkey) {
-                callback(account.data());
-            }
-        });
+    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
 
     let mut error_counter = TransactionErrorMetrics::default();
     let recording_config = ExecutionRecordingConfig {
@@ -451,7 +465,7 @@ fn svm_integration() {
         false,
     );
 
-    assert_eq!(result.execution_results.len(), 3);
+    assert_eq!(result.execution_results.len(), 5);
     assert!(result.execution_results[0]
         .details()
         .unwrap()
@@ -472,7 +486,7 @@ fn svm_integration() {
         .is_ok());
 
     // The SVM does not commit the account changes in MockBank
-    let recipient_key = transactions[1].message().account_keys()[3];
+    let recipient_key = transactions[1].message().account_keys()[2];
     let recipient_data = result.loaded_transactions[1]
         .0
         .as_ref()
@@ -493,4 +507,22 @@ fn svm_integration() {
     let clock_data = mock_bank.get_account_shared_data(&Clock::id()).unwrap();
     let clock_info: Clock = bincode::deserialize(clock_data.data()).unwrap();
     assert_eq!(clock_info.unix_timestamp, time);
+
+    assert!(result.execution_results[3]
+        .details()
+        .unwrap()
+        .status
+        .is_err());
+    assert!(result.execution_results[3]
+        .details()
+        .unwrap()
+        .log_messages
+        .as_ref()
+        .unwrap()
+        .contains(&"Transfer: insufficient lamports 900000, need 900050".to_string()));
+
+    assert!(matches!(
+        result.execution_results[4],
+        TransactionExecutionResult::NotExecuted(TransactionError::BlockhashNotFound)
+    ));
 }

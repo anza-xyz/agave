@@ -41,6 +41,11 @@ use {
         bank::{
             builtins::{BuiltinPrototype, BUILTINS},
             metrics::*,
+            partitioned_epoch_rewards::{
+                CalculateRewardsAndDistributeVoteRewardsResult, EpochRewardCalculateParamInfo,
+                EpochRewardStatus, PartitionedRewardsCalculation, RewardInterval,
+                StakeRewardCalculationPartitioned, StakeRewards, VoteRewardsAccounts,
+            },
         },
         bank_forks::BankForks,
         epoch_rewards_hasher::hash_rewards_into_partitions,
@@ -83,7 +88,6 @@ use {
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
         epoch_accounts_hash::EpochAccountsHash,
-        partitioned_rewards::PartitionedEpochRewardsConfig,
         sorted_storages::SortedStorages,
         stake_rewards::StakeReward,
         storable_accounts::StorableAccounts,
@@ -173,7 +177,7 @@ use {
         },
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+    solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     solana_vote_program::vote_state::VoteState,
     std::{
         borrow::Cow,
@@ -220,6 +224,7 @@ pub mod builtins;
 pub mod epoch_accounts_hash_utils;
 mod fee_distribution;
 mod metrics;
+pub(crate) mod partitioned_epoch_rewards;
 mod serde_snapshot;
 mod sysvar_cache;
 #[cfg(test)]
@@ -642,27 +647,6 @@ impl AbiExample for OptionalDropCallback {
     }
 }
 
-#[derive(AbiExample, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct StartBlockHeightAndRewards {
-    /// the block height of the slot at which rewards distribution began
-    pub(crate) start_block_height: u64,
-    /// calculated epoch rewards pending distribution, outer Vec is by partition (one partition per block)
-    pub(crate) stake_rewards_by_partition: Arc<Vec<StakeRewards>>,
-}
-
-/// Represent whether bank is in the reward phase or not.
-#[derive(AbiExample, AbiEnumVisitor, Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub(crate) enum EpochRewardStatus {
-    /// this bank is in the reward phase.
-    /// Contents are the start point for epoch reward calculation,
-    /// i.e. parent_slot and parent_block height for the starting
-    /// block of the current epoch.
-    Active(StartBlockHeightAndRewards),
-    /// this bank is outside of the rewarding phase.
-    #[default]
-    Inactive,
-}
-
 /// Manager for the state of all accounts and programs after processing its entries.
 /// AbiExample is needed even without Serialize/Deserialize; actual (de-)serialization
 /// are implemented elsewhere for versioning
@@ -865,56 +849,6 @@ struct VoteReward {
 }
 
 type VoteRewards = DashMap<Pubkey, VoteReward>;
-#[derive(Debug, Default)]
-struct VoteRewardsAccounts {
-    /// reward info for each vote account pubkey.
-    /// This type is used by `update_reward_history()`
-    rewards: Vec<(Pubkey, RewardInfo)>,
-    /// corresponds to pubkey in `rewards`
-    /// Some if account is to be stored.
-    /// None if to be skipped.
-    accounts_to_store: Vec<Option<AccountSharedData>>,
-}
-
-/// hold reward calc info to avoid recalculation across functions
-struct EpochRewardCalculateParamInfo<'a> {
-    stake_history: StakeHistory,
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    cached_vote_accounts: &'a VoteAccounts,
-}
-
-/// Hold all results from calculating the rewards for partitioned distribution.
-/// This struct exists so we can have a function which does all the calculation with no
-/// side effects.
-struct PartitionedRewardsCalculation {
-    vote_account_rewards: VoteRewardsAccounts,
-    stake_rewards_by_partition: StakeRewardCalculationPartitioned,
-    old_vote_balance_and_staked: u64,
-    validator_rewards: u64,
-    validator_rate: f64,
-    foundation_rate: f64,
-    prev_epoch_duration_in_years: f64,
-    capitalization: u64,
-}
-
-/// result of calculating the stake rewards at beginning of new epoch
-struct StakeRewardCalculationPartitioned {
-    /// each individual stake account to reward, grouped by partition
-    stake_rewards_by_partition: Vec<StakeRewards>,
-    /// total lamports across all `stake_rewards`
-    total_stake_rewards_lamports: u64,
-}
-
-struct CalculateRewardsAndDistributeVoteRewardsResult {
-    /// total rewards for the epoch (including both vote rewards and stake rewards)
-    total_rewards: u64,
-    /// distributed vote rewards
-    distributed_rewards: u64,
-    /// stake rewards that still need to be distributed, grouped by partition
-    stake_rewards_by_partition: Vec<StakeRewards>,
-}
-
-pub(crate) type StakeRewards = Vec<StakeReward>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -948,14 +882,6 @@ struct StakeRewardCalculation {
     stake_rewards: StakeRewards,
     /// total lamports across all `stake_rewards`
     total_stake_rewards_lamports: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub(super) enum RewardInterval {
-    /// the slot within the epoch is INSIDE the reward distribution interval
-    InsideInterval,
-    /// the slot within the epoch is OUTSIDE the reward distribution interval
-    OutsideInterval,
 }
 
 impl Bank {
@@ -1142,76 +1068,6 @@ impl Bank {
 
     fn get_rent_collector_from(rent_collector: &RentCollector, epoch: Epoch) -> RentCollector {
         rent_collector.clone_with_epoch(epoch)
-    }
-
-    fn is_partitioned_rewards_feature_enabled(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::enable_partitioned_epoch_reward::id())
-    }
-
-    pub(crate) fn set_epoch_reward_status_active(
-        &mut self,
-        stake_rewards_by_partition: Vec<StakeRewards>,
-    ) {
-        self.epoch_reward_status = EpochRewardStatus::Active(StartBlockHeightAndRewards {
-            start_block_height: self.block_height,
-            stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
-        });
-    }
-
-    fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
-        &self
-            .rc
-            .accounts
-            .accounts_db
-            .partitioned_epoch_rewards_config
-    }
-
-    /// # stake accounts to store in one block during partitioned reward interval
-    fn partitioned_rewards_stake_account_stores_per_block(&self) -> u64 {
-        self.partitioned_epoch_rewards_config()
-            .stake_account_stores_per_block
-    }
-
-    /// reward calculation happens synchronously during the first block of the epoch boundary.
-    /// So, # blocks for reward calculation is 1.
-    fn get_reward_calculation_num_blocks(&self) -> Slot {
-        self.partitioned_epoch_rewards_config()
-            .reward_calculation_num_blocks
-    }
-
-    /// Calculate the number of blocks required to distribute rewards to all stake accounts.
-    fn get_reward_distribution_num_blocks(&self, rewards: &StakeRewards) -> u64 {
-        let total_stake_accounts = rewards.len();
-        if self.epoch_schedule.warmup && self.epoch < self.first_normal_epoch() {
-            1
-        } else {
-            const MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH: u64 = 10;
-            let num_chunks = solana_accounts_db::accounts_hash::AccountsHasher::div_ceil(
-                total_stake_accounts,
-                self.partitioned_rewards_stake_account_stores_per_block() as usize,
-            ) as u64;
-
-            // Limit the reward credit interval to 10% of the total number of slots in a epoch
-            num_chunks.clamp(
-                1,
-                (self.epoch_schedule.slots_per_epoch / MAX_FACTOR_OF_REWARD_BLOCKS_IN_EPOCH).max(1),
-            )
-        }
-    }
-
-    /// Return `RewardInterval` enum for current bank
-    fn get_reward_interval(&self) -> RewardInterval {
-        if matches!(self.epoch_reward_status, EpochRewardStatus::Active(_)) {
-            RewardInterval::InsideInterval
-        } else {
-            RewardInterval::OutsideInterval
-        }
-    }
-
-    /// For testing only
-    pub fn force_reward_interval_end_for_tests(&mut self) {
-        self.epoch_reward_status = EpochRewardStatus::Inactive;
     }
 
     fn _new_from_parent(
@@ -1621,34 +1477,6 @@ impl Bank {
         );
     }
 
-    /// partitioned reward distribution is complete.
-    /// So, deactivate the epoch rewards sysvar.
-    fn deactivate_epoch_reward_status(&mut self) {
-        assert!(matches!(
-            self.epoch_reward_status,
-            EpochRewardStatus::Active(_)
-        ));
-        self.epoch_reward_status = EpochRewardStatus::Inactive;
-        if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
-            if account.lamports() > 0 {
-                info!(
-                    "burning {} extra lamports in EpochRewards sysvar account at slot {}",
-                    account.lamports(),
-                    self.slot()
-                );
-                self.log_epoch_rewards_sysvar("burn");
-                self.burn_and_purge_account(&sysvar::epoch_rewards::id(), account);
-            }
-        }
-    }
-
-    fn force_partition_rewards_in_first_block_of_epoch(&self) -> bool {
-        self.partitioned_epoch_rewards_config()
-            .test_enable_partitioned_rewards
-            && self.get_reward_calculation_num_blocks() == 0
-            && self.partitioned_rewards_stake_account_stores_per_block() == u64::MAX
-    }
-
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     fn begin_partitioned_rewards(
@@ -1673,13 +1501,12 @@ impl Bank {
 
         let slot = self.slot();
         let credit_start = self.block_height() + self.get_reward_calculation_num_blocks();
-        let credit_end_exclusive = credit_start + stake_rewards_by_partition.len() as u64;
 
         self.set_epoch_reward_status_active(stake_rewards_by_partition);
 
         // create EpochRewards sysvar that holds the balance of undistributed rewards with
-        // (total_rewards, distributed_rewards, credit_end_exclusive), total capital will increase by (total_rewards - distributed_rewards)
-        self.create_epoch_rewards_sysvar(total_rewards, distributed_rewards, credit_end_exclusive);
+        // (total_rewards, distributed_rewards, credit_start), total capital will increase by (total_rewards - distributed_rewards)
+        self.create_epoch_rewards_sysvar(total_rewards, distributed_rewards, credit_start);
 
         datapoint_info!(
             "epoch-rewards-status-update",
@@ -1723,7 +1550,12 @@ impl Bank {
                 ("start_block_height", start_block_height, i64),
             );
 
-            self.deactivate_epoch_reward_status();
+            assert!(matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Active(_)
+            ));
+            self.epoch_reward_status = EpochRewardStatus::Inactive;
+            self.destroy_epoch_rewards_sysvar();
         }
     }
 
@@ -1824,8 +1656,13 @@ impl Bank {
         // from Stakes<Delegation> by reading the full account state from
         // accounts-db. Note that it is crucial that these accounts are loaded
         // at the right slot and match precisely with serialized Delegations.
+        // Note that we are disabling the read cache while we populate the stakes cache.
+        // The stakes accounts will not be expected to be loaded again.
+        // If we populate the read cache with these loads, then we'll just soon have to evict these.
         let stakes = Stakes::new(&fields.stakes, |pubkey| {
-            let (account, _slot) = bank_rc.accounts.load_with_fixed_root(&ancestors, pubkey)?;
+            let (account, _slot) = bank_rc
+                .accounts
+                .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
             Some(account)
         })
         .expect(
@@ -3585,78 +3422,6 @@ impl Bank {
         };
 
         report_partitioned_reward_metrics(self, metrics);
-    }
-
-    /// true if it is ok to run partitioned rewards code.
-    /// This means the feature is activated or certain testing situations.
-    fn is_partitioned_rewards_code_enabled(&self) -> bool {
-        self.is_partitioned_rewards_feature_enabled()
-            || self
-                .partitioned_epoch_rewards_config()
-                .test_enable_partitioned_rewards
-    }
-
-    /// Helper fn to log epoch_rewards sysvar
-    fn log_epoch_rewards_sysvar(&self, prefix: &str) {
-        if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
-            let epoch_rewards: sysvar::epoch_rewards::EpochRewards =
-                from_account(&account).unwrap();
-            info!(
-                "{prefix} epoch_rewards sysvar: {:?}",
-                (account.lamports(), epoch_rewards)
-            );
-        } else {
-            info!("{prefix} epoch_rewards sysvar: none");
-        }
-    }
-
-    /// Create EpochRewards sysvar with calculated rewards
-    fn create_epoch_rewards_sysvar(
-        &self,
-        total_rewards: u64,
-        distributed_rewards: u64,
-        distribution_complete_block_height: u64,
-    ) {
-        assert!(self.is_partitioned_rewards_code_enabled());
-
-        let epoch_rewards = sysvar::epoch_rewards::EpochRewards {
-            total_rewards,
-            distributed_rewards,
-            distribution_complete_block_height,
-        };
-
-        self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            let mut inherited_account_fields =
-                self.inherit_specially_retained_account_fields(account);
-
-            assert!(total_rewards >= distributed_rewards);
-            // set the account lamports to the undistributed rewards
-            inherited_account_fields.0 = total_rewards - distributed_rewards;
-            create_account(&epoch_rewards, inherited_account_fields)
-        });
-
-        self.log_epoch_rewards_sysvar("create");
-    }
-
-    /// Update EpochRewards sysvar with distributed rewards
-    fn update_epoch_rewards_sysvar(&self, distributed: u64) {
-        assert!(self.is_partitioned_rewards_code_enabled());
-
-        let mut epoch_rewards: sysvar::epoch_rewards::EpochRewards =
-            from_account(&self.get_account(&sysvar::epoch_rewards::id()).unwrap()).unwrap();
-        epoch_rewards.distribute(distributed);
-
-        self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            let mut inherited_account_fields =
-                self.inherit_specially_retained_account_fields(account);
-
-            let lamports = inherited_account_fields.0;
-            assert!(lamports >= distributed);
-            inherited_account_fields.0 = lamports - distributed;
-            create_account(&epoch_rewards, inherited_account_fields)
-        });
-
-        self.log_epoch_rewards_sysvar("update");
     }
 
     fn update_recent_blockhashes_locked(&self, locked_blockhash_queue: &BlockhashQueue) {
