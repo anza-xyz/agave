@@ -222,7 +222,7 @@ mod tests {
         )
         .unwrap();
 
-        drop(request_recv_endpoint);
+        drop(request_recv_endpoints);
         // Response Receiver:
         let (response_recv_socket, response_recv_exit, keypair2, response_recv_ip) = server_args();
         let (sender2, receiver2) = unbounded();
@@ -260,6 +260,10 @@ mod tests {
             key: priv_key,
         });
 
+        let response_recv_endpoint = response_recv_endpoints
+            .pop()
+            .expect("at least one endpoint");
+        drop(response_recv_endpoints);
         let endpoint =
             QuicLazyInitializedEndpoint::new(client_certificate, Some(response_recv_endpoint));
         let request_sender =

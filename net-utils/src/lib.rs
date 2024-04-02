@@ -381,20 +381,10 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SocketConfig {
     pub reuseaddr: bool,
     pub reuseport: bool,
-}
-
-impl Default for SocketConfig {
-    #[allow(clippy::derivable_impls)]
-    fn default() -> Self {
-        Self {
-            reuseaddr: false,
-            reuseport: false,
-        }
-    }
 }
 
 #[cfg(any(windows, target_os = "ios"))]
