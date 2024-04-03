@@ -907,23 +907,23 @@ impl Cluster for LocalCluster {
         &mut self,
         pubkey: &Pubkey,
         cluster_validator_info: &mut ClusterValidatorInfo,
-    ) -> (Node, Option<ContactInfo>) {
+    ) -> (Node, Vec<ContactInfo>) {
         // Update the stored ContactInfo for this node
         let node = Node::new_localhost_with_pubkey(pubkey);
         cluster_validator_info.info.contact_info = node.info.clone();
         cluster_validator_info.config.rpc_addrs =
             Some((node.info.rpc().unwrap(), node.info.rpc_pubsub().unwrap()));
 
-        let entry_point_info = {
-            if pubkey == self.entry_point_info.pubkey() {
-                self.entry_point_info = node.info.clone();
-                None
-            } else {
-                Some(self.entry_point_info.clone())
-            }
-        };
+        let entry_point_infos: Vec<ContactInfo> = self
+            .validators
+            .values()
+            .map(|validator| validator.info.contact_info.clone())
+            .collect();
+        if entry_point_infos.is_empty() {
+            panic!("Validator has no alive entrypoints to rejoin cluster with");
+        }
 
-        (node, entry_point_info)
+        (node, entry_point_infos)
     }
 
     fn set_entry_point(&mut self, entry_point_info: ContactInfo) {
@@ -951,9 +951,12 @@ impl Cluster for LocalCluster {
 
     fn restart_node_with_context(
         mut cluster_validator_info: ClusterValidatorInfo,
-        (node, entry_point_info): (Node, Option<ContactInfo>),
+        (node, entry_point_infos): (Node, Vec<ContactInfo>),
         socket_addr_space: SocketAddrSpace,
     ) -> ClusterValidatorInfo {
+        if entry_point_infos.is_empty() {
+            panic!("Passed empty entrypoints list");
+        }
         // Restart the node
         let validator_info = &cluster_validator_info.info;
         LocalCluster::sync_ledger_path_across_nested_config_fields(
@@ -966,11 +969,10 @@ impl Cluster for LocalCluster {
             &validator_info.ledger_path,
             &validator_info.voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![validator_info.voting_keypair.clone()])),
-            entry_point_info
-                .map(|entry_point_info| {
-                    vec![LegacyContactInfo::try_from(&entry_point_info).unwrap()]
-                })
-                .unwrap_or_default(),
+            entry_point_infos
+                .into_iter()
+                .map(|entry_point_info| LegacyContactInfo::try_from(&entry_point_info).unwrap())
+                .collect(),
             &safe_clone_config(&cluster_validator_info.config),
             true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
