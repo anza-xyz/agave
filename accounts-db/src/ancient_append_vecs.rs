@@ -2832,11 +2832,13 @@ pub mod tests {
                     if swap {
                         infos.all_infos = infos.all_infos.into_iter().rev().collect();
                     }
-                    infos.total_alive_bytes_shrink += infos
-                        .all_infos
-                        .iter()
-                        .map(|info| info.alive_bytes)
-                        .sum::<u64>();
+                    infos.total_alive_bytes_shrink = Saturating(
+                        infos
+                            .all_infos
+                            .iter()
+                            .map(|info| info.alive_bytes)
+                            .sum::<u64>(),
+                    );
                     match method {
                         TestShouldShrink::FilterAncientSlots => {
                             let tuning = PackedAncientStorageTuning {

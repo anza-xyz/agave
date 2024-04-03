@@ -3988,7 +3988,7 @@ impl AccountsDb {
             let (shrink_in_progress, time_us) = measure_us!(
                 self.get_store_for_shrink(slot, shrink_collect.alive_total_bytes as u64)
             );
-            stats_sub.create_and_insert_store_elapsed_us += time_us;
+            stats_sub.create_and_insert_store_elapsed_us = Saturating(time_us);
 
             // here, we're writing back alive_accounts. That should be an atomic operation
             // without use of rather wide locks in this whole function, because we're
@@ -4001,7 +4001,7 @@ impl AccountsDb {
             );
 
             rewrite_elapsed.stop();
-            stats_sub.rewrite_elapsed_us += rewrite_elapsed.as_us();
+            stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
 
             // `store_accounts_frozen()` above may have purged accounts from some
             // other storage entries (the ones that were just overwritten by this
@@ -4463,7 +4463,8 @@ impl AccountsDb {
         let (mut shrink_in_progress, create_and_insert_store_elapsed_us) = measure_us!(
             current_ancient.create_if_necessary(slot, self, shrink_collect.alive_total_bytes)
         );
-        stats_sub.create_and_insert_store_elapsed_us += create_and_insert_store_elapsed_us;
+        stats_sub.create_and_insert_store_elapsed_us =
+            Saturating(create_and_insert_store_elapsed_us);
         let available_bytes = current_ancient.accounts_file().accounts.remaining_bytes();
         // split accounts in 'slot' into:
         // 'Primary', which can fit in 'current_ancient'
@@ -4525,7 +4526,7 @@ impl AccountsDb {
         }
         assert_eq!(bytes_remaining_to_write, 0);
         rewrite_elapsed.stop();
-        stats_sub.rewrite_elapsed_us += rewrite_elapsed.as_us();
+        stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
 
         if slot != current_ancient.slot() {
             // all append vecs in this slot have been combined into an ancient append vec
@@ -6309,7 +6310,7 @@ impl AccountsDb {
                     StoreReclaims::Default,
                 ));
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
-            flush_stats.store_accounts_total_us += store_accounts_total_inner_us;
+            flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
 
             // If the above sizing function is correct, just one AppendVec is enough to hold
             // all the data for the slot
