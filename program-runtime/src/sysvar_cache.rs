@@ -68,15 +68,23 @@ impl SysvarCache {
                 panic!("zero length error");
             }
 
-            if length + offset > sysvar_buf.len() {
-                panic!("overrun error");
+            match length.checked_add(offset) {
+                Some(limit) if limit <= sysvar_buf.len() => (),
+                _ => panic!("overrun error"),
             }
 
             if length != out_buf.len() {
                 panic!("bad out_buf error");
             }
 
-            out_buf.copy_from_slice(&sysvar_buf[offset..offset + length]);
+            if let Some(sysvar_slice) = offset
+                .checked_add(length)
+                .and_then(|limit| sysvar_buf.get(offset..limit))
+            {
+                out_buf.copy_from_slice(sysvar_slice);
+            } else {
+                panic!("shouldnt happen");
+            }
 
             Ok(())
         } else {
