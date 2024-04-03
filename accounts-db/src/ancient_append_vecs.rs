@@ -441,13 +441,12 @@ impl AccountsDb {
             StoreReclaims::Ignore,
         ));
 
-        let shrink_stats = ShrinkStatsSub {
+        write_ancient_accounts.metrics.accumulate(&ShrinkStatsSub {
             store_accounts_timing,
             rewrite_elapsed_us: Saturating(rewrite_elapsed_us),
             create_and_insert_store_elapsed_us: Saturating(create_and_insert_store_elapsed_us),
             ..ShrinkStatsSub::default()
-        };
-        write_ancient_accounts.metrics.accumulate(&shrink_stats);
+        });
 
         write_ancient_accounts
             .shrinks_in_progress
