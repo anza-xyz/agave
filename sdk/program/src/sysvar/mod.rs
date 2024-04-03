@@ -252,6 +252,20 @@ pub enum GettableSysvar {
     LastRestartSlot,
 }
 
+impl From<GettableSysvar> for u64 {
+    fn from(value: GettableSysvar) -> Self {
+        match value {
+            GettableSysvar::Clock => 1,
+            GettableSysvar::EpochSchedule => 2,
+            GettableSysvar::EpochRewards => 3,
+            GettableSysvar::Rent => 4,
+            GettableSysvar::SlotHashes => 5,
+            GettableSysvar::StakeHistory => 6,
+            GettableSysvar::LastRestartSlot => 7,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {

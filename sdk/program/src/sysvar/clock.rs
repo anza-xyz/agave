@@ -127,10 +127,37 @@
 //! ```
 
 pub use crate::clock::Clock;
-use crate::{impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar};
+use crate::{
+    program_error::ProgramError,
+    sysvar::{GettableSysvar, Sysvar},
+};
 
 crate::declare_sysvar_id!("SysvarC1ock11111111111111111111111111111111", Clock);
 
 impl Sysvar for Clock {
-    impl_sysvar_get!(sol_get_clock_sysvar);
+    fn get() -> Result<Self, ProgramError> {
+        let size = Self::size_of();
+        let mut var: Vec<u8> = vec![0; size];
+        let var_addr = var.as_mut_ptr();
+
+        #[cfg(target_os = "solana")]
+        let result = unsafe {
+            crate::syscalls::sol_get_sysvar(GettableSysvar::Clock.into(), size as u64, 0, var_addr)
+        };
+
+        #[cfg(not(target_os = "solana"))]
+        let result = crate::program_stubs::sol_get_sysvar(
+            GettableSysvar::Clock.into(),
+            size as u64,
+            0,
+            var_addr,
+        );
+
+        match result {
+            crate::entrypoint::SUCCESS => {
+                bincode::deserialize(&var).map_err(|_| ProgramError::InvalidAccountData)
+            }
+            e => Err(e.into()),
+        }
+    }
 }
