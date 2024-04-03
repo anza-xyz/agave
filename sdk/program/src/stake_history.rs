@@ -6,7 +6,7 @@
 //!
 //! [`sysvar::stake_history`]: crate::sysvar::stake_history
 
-pub use crate::clock::Epoch;
+pub use crate::{clock::Epoch, sysvar::GettableSysvar};
 use std::{ops::Deref, sync::Arc};
 
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
@@ -114,10 +114,11 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
     fn get_entry(&self, target_epoch: Epoch) -> Option<StakeHistoryEntry> {
         #[cfg(target_os = "solana")]
         {
+            let tag = GettableSysvar::StakeHistory as u64;
             let mut len_buf = [0; 8];
             let len_buf_addr = &mut len_buf as *mut _ as *mut u8;
 
-            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 8, 0, len_buf_addr) };
+            let result = unsafe { crate::syscalls::sol_get_sysvar(tag, 8, 0, len_buf_addr) };
             if result != crate::entrypoint::SUCCESS {
                 panic!("no len???");
             }
@@ -132,7 +133,7 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
             let mut entry_buf = [0; 32];
             let entry_buf_addr = &mut entry_buf as *mut _ as *mut u8;
 
-            let result = unsafe { crate::syscalls::sol_get_sysvar(0, 32, 8, entry_buf_addr) };
+            let result = unsafe { crate::syscalls::sol_get_sysvar(tag, 32, 8, entry_buf_addr) };
             if result != crate::entrypoint::SUCCESS {
                 panic!("no entry?????");
             }
@@ -160,7 +161,7 @@ impl StakeHistoryGetEntry for StakeHistorySyscall {
 
                 entry_buf.iter_mut().for_each(|x| *x = 0);
                 let result =
-                    unsafe { crate::syscalls::sol_get_sysvar(0, 32, offset, entry_buf_addr) };
+                    unsafe { crate::syscalls::sol_get_sysvar(tag, 32, offset, entry_buf_addr) };
                 if result != crate::entrypoint::SUCCESS {
                     panic!("no entry?????");
                 }

@@ -84,6 +84,7 @@
 use {
     crate::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey},
     lazy_static::lazy_static,
+    num_derive::FromPrimitive,
 };
 
 pub mod clock;
@@ -236,6 +237,19 @@ macro_rules! impl_sysvar_get {
             }
         }
     };
+}
+
+/// A Sysvar that can be accessed through the SysvarGet syscall
+// HANA this name kinda sucks idk
+#[derive(Copy, Clone, Debug, PartialEq, Eq, FromPrimitive)]
+pub enum GettableSysvar {
+    Clock = 1,
+    EpochSchedule,
+    EpochRewards,
+    Rent,
+    SlotHashes,
+    StakeHistory,
+    LastRestartSlot,
 }
 
 #[cfg(test)]

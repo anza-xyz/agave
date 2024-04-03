@@ -161,7 +161,6 @@ declare_builtin_function!(
     SyscallGetSysvar,
     fn rust(
         invoke_context: &mut InvokeContext,
-        // HANA stakehistory just for now
         sysvar_tag: u64,
         length: u64,
         offset: u64,
@@ -174,28 +173,22 @@ declare_builtin_function!(
             invoke_context
                 .get_compute_budget()
                 .sysvar_base_cost
-                .saturating_add(length as u64),
+                .saturating_add(length),
         )?;
 
-        match sysvar_tag {
-            // stake history
-            _ => {
-                let cache = invoke_context.get_sysvar_cache();
+        if let Some(sysvar_tag) = FromPrimitive::from_u64(sysvar_tag) {
+            let cache = invoke_context.get_sysvar_cache();
 
-                let var = translate_slice_mut::<u8>(
-                    memory_mapping,
-                    var_addr,
-                    length,
-                    invoke_context.get_check_aligned(),
-                )?;
+            let var = translate_slice_mut::<u8>(
+                memory_mapping,
+                var_addr,
+                length,
+                invoke_context.get_check_aligned(),
+            )?;
 
-                cache.read_sysvar_into(
-                    CachedSysvar::StakeHistory,
-                    length as usize,
-                    offset as usize,
-                    var,
-                )?;
-            }
+            cache.read_sysvar_into(sysvar_tag, length as usize, offset as usize, var)?;
+        } else {
+            panic!("none");
         }
 
         Ok(SUCCESS)

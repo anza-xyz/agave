@@ -12,9 +12,10 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+    num_traits::FromPrimitive,
     solana_program_runtime::{
         compute_budget::ComputeBudget, ic_logger_msg, ic_msg, invoke_context::InvokeContext,
-        stable_log, sysvar_cache::CachedSysvar, timings::ExecuteTimings,
+        stable_log, timings::ExecuteTimings,
     },
     solana_rbpf::{
         declare_builtin_function,

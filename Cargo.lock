@@ -5630,6 +5630,7 @@ dependencies = [
  "libsecp256k1",
  "log",
  "memoffset 0.9.0",
+ "num-traits",
  "rand 0.8.5",
  "scopeguard",
  "solana-measure",

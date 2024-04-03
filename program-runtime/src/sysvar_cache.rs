@@ -9,22 +9,11 @@ use {
         sysvar::{
             clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
             last_restart_slot::LastRestartSlot, rent::Rent, slot_hashes::SlotHashes,
-            stake_history::StakeHistory, Sysvar, SysvarId,
+            stake_history::StakeHistory, GettableSysvar, Sysvar, SysvarId,
         },
         transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
 };
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CachedSysvar {
-    Clock,
-    EpochSchedule,
-    EpochRewards,
-    Rent,
-    SlotHashes,
-    StakeHistory,
-    LastRestartSlot,
-}
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
@@ -55,21 +44,21 @@ pub struct SysvarCache {
 }
 
 impl SysvarCache {
-    fn vec_for_enum(&self, sysvar_type: CachedSysvar) -> &Option<Vec<u8>> {
+    fn vec_for_enum(&self, sysvar_type: GettableSysvar) -> &Option<Vec<u8>> {
         match sysvar_type {
-            CachedSysvar::Clock => &self.clock,
-            CachedSysvar::EpochSchedule => &self.epoch_schedule,
-            CachedSysvar::EpochRewards => &self.epoch_rewards,
-            CachedSysvar::Rent => &self.rent,
-            CachedSysvar::SlotHashes => &self.slot_hashes,
-            CachedSysvar::StakeHistory => &self.stake_history,
-            CachedSysvar::LastRestartSlot => &self.last_restart_slot,
+            GettableSysvar::Clock => &self.clock,
+            GettableSysvar::EpochSchedule => &self.epoch_schedule,
+            GettableSysvar::EpochRewards => &self.epoch_rewards,
+            GettableSysvar::Rent => &self.rent,
+            GettableSysvar::SlotHashes => &self.slot_hashes,
+            GettableSysvar::StakeHistory => &self.stake_history,
+            GettableSysvar::LastRestartSlot => &self.last_restart_slot,
         }
     }
 
     pub fn read_sysvar_into(
         &self,
-        sysvar_type: CachedSysvar,
+        sysvar_type: GettableSysvar,
         length: usize,
         offset: usize,
         out_buf: &mut [u8],
@@ -97,7 +86,7 @@ impl SysvarCache {
 
     fn get_sysvar_obj<T: DeserializeOwned>(
         &self,
-        sysvar_type: CachedSysvar,
+        sysvar_type: GettableSysvar,
     ) -> Result<T, InstructionError> {
         if let Some(ref sysvar_buf) = self.vec_for_enum(sysvar_type) {
             bincode::deserialize(sysvar_buf).map_err(|_| InstructionError::UnsupportedSysvar)
@@ -107,33 +96,33 @@ impl SysvarCache {
     }
 
     pub fn get_clock(&self) -> Result<Clock, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::Clock)
+        self.get_sysvar_obj(GettableSysvar::Clock)
     }
 
     pub fn get_epoch_schedule(&self) -> Result<EpochSchedule, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::EpochSchedule)
+        self.get_sysvar_obj(GettableSysvar::EpochSchedule)
     }
 
     pub fn get_epoch_rewards(&self) -> Result<EpochRewards, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::EpochRewards)
+        self.get_sysvar_obj(GettableSysvar::EpochRewards)
     }
 
     pub fn get_rent(&self) -> Result<Rent, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::Rent)
+        self.get_sysvar_obj(GettableSysvar::Rent)
     }
 
     pub fn get_last_restart_slot(&self) -> Result<LastRestartSlot, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::LastRestartSlot)
+        self.get_sysvar_obj(GettableSysvar::LastRestartSlot)
     }
 
     // HANA remove after fixing callsites
     pub fn get_stake_history(&self) -> Result<StakeHistory, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::StakeHistory)
+        self.get_sysvar_obj(GettableSysvar::StakeHistory)
     }
 
     // HANA remove after fixing callsites
     pub fn get_slot_hashes(&self) -> Result<SlotHashes, InstructionError> {
-        self.get_sysvar_obj(CachedSysvar::SlotHashes)
+        self.get_sysvar_obj(GettableSysvar::SlotHashes)
     }
 
     #[deprecated]
