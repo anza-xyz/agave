@@ -191,7 +191,12 @@ impl AncientSlotInfos {
             // combined ancient storages is less than the threshold, then
             // we've gone too far, so get rid of this entry and all after it.
             // Every storage after this one is larger.
-            if storages_remaining + ancient_storages_required < low_threshold {
+            // if we ever get to more than 10 required ancient storages, that is enough to stop for now.
+            // It will take a while to create that many. This should be a limit that only affects
+            // extreme testing environments.
+            if storages_remaining + ancient_storages_required < low_threshold
+                || ancient_storages_required > 10
+            {
                 self.all_infos.truncate(i);
                 break;
             }
@@ -438,7 +443,6 @@ impl AccountsDb {
             accounts_to_write,
             None::<Vec<AccountHash>>,
             shrink_in_progress.new_storage(),
-            None,
             StoreReclaims::Ignore,
         ));
 
@@ -1175,7 +1179,6 @@ pub mod tests {
                                     storage,
                                     &pk,
                                     &account,
-                                    0,
                                     true,
                                     Some(&db.accounts_index),
                                 );
@@ -1283,7 +1286,6 @@ pub mod tests {
                                     storage,
                                     &pk,
                                     &account,
-                                    0,
                                     true,
                                     Some(&db.accounts_index),
                                 );
@@ -1515,12 +1517,10 @@ pub mod tests {
                                 storages.iter().for_each(|storage| {
                                     let pk = solana_sdk::pubkey::new_rand();
                                     let alive = false;
-                                    let write_version = 0;
                                     append_single_account_with_default_hash(
                                         storage,
                                         &pk,
                                         &AccountSharedData::default(),
-                                        write_version,
                                         alive,
                                         Some(&db.accounts_index),
                                     );
@@ -1664,7 +1664,6 @@ pub mod tests {
                 &storage,
                 &pk_with_1_ref,
                 &account_with_1_ref,
-                0,
                 true,
                 Some(&db.accounts_index),
             );
@@ -1677,7 +1676,6 @@ pub mod tests {
                 &ignored_storage,
                 pk_with_2_refs,
                 &account_with_2_refs.to_account_shared_data(),
-                0,
                 true,
                 Some(&db.accounts_index),
             );
@@ -1844,7 +1842,6 @@ pub mod tests {
                 &storage,
                 &pk_with_1_ref,
                 &account_with_1_ref,
-                0,
                 true,
                 Some(&db.accounts_index),
             );
@@ -2164,8 +2161,9 @@ pub mod tests {
                         let tuning = PackedAncientStorageTuning {
                             percent_of_alive_shrunk_data: 100,
                             max_ancient_slots: 0,
-                            // irrelevant
-                            ideal_storage_size: NonZeroU64::new(1).unwrap(),
+                            // irrelevant for what this test is trying to test, but necessary to avoid minimums
+                            ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity())
+                                .unwrap(),
                             can_randomly_shrink,
                         };
                         infos = db.collect_sort_filter_ancient_slots(vec![slot1], &tuning);
@@ -2322,7 +2320,10 @@ pub mod tests {
                                 percent_of_alive_shrunk_data: 100,
                                 max_ancient_slots: 0,
                                 // irrelevant
-                                ideal_storage_size: NonZeroU64::new(1).unwrap(),
+                                ideal_storage_size: NonZeroU64::new(
+                                    get_ancient_append_vec_capacity(),
+                                )
+                                .unwrap(),
                                 can_randomly_shrink,
                             };
                             db.collect_sort_filter_ancient_slots(slot_vec.clone(), &tuning)
@@ -2632,8 +2633,9 @@ pub mod tests {
                         let tuning = PackedAncientStorageTuning {
                             percent_of_alive_shrunk_data: 100,
                             max_ancient_slots: 0,
-                            // irrelevant
-                            ideal_storage_size: NonZeroU64::new(1).unwrap(),
+                            // irrelevant for what this test is trying to test, but necessary to avoid minimums
+                            ideal_storage_size: NonZeroU64::new(get_ancient_append_vec_capacity())
+                                .unwrap(),
                             can_randomly_shrink,
                         };
                         // note this can sort infos.all_infos
@@ -2641,7 +2643,7 @@ pub mod tests {
                     }
                 };
 
-                assert_eq!(infos.all_infos.len(), 2);
+                assert_eq!(infos.all_infos.len(), 2, "{method:?}");
                 storages.iter().for_each(|storage| {
                     assert!(infos
                         .all_infos
@@ -2837,8 +2839,11 @@ pub mod tests {
                                 percent_of_alive_shrunk_data,
                                 // 0 so that we combine everything with regard to the overall # of slots limit
                                 max_ancient_slots: 0,
-                                // this is irrelevant since the limit is artificially 0
-                                ideal_storage_size: NonZeroU64::new(1).unwrap(),
+                                // irrelevant for what this test is trying to test, but necessary to avoid minimums
+                                ideal_storage_size: NonZeroU64::new(
+                                    get_ancient_append_vec_capacity(),
+                                )
+                                .unwrap(),
                                 can_randomly_shrink: false,
                             };
                             infos.filter_ancient_slots(&tuning);
