@@ -7,11 +7,12 @@
 //!
 use {
     crate::bench_tps_client::{BenchTpsClient, BenchTpsError, Result},
+    rand::prelude::*,
     solana_client::{
         connection_cache::Protocol, nonblocking::tpu_client::LeaderTpuService,
         tpu_connection::TpuConnection,
     },
-    solana_connection_cache::connection_cache::ConnectionCache as BackendConnectionCache,
+    solana_connection_cache::connection_cache::{self, ConnectionCache as BackendConnectionCache},
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcBlockConfig,
@@ -38,7 +39,7 @@ pub struct HighTpsClient {
     leader_tpu_service: LeaderTpuService,
     exit: Arc<AtomicBool>,
     rpc_client: Arc<RpcClient>,
-    connection_cache: Arc<ConnectionCache>,
+    connection_caches: Vec<Arc<ConnectionCache>>,
     config: HighTpsClientConfig,
 }
 
@@ -53,7 +54,7 @@ impl HighTpsClient {
         rpc_client: Arc<RpcClient>,
         websocket_url: &str,
         config: HighTpsClientConfig,
-        connection_cache: Arc<ConnectionCache>,
+        connection_caches: Vec<Arc<ConnectionCache>>,
     ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
         let create_leader_tpu_service = LeaderTpuService::new(
@@ -69,7 +70,7 @@ impl HighTpsClient {
             leader_tpu_service,
             exit,
             rpc_client,
-            connection_cache,
+            connection_caches,
             config,
         })
     }
@@ -87,12 +88,14 @@ impl BenchTpsClient for HighTpsClient {
             .into_iter() //.into_par_iter() any effect of this?
             .map(|tx| bincode::serialize(&tx).expect("transaction should be valid."))
             .collect::<Vec<_>>();
+        let mut rng = rand::thread_rng();
+        let cc_index: usize = rng.gen_range(0..self.connection_caches.len());
         for c in wire_transactions.chunks(self.config.send_batch_size) {
             let tpu_addresses = self
                 .leader_tpu_service
                 .leader_tpu_sockets(self.config.fanout_slots);
             for tpu_address in &tpu_addresses {
-                let conn = self.connection_cache.get_connection(tpu_address);
+                let conn = self.connection_caches[cc_index].get_connection(tpu_address);
                 let _ = conn.send_data_batch_async(c.to_vec());
             }
         }

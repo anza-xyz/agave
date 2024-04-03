@@ -76,7 +76,7 @@ pub struct Config {
     pub instruction_padding_config: Option<InstructionPaddingConfig>,
     pub num_conflict_groups: Option<usize>,
     pub bind_address: IpAddr,
-    pub client_node_id: Option<Keypair>,
+    pub client_node_ids: Option<Vec<Keypair>>,
     pub commitment_config: CommitmentConfig,
     pub block_data_file: Option<String>,
     pub transaction_data_file: Option<String>,
@@ -111,7 +111,7 @@ impl Default for Config {
             instruction_padding_config: None,
             num_conflict_groups: None,
             bind_address: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            client_node_id: None,
+            client_node_ids: None,
             commitment_config: CommitmentConfig::confirmed(),
             block_data_file: None,
             transaction_data_file: None,
@@ -422,6 +422,7 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .takes_value(true)
                 .requires("json_rpc_url")
                 .validator(is_keypair)
+                .multiple(true)
                 .help("File containing the node identity (keypair) of a validator with active stake. This allows communicating with network using staked connection"),
         )
         .arg(
@@ -614,10 +615,14 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
             solana_net_utils::parse_host(addr).map_err(|_| "Failed to parse bind-address")?;
     }
 
-    if let Some(client_node_id_filename) = matches.value_of("client_node_id") {
+    if let Some(client_node_id_filenames) = matches.values_of("client_node_id") {
         // error is checked by arg validator
-        let client_node_id = read_keypair_file(client_node_id_filename).map_err(|_| "")?;
-        args.client_node_id = Some(client_node_id);
+        let client_node_ids = client_node_id_filenames
+            .map(|filename| {
+                read_keypair_file(filename).expect("File has been checked by cla validator.")
+            })
+            .collect();
+        args.client_node_ids = Some(client_node_ids);
     }
 
     args.commitment_config = value_t_or_exit!(matches, "commitment_config", CommitmentConfig);
