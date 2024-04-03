@@ -227,6 +227,7 @@ dependencies = [
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
+ "solana-inline-spl",
  "solana-ledger",
  "solana-logger",
  "solana-metrics",
@@ -4971,9 +4972,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.114"
+version = "1.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5f09b1bd632ef549eaa9f60a1f8de742bdbc698e6cee2095fc84dde5f549ae0"
+checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
 dependencies = [
  "itoa",
  "ryu",
@@ -5323,6 +5324,7 @@ dependencies = [
  "solana-core",
  "solana-faucet",
  "solana-gossip",
+ "solana-inline-spl",
  "solana-local-cluster",
  "solana-logger",
  "solana-measure",
@@ -5376,6 +5378,7 @@ dependencies = [
  "solana-bucket-map",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-inline-spl",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
@@ -6252,6 +6255,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-inline-spl"
+version = "2.0.0"
+dependencies = [
+ "bytemuck",
+ "rustc_version 0.4.0",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-keygen"
 version = "2.0.0"
 dependencies = [
@@ -6488,6 +6500,7 @@ dependencies = [
  "solana-logger",
  "solana-sdk",
  "solana-version",
+ "static_assertions",
  "tokio",
  "url 2.5.0",
 ]
@@ -6683,6 +6696,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-banks-server",
  "solana-bpf-loader-program",
+ "solana-inline-spl",
  "solana-logger",
  "solana-program-runtime",
  "solana-runtime",
@@ -6804,6 +6818,7 @@ dependencies = [
  "solana-entry",
  "solana-faucet",
  "solana-gossip",
+ "solana-inline-spl",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
@@ -6982,6 +6997,7 @@ dependencies = [
  "solana-cost-model",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-inline-spl",
  "solana-loader-v4-program",
  "solana-logger",
  "solana-measure",
