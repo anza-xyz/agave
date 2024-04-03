@@ -217,28 +217,6 @@ pub trait Sysvar:
     }
 }
 
-/// Implements the [`Sysvar::get`] method for both SBF and host targets.
-#[macro_export]
-macro_rules! impl_sysvar_get {
-    ($syscall_name:ident) => {
-        fn get() -> Result<Self, ProgramError> {
-            let mut var = Self::default();
-            let var_addr = &mut var as *mut _ as *mut u8;
-
-            #[cfg(target_os = "solana")]
-            let result = unsafe { $crate::syscalls::$syscall_name(var_addr) };
-
-            #[cfg(not(target_os = "solana"))]
-            let result = $crate::program_stubs::$syscall_name(var_addr);
-
-            match result {
-                $crate::entrypoint::SUCCESS => Ok(var),
-                e => Err(e.into()),
-            }
-        }
-    };
-}
-
 /// A Sysvar that can be accessed through the SysvarGet syscall
 // HANA this name kinda sucks idk. "gettable" is too vague
 // ughhh we also have very confusing terminology here
@@ -255,6 +233,38 @@ pub enum GettableSysvar {
     SlotHashes,
     StakeHistory,
     LastRestartSlot,
+}
+
+/// Implements the [`Sysvar::get`] method for both SBF and host targets.
+#[macro_export]
+macro_rules! impl_sysvar_get {
+    ($sysvar_name:ident) => {
+        fn get() -> Result<Self, ProgramError> {
+            if let Some(sysvar_tag) = GettableSysvar::$sysvar_name.to_u64() {
+                let size = Self::size_of();
+                let mut var: Vec<u8> = vec![0; size];
+                let var_addr = var.as_mut_ptr();
+
+                #[cfg(target_os = "solana")]
+                let result = unsafe {
+                    $crate::syscalls::sol_get_sysvar(sysvar_tag, size as u64, 0, var_addr)
+                };
+
+                #[cfg(not(target_os = "solana"))]
+                let result =
+                    $crate::program_stubs::sol_get_sysvar(sysvar_tag, size as u64, 0, var_addr);
+
+                match result {
+                    $crate::entrypoint::SUCCESS => {
+                        bincode::deserialize(&var).map_err(|_| ProgramError::InvalidAccountData)
+                    }
+                    e => Err(e.into()),
+                }
+            } else {
+                Err(ProgramError::InvalidAccountData)
+            }
+        }
+    };
 }
 
 #[cfg(test)]

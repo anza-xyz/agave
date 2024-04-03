@@ -21,9 +21,7 @@
 #![allow(deprecated)]
 
 use {
-    crate::{
-        fee_calculator::FeeCalculator, impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar,
-    },
+    crate::{fee_calculator::FeeCalculator, program_error::ProgramError, sysvar::Sysvar},
     solana_sdk_macro::CloneZeroed,
 };
 
@@ -50,7 +48,21 @@ impl Fees {
 }
 
 impl Sysvar for Fees {
-    impl_sysvar_get!(sol_get_fees_sysvar);
+    fn get() -> Result<Self, ProgramError> {
+        let mut var = Self::default();
+        let var_addr = &mut var as *mut _ as *mut u8;
+
+        #[cfg(target_os = "solana")]
+        let result = unsafe { crate::syscalls::sol_get_fees_sysvar(var_addr) };
+
+        #[cfg(not(target_os = "solana"))]
+        let result = crate::program_stubs::sol_get_fees_sysvar(var_addr);
+
+        match result {
+            crate::entrypoint::SUCCESS => Ok(var),
+            e => Err(e.into()),
+        }
+    }
 }
 
 #[cfg(test)]

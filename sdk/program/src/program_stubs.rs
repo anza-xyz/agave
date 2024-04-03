@@ -154,37 +154,15 @@ pub(crate) fn sol_invoke_signed(
         .sol_invoke_signed(instruction, account_infos, signers_seeds)
 }
 
-pub(crate) fn sol_get_clock_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().unwrap().sol_get_clock_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_epoch_schedule_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS
-        .read()
-        .unwrap()
-        .sol_get_epoch_schedule_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_fees_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().unwrap().sol_get_fees_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_rent_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS.read().unwrap().sol_get_rent_sysvar(var_addr)
-}
-
-pub(crate) fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS
-        .read()
-        .unwrap()
-        .sol_get_last_restart_slot(var_addr)
-}
-
 pub(crate) fn sol_get_sysvar(sysvar_tag: u64, length: u64, offset: u64, var_addr: *mut u8) -> u64 {
     SYSCALL_STUBS
         .read()
         .unwrap()
         .sol_get_sysvar(sysvar_tag, length, offset, var_addr)
+}
+
+pub(crate) fn sol_get_fees_sysvar(var_addr: *mut u8) -> u64 {
+    SYSCALL_STUBS.read().unwrap().sol_get_fees_sysvar(var_addr)
 }
 
 pub(crate) fn sol_memcpy(dst: *mut u8, src: *const u8, n: usize) {
@@ -232,13 +210,6 @@ pub(crate) fn sol_get_processed_sibling_instruction(index: usize) -> Option<Inst
 
 pub(crate) fn sol_get_stack_height() -> u64 {
     SYSCALL_STUBS.read().unwrap().sol_get_stack_height()
-}
-
-pub(crate) fn sol_get_epoch_rewards_sysvar(var_addr: *mut u8) -> u64 {
-    SYSCALL_STUBS
-        .read()
-        .unwrap()
-        .sol_get_epoch_rewards_sysvar(var_addr)
 }
 
 /// Check that two regions do not overlap.
