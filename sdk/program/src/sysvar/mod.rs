@@ -84,7 +84,7 @@
 use {
     crate::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey},
     lazy_static::lazy_static,
-    num_derive::FromPrimitive,
+    num_derive::{FromPrimitive, ToPrimitive},
 };
 
 pub mod clock;
@@ -240,8 +240,13 @@ macro_rules! impl_sysvar_get {
 }
 
 /// A Sysvar that can be accessed through the SysvarGet syscall
-// HANA this name kinda sucks idk
-#[derive(Copy, Clone, Debug, PartialEq, Eq, FromPrimitive)]
+// HANA this name kinda sucks idk. "gettable" is too vague
+// ughhh we also have very confusing terminology here
+// "gettable" means "can be fetched via the syscall"
+// but we *also* have to deal with the fact that only *five* of these will have SysvarGet impls
+// or, at least, the vector ones cant use the default impl........ or can they????
+// i guess they can actually. size aside. oh well
+#[derive(Copy, Clone, Debug, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub enum GettableSysvar {
     Clock = 1,
     EpochSchedule,
@@ -250,20 +255,6 @@ pub enum GettableSysvar {
     SlotHashes,
     StakeHistory,
     LastRestartSlot,
-}
-
-impl From<GettableSysvar> for u64 {
-    fn from(value: GettableSysvar) -> Self {
-        match value {
-            GettableSysvar::Clock => 1,
-            GettableSysvar::EpochSchedule => 2,
-            GettableSysvar::EpochRewards => 3,
-            GettableSysvar::Rent => 4,
-            GettableSysvar::SlotHashes => 5,
-            GettableSysvar::StakeHistory => 6,
-            GettableSysvar::LastRestartSlot => 7,
-        }
-    }
 }
 
 #[cfg(test)]
