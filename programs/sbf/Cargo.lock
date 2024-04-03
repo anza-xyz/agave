@@ -3001,6 +3001,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "cfg_aliases",
  "libc",
+ "memoffset 0.9.0",
 ]
 
 [[package]]
