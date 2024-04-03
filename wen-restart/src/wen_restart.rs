@@ -262,10 +262,7 @@ pub(crate) fn find_heaviest_fork(
     blockstore: Arc<Blockstore>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Slot, Hash)> {
-    let root_bank;
-    {
-        root_bank = bank_forks.read().unwrap().root_bank().clone();
-    }
+    let root_bank = bank_forks.read().unwrap().root_bank();
     let root_slot = root_bank.slot();
     // TODO: Should use better epoch_stakes later.
     let epoch_stake = root_bank.epoch_stakes(root_bank.epoch()).unwrap();
@@ -330,6 +327,7 @@ pub(crate) fn find_heaviest_fork(
     Ok((heaviest_fork_slot, heaviest_fork_bankhash))
 }
 
+// Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
 fn find_bankhash_of_heaviest_fork(
     heaviest_fork_slot: Slot,
     slots: Vec<Slot>,
@@ -338,7 +336,6 @@ fn find_bankhash_of_heaviest_fork(
     root_bank: Arc<Bank>,
     exit: &Arc<AtomicBool>,
 ) -> Result<Hash> {
-    // Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
     let heaviest_fork_bankhash = bank_forks
         .read()
         .unwrap()
