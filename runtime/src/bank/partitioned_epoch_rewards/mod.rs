@@ -446,9 +446,9 @@ mod tests {
             } else if slot == num_slots_in_epoch + 1 {
                 // 1. when curr_slot == num_slots_in_epoch + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block.
-                // however, all stake rewards are paid at the this block
-                // therefore reward_status should have transitioned to inactive.
-                // The cap should increase accordingly.
+                // however, all stake rewards are paid at this block therefore
+                // reward_status should have transitioned to inactive. The cap
+                // should increase accordingly.
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::OutsideInterval
@@ -475,7 +475,7 @@ mod tests {
             }
             // EpochRewards sysvar is created in the first block of epoch 1.
             // Ensure the sysvar persists thereafter.
-            if slot > num_slots_in_epoch {
+            if slot >= num_slots_in_epoch {
                 let epoch_rewards_lamports =
                     curr_bank.get_balance(&solana_sdk::sysvar::epoch_rewards::id());
                 assert!(epoch_rewards_lamports > 0);
