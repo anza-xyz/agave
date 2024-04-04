@@ -586,7 +586,7 @@ impl LocalCluster {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
         info!(
             "{} looking minimum root {} on all nodes",
-            min_root, test_name
+            test_name, min_root
         );
         cluster_tests::check_min_slot_is_rooted(
             min_root,
