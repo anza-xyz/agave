@@ -77,6 +77,30 @@ impl Bank {
 
         self.log_epoch_rewards_sysvar("update");
     }
+
+    /// Update EpochRewards sysvar with distributed rewards
+    pub(in crate::bank::partitioned_epoch_rewards) fn set_epoch_rewards_sysvar_to_inactive(&self) {
+        let mut epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(
+            &self
+                .get_account(&sysvar::epoch_rewards::id())
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default();
+        assert_eq!(
+            epoch_rewards.distributed_rewards,
+            epoch_rewards.total_rewards
+        );
+        epoch_rewards.active = false;
+
+        self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
+            create_account(
+                &epoch_rewards,
+                self.inherit_specially_retained_account_fields(account),
+            )
+        });
+
+        self.log_epoch_rewards_sysvar("set_inactive");
+    }
 }
 
 #[cfg(test)]
