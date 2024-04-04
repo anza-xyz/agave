@@ -917,11 +917,12 @@ impl Cluster for LocalCluster {
         let entry_point_infos: Vec<ContactInfo> = self
             .validators
             .values()
-            .map(|validator| validator.info.contact_info.clone())
+            .map(|validator| {
+                // Should not be restarting a validator that is still alive
+                assert!(validator.info.contact_info.pubkey() != pubkey);
+                validator.info.contact_info.clone()
+            })
             .collect();
-        if entry_point_infos.is_empty() {
-            panic!("Validator has no alive entrypoints to rejoin cluster with");
-        }
 
         (node, entry_point_infos)
     }
@@ -954,9 +955,6 @@ impl Cluster for LocalCluster {
         (node, entry_point_infos): (Node, Vec<ContactInfo>),
         socket_addr_space: SocketAddrSpace,
     ) -> ClusterValidatorInfo {
-        if entry_point_infos.is_empty() {
-            panic!("Passed empty entrypoints list");
-        }
         // Restart the node
         let validator_info = &cluster_validator_info.info;
         LocalCluster::sync_ledger_path_across_nested_config_fields(
