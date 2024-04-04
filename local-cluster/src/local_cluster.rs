@@ -914,6 +914,10 @@ impl Cluster for LocalCluster {
         cluster_validator_info.config.rpc_addrs =
             Some((node.info.rpc().unwrap(), node.info.rpc_pubsub().unwrap()));
 
+        if pubkey == self.entry_point_info.pubkey() {
+            self.entry_point_info = node.info.clone();
+        }
+
         let entry_point_infos: Vec<ContactInfo> = self
             .validators
             .values()
