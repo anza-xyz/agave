@@ -51,6 +51,7 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
     if addr.ss_family == AF_INET as sa_family_t
         && hdr.msg_hdr.msg_namelen == SOCKADDR_IN_SIZE as socklen_t
     {
+        // ref: https://github.com/rust-lang/socket2/blob/65085d9dff270e588c0fbdd7217ec0b392b05ef2/src/sockaddr.rs#L167-L172
         let addr = unsafe { &*(addr as *const _ as *const sockaddr_in) };
         return Some(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::from(addr.sin_addr.s_addr.to_ne_bytes()),
@@ -60,6 +61,7 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
     if addr.ss_family == AF_INET6 as sa_family_t
         && hdr.msg_hdr.msg_namelen == SOCKADDR_IN6_SIZE as socklen_t
     {
+        // ref: https://github.com/rust-lang/socket2/blob/65085d9dff270e588c0fbdd7217ec0b392b05ef2/src/sockaddr.rs#L174-L189
         let addr = unsafe { &*(addr as *const _ as *const sockaddr_in6) };
         return Some(SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::from(addr.sin6_addr.s6_addr),
