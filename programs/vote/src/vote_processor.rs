@@ -133,6 +133,15 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
+            if invoke_context
+                .get_feature_set()
+                .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
+                && invoke_context
+                    .get_feature_set()
+                    .is_active(&feature_set::enable_tower_sync_ix::id())
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
             let slot_hashes =
                 get_sysvar_with_account_check::slot_hashes(invoke_context, instruction_context, 1)?;
             let clock =
@@ -148,6 +157,15 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
         | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
+            if invoke_context
+                .get_feature_set()
+                .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
+                && invoke_context
+                    .get_feature_set()
+                    .is_active(&feature_set::enable_tower_sync_ix::id())
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
             let sysvar_cache = invoke_context.get_sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
@@ -162,6 +180,15 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::CompactUpdateVoteState(vote_state_update)
         | VoteInstruction::CompactUpdateVoteStateSwitch(vote_state_update, _) => {
+            if invoke_context
+                .get_feature_set()
+                .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
+                && invoke_context
+                    .get_feature_set()
+                    .is_active(&feature_set::enable_tower_sync_ix::id())
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
             let sysvar_cache = invoke_context.get_sysvar_cache();
             let slot_hashes = sysvar_cache.get_slot_hashes()?;
             let clock = sysvar_cache.get_clock()?;
