@@ -281,6 +281,19 @@ impl CollectorFeeDetails {
             .priority_fee
             .saturating_add(fee_details.prioritization_fee());
     }
+
+    pub(crate) fn total(&self) -> u64 {
+        self.transaction_fee.saturating_add(self.priority_fee)
+    }
+}
+
+impl From<FeeDetails> for CollectorFeeDetails {
+    fn from(fee_details: FeeDetails) -> Self {
+        CollectorFeeDetails {
+            transaction_fee: fee_details.transaction_fee(),
+            priority_fee: fee_details.prioritization_fee(),
+        }
+    }
 }
 
 #[derive(Debug)]
