@@ -384,8 +384,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         result
     }
 
-    /// Load program with a specific pubkey from program cache, and
-    /// update the program's access slot as a side-effect.
+    /// Loads the program with the given pubkey.
+    ///
+    /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
+    /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
+    /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
     pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
@@ -837,10 +840,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         pubkey: &Pubkey,
     ) -> Option<ProgramAccountLoadResult> {
         let program_account = callbacks.get_account_shared_data(pubkey)?;
-
-        debug_assert!(solana_bpf_loader_program::check_loader_id(
-            program_account.owner()
-        ));
 
         if loader_v4::check_id(program_account.owner()) {
             return Some(

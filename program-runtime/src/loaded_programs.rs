@@ -65,7 +65,9 @@ pub trait ForkGraph {
 pub enum LoadedProgramType {
     /// Tombstone for programs which currently do not pass the verifier but could if the feature set changed.
     FailedVerification(ProgramRuntimeEnvironment),
-    /// Tombstone for accounts which are not programs but might still be owned by a loader.
+    /// Tombstone for programs that were either explicitly closed or never deployed.
+    ///
+    /// It's also used for accounts belonging to program loaders, that don't actually contain program code (e.g. buffer accounts for LoaderV3 programs).
     #[default]
     Closed,
     /// Tombstone for programs which have recently been modified but the new version is not visible yet.
@@ -774,6 +776,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             Ok(index) => {
                 let existing = slot_versions.get_mut(index).unwrap();
                 match (&existing.program, &entry.program) {
+                    // Add test for Closed => Loaded transition in same slot
                     (LoadedProgramType::Builtin(_), LoadedProgramType::Builtin(_))
                     | (LoadedProgramType::Closed, LoadedProgramType::LegacyV0(_))
                     | (LoadedProgramType::Closed, LoadedProgramType::LegacyV1(_))
