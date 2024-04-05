@@ -765,13 +765,13 @@ async fn handle_connection(
                         streams_in_current_interval = 0;
                     } else if streams_in_current_interval >= max_streams_per_100ms {
                         stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                        match params.peer_type {
+                        match peer_type {
                             ConnectionPeerType::Unstaked => {
                                 stats
                                     .throttled_unstaked_streams
                                     .fetch_add(1, Ordering::Relaxed);
                             }
-                            ConnectionPeerType::Staked(_) => {
+                            ConnectionPeerType::Staked => {
                                 stats
                                     .throttled_staked_streams
                                     .fetch_add(1, Ordering::Relaxed);
@@ -950,7 +950,7 @@ async fn handle_chunk(
                                     .total_unstaked_packets_sent_for_batching
                                     .fetch_add(1, Ordering::Relaxed);
                             }
-                            ConnectionPeerType::Staked(_) => {
+                            ConnectionPeerType::Staked => {
                                 stats
                                     .total_staked_packets_sent_for_batching
                                     .fetch_add(1, Ordering::Relaxed);
