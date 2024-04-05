@@ -2314,7 +2314,7 @@ impl AccountsDb {
         // The high and low watermark sizes for the accounts read cache.  If the cache size exceeds
         // MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
         const MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 400_000_000;
-        const MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 800_000_000;
+        const MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 400_000_000;
         // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
         const READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE: u32 = 100;
 
