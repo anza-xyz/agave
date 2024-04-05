@@ -473,7 +473,7 @@ pub struct Validator {
     snapshot_packager_service: Option<SnapshotPackagerService>,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     poh_service: PohService,
-    tpu: Tpu,
+    tpu: Option<Tpu>,
     tvu: Tvu,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
     pub cluster_info: Arc<ClusterInfo>,
@@ -1353,48 +1353,53 @@ impl Validator {
             };
         }
 
-        let (tpu, mut key_notifies) = Tpu::new(
-            &cluster_info,
-            &poh_recorder,
-            entry_receiver,
-            retransmit_slots_receiver,
-            TpuSockets {
-                transactions: node.sockets.tpu,
-                transaction_forwards: node.sockets.tpu_forwards,
-                vote: node.sockets.tpu_vote,
-                broadcast: node.sockets.broadcast,
-                transactions_quic: node.sockets.tpu_quic,
-                transactions_forwards_quic: node.sockets.tpu_forwards_quic,
-            },
-            &rpc_subscriptions,
-            transaction_status_sender,
-            entry_notification_sender,
-            blockstore.clone(),
-            &config.broadcast_stage_type,
-            exit,
-            node.info.shred_version(),
-            vote_tracker,
-            bank_forks.clone(),
-            verified_vote_sender,
-            gossip_verified_vote_hash_sender,
-            replay_vote_receiver,
-            replay_vote_sender,
-            bank_notification_sender.map(|sender| sender.sender),
-            config.tpu_coalesce,
-            duplicate_confirmed_slot_sender,
-            &connection_cache,
-            turbine_quic_endpoint_sender,
-            &identity_keypair,
-            config.runtime_config.log_messages_bytes_limit,
-            &staked_nodes,
-            config.staked_nodes_overrides.clone(),
-            banking_tracer,
-            tracer_thread,
-            tpu_enable_udp,
-            &prioritization_fee_cache,
-            config.block_production_method.clone(),
-            config.generator_config.clone(),
-        );
+        let (tpu, mut key_notifies) = if !config.voting_disabled {
+            let (tpu, key_notifies) = Tpu::new(
+                &cluster_info,
+                &poh_recorder,
+                entry_receiver,
+                retransmit_slots_receiver,
+                TpuSockets {
+                    transactions: node.sockets.tpu,
+                    transaction_forwards: node.sockets.tpu_forwards,
+                    vote: node.sockets.tpu_vote,
+                    broadcast: node.sockets.broadcast,
+                    transactions_quic: node.sockets.tpu_quic,
+                    transactions_forwards_quic: node.sockets.tpu_forwards_quic,
+                },
+                &rpc_subscriptions,
+                transaction_status_sender,
+                entry_notification_sender,
+                blockstore.clone(),
+                &config.broadcast_stage_type,
+                exit,
+                node.info.shred_version(),
+                vote_tracker,
+                bank_forks.clone(),
+                verified_vote_sender,
+                gossip_verified_vote_hash_sender,
+                replay_vote_receiver,
+                replay_vote_sender,
+                bank_notification_sender.map(|sender| sender.sender),
+                config.tpu_coalesce,
+                duplicate_confirmed_slot_sender,
+                &connection_cache,
+                turbine_quic_endpoint_sender,
+                &identity_keypair,
+                config.runtime_config.log_messages_bytes_limit,
+                &staked_nodes,
+                config.staked_nodes_overrides.clone(),
+                banking_tracer,
+                tracer_thread,
+                tpu_enable_udp,
+                &prioritization_fee_cache,
+                config.block_production_method.clone(),
+                config.generator_config.clone(),
+            );
+            (Some(tpu), key_notifies)
+        } else {
+            (None, vec![])
+        };
 
         datapoint_info!(
             "validator-new",
@@ -1591,7 +1596,9 @@ impl Validator {
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
-        self.tpu.join().expect("tpu");
+        if let Some(tpu) = self.tpu {
+            tpu.join().expect("tpu");
+        }
         self.tvu.join().expect("tvu");
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
             self.turbine_quic_endpoint_runtime

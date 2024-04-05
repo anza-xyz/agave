@@ -1862,6 +1862,11 @@ pub fn main() {
 
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
+    if validator_config.voting_disabled {
+        node.info.remove_tpu();
+        node.info.remove_tpu_forwards();
+    }
+
     if restricted_repair_only_mode {
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
