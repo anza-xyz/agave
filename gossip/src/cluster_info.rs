@@ -2831,10 +2831,6 @@ impl Node {
                 quic_config.clone(),
             )
             .unwrap();
-        let quic_config = SocketConfig {
-            reuseaddr: false,
-            reuseport: true,
-        };
         let tpu_quic =
             bind_more_with_config(tpu_quic, QUIC_ENDPOINTS, quic_config.clone()).unwrap();
         let (gossip_port, (gossip, ip_echo)) =
@@ -3099,7 +3095,7 @@ impl Node {
             quic_config.clone(),
         );
         let tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, QUIC_ENDPOINTS, quic_config.clone()).unwrap();
+            bind_more_with_config(tpu_forwards_quic, QUIC_ENDPOINTS, quic_config).unwrap();
 
         let (tpu_vote_port, tpu_vote_sockets) =
             multi_bind_in_range(bind_ip_addr, port_range, 1).expect("tpu_vote multi_bind");

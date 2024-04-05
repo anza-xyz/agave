@@ -1296,18 +1296,14 @@ pub mod test {
         async_channel::unbounded as async_unbounded,
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ClientConfig, IdleTimeout, TransportConfig},
-        socket2,
+        solana_net_utils::{bind_more_with_config, bind_to_with_config, SocketConfig},
         solana_sdk::{
             net::DEFAULT_TPU_COALESCE,
             quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
             signature::Keypair,
             signer::Signer,
         },
-        std::{
-            collections::HashMap,
-            os::fd::{FromRawFd, IntoRawFd},
-            str::FromStr as _,
-        },
+        std::collections::HashMap,
         tokio::time::sleep,
     };
 
@@ -1356,6 +1352,16 @@ pub mod test {
         config
     }
 
+    fn make_quic_sockets() -> Vec<UdpSocket> {
+        const NUM_QUIC_SOCKETS: usize = 10;
+        let config = SocketConfig {
+            reuseaddr: false,
+            reuseport: true,
+        };
+        let socket = bind_to_with_config("127.0.0.1".parse().unwrap(), 0, config.clone()).unwrap();
+        bind_more_with_config(socket, NUM_QUIC_SOCKETS - 1, config).unwrap()
+    }
+
     fn setup_quic_server(
         option_staked_nodes: Option<StakedNodes>,
         max_connections_per_peer: usize,
@@ -1366,28 +1372,14 @@ pub mod test {
         SocketAddr,
         Arc<StreamStats>,
     ) {
-        let sockets = (0..10)
-            .map(|_| {
-                let sock = socket2::Socket::new(
-                    socket2::Domain::IPV4,
-                    socket2::Type::DGRAM,
-                    Some(socket2::Protocol::UDP),
-                )
-                .unwrap();
-                sock.set_reuse_port(true).unwrap();
-                sock.bind(&SocketAddr::from_str("127.0.0.1:42069").unwrap().into())
-                    .unwrap();
-                unsafe { UdpSocket::from_raw_fd(sock.into_raw_fd()) }
-            })
-            .collect::<Vec<_>>();
-
+        let sockets = make_quic_sockets();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
         let server_address = sockets[0].local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
         let (_, stats, t) = spawn_server_multi(
-            "one-million-sol",
+            "quic_streamer_test",
             sockets,
             &keypair,
             sender,

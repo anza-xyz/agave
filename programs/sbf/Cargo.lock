@@ -6335,6 +6335,7 @@ dependencies = [
  "rustls",
  "solana-measure",
  "solana-metrics",
+ "solana-net-utils",
  "solana-perf",
  "solana-sdk",
  "solana-transaction-metrics-tracker",

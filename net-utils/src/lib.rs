@@ -407,7 +407,7 @@ fn udp_socket(_reuseaddr: bool) -> io::Result<Socket> {
 }
 
 #[cfg(any(windows, target_os = "ios"))]
-fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
+fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
     Ok(sock)
 }
