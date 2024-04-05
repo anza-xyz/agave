@@ -974,4 +974,9 @@ Rewards:
             "abcdefghijklmnopqrstuvwxyz12345 (1111..1111)"
         );
     }
+
+    #[test]
+    fn test_unix_timestamp_to_string() {
+        assert_eq!(unix_timestamp_to_string(1628633791), "2021-08-10T22:16:31Z");
+    }
 }
