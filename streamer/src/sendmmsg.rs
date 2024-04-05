@@ -73,38 +73,21 @@ fn mmsghdr_for_packet(
     hdr.msg_hdr.msg_iovlen = 1;
     hdr.msg_hdr.msg_name = addr as *mut _ as *mut _;
 
-    match *dest {
-        SocketAddr::V4(ref socket_addr_v4) => {
-            // https://github.com/nix-rust/nix/blob/v0.28.0/src/sys/socket/addr.rs#L894-L910
+    match dest {
+        SocketAddr::V4(socket_addr_v4) => {
             unsafe {
                 std::ptr::write(
                     addr as *mut _ as *mut _,
-                    libc::sockaddr_in {
-                        sin_family: libc::AF_INET as u16,
-                        sin_port: socket_addr_v4.port().to_be(),
-                        sin_addr: libc::in_addr {
-                            s_addr: u32::from_ne_bytes(socket_addr_v4.ip().octets()),
-                        },
-                        ..std::mem::zeroed()
-                    },
+                    *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
                 );
             }
             hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN as u32;
         }
-        SocketAddr::V6(ref socket_addr_v6) => {
-            // https://github.com/nix-rust/nix/blob/v0.28.0/src/sys/socket/addr.rs#L1018-L1037
+        SocketAddr::V6(socket_addr_v6) => {
             unsafe {
                 std::ptr::write(
                     addr as *mut _ as *mut _,
-                    libc::sockaddr_in6 {
-                        sin6_family: libc::AF_INET6 as u16,
-                        sin6_port: socket_addr_v6.port().to_be(),
-                        sin6_addr: libc::in6_addr {
-                            s6_addr: socket_addr_v6.ip().octets(),
-                        },
-                        sin6_flowinfo: socket_addr_v6.flowinfo(),
-                        sin6_scope_id: socket_addr_v6.scope_id(),
-                    },
+                    *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
                 );
             }
             hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN6 as u32;
