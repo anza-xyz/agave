@@ -918,15 +918,23 @@ impl Cluster for LocalCluster {
             self.entry_point_info = node.info.clone();
         }
 
-        let entry_point_infos: Vec<ContactInfo> = self
+        let mut is_entrypoint_alive = false;
+        let mut entry_point_infos: Vec<ContactInfo> = self
             .validators
             .values()
             .map(|validator| {
                 // Should not be restarting a validator that is still alive
                 assert!(validator.info.contact_info.pubkey() != pubkey);
+                if validator.info.contact_info.pubkey() == self.entry_point_info.pubkey() {
+                    is_entrypoint_alive = true;
+                }
                 validator.info.contact_info.clone()
             })
             .collect();
+
+        if !is_entrypoint_alive {
+            entry_point_infos.push(self.entry_point_info.clone());
+        }
 
         (node, entry_point_infos)
     }
