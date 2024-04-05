@@ -13,7 +13,7 @@ use {
         program_utils::limited_deserialize,
         pubkey::Pubkey,
         stake::{
-            instruction::{LockupArgs, StakeInstruction},
+            instruction::{LockupArgs, StakeError, StakeInstruction},
             program::id,
             state::{Authorized, Lockup},
         },
@@ -62,6 +62,23 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             return Err(InstructionError::InvalidAccountOwner);
         }
         Ok(me)
+    };
+
+    // The EpochRewards sysvar only exists after the
+    // enable_partitioned_epoch_reward feature is activated. If it exists, check
+    // the `active` field
+    let epoch_rewards_active = invoke_context
+        .get_sysvar_cache()
+        .get_epoch_rewards()
+        .map(|epoch_rewards| epoch_rewards.active)
+        .unwrap_or(false);
+
+    let error_during_epoch_rewards = || {
+        if epoch_rewards_active {
+            Err::<(), InstructionError>(StakeError::EpochRewardsActive.into())
+        } else {
+            Ok(())
+        }
     };
 
     let signers = instruction_context.get_signers(transaction_context)?;
