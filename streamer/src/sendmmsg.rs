@@ -75,6 +75,7 @@ fn mmsghdr_for_packet(
 
     match *dest {
         SocketAddr::V4(ref socket_addr_v4) => {
+            // https://github.com/nix-rust/nix/blob/v0.28.0/src/sys/socket/addr.rs#L894-L910
             unsafe {
                 std::ptr::write(
                     addr as *mut _ as *mut _,
@@ -91,6 +92,7 @@ fn mmsghdr_for_packet(
             hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN as u32;
         }
         SocketAddr::V6(ref socket_addr_v6) => {
+            // https://github.com/nix-rust/nix/blob/v0.28.0/src/sys/socket/addr.rs#L1018-L1037
             unsafe {
                 std::ptr::write(
                     addr as *mut _ as *mut _,
