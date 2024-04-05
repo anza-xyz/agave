@@ -42,8 +42,7 @@ use {
             builtins::{BuiltinPrototype, BUILTINS},
             metrics::*,
             partitioned_epoch_rewards::{
-                EpochRewardCalculateParamInfo, EpochRewardStatus, RewardInterval, StakeRewards,
-                VoteRewardsAccounts,
+                EpochRewardCalculateParamInfo, EpochRewardStatus, StakeRewards, VoteRewardsAccounts,
             },
         },
         bank_forks::BankForks,

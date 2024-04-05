@@ -18,14 +18,6 @@ use {
     std::sync::Arc,
 };
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub(super) enum RewardInterval {
-    /// the slot within the epoch is INSIDE the reward distribution interval
-    InsideInterval,
-    /// the slot within the epoch is OUTSIDE the reward distribution interval
-    OutsideInterval,
-}
-
 #[derive(AbiExample, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
@@ -155,15 +147,6 @@ impl Bank {
         }
     }
 
-    /// Return `RewardInterval` enum for current bank
-    pub(super) fn get_reward_interval(&self) -> RewardInterval {
-        if matches!(self.epoch_reward_status, EpochRewardStatus::Active(_)) {
-            RewardInterval::InsideInterval
-        } else {
-            RewardInterval::OutsideInterval
-        }
-    }
-
     /// true if it is ok to run partitioned rewards code.
     /// This means the feature is activated or certain testing situations.
     pub(super) fn is_partitioned_rewards_code_enabled(&self) -> bool {
@@ -215,7 +198,24 @@ mod tests {
         solana_vote_program::{vote_state, vote_transaction},
     };
 
+    #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+    enum RewardInterval {
+        /// the slot within the epoch is INSIDE the reward distribution interval
+        InsideInterval,
+        /// the slot within the epoch is OUTSIDE the reward distribution interval
+        OutsideInterval,
+    }
+
     impl Bank {
+        /// Return `RewardInterval` enum for current bank
+        fn get_reward_interval(&self) -> RewardInterval {
+            if matches!(self.epoch_reward_status, EpochRewardStatus::Active(_)) {
+                RewardInterval::InsideInterval
+            } else {
+                RewardInterval::OutsideInterval
+            }
+        }
+
         /// Return the total number of blocks in reward interval (including both calculation and crediting).
         pub(in crate::bank) fn get_reward_total_num_blocks(&self, rewards: &StakeRewards) -> u64 {
             self.get_reward_calculation_num_blocks()
