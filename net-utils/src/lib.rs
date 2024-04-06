@@ -1,5 +1,7 @@
 //! The `net_utils` module assists with networking
 #![allow(clippy::arithmetic_side_effects)]
+#[macro_use]
+extern crate lazy_static;
 use {
     crossbeam_channel::unbounded,
     log::*,
@@ -9,7 +11,7 @@ use {
         collections::{BTreeMap, HashSet},
         io::{self, Read, Write},
         net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
-        sync::{Arc, RwLock},
+        sync::{Arc, Mutex, RwLock},
         time::{Duration, Instant},
     },
     url::Url,
@@ -384,6 +386,55 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
+lazy_static! {
+    static ref ALL_USED_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+    static ref REUSED_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+}
+
+#[allow(clippy::collapsible_else_if)]
+fn sock_bind(sock: &Socket, addr: SocketAddr, reuse: bool) -> io::Result<()> {
+    let port = addr.port();
+    let mut all_used_ports_lock = ALL_USED_PORTS.lock().unwrap();
+    let mut reused_ports_lock = REUSED_PORTS.lock().unwrap();
+    if reuse {
+        if !reused_ports_lock.contains(&port) {
+            // bind for a reuse_port for the first time
+            if all_used_ports_lock.contains(&port) {
+                // this port is already binded.
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("{} has already been binded before", port),
+                ))
+            } else {
+                // this port is not yet binded.
+                let r = sock.bind(&SockAddr::from(addr));
+                if r.is_ok() {
+                    all_used_ports_lock.push(port);
+                    reused_ports_lock.push(port);
+                }
+                r
+            }
+        } else {
+            // rebind to a reused port
+            sock.bind(&SockAddr::from(addr))
+        }
+    } else {
+        if all_used_ports_lock.contains(&port) {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("{} has already been binded before", port),
+            ))
+        } else {
+            let r = sock.bind(&SockAddr::from(addr));
+
+            if r.is_ok() {
+                all_used_ports_lock.push(port);
+            }
+            r
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SocketConfig {
     pub reuseaddr: bool,
@@ -477,12 +528,12 @@ pub fn bind_in_range_with_config(
     range: PortRange,
     config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = udp_socket_with_config(config.clone())?;
 
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
-
-        if sock.bind(&SockAddr::from(addr)).is_ok() {
+        let bind = sock_bind(&sock, addr, config.reuseport);
+        if bind.is_ok() {
             let sock: UdpSocket = sock.into();
             return Result::Ok((sock.local_addr().unwrap().port(), sock));
         }
@@ -497,7 +548,8 @@ pub fn bind_in_range_with_config(
 pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
     let sock = udp_socket(false)?;
     let addr = SocketAddr::new(ip_addr, 0);
-    match sock.bind(&SockAddr::from(addr)) {
+    let bind = sock_bind(&sock, addr, false);
+    match bind {
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::new(
             io::ErrorKind::Other,
@@ -569,11 +621,13 @@ pub fn bind_to_with_config(
     port: u16,
     config: SocketConfig,
 ) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = udp_socket_with_config(config.clone())?;
 
     let addr = SocketAddr::new(ip_addr, port);
 
-    sock.bind(&SockAddr::from(addr)).map(|_| sock.into())
+    let bind = sock_bind(&sock, addr, config.reuseport);
+
+    bind.map(|_| sock.into())
 }
 
 // binds both a UdpSocket and a TcpListener
@@ -595,12 +649,12 @@ pub fn bind_common_with_config(
     port: u16,
     config: SocketConfig,
 ) -> io::Result<(UdpSocket, TcpListener)> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = udp_socket_with_config(config.clone())?;
 
     let addr = SocketAddr::new(ip_addr, port);
-    let sock_addr = SockAddr::from(addr);
-    sock.bind(&sock_addr)
-        .and_then(|_| TcpListener::bind(addr).map(|listener| (sock.into(), listener)))
+    let bind = sock_bind(&sock, addr, config.reuseport);
+
+    bind.and_then(|_| TcpListener::bind(addr).map(|listener| (sock.into(), listener)))
 }
 
 pub fn bind_two_in_range_with_offset(

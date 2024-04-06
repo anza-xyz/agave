@@ -6533,6 +6533,7 @@ dependencies = [
  "bincode",
  "clap 3.2.23",
  "crossbeam-channel",
+ "lazy_static",
  "log",
  "nix 0.26.4",
  "rand 0.8.5",

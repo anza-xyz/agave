@@ -5314,6 +5314,7 @@ dependencies = [
  "bincode",
  "clap 3.1.6",
  "crossbeam-channel",
+ "lazy_static",
  "log",
  "nix",
  "rand 0.8.5",
