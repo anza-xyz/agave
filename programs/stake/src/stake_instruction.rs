@@ -469,11 +469,9 @@ mod tests {
         )
     }
 
-    fn process_instruction_as_one_arg(
-        feature_set: Arc<FeatureSet>,
+    fn get_default_transaction_accounts(
         instruction: &Instruction,
-        expected_result: Result<(), InstructionError>,
-    ) -> Vec<AccountSharedData> {
+    ) -> Vec<(Pubkey, AccountSharedData)> {
         let mut pubkeys: HashSet<Pubkey> = instruction
             .accounts
             .iter()
@@ -482,7 +480,7 @@ mod tests {
         pubkeys.insert(clock::id());
         pubkeys.insert(epoch_schedule::id());
         #[allow(deprecated)]
-        let transaction_accounts = pubkeys
+        pubkeys
             .iter()
             .map(|pubkey| {
                 (
@@ -510,7 +508,15 @@ mod tests {
                     },
                 )
             })
-            .collect();
+            .collect()
+    }
+
+    fn process_instruction_as_one_arg(
+        feature_set: Arc<FeatureSet>,
+        instruction: &Instruction,
+        expected_result: Result<(), InstructionError>,
+    ) -> Vec<AccountSharedData> {
+        let transaction_accounts = get_default_transaction_accounts(instruction);
         process_instruction(
             Arc::clone(&feature_set),
             &instruction.data,
