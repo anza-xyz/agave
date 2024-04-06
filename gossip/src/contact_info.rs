@@ -222,6 +222,10 @@ impl ContactInfo {
         self.shred_version = shred_version
     }
 
+    pub fn get_num_sockets(&self) -> usize {
+        self.sockets.len()
+    }
+
     get_socket!(gossip, SOCKET_TAG_GOSSIP);
     get_socket!(rpc, SOCKET_TAG_RPC);
     get_socket!(rpc_pubsub, SOCKET_TAG_RPC_PUBSUB);

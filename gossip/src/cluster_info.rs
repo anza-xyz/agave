@@ -3215,6 +3215,97 @@ mod tests {
         ));
     }
 
+    fn rand_port_range() -> (u16, u16) {
+        let width = 100;
+        let start = thread_rng().gen_range(1024..(65535 - width));
+        (start, start + width)
+    }
+
+    #[test]
+    fn test_duplicate_ports_single_bind() {
+        solana_logger::setup();
+
+        let ip = Ipv4Addr::LOCALHOST;
+        let bind_ip_addr = IpAddr::V4(ip);
+        let node = Node::new_single_bind(
+            &Pubkey::new_unique(),
+            &socketaddr!(ip, 0),
+            rand_port_range(),
+            bind_ip_addr,
+        );
+
+        check_duplicate_ports(&node.info, true);
+    }
+
+    #[test]
+    fn test_duplicate_ports_external_ip() {
+        solana_logger::setup();
+
+        let ip = Ipv4Addr::LOCALHOST;
+        let config = NodeConfig {
+            gossip_addr: socketaddr!(ip, 0),
+            port_range: rand_port_range(),
+            bind_ip_addr: IpAddr::V4(ip),
+            public_tpu_addr: None,
+            public_tpu_forwards_addr: None,
+        };
+
+        let node = Node::new_with_external_ip(&Pubkey::new_unique(), config);
+
+        check_duplicate_ports(&node.info, false);
+    }
+
+    #[test]
+    fn test_duplicate_ports_local() {
+        solana_logger::setup();
+        let node = Node::new_localhost();
+
+        check_duplicate_ports(&node.info, true);
+    }
+
+    fn check_duplicate_ports(info: &ContactInfo, rpc: bool) {
+        let mut ports = HashSet::new();
+        let s = info.gossip().unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tpu(contact_info::Protocol::UDP).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tpu(contact_info::Protocol::QUIC).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tpu_forwards(contact_info::Protocol::UDP).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tpu_forwards(contact_info::Protocol::QUIC).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.serve_repair(contact_info::Protocol::UDP).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.serve_repair(contact_info::Protocol::QUIC).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tvu(contact_info::Protocol::UDP).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tvu(contact_info::Protocol::QUIC).unwrap();
+        assert!(ports.insert(s.port()));
+
+        let s = info.tpu_vote().unwrap();
+        assert!(ports.insert(s.port()));
+
+        if rpc {
+            let s = info.rpc().unwrap();
+            assert!(ports.insert(s.port()));
+
+            let s = info.rpc_pubsub().unwrap();
+            assert!(ports.insert(s.port()));
+        }
+
+        assert_eq!(ports.len(), info.get_num_sockets());
+    }
+
     #[test]
     fn test_handle_pull() {
         solana_logger::setup();
