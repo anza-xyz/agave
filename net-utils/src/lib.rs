@@ -391,7 +391,6 @@ lazy_static! {
     static ref REUSED_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 }
 
-#[allow(clippy::collapsible_else_if)]
 fn sock_bind(sock: &Socket, addr: SocketAddr, config: SocketConfig) -> io::Result<()> {
     let port = addr.port();
     let mut all_used_ports_lock = ALL_USED_PORTS.lock().unwrap();
@@ -407,22 +406,20 @@ fn sock_bind(sock: &Socket, addr: SocketAddr, config: SocketConfig) -> io::Resul
                     io::ErrorKind::Other,
                     format!("{} has already been bound before", port),
                 ))
+            } else if reused_ports_lock.contains(&port) {
+                // this port is already bounded before as reused ports.
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("{} has already been bound before as resued_port", port),
+                ))
             } else {
-                if reused_ports_lock.contains(&port) {
-                    // this port is already bounded before as reused ports.
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("{} has already been bound before as resued_port", port),
-                    ))
-                } else {
-                    // this port is not yet bounded.
-                    let r = sock.bind(&SockAddr::from(addr));
-                    if r.is_ok() {
-                        all_used_ports_lock.push(port);
-                        reused_ports_lock.push(port);
-                    }
-                    r
+                // this port is not yet bounded.
+                let r = sock.bind(&SockAddr::from(addr));
+                if r.is_ok() {
+                    all_used_ports_lock.push(port);
+                    reused_ports_lock.push(port);
                 }
+                r
             }
         } else {
             // binding to existing reuse port
