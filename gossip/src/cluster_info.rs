@@ -3083,32 +3083,25 @@ impl Node {
         let (tpu_port, tpu_sockets) =
             multi_bind_in_range(bind_ip_addr, port_range, 32).expect("tpu multi_bind");
 
-        let quic_config = SocketConfig {
-            reuseaddr: false,
-            reuseport: true,
-            first_reuse: true,
-        };
-        let (_tpu_port_quic, tpu_quic) = Self::bind_with_config(
+        let (_tpu_port_quic, tpu_quic) = multi_bind_in_range(
             bind_ip_addr,
             (tpu_port + QUIC_PORT_OFFSET, tpu_port + QUIC_PORT_OFFSET + 1),
-            quic_config.clone(),
-        );
-        let tpu_quic =
-            bind_more_with_config(tpu_quic, QUIC_ENDPOINTS, quic_config.clone()).unwrap();
+            QUIC_ENDPOINTS,
+        )
+        .expect("tpu_quic multi_bind");
 
         let (tpu_forwards_port, tpu_forwards_sockets) =
             multi_bind_in_range(bind_ip_addr, port_range, 8).expect("tpu_forwards multi_bind");
 
-        let (_tpu_forwards_port_quic, tpu_forwards_quic) = Self::bind_with_config(
+        let (_tpu_forwards_port_quic, tpu_forwards_quic) = multi_bind_in_range(
             bind_ip_addr,
             (
                 tpu_forwards_port + QUIC_PORT_OFFSET,
                 tpu_forwards_port + QUIC_PORT_OFFSET + 1,
             ),
-            quic_config.clone(),
-        );
-        let tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, QUIC_ENDPOINTS, quic_config).unwrap();
+            QUIC_ENDPOINTS,
+        )
+        .expect("tpu_forward_quic multi_bind");
 
         let (tpu_vote_port, tpu_vote_sockets) =
             multi_bind_in_range(bind_ip_addr, port_range, 1).expect("tpu_vote multi_bind");
