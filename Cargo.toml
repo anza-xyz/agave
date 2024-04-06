@@ -41,7 +41,7 @@ members = [
     "geyser-plugin-manager",
     "gossip",
     "inline-spl",
-    "install",
+    "install", "kcp-client",
     "keygen",
     "ledger",
     "ledger-tool",

@@ -1,0 +1,20 @@
+[package]
+name = "solana-kcp-client"
+description = "Solana KCP Client"
+documentation = "https://docs.rs/solana-udp-client"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-trait = "0.1.79"
+kcp = "0.5.3"
+solana-connection-cache = "1.18.9"
+solana-metrics = "1.18.9"
+solana-sdk = "1.18.9"
+tokio.workspace = true
