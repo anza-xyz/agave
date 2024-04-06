@@ -355,27 +355,6 @@ fn find_bankhash_of_heaviest_fork(
     let opts = ProcessOptions::default();
     // Grab one write lock until end of function because we are the only one touching bankforks now.
     let mut my_bankforks = bank_forks.write().unwrap();
-    // Check that the existing banks are frozen and link to the expected parent.
-    let mut parent_slot = root_bank.slot();
-    for slot in &slots {
-        if exit.load(Ordering::Relaxed) {
-            return Err(WenRestartError::Exiting.into());
-        }
-        if let Some(bank) = my_bankforks.get(*slot) {
-            if !bank.is_frozen() {
-                return Err(WenRestartError::BlockNotFrozenAfterReplay(*slot, None).into());
-            }
-            if bank.parent_slot() != parent_slot {
-                return Err(WenRestartError::BlockNotLinkedToExpectedParent(
-                    *slot,
-                    Some(bank.parent_slot()),
-                    parent_slot,
-                )
-                .into());
-            }
-        }
-        parent_slot = *slot;
-    }
     // Now replay all the missing blocks.
     let mut parent_bank = root_bank;
     for slot in slots {
@@ -383,7 +362,12 @@ fn find_bankhash_of_heaviest_fork(
             return Err(WenRestartError::Exiting.into());
         }
         let bank = match my_bankforks.get(slot) {
-            Some(cur_bank) => cur_bank,
+            Some(cur_bank) => {
+                if !cur_bank.is_frozen() {
+                    return Err(WenRestartError::BlockNotFrozenAfterReplay(slot, None).into());
+                }
+                cur_bank
+            }
             None => {
                 let new_bank = Bank::new_from_parent(
                     parent_bank.clone(),
