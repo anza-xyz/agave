@@ -392,37 +392,56 @@ lazy_static! {
 }
 
 #[allow(clippy::collapsible_else_if)]
-fn sock_bind(sock: &Socket, addr: SocketAddr, reuse: bool) -> io::Result<()> {
+fn sock_bind(sock: &Socket, addr: SocketAddr, config: SocketConfig) -> io::Result<()> {
     let port = addr.port();
     let mut all_used_ports_lock = ALL_USED_PORTS.lock().unwrap();
     let mut reused_ports_lock = REUSED_PORTS.lock().unwrap();
-    if reuse {
-        if !reused_ports_lock.contains(&port) {
+
+    if config.reuseport {
+        // binding reuse port
+        if config.first_reuse {
             // bind for a reuse_port for the first time
             if all_used_ports_lock.contains(&port) {
-                // this port is already binded.
+                // this port is already bounded.
                 Err(io::Error::new(
                     io::ErrorKind::Other,
-                    format!("{} has already been binded before", port),
+                    format!("{} has already been bound before", port),
                 ))
             } else {
-                // this port is not yet binded.
-                let r = sock.bind(&SockAddr::from(addr));
-                if r.is_ok() {
-                    all_used_ports_lock.push(port);
-                    reused_ports_lock.push(port);
+                if reused_ports_lock.contains(&port) {
+                    // this port is already bounded before as reused ports.
+                    Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("{} has already been bound before as resued_port", port),
+                    ))
+                } else {
+                    // this port is not yet bounded.
+                    let r = sock.bind(&SockAddr::from(addr));
+                    if r.is_ok() {
+                        all_used_ports_lock.push(port);
+                        reused_ports_lock.push(port);
+                    }
+                    r
                 }
-                r
             }
         } else {
-            // rebind to a reused port
-            sock.bind(&SockAddr::from(addr))
+            // binding to existing reuse port
+            if reused_ports_lock.contains(&port) {
+                sock.bind(&SockAddr::from(addr))
+            } else {
+                // existing reuse port not found
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("reuse_port {} has not been bound before", port),
+                ))
+            }
         }
     } else {
+        // binding non reuse port
         if all_used_ports_lock.contains(&port) {
             Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("{} has already been binded before", port),
+                format!("{} has already been bound before", port),
             ))
         } else {
             let r = sock.bind(&SockAddr::from(addr));
@@ -439,6 +458,7 @@ fn sock_bind(sock: &Socket, addr: SocketAddr, reuse: bool) -> io::Result<()> {
 pub struct SocketConfig {
     pub reuseaddr: bool,
     pub reuseport: bool,
+    pub first_reuse: bool,
 }
 
 impl Default for SocketConfig {
@@ -447,12 +467,13 @@ impl Default for SocketConfig {
         Self {
             reuseaddr: false,
             reuseport: false,
+            first_reuse: false,
         }
     }
 }
 
 #[cfg(any(windows, target_os = "ios"))]
-fn udp_socket(_reuseaddr: bool) -> io::Result<Socket> {
+fn udp_socket(_reuseaddr: bool, _first_reuse: bool) -> io::Result<Socket> {
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
     Ok(sock)
 }
@@ -464,10 +485,11 @@ fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
 }
 
 #[cfg(not(any(windows, target_os = "ios")))]
-fn udp_socket(reuseaddr: bool) -> io::Result<Socket> {
+fn udp_socket(reuseaddr: bool, first_reuse: bool) -> io::Result<Socket> {
     let config = SocketConfig {
         reuseaddr,
         reuseport: false,
+        first_reuse,
     };
     udp_socket_with_config(config)
 }
@@ -484,6 +506,7 @@ fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     let SocketConfig {
         reuseaddr,
         mut reuseport,
+        first_reuse: _,
     } = config;
 
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
@@ -532,7 +555,7 @@ pub fn bind_in_range_with_config(
 
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
-        let bind = sock_bind(&sock, addr, config.reuseport);
+        let bind = sock_bind(&sock, addr, config.clone());
         if bind.is_ok() {
             let sock: UdpSocket = sock.into();
             return Result::Ok((sock.local_addr().unwrap().port(), sock));
@@ -546,10 +569,9 @@ pub fn bind_in_range_with_config(
 }
 
 pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
-    let sock = udp_socket(false)?;
+    let sock = udp_socket(false, false)?;
     let addr = SocketAddr::new(ip_addr, 0);
-    let bind = sock_bind(&sock, addr, false);
-    match bind {
+    match sock.bind(&SockAddr::from(addr)) {
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::new(
             io::ErrorKind::Other,
@@ -558,7 +580,7 @@ pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
     }
 }
 
-// binds many sockets to the same port in a range
+// binds many sockets to the same port in a range with port reuse
 pub fn multi_bind_in_range(
     ip_addr: IpAddr,
     range: PortRange,
@@ -578,16 +600,23 @@ pub fn multi_bind_in_range(
     let mut port = 0;
     let mut error = None;
     for _ in 0..NUM_TRIES {
-        port = {
-            let (port, _) = bind_in_range(ip_addr, range)?;
-            port
-        }; // drop the probe, port should be available... briefly.
-
-        let config = SocketConfig {
+        let mut config = SocketConfig {
             reuseaddr: true,
             reuseport: true,
+            first_reuse: true,
         };
-        for _ in 0..num {
+
+        // find first available reuse port to bind
+        let sock = bind_in_range_with_config(ip_addr, range, config.clone());
+        if sock.is_err() {
+            continue;
+        }
+        let (found, sock) = sock.unwrap();
+        port = found;
+        sockets.push(sock);
+        config.first_reuse = false;
+        // bind the rest sock on the reuse port
+        for _ in 1..num {
             let sock = bind_to_with_config(ip_addr, port, config.clone());
             if let Ok(sock) = sock {
                 sockets.push(sock);
@@ -609,11 +638,9 @@ pub fn multi_bind_in_range(
 }
 
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseaddr: bool) -> io::Result<UdpSocket> {
-    let config = SocketConfig {
-        reuseaddr,
-        reuseport: false,
-    };
-    bind_to_with_config(ip_addr, port, config)
+    let sock = udp_socket(reuseaddr, false)?;
+    let addr = SocketAddr::new(ip_addr, port);
+    sock.bind(&SockAddr::from(addr)).map(|_| sock.into())
 }
 
 pub fn bind_to_with_config(
@@ -625,7 +652,7 @@ pub fn bind_to_with_config(
 
     let addr = SocketAddr::new(ip_addr, port);
 
-    let bind = sock_bind(&sock, addr, config.reuseport);
+    let bind = sock_bind(&sock, addr, config);
 
     bind.map(|_| sock.into())
 }
@@ -639,6 +666,7 @@ pub fn bind_common(
     let config = SocketConfig {
         reuseaddr,
         reuseport: false,
+        first_reuse: false,
     };
     bind_common_with_config(ip_addr, port, config)
 }
@@ -652,7 +680,7 @@ pub fn bind_common_with_config(
     let sock = udp_socket_with_config(config.clone())?;
 
     let addr = SocketAddr::new(ip_addr, port);
-    let bind = sock_bind(&sock, addr, config.reuseport);
+    let bind = sock_bind(&sock, addr, config);
 
     bind.and_then(|_| TcpListener::bind(addr).map(|listener| (sock.into(), listener)))
 }
@@ -844,9 +872,15 @@ mod tests {
         let config = SocketConfig {
             reuseaddr: true,
             reuseport: true,
+            first_reuse: true,
         };
-        let x = bind_to_with_config(ip_addr, 2002, config.clone()).unwrap();
-        let y = bind_to_with_config(ip_addr, 2002, config).unwrap();
+        let config2 = SocketConfig {
+            reuseaddr: true,
+            reuseport: true,
+            first_reuse: false,
+        };
+        let x = bind_to_with_config(ip_addr, 2002, config).unwrap();
+        let y = bind_to_with_config(ip_addr, 2002, config2).unwrap();
         assert_eq!(
             x.local_addr().unwrap().port(),
             y.local_addr().unwrap().port()

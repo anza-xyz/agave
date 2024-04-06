@@ -1354,11 +1354,13 @@ pub mod test {
 
     fn make_quic_sockets() -> Vec<UdpSocket> {
         const NUM_QUIC_SOCKETS: usize = 10;
-        let config = SocketConfig {
+        let mut config = SocketConfig {
             reuseaddr: false,
             reuseport: true,
+            first_reuse: true,
         };
         let socket = bind_to_with_config("127.0.0.1".parse().unwrap(), 0, config.clone()).unwrap();
+        config.first_reuse = false;
         bind_more_with_config(socket, NUM_QUIC_SOCKETS - 1, config).unwrap()
     }
 
