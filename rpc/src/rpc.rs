@@ -6020,6 +6020,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":150,
                 }
@@ -6105,6 +6106,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":150,
                 }
@@ -6134,7 +6136,8 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
-                    "returnData":null,
+                    "replacementBlockhash": null,
+                    "returnData": null,
                     "unitsConsumed":150,
                 }
             },
@@ -6184,7 +6187,8 @@ pub mod tests {
                     "accounts":null,
                     "innerInstructions":null,
                     "logs":[],
-                    "returnData":null,
+                    "replacementBlockhash": null,
+                    "returnData": null,
                     "unitsConsumed":0,
                 }
             },
@@ -6202,6 +6206,11 @@ pub mod tests {
             r#"{{"jsonrpc":"2.0","id":1,"method":"simulateTransaction","params":["{tx_invalid_recent_blockhash}", {{"replaceRecentBlockhash": true}}]}}"#,
         );
         let res = io.handle_request_sync(&req, meta.clone());
+        let latest_blockhash = bank.confirmed_last_blockhash();
+        let expiry_slot = bank
+            .get_blockhash_last_valid_block_height(&latest_blockhash)
+            .expect("blockhash exists");
+
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
@@ -6214,6 +6223,10 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": {
+                        "blockhash": latest_blockhash.to_string(),
+                        "lastValidBlockHeight": expiry_slot
+                    },
                     "returnData":null,
                     "unitsConsumed":150,
                 }
@@ -6358,6 +6371,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData": null,
                     "unitsConsumed": 150,
                 }
@@ -6438,6 +6452,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 success",
                         "Program AddressLookupTab1e1111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":1200,
                 }
@@ -6481,6 +6496,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 success",
                         "Program AddressLookupTab1e1111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":1200,
                 }
@@ -6567,6 +6583,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 success",
                         "Program AddressLookupTab1e1111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":1200,
                 }
