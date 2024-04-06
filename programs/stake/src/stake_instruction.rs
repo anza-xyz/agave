@@ -82,14 +82,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     };
 
     let signers = instruction_context.get_signers(transaction_context)?;
-    match limited_deserialize(data) {
-        Ok(StakeInstruction::Initialize(authorized, lockup)) => {
+    match limited_deserialize(data)? {
+        StakeInstruction::Initialize(authorized, lockup) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 1)?;
             initialize(&mut me, &authorized, &lockup, &rent)
         }
-        Ok(StakeInstruction::Authorize(authorized_pubkey, stake_authorize)) => {
+        StakeInstruction::Authorize(authorized_pubkey, stake_authorize) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             let clock =
@@ -107,7 +107,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 custodian_pubkey,
             )
         }
-        Ok(StakeInstruction::AuthorizeWithSeed(args)) => {
+        StakeInstruction::AuthorizeWithSeed(args) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -129,7 +129,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 custodian_pubkey,
             )
         }
-        Ok(StakeInstruction::DelegateStake) => {
+        StakeInstruction::DelegateStake => {
             error_during_epoch_rewards()?;
             let me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -154,7 +154,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &invoke_context.feature_set,
             )
         }
-        Ok(StakeInstruction::Split(lamports)) => {
+        StakeInstruction::Split(lamports) => {
             error_during_epoch_rewards()?;
             let me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -169,7 +169,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
             )
         }
-        Ok(StakeInstruction::Merge) => {
+        StakeInstruction::Merge => {
             error_during_epoch_rewards()?;
             let me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -192,7 +192,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &signers,
             )
         }
-        Ok(StakeInstruction::Withdraw(lamports)) => {
+        StakeInstruction::Withdraw(lamports) => {
             error_during_epoch_rewards()?;
             let me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -222,20 +222,20 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 new_warmup_cooldown_rate_epoch(invoke_context),
             )
         }
-        Ok(StakeInstruction::Deactivate) => {
+        StakeInstruction::Deactivate => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, instruction_context, 1)?;
             deactivate(invoke_context, &mut me, &clock, &signers)
         }
-        Ok(StakeInstruction::SetLockup(lockup)) => {
+        StakeInstruction::SetLockup(lockup) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             let clock = invoke_context.get_sysvar_cache().get_clock()?;
             set_lockup(&mut me, &lockup, &signers, &clock)
         }
-        Ok(StakeInstruction::InitializeChecked) => {
+        StakeInstruction::InitializeChecked => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(4)?;
@@ -257,7 +257,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let rent = get_sysvar_with_account_check::rent(invoke_context, instruction_context, 1)?;
             initialize(&mut me, &authorized, &Lockup::default(), &rent)
         }
-        Ok(StakeInstruction::AuthorizeChecked(stake_authorize)) => {
+        StakeInstruction::AuthorizeChecked(stake_authorize) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             let clock =
@@ -281,7 +281,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 custodian_pubkey,
             )
         }
-        Ok(StakeInstruction::AuthorizeCheckedWithSeed(args)) => {
+        StakeInstruction::AuthorizeCheckedWithSeed(args) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(2)?;
@@ -310,7 +310,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 custodian_pubkey,
             )
         }
-        Ok(StakeInstruction::SetLockupChecked(lockup_checked)) => {
+        StakeInstruction::SetLockupChecked(lockup_checked) => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             let custodian_pubkey =
@@ -324,7 +324,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             let clock = invoke_context.get_sysvar_cache().get_clock()?;
             set_lockup(&mut me, &lockup, &signers, &clock)
         }
-        Ok(StakeInstruction::GetMinimumDelegation) => {
+        StakeInstruction::GetMinimumDelegation => {
             let feature_set = invoke_context.feature_set.as_ref();
             let minimum_delegation = crate::get_minimum_delegation(feature_set);
             let minimum_delegation = Vec::from(minimum_delegation.to_le_bytes());
@@ -332,7 +332,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 .transaction_context
                 .set_return_data(id(), minimum_delegation)
         }
-        Ok(StakeInstruction::DeactivateDelinquent) => {
+        StakeInstruction::DeactivateDelinquent => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             instruction_context.check_number_of_instruction_accounts(3)?;
@@ -348,7 +348,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 clock.epoch,
             )
         }
-        Ok(StakeInstruction::Redelegate) => {
+        StakeInstruction::Redelegate => {
             error_during_epoch_rewards()?;
             let mut me = get_stake_account()?;
             if invoke_context
@@ -369,7 +369,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 Err(InstructionError::InvalidInstructionData)
             }
         }
-        Err(err) => Err(err),
     }
 });
 
