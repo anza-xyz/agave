@@ -403,7 +403,11 @@ mod tests {
             },
             stake_history::{StakeHistory, StakeHistoryEntry},
             system_program,
-            sysvar::{clock, epoch_schedule, rent, rewards, stake_history},
+            sysvar::{
+                clock,
+                epoch_rewards::{self, EpochRewards},
+                epoch_schedule, rent, rewards, stake_history,
+            },
         },
         solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
         std::{collections::HashSet, str::FromStr, sync::Arc},
@@ -7855,6 +7859,188 @@ mod tests {
             &uninitialized_stake_address,
             &uninitialized_stake_account,
             Err(StakeError::RedelegateToSameVoteAccount.into()),
+        );
+    }
+
+    #[test]
+    fn test_stake_process_instruction_with_epoch_rewards_active() {
+        let feature_set = feature_set_all_enabled();
+
+        let process_instruction_as_one_arg = |feature_set: Arc<FeatureSet>,
+                                              instruction: &Instruction,
+                                              expected_result: Result<(), InstructionError>|
+         -> Vec<AccountSharedData> {
+            let mut transaction_accounts = get_default_transaction_accounts(instruction);
+
+            // Initialize EpochRewards sysvar account
+            let epoch_rewards_sysvar = EpochRewards {
+                active: true,
+                ..EpochRewards::default()
+            };
+            transaction_accounts.push((
+                epoch_rewards::id(),
+                create_account_shared_data_for_test(&epoch_rewards_sysvar),
+            ));
+
+            process_instruction(
+                Arc::clone(&feature_set),
+                &instruction.data,
+                transaction_accounts,
+                instruction.accounts.clone(),
+                expected_result,
+            )
+        };
+
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::initialize(
+                &Pubkey::new_unique(),
+                &Authorized::default(),
+                &Lockup::default(),
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::authorize(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                StakeAuthorize::Staker,
+                None,
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::delegate_stake(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &invalid_vote_state_pubkey(),
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::split(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+                &invalid_stake_state_pubkey(),
+            )[2],
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::withdraw(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+                None,
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::deactivate_stake(&Pubkey::new_unique(), &Pubkey::new_unique()),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::set_lockup(
+                &Pubkey::new_unique(),
+                &LockupArgs::default(),
+                &Pubkey::new_unique(),
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::merge(
+                &Pubkey::new_unique(),
+                &invalid_stake_state_pubkey(),
+                &Pubkey::new_unique(),
+            )[0],
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::authorize_with_seed(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                "seed".to_string(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                StakeAuthorize::Staker,
+                None,
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::initialize_checked(&Pubkey::new_unique(), &Authorized::default()),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::authorize_checked(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                StakeAuthorize::Staker,
+                None,
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::authorize_checked_with_seed(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                "seed".to_string(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                StakeAuthorize::Staker,
+                None,
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::set_lockup_checked(
+                &Pubkey::new_unique(),
+                &LockupArgs::default(),
+                &Pubkey::new_unique(),
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::deactivate_delinquent_stake(
+                &Pubkey::new_unique(),
+                &invalid_vote_state_pubkey(),
+                &Pubkey::new_unique(),
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::redelegate(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+            )[2],
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+
+        // Only GetMinimumDelegation should not return StakeError::EpochRewardsActive
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::get_minimum_delegation(),
+            Ok(()),
         );
     }
 }
