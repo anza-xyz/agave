@@ -559,6 +559,7 @@ mod test {
         super::*,
         crate::nonblocking::quic::{test::*, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
         crossbeam_channel::unbounded,
+        serial_test::serial,
         solana_sdk::net::DEFAULT_TPU_COALESCE,
         std::net::SocketAddr,
     };
@@ -597,6 +598,7 @@ mod test {
         (t, exit, receiver, server_address)
     }
 
+    #[serial]
     #[test]
     fn test_quic_server_exit() {
         let (t, exit, _receiver, _server_address) = setup_quic_server();
@@ -604,6 +606,7 @@ mod test {
         t.join().unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_quic_timeout() {
         solana_logger::setup();
@@ -614,6 +617,7 @@ mod test {
         t.join().unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
@@ -625,6 +629,7 @@ mod test {
         t.join().unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
@@ -660,6 +665,7 @@ mod test {
         t.join().unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_quic_server_multiple_writes() {
         solana_logger::setup();
@@ -671,6 +677,7 @@ mod test {
         t.join().unwrap();
     }
 
+    #[serial]
     #[test]
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();

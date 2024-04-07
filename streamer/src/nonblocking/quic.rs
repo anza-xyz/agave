@@ -1296,7 +1296,10 @@ pub mod test {
         async_channel::unbounded as async_unbounded,
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ClientConfig, IdleTimeout, TransportConfig},
-        solana_net_utils::{bind_more_with_config, bind_to_with_config, SocketConfig},
+        serial_test::serial,
+        solana_net_utils::{
+            bind_more_with_config, bind_to_with_config, bind_with_any_port, SocketConfig,
+        },
         solana_sdk::{
             net::DEFAULT_TPU_COALESCE,
             quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
@@ -1354,12 +1357,20 @@ pub mod test {
 
     fn make_quic_sockets() -> Vec<UdpSocket> {
         const NUM_QUIC_SOCKETS: usize = 10;
+
+        // find an available port.
+        let port = {
+            let t = bind_with_any_port("127.0.0.1".parse().unwrap()).unwrap();
+            t.local_addr().unwrap().port()
+        };
+
         let mut config = SocketConfig {
-            reuseaddr: false,
+            reuseaddr: true,
             reuseport: true,
             first_reuse: true,
         };
-        let socket = bind_to_with_config("127.0.0.1".parse().unwrap(), 0, config.clone()).unwrap();
+        let socket =
+            bind_to_with_config("127.0.0.1".parse().unwrap(), port, config.clone()).unwrap();
         config.first_reuse = false;
         bind_more_with_config(socket, NUM_QUIC_SOCKETS - 1, config).unwrap()
     }
@@ -1565,6 +1576,7 @@ pub mod test {
         }
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_exit() {
         let (t, exit, _receiver, _server_address, _stats) = setup_quic_server(None, 1);
@@ -1572,6 +1584,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_timeout() {
         solana_logger::setup();
@@ -1581,6 +1594,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_packet_batcher() {
         solana_logger::setup();
@@ -1630,6 +1644,7 @@ pub mod test {
         handle.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_stream_timeout() {
         solana_logger::setup();
@@ -1660,6 +1675,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
@@ -1669,6 +1685,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_multiple_connections_on_single_client_endpoint() {
         solana_logger::setup();
@@ -1728,6 +1745,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_multiple_writes() {
         solana_logger::setup();
@@ -1737,6 +1755,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_staked_connection_removal() {
         solana_logger::setup();
@@ -1762,6 +1781,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_zero_staked_connection_removal() {
         // In this test, the client has a pubkey, but is not in stake table.
@@ -1788,6 +1808,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_unstaked_connection_removal() {
         solana_logger::setup();
@@ -1806,6 +1827,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
@@ -1835,6 +1857,7 @@ pub mod test {
         t.await.unwrap();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();

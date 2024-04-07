@@ -39,6 +39,7 @@ x509-parser = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+serial_test = { workspace = true }
 socket2 = { workspace = true }
 solana-logger = { workspace = true }
 

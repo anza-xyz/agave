@@ -393,6 +393,7 @@ lazy_static! {
 
 fn sock_bind(sock: &Socket, addr: SocketAddr, config: SocketConfig) -> io::Result<()> {
     let port = addr.port();
+    assert_ne!(port, 0, "don't use sock_bind for any port. ");
     let mut all_used_ports_lock = ALL_USED_PORTS.lock().unwrap();
     let mut reused_ports_lock = REUSED_PORTS.lock().unwrap();
 
