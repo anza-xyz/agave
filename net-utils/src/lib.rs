@@ -607,7 +607,7 @@ pub fn multi_bind_in_range(
     let mut error = None;
     for _ in 0..NUM_TRIES {
         let mut config = SocketConfig {
-            reuseaddr: true,
+            reuseaddr: false,
             reuseport: true,
             first_reuse: true,
         };
