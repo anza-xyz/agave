@@ -89,7 +89,7 @@ pub(crate) struct ReadOnlyAccountsCache {
     ///
     /// NOTE: This field must be above `evictor` to ensure it is dropped before `evictor`.
     evict_sender: crossbeam_channel::Sender<()>,
-    /// To the evictor goes the spoils [sic]
+    /// To the evictor goes the spoiled [sic]
     ///
     /// Evict from the cache in the background.
     _evictor: thread::JoinHandle<()>,
