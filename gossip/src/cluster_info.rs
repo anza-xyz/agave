@@ -3707,7 +3707,9 @@ mod tests {
             VALIDATOR_PORT_RANGE.1 + (2 * MINIMUM_VALIDATOR_PORT_RANGE_WIDTH),
         );
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port = bind_in_range(ip, port_range).expect("Failed to bind").0;
+        let port =
+            find_available_port_in_range(ip, port_range).expect("Failed to find available port");
+
         let config = NodeConfig {
             gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port),
             port_range,

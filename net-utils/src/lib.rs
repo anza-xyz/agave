@@ -740,8 +740,20 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
     let (start, end) = range;
     let mut tries_left = end - start;
     let mut rand_port = thread_rng().gen_range(start..end);
+
+    let lookup = |ip_addr, port| -> io::Result<()> {
+        let config = SocketConfig {
+            reuseaddr: false,
+            reuseport: false,
+            first_reuse: false,
+        };
+        let sock = udp_socket_with_config(config)?;
+        let addr = SocketAddr::new(ip_addr, port);
+        sock.bind(&SockAddr::from(addr))
+    };
+
     loop {
-        match bind_common(ip_addr, rand_port, false) {
+        match lookup(ip_addr, rand_port) {
             Ok(_) => {
                 break Ok(rand_port);
             }
