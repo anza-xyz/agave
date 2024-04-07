@@ -293,7 +293,7 @@ impl LocalCluster {
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
+            true,
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
