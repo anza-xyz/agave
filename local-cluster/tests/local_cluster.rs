@@ -3339,6 +3339,8 @@ fn do_test_optimistic_confirmation_violation_with_or_without_tower(with_tower: b
         }
     }
 
+    solana_net_utils::clear_used_ports();
+
     // Step 3:
     // Run validator C only to make it produce and vote on its own fork.
     info!("Restart validator C again!!!");

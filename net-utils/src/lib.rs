@@ -391,6 +391,14 @@ lazy_static! {
     static ref REUSED_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 }
 
+pub fn clear_used_ports() {
+    let mut all_used_ports_lock = ALL_USED_PORTS.lock().unwrap();
+    let mut reused_ports_lock = REUSED_PORTS.lock().unwrap();
+
+    all_used_ports_lock.clear();
+    reused_ports_lock.clear();
+}
+
 fn sock_bind(sock: &Socket, addr: SocketAddr, config: SocketConfig) -> io::Result<()> {
     let port = addr.port();
     assert_ne!(port, 0, "don't use sock_bind for any port. ");

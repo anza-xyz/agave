@@ -6426,6 +6426,7 @@ dependencies = [
  "solana-gossip",
  "solana-ledger",
  "solana-logger",
+ "solana-net-utils",
  "solana-pubsub-client",
  "solana-quic-client",
  "solana-rpc-client",
