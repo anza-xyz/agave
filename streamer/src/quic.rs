@@ -604,6 +604,7 @@ mod test {
         let (t, exit, _receiver, _server_address) = setup_quic_server();
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -615,6 +616,7 @@ mod test {
         runtime.block_on(check_timeout(receiver, server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -627,6 +629,7 @@ mod test {
         runtime.block_on(check_block_multiple_connections(server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -663,6 +666,7 @@ mod test {
         runtime.block_on(check_multiple_streams(receiver, server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -675,6 +679,7 @@ mod test {
         runtime.block_on(check_multiple_writes(receiver, server_address, None));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -711,5 +716,6 @@ mod test {
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
+        solana_net_utils::clear_used_ports();
     }
 }

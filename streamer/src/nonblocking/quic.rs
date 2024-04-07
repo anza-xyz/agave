@@ -1582,6 +1582,7 @@ pub mod test {
         let (t, exit, _receiver, _server_address, _stats) = setup_quic_server(None, 1);
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1592,6 +1593,7 @@ pub mod test {
         check_timeout(receiver, server_address).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1642,6 +1644,7 @@ pub mod test {
         assert_eq!(i, num_packets);
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1673,6 +1676,7 @@ pub mod test {
 
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1683,6 +1687,7 @@ pub mod test {
         check_block_multiple_connections(server_address).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1743,6 +1748,7 @@ pub mod test {
 
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1753,6 +1759,7 @@ pub mod test {
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1779,6 +1786,7 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1806,6 +1814,7 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1825,6 +1834,7 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1855,6 +1865,7 @@ pub mod test {
         check_unstaked_node_connect_failure(server_address).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
     #[serial]
@@ -1891,6 +1902,7 @@ pub mod test {
         t.await.unwrap();
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
+        solana_net_utils::clear_used_ports();
     }
 
     #[test]
