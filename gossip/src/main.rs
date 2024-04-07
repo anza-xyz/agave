@@ -238,7 +238,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
             // find an available port.
             let get_port = || -> Result<_, std::io::Error> {
-                let t = solana_net_utils::bind_with_any_port(bind_address)?;
+                let t = solana_net_utils::bind_with_any_port(IpAddr::V4(Ipv4Addr::UNSPECIFIED))?;
                 let addr = t.local_addr()?;
                 Ok(addr.port())
             };
