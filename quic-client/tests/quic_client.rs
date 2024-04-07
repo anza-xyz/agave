@@ -206,7 +206,7 @@ mod tests {
         let (sender, receiver) = unbounded();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let (request_recv_socket, request_recv_exit, keypair, request_recv_ip) = server_args();
-        let (request_recv_endpoint, request_recv_thread) = solana_streamer::quic::spawn_server(
+        let (request_recv_endpoints, request_recv_thread) = solana_streamer::quic::spawn_server(
             "quic_streamer_test",
             request_recv_socket.try_clone().unwrap(),
             &keypair,
@@ -260,10 +260,6 @@ mod tests {
             key: priv_key,
         });
 
-        let response_recv_endpoint = response_recv_endpoints
-            .pop()
-            .expect("at least one endpoint");
-        drop(response_recv_endpoints);
         let endpoint =
             QuicLazyInitializedEndpoint::new(client_certificate, Some(response_recv_endpoint));
         let request_sender =
