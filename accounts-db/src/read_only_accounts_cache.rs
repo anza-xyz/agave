@@ -586,7 +586,7 @@ mod tests {
         }
 
         // wait for background thread to store the accounts
-        thread::sleep(Duration::from_millis(1000));
+        thread::sleep(Duration::from_millis(100));
 
         // we haven't exceeded the max cache size yet, so no evictions should've happened
         assert_eq!(cache.cache_len(), MAX_ENTRIES);

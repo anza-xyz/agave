@@ -13579,26 +13579,35 @@ pub mod tests {
         db.clean_accounts_for_tests();
         db.add_root(2);
 
+        let assert_read_only_cache_len = |len| {
+            // wait for background thread to store the accounts to the cache
+            thread::sleep(Duration::from_millis(100));
+            assert_eq!(db.read_only_accounts_cache.cache_len(), len);
+        };
+
         assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
         let account = db
             .load_with_fixed_root(&Ancestors::default(), &account_key)
             .map(|(account, _)| account)
             .unwrap();
         assert_eq!(account.lamports(), 1);
-        assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+        assert_read_only_cache_len(1);
+
         let account = db
             .load_with_fixed_root(&Ancestors::default(), &account_key)
             .map(|(account, _)| account)
             .unwrap();
         assert_eq!(account.lamports(), 1);
-        assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+        assert_read_only_cache_len(1);
+
         db.store_cached((2, &[(&account_key, &zero_lamport_account)][..]), None);
-        assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+        assert_read_only_cache_len(1);
+
         let account = db
             .load_with_fixed_root(&Ancestors::default(), &account_key)
             .map(|(account, _)| account);
         assert!(account.is_none());
-        assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+        assert_read_only_cache_len(1);
     }
 
     #[test]
