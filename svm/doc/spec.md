@@ -3,7 +3,7 @@
 # Introduction
 
 Several components of the Solana Validator are involved in processing
-of a transaction (or a batch of transactions).  Collectively the
+a transaction (or a batch of transactions).  Collectively, the
 components responsible for transaction execution are designated as
 Solana Virtual Machine (SVM). SVM packaged as a stand-alone library
 can be used in applications outside the Solana Validator.
