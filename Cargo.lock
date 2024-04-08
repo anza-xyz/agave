@@ -7230,7 +7230,7 @@ dependencies = [
  "async-channel",
  "bytes",
  "crossbeam-channel",
- "futures 0.3.28",
+ "futures 0.3.30",
  "futures-util",
  "governor",
  "histogram",
@@ -7247,7 +7247,7 @@ dependencies = [
  "rand 0.8.5",
  "rcgen",
  "rustls",
- "socket2 0.5.5",
+ "socket2 0.5.6",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
@@ -7401,7 +7401,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-metrics-tracker"
-version = "1.17.29"
+version = "1.17.30"
 dependencies = [
  "Inflector",
  "base64 0.21.7",
