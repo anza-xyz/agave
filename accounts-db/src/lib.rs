@@ -15,7 +15,7 @@ pub mod accounts_index;
 pub mod accounts_index_storage;
 pub mod accounts_partition;
 pub mod accounts_update_notifier_interface;
-pub mod active_stats;
+mod active_stats;
 pub mod ancestors;
 mod ancient_append_vecs;
 pub mod append_vec;
