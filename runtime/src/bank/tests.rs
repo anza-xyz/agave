@@ -10,7 +10,6 @@ use {
         accounts_background_service::{PrunedBanksRequestHandler, SendDroppedBankCallback},
         bank_client::BankClient,
         bank_forks::BankForks,
-        epoch_rewards_hasher::hash_rewards_into_partitions,
         genesis_utils::{
             self, activate_all_features, activate_feature, bootstrap_validator_stake_lamports,
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
@@ -33,7 +32,6 @@ use {
         },
         accounts_partition::{self, PartitionIndex, RentPayingAccountsByPartition},
         ancestors::Ancestors,
-        partitioned_rewards::TestPartitionedEpochRewards,
     },
     solana_inline_spl::token,
     solana_logger,
@@ -41,11 +39,7 @@ use {
         compute_budget::ComputeBudget,
         compute_budget_processor::{self, MAX_COMPUTE_UNIT_LIMIT},
         declare_process_instruction,
-        invoke_context::mock_process_instruction,
-        loaded_programs::{
-            LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch,
-            DELAY_VISIBILITY_SLOT_OFFSET,
-        },
+        loaded_programs::{LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch},
         prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         timings::ExecuteTimings,
     },
@@ -113,7 +107,6 @@ use {
         vote_state::{
             self, BlockTimestamp, Vote, VoteInit, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
-        vote_transaction,
     },
     std::{
         collections::{HashMap, HashSet},
@@ -159,7 +152,7 @@ impl VoteReward {
     }
 }
 
-fn new_bank_from_parent_with_bank_forks(
+pub(in crate::bank) fn new_bank_from_parent_with_bank_forks(
     bank_forks: &RwLock<BankForks>,
     parent: Arc<Bank>,
     collector_id: &Pubkey,
@@ -7144,7 +7137,7 @@ fn test_bank_load_program() {
     programdata_account.set_rent_epoch(1);
     bank.store_account_and_update_capitalization(&key1, &program_account);
     bank.store_account_and_update_capitalization(&programdata_key, &programdata_account);
-    let program = bank.load_program(&key1, false, bank.epoch());
+    let program = bank.load_program(&key1, false, bank.epoch()).unwrap();
     assert_matches!(program.program, LoadedProgramType::LegacyV1(_));
     assert_eq!(
         program.account_size,
@@ -7169,6 +7162,26 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         &bpf_loader_upgradeable::id(),
     );
     let upgrade_authority_keypair = Keypair::new();
+
+    // Invoke not yet deployed program
+    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
+    let invocation_message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let binding = mint_keypair.insecure_clone();
+    let transaction = Transaction::new(
+        &[&binding],
+        invocation_message.clone(),
+        bank.last_blockhash(),
+    );
+    assert_eq!(
+        bank.process_transaction(&transaction),
+        Err(TransactionError::ProgramAccountNotFound),
+    );
+    {
+        // Make sure it is not in the cache because the account owner is not a loader
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert!(slot_versions.is_empty());
+    }
 
     // Load program file
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
@@ -7217,6 +7230,28 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         &bpf_loader_upgradeable::id(),
     );
 
+    // Test buffer invocation
+    bank.store_account(&buffer_address, &buffer_account);
+    let instruction = Instruction::new_with_bytes(buffer_address, &[], Vec::new());
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
+    assert_eq!(
+        bank.process_transaction(&transaction),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidAccountData,
+        )),
+    );
+    {
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&buffer_address);
+        assert_eq!(slot_versions.len(), 1);
+        assert!(matches!(
+            slot_versions[0].program,
+            LoadedProgramType::Closed,
+        ));
+    }
+
     // Test successful deploy
     let payer_base_balance = LAMPORTS_PER_SOL;
     let deploy_fees = {
@@ -7234,7 +7269,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             &system_program::id(),
         ),
     );
-    bank.store_account(&buffer_address, &buffer_account);
     bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
     bank.store_account(&programdata_address, &AccountSharedData::default());
     let message = Message::new(
@@ -7299,30 +7333,15 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         assert_eq!(*elf.get(i).unwrap(), *byte);
     }
 
-    let loaded_program = bank.load_program(&program_keypair.pubkey(), false, bank.epoch());
+    // Advance the bank so that the program becomes effective
+    goto_end_of_slot(bank.clone());
+    let bank = bank_client
+        .advance_slot(1, bank_forks.as_ref(), &mint_keypair.pubkey())
+        .unwrap();
 
-    // Invoke deployed program
-    mock_process_instruction(
-        &bpf_loader_upgradeable::id(),
-        vec![0, 1],
-        &[],
-        vec![
-            (programdata_address, post_programdata_account),
-            (program_keypair.pubkey(), post_program_account),
-        ],
-        Vec::new(),
-        Ok(()),
-        solana_bpf_loader_program::Entrypoint::vm,
-        |invoke_context| {
-            invoke_context
-                .programs_modified_by_tx
-                .set_slot_for_tests(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
-            invoke_context
-                .programs_modified_by_tx
-                .replenish(program_keypair.pubkey(), loaded_program.clone());
-        },
-        |_invoke_context| {},
-    );
+    // Invoke the deployed program
+    let transaction = Transaction::new(&[&binding], invocation_message, bank.last_blockhash());
+    assert!(bank.process_transaction(&transaction).is_ok());
 
     // Test initialized program account
     bank.clear_signatures();
@@ -12126,501 +12145,6 @@ fn test_squash_timing_add_assign() {
     assert!(t0 == expected);
 }
 
-/// Helper function to create a bank that pays some rewards
-fn create_reward_bank(expected_num_delegations: usize) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
-    let validator_keypairs = (0..expected_num_delegations)
-        .map(|_| ValidatorVoteKeypairs::new_rand())
-        .collect::<Vec<_>>();
-
-    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
-        1_000_000_000,
-        &validator_keypairs,
-        vec![2_000_000_000; expected_num_delegations],
-    );
-
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    // Fill bank_forks with banks with votes landing in the next slot
-    // Create enough banks such that vote account will root
-    for validator_vote_keypairs in &validator_keypairs {
-        let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-        let mut vote_account = bank.get_account(&vote_id).unwrap();
-        // generate some rewards
-        let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-        for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-            if let Some(v) = vote_state.as_mut() {
-                vote_state::process_slot_vote_unchecked(v, i as u64)
-            }
-            let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
-            vote_state::to(&versioned, &mut vote_account).unwrap();
-            match versioned {
-                VoteStateVersions::Current(v) => {
-                    vote_state = Some(*v);
-                }
-                _ => panic!("Has to be of type Current"),
-            };
-        }
-        bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-    }
-    (
-        bank,
-        validator_keypairs
-            .iter()
-            .map(|k| k.vote_keypair.pubkey())
-            .collect(),
-        validator_keypairs
-            .iter()
-            .map(|k| k.stake_keypair.pubkey())
-            .collect(),
-    )
-}
-
-#[test]
-fn test_rewards_point_calculation() {
-    solana_logger::setup();
-
-    let expected_num_delegations = 100;
-    let (bank, _, _) = create_reward_bank(expected_num_delegations);
-
-    let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-    let rewards_metrics = RewardsMetrics::default();
-    let expected_rewards = 100_000_000_000;
-
-    let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-    let reward_calculate_param = bank.get_epoch_reward_calculate_param_info(&stakes);
-
-    let point_value = bank.calculate_reward_points_partitioned(
-        &reward_calculate_param,
-        expected_rewards,
-        &thread_pool,
-        &rewards_metrics,
-    );
-
-    assert!(point_value.is_some());
-    assert_eq!(point_value.as_ref().unwrap().rewards, expected_rewards);
-    assert_eq!(point_value.as_ref().unwrap().points, 8400000000000);
-}
-
-#[test]
-fn test_rewards_point_calculation_empty() {
-    solana_logger::setup();
-
-    // bank with no rewards to distribute
-    let (genesis_config, _mint_keypair) = create_genesis_config(sol_to_lamports(1.0));
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-    let rewards_metrics: RewardsMetrics = RewardsMetrics::default();
-    let expected_rewards = 100_000_000_000;
-    let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-    let reward_calculate_param = bank.get_epoch_reward_calculate_param_info(&stakes);
-
-    let point_value = bank.calculate_reward_points_partitioned(
-        &reward_calculate_param,
-        expected_rewards,
-        &thread_pool,
-        &rewards_metrics,
-    );
-
-    assert!(point_value.is_none());
-}
-
-/// Test that reward partition range panics when passing out of range partition index
-#[test]
-#[should_panic(expected = "index out of bounds: the len is 10 but the index is 15")]
-fn test_get_stake_rewards_partition_range_panic() {
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-
-    // simulate 40K - 1 rewards, the expected num of credit blocks should be 10.
-    let expected_num = 40959;
-    let stake_rewards = (0..expected_num)
-        .map(|_| StakeReward::new_random())
-        .collect::<Vec<_>>();
-
-    let stake_rewards_bucket =
-        hash_rewards_into_partitions(stake_rewards, &Hash::new(&[1; 32]), 10);
-
-    bank.set_epoch_reward_status_active(stake_rewards_bucket.clone());
-
-    // This call should panic, i.e. 15 is out of the num_credit_blocks
-    let _range = &stake_rewards_bucket[15];
-}
-
-#[test]
-/// Test rewards computation and partitioned rewards distribution at the epoch boundary
-fn test_rewards_computation() {
-    solana_logger::setup();
-
-    let expected_num_delegations = 100;
-    let bank = create_reward_bank(expected_num_delegations).0;
-
-    // Calculate rewards
-    let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-    let mut rewards_metrics = RewardsMetrics::default();
-    let expected_rewards = 100_000_000_000;
-
-    let calculated_rewards = bank.calculate_validator_rewards(
-        1,
-        expected_rewards,
-        null_tracer(),
-        &thread_pool,
-        &mut rewards_metrics,
-    );
-
-    let vote_rewards = &calculated_rewards.as_ref().unwrap().0;
-    let stake_rewards = &calculated_rewards.as_ref().unwrap().1;
-
-    let total_vote_rewards: u64 = vote_rewards
-        .rewards
-        .iter()
-        .map(|reward| reward.1.lamports)
-        .sum::<i64>() as u64;
-
-    // assert that total rewards matches the sum of vote rewards and stake rewards
-    assert_eq!(
-        stake_rewards.total_stake_rewards_lamports + total_vote_rewards,
-        expected_rewards
-    );
-
-    // assert that number of stake rewards matches
-    assert_eq!(stake_rewards.stake_rewards.len(), expected_num_delegations);
-}
-
-/// Test rewards computation and partitioned rewards distribution at the epoch boundary (one reward distribution block)
-#[test]
-fn test_rewards_computation_and_partitioned_distribution_one_block() {
-    solana_logger::setup();
-
-    // setup the expected number of stake delegations
-    let expected_num_delegations = 100;
-
-    let validator_keypairs = (0..expected_num_delegations)
-        .map(|_| ValidatorVoteKeypairs::new_rand())
-        .collect::<Vec<_>>();
-
-    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
-        1_000_000_000,
-        &validator_keypairs,
-        vec![2_000_000_000; expected_num_delegations],
-    );
-
-    let bank0 = Bank::new_for_tests(&genesis_config);
-    let num_slots_in_epoch = bank0.get_slots_in_epoch(bank0.epoch());
-    assert_eq!(num_slots_in_epoch, 32);
-
-    let mut previous_bank = Arc::new(Bank::new_from_parent(
-        Arc::new(bank0),
-        &Pubkey::default(),
-        1,
-    ));
-
-    // simulate block progress
-    for slot in 2..=num_slots_in_epoch + 2 {
-        let pre_cap = previous_bank.capitalization();
-        let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
-        let post_cap = curr_bank.capitalization();
-
-        // Fill banks with banks with votes landing in the next slot
-        // Create enough banks such that vote account will root
-        for validator_vote_keypairs in validator_keypairs.iter() {
-            let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-            let mut vote_account = curr_bank.get_account(&vote_id).unwrap();
-            // generate some rewards
-            let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
-                }
-                let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
-                vote_state::to(&versioned, &mut vote_account).unwrap();
-                match versioned {
-                    VoteStateVersions::Current(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type Current"),
-                };
-            }
-            curr_bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-        }
-
-        if slot == num_slots_in_epoch {
-            // This is the first block of epoch 1. Reward computation should happen in this block.
-            // assert reward compute status activated at epoch boundary
-            assert_matches!(
-                curr_bank.get_reward_interval(),
-                RewardInterval::InsideInterval
-            );
-
-            // cap should increase because of new epoch rewards
-            assert!(post_cap > pre_cap);
-        } else if slot == num_slots_in_epoch + 1 || slot == num_slots_in_epoch + 2 {
-            // 1. when curr_slot == num_slots_in_epoch + 1, the 2nd block of epoch 1, reward distribution should happen in this block.
-            // however, all stake rewards are paid at the this block therefore reward_status should have transitioned to inactive. And since
-            // rewards are transferred from epoch_rewards sysvar to stake accounts. The cap should stay the same.
-            // 2. when curr_slot == num_slots_in_epoch+2, the 3rd block of epoch 1. reward distribution should have already completed. Therefore,
-            // reward_status should stay inactive and cap should stay the same.
-            assert_matches!(
-                curr_bank.get_reward_interval(),
-                RewardInterval::OutsideInterval
-            );
-
-            assert_eq!(post_cap, pre_cap);
-        } else {
-            // slot is not in rewards, cap should not change
-            assert_eq!(post_cap, pre_cap);
-        }
-        previous_bank = Arc::new(curr_bank);
-    }
-}
-
-/// Test rewards computation and partitioned rewards distribution at the epoch boundary (two reward distribution blocks)
-#[test]
-fn test_rewards_computation_and_partitioned_distribution_two_blocks() {
-    solana_logger::setup();
-
-    // Set up the expected number of stake delegations 100
-    let expected_num_delegations = 100;
-
-    let validator_keypairs = (0..expected_num_delegations)
-        .map(|_| ValidatorVoteKeypairs::new_rand())
-        .collect::<Vec<_>>();
-
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = create_genesis_config_with_vote_accounts(
-        1_000_000_000,
-        &validator_keypairs,
-        vec![2_000_000_000; expected_num_delegations],
-    );
-    genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
-
-    // Config stake reward distribution to be 50 per block
-    // We will need two blocks for reward distribution. And we can assert that the expected bank
-    // capital changes before/during/after reward distribution.
-    let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-    accounts_db_config.test_partitioned_epoch_rewards =
-        TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-            reward_calculation_num_blocks: 1,
-            stake_account_stores_per_block: 50,
-        };
-
-    let bank0 = Bank::new_with_paths(
-        &genesis_config,
-        Arc::new(RuntimeConfig::default()),
-        Vec::new(),
-        None,
-        None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
-        false,
-        Some(accounts_db_config),
-        None,
-        None,
-        Arc::default(),
-    );
-
-    let num_slots_in_epoch = bank0.get_slots_in_epoch(bank0.epoch());
-    assert_eq!(num_slots_in_epoch, 32);
-
-    let mut previous_bank = Arc::new(Bank::new_from_parent(
-        Arc::new(bank0),
-        &Pubkey::default(),
-        1,
-    ));
-
-    // simulate block progress
-    for slot in 2..=num_slots_in_epoch + 3 {
-        let pre_cap = previous_bank.capitalization();
-        let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
-        let post_cap = curr_bank.capitalization();
-
-        // Fill banks with banks with votes landing in the next slot
-        // Create enough banks such that vote account will root
-        for validator_vote_keypairs in validator_keypairs.iter() {
-            let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-            let mut vote_account = curr_bank.get_account(&vote_id).unwrap();
-            // generate some rewards
-            let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
-                }
-                let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
-                vote_state::to(&versioned, &mut vote_account).unwrap();
-                match versioned {
-                    VoteStateVersions::Current(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type Current"),
-                };
-            }
-            curr_bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-        }
-
-        if slot == num_slots_in_epoch {
-            // This is the first block of epoch 1. Reward computation should happen in this block.
-            // assert reward compute status activated at epoch boundary
-            assert_matches!(
-                curr_bank.get_reward_interval(),
-                RewardInterval::InsideInterval
-            );
-
-            // cap should increase because of new epoch rewards
-            assert!(post_cap > pre_cap);
-        } else if slot == num_slots_in_epoch + 1 {
-            // When curr_slot == num_slots_in_epoch + 1, the 2nd block of epoch 1, reward distribution should happen in this block.
-            // however, since rewards are transferred from epoch_rewards sysvar to stake accounts. The cap should stay the same.
-            assert_matches!(
-                curr_bank.get_reward_interval(),
-                RewardInterval::InsideInterval
-            );
-
-            assert_eq!(post_cap, pre_cap);
-        } else if slot == num_slots_in_epoch + 2 || slot == num_slots_in_epoch + 3 {
-            // 1. when curr_slot == num_slots_in_epoch + 2, the 3nd block of epoch 1, reward distribution should happen in this block.
-            // however, all stake rewards are paid at the this block therefore reward_status should have transitioned to inactive. And since
-            // rewards are transferred from epoch_rewards sysvar to stake accounts. The cap should stay the same.
-            // 2. when curr_slot == num_slots_in_epoch+2, the 3rd block of epoch 1. reward distribution should have already completed. Therefore,
-            // reward_status should stay inactive and cap should stay the same.
-            assert_matches!(
-                curr_bank.get_reward_interval(),
-                RewardInterval::OutsideInterval
-            );
-
-            assert_eq!(post_cap, pre_cap);
-        } else {
-            // slot is not in rewards, cap should not change
-            assert_eq!(post_cap, pre_cap);
-        }
-        previous_bank = Arc::new(curr_bank);
-    }
-}
-
-/// Test that program execution that involves stake accounts should fail during reward period.
-/// Any programs, which result in stake account changes, will throw `ProgramExecutionTemporarilyRestricted` error when
-/// in reward period.
-#[test]
-fn test_program_execution_restricted_for_stake_account_in_reward_period() {
-    use solana_sdk::transaction::TransactionError::ProgramExecutionTemporarilyRestricted;
-
-    let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
-    let validator_keypairs = vec![&validator_vote_keypairs];
-    let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
-        1_000_000_000,
-        &validator_keypairs,
-        vec![1_000_000_000; 1],
-    );
-
-    let node_key = &validator_keypairs[0].node_keypair;
-    let stake_key = &validator_keypairs[0].stake_keypair;
-
-    let (mut previous_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let num_slots_in_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
-    assert_eq!(num_slots_in_epoch, 32);
-
-    for slot in 1..=num_slots_in_epoch + 2 {
-        let bank = new_bank_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            previous_bank.clone(),
-            &Pubkey::default(),
-            slot,
-        );
-
-        // Fill bank_forks with banks with votes landing in the next slot
-        // So that rewards will be paid out at the epoch boundary, i.e. slot = 32
-        let vote = vote_transaction::new_vote_transaction(
-            vec![slot - 1],
-            previous_bank.hash(),
-            previous_bank.last_blockhash(),
-            &validator_vote_keypairs.node_keypair,
-            &validator_vote_keypairs.vote_keypair,
-            &validator_vote_keypairs.vote_keypair,
-            None,
-        );
-        bank.process_transaction(&vote).unwrap();
-
-        // Insert a transfer transaction from node account to stake account
-        let tx =
-            system_transaction::transfer(node_key, &stake_key.pubkey(), 1, bank.last_blockhash());
-        let r = bank.process_transaction(&tx);
-
-        if slot == num_slots_in_epoch {
-            // When the bank is at the beginning of the new epoch, i.e. slot 32,
-            // ProgramExecutionTemporarilyRestricted should be thrown for the transfer transaction.
-            assert_eq!(
-                r,
-                Err(ProgramExecutionTemporarilyRestricted { account_index: 1 })
-            );
-        } else {
-            // When the bank is outside of reward interval, the transfer transaction should not be affected and will succeed.
-            assert!(r.is_ok());
-        }
-
-        // Push a dummy blockhash, so that the latest_blockhash() for the transfer transaction in each
-        // iteration are different. Otherwise, all those transactions will be the same, and will not be
-        // executed by the bank except the first one.
-        bank.register_unique_recent_blockhash_for_test();
-        previous_bank = bank;
-    }
-}
-
-#[test]
-fn test_store_vote_accounts_partitioned() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    let expected_vote_rewards_num = 100;
-
-    let vote_rewards = (0..expected_vote_rewards_num)
-        .map(|_| Some((Pubkey::new_unique(), VoteReward::new_random())))
-        .collect::<Vec<_>>();
-
-    let mut vote_rewards_account = VoteRewardsAccounts::default();
-    vote_rewards.iter().for_each(|e| {
-        if let Some(p) = &e {
-            let info = RewardInfo {
-                reward_type: RewardType::Voting,
-                lamports: p.1.vote_rewards as i64,
-                post_balance: p.1.vote_rewards,
-                commission: Some(p.1.commission),
-            };
-            vote_rewards_account.rewards.push((p.0, info));
-            vote_rewards_account
-                .accounts_to_store
-                .push(e.as_ref().map(|p| p.1.vote_account.clone()));
-        }
-    });
-
-    let metrics = RewardsMetrics::default();
-
-    let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards_account, &metrics);
-    assert_eq!(expected_vote_rewards_num, stored_vote_accounts.len());
-
-    // load accounts to make sure they were stored correctly
-    vote_rewards.iter().for_each(|e| {
-        if let Some(p) = &e {
-            let (k, account) = (p.0, p.1.vote_account.clone());
-            let loaded_account = bank.load_slow_with_fixed_root(&bank.ancestors, &k).unwrap();
-            assert!(accounts_equal(&loaded_account.0, &account));
-        }
-    });
-}
-
-#[test]
-fn test_store_vote_accounts_partitioned_empty() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    let expected = 0;
-    let vote_rewards = VoteRewardsAccounts::default();
-    let metrics = RewardsMetrics::default();
-
-    let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
-    assert_eq!(expected, stored_vote_accounts.len());
-}
-
 #[test]
 fn test_system_instruction_allocate() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(sol_to_lamports(1.0));
@@ -12944,94 +12468,6 @@ fn test_calc_vote_accounts_to_store_normal() {
             }
         }
     }
-}
-
-#[test]
-fn test_calculate_stake_vote_rewards() {
-    solana_logger::setup();
-
-    let expected_num_delegations = 1;
-    let (bank, voters, stakers) = create_reward_bank(expected_num_delegations);
-
-    let vote_pubkey = voters.first().unwrap();
-    let mut vote_account = bank
-        .load_slow_with_fixed_root(&bank.ancestors, vote_pubkey)
-        .unwrap()
-        .0;
-
-    let stake_pubkey = stakers.first().unwrap();
-    let stake_account = bank
-        .load_slow_with_fixed_root(&bank.ancestors, stake_pubkey)
-        .unwrap()
-        .0;
-
-    let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-    let mut rewards_metrics = RewardsMetrics::default();
-
-    let point_value = PointValue {
-        rewards: 100000, // lamports to split
-        points: 1000,    // over these points
-    };
-    let tracer = |_event: &RewardCalculationEvent| {};
-    let reward_calc_tracer = Some(tracer);
-    let rewarded_epoch = bank.epoch();
-    let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-    let reward_calculate_param = bank.get_epoch_reward_calculate_param_info(&stakes);
-    let (vote_rewards_accounts, stake_reward_calculation) = bank.calculate_stake_vote_rewards(
-        &reward_calculate_param,
-        rewarded_epoch,
-        point_value,
-        &thread_pool,
-        reward_calc_tracer,
-        &mut rewards_metrics,
-    );
-
-    assert_eq!(
-        vote_rewards_accounts.rewards.len(),
-        vote_rewards_accounts.accounts_to_store.len()
-    );
-    assert_eq!(vote_rewards_accounts.rewards.len(), 1);
-    let rewards = &vote_rewards_accounts.rewards[0];
-    let account = &vote_rewards_accounts.accounts_to_store[0];
-    let vote_rewards = 0;
-    let commision = 0;
-    _ = vote_account.checked_add_lamports(vote_rewards);
-    assert_eq!(
-        account.as_ref().unwrap().lamports(),
-        vote_account.lamports()
-    );
-    assert!(accounts_equal(account.as_ref().unwrap(), &vote_account));
-    assert_eq!(
-        rewards.1,
-        RewardInfo {
-            reward_type: RewardType::Voting,
-            lamports: vote_rewards as i64,
-            post_balance: vote_account.lamports(),
-            commission: Some(commision),
-        }
-    );
-    assert_eq!(&rewards.0, vote_pubkey);
-
-    assert_eq!(stake_reward_calculation.stake_rewards.len(), 1);
-    assert_eq!(
-        &stake_reward_calculation.stake_rewards[0].stake_pubkey,
-        stake_pubkey
-    );
-
-    let original_stake_lamport = stake_account.lamports();
-    let rewards = stake_reward_calculation.stake_rewards[0]
-        .stake_reward_info
-        .lamports;
-    let expected_reward_info = RewardInfo {
-        reward_type: RewardType::Staking,
-        lamports: rewards,
-        post_balance: original_stake_lamport + rewards as u64,
-        commission: Some(commision),
-    };
-    assert_eq!(
-        stake_reward_calculation.stake_rewards[0].stake_reward_info,
-        expected_reward_info,
-    );
 }
 
 #[test]

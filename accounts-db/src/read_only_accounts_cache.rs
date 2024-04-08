@@ -3,7 +3,7 @@
 use {
     dashmap::{mapref::entry::Entry, DashMap},
     index_list::{Index, IndexList},
-    solana_measure::measure_us,
+    solana_measure::{measure::Measure, measure_us},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
@@ -36,6 +36,8 @@ struct ReadOnlyCacheStats {
     misses: AtomicU64,
     evicts: AtomicU64,
     load_us: AtomicU64,
+    store_us: AtomicU64,
+    evict_us: AtomicU64,
 }
 
 impl ReadOnlyCacheStats {
@@ -44,15 +46,19 @@ impl ReadOnlyCacheStats {
         self.misses.store(0, Ordering::Relaxed);
         self.evicts.store(0, Ordering::Relaxed);
         self.load_us.store(0, Ordering::Relaxed);
+        self.store_us.store(0, Ordering::Relaxed);
+        self.evict_us.store(0, Ordering::Relaxed);
     }
 
-    fn get_and_reset_stats(&self) -> (u64, u64, u64, u64) {
+    fn get_and_reset_stats(&self) -> (u64, u64, u64, u64, u64, u64) {
         let hits = self.hits.swap(0, Ordering::Relaxed);
         let misses = self.misses.swap(0, Ordering::Relaxed);
         let evicts = self.evicts.swap(0, Ordering::Relaxed);
         let load_us = self.load_us.swap(0, Ordering::Relaxed);
+        let store_us = self.store_us.swap(0, Ordering::Relaxed);
+        let evict_us = self.evict_us.swap(0, Ordering::Relaxed);
 
-        (hits, misses, evicts, load_us)
+        (hits, misses, evicts, load_us, store_us, evict_us)
     }
 }
 
@@ -136,6 +142,7 @@ impl ReadOnlyAccountsCache {
     }
 
     pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
+        let measure_store = Measure::start("");
         self.highest_slot_stored.fetch_max(slot, Ordering::Release);
         let key = (pubkey, slot);
         let account_size = self.account_size(&account);
@@ -162,14 +169,19 @@ impl ReadOnlyAccountsCache {
         };
         // Evict entries from the front of the queue.
         let mut num_evicts = 0;
-        while self.data_size.load(Ordering::Relaxed) > self.max_data_size {
-            let Some(&(pubkey, slot)) = self.queue.lock().unwrap().get_first() else {
-                break;
-            };
-            num_evicts += 1;
-            self.remove(pubkey, slot);
-        }
+        let (_, evict_us) = measure_us!({
+            while self.data_size.load(Ordering::Relaxed) > self.max_data_size {
+                let Some(&(pubkey, slot)) = self.queue.lock().unwrap().get_first() else {
+                    break;
+                };
+                num_evicts += 1;
+                self.remove(pubkey, slot);
+            }
+        });
+        let store_us = measure_store.end_as_us();
         self.stats.evicts.fetch_add(num_evicts, Ordering::Relaxed);
+        self.stats.evict_us.fetch_add(evict_us, Ordering::Relaxed);
+        self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
     }
 
     /// true if any pubkeys could have ever been stored into the cache at `slot`
@@ -208,7 +220,7 @@ impl ReadOnlyAccountsCache {
         self.data_size.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn get_and_reset_stats(&self) -> (u64, u64, u64, u64) {
+    pub(crate) fn get_and_reset_stats(&self) -> (u64, u64, u64, u64, u64, u64) {
         self.stats.get_and_reset_stats()
     }
 }

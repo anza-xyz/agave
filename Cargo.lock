@@ -1232,9 +1232,9 @@ checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "chrono"
-version = "0.4.35"
+version = "0.4.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eaf5903dcbc0a39312feb77df2ff4c76387d591b9fc7b04a238dcf8bb62639a"
+checksum = "8a0d04d43504c61aa6c7531f1871dd0d418d91130162063b789da00fd7057a5e"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -2475,9 +2475,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.3.25"
+version = "0.3.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fbd2820c5e49886948654ab546d0688ff24530286bdcf8fca3cefb16d4618eb"
+checksum = "81fe527a889e1532da5c525686d96d4c2e74cdd345badf8dfef9f6b39dd5f5e8"
 dependencies = [
  "bytes",
  "fnv",
@@ -6660,7 +6660,6 @@ dependencies = [
  "enum-iterator",
  "itertools",
  "libc",
- "libsecp256k1",
  "log",
  "num-derive",
  "num-traits",
@@ -7246,9 +7245,11 @@ dependencies = [
  "rand 0.8.5",
  "rustls",
  "solana-logger",
+ "solana-measure",
  "solana-metrics",
  "solana-perf",
  "solana-sdk",
+ "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
  "x509-parser",
@@ -7260,9 +7261,12 @@ version = "2.0.0"
 dependencies = [
  "bincode",
  "itertools",
+ "libsecp256k1",
  "log",
  "percentage",
- "rustc_version",
+ "rand 0.8.5",
+ "rustc_version 0.4.0",
+ "serde",
  "solana-bpf-loader-program",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -7416,6 +7420,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-transaction-metrics-tracker"
+version = "2.0.0"
+dependencies = [
+ "Inflector",
+ "base64 0.22.0",
+ "bincode",
+ "lazy_static",
+ "log",
+ "rand 0.8.5",
+ "solana-perf",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-transaction-status"
 version = "2.0.0"
 dependencies = [
@@ -7492,7 +7510,9 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "2.0.0"
 dependencies = [
+ "assert_matches",
  "solana-sdk",
+ "static_assertions",
 ]
 
 [[package]]
@@ -7501,6 +7521,7 @@ version = "2.0.0"
 dependencies = [
  "assert_matches",
  "crossbeam-channel",
+ "dashmap",
  "derivative",
  "log",
  "solana-ledger",
@@ -7588,7 +7609,8 @@ dependencies = [
  "prost-types",
  "protobuf-src",
  "rand 0.8.5",
- "rustc_version",
+ "rayon",
+ "rustc_version 0.4.0",
  "serial_test",
  "solana-accounts-db",
  "solana-entry",
@@ -7596,6 +7618,7 @@ dependencies = [
  "solana-ledger",
  "solana-logger",
  "solana-program",
+ "solana-program-runtime",
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",

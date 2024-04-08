@@ -1015,9 +1015,9 @@ checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "chrono"
-version = "0.4.34"
+version = "0.4.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bc015644b92d5890fab7489e49d21f879d5c990186827d42ec511919404f38b"
+checksum = "8a0d04d43504c61aa6c7531f1871dd0d418d91130162063b789da00fd7057a5e"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -2001,9 +2001,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.3.24"
+version = "0.3.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb2c4422095b67ee78da96fbb51a4cc413b3b25883c7717ff7ca1ab31022c9c9"
+checksum = "81fe527a889e1532da5c525686d96d4c2e74cdd345badf8dfef9f6b39dd5f5e8"
 dependencies = [
  "bytes",
  "fnv",
@@ -5446,7 +5446,6 @@ dependencies = [
  "percentage",
  "rand 0.8.5",
  "rustc_version",
- "serde",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-measure",
@@ -6333,9 +6332,11 @@ dependencies = [
  "quinn-proto",
  "rand 0.8.5",
  "rustls",
+ "solana-measure",
  "solana-metrics",
  "solana-perf",
  "solana-sdk",
+ "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
  "x509-parser",
@@ -6349,6 +6350,7 @@ dependencies = [
  "log",
  "percentage",
  "rustc_version",
+ "serde",
  "solana-bpf-loader-program",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -6438,6 +6440,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-transaction-metrics-tracker"
+version = "2.0.0"
+dependencies = [
+ "Inflector",
+ "base64 0.22.0",
+ "bincode",
+ "lazy_static",
+ "log",
+ "rand 0.8.5",
+ "solana-perf",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-transaction-status"
 version = "2.0.0"
 dependencies = [
@@ -6511,7 +6527,9 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "2.0.0"
 dependencies = [
+ "assert_matches",
  "solana-sdk",
+ "static_assertions",
 ]
 
 [[package]]
@@ -6520,6 +6538,7 @@ version = "2.0.0"
 dependencies = [
  "assert_matches",
  "crossbeam-channel",
+ "dashmap",
  "derivative",
  "log",
  "solana-ledger",
@@ -6591,11 +6610,14 @@ dependencies = [
  "prost-build",
  "prost-types",
  "protobuf-src",
+ "rayon",
  "rustc_version",
+ "solana-entry",
  "solana-gossip",
  "solana-ledger",
  "solana-logger",
  "solana-program",
+ "solana-program-runtime",
  "solana-runtime",
  "solana-sdk",
  "solana-vote-program",
@@ -7162,18 +7184,18 @@ checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
 
 [[package]]
 name = "thiserror"
-version = "1.0.57"
+version = "1.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e45bcbe8ed29775f228095caf2cd67af7a4ccf756ebff23a306bf3e8b47b24b"
+checksum = "03468839009160513471e86a034bb2c5c0e4baae3b43f79ffc55c4a5427b3297"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.57"
+version = "1.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a953cb265bef375dae3de6663da4d3804eee9682ea80d8e2542529b73c531c81"
+checksum = "c61f3ba182994efc43764a46c018c347bc492c79f024e705f46567b418f6d4f7"
 dependencies = [
  "proc-macro2",
  "quote",
