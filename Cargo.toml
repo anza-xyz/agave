@@ -299,7 +299,7 @@ sha3 = "0.10.4"
 signal-hook = "0.3.17"
 siphasher = "0.3.11"
 smpl_jwt = "0.7.1"
-socket2 = "0.5.4"
+socket2 = { version= "0.5.4", features=["all"]}
 soketto = "0.7"
 solana_rbpf = "=0.8.0"
 solana-account-decoder = { path = "account-decoder", version = "=1.17.30" }
