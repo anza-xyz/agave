@@ -230,7 +230,7 @@ Steps of `load_and_execute_sanitized_transactions`
 4. Prepare the results of loading and executing transactions.
 
    This includes the following steps for each transactions
-   1. Dump flattened result to info log for an account which pubkey is
+   1. Dump flattened result to info log for an account whose pubkey is
       in the transaction's debug keys.
    2. Collect logs of the transaction execution for each executed
       transaction, unless Bank's `transaction_log_collector_config` is
