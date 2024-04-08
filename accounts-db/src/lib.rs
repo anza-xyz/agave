@@ -17,7 +17,7 @@ pub mod accounts_partition;
 pub mod accounts_update_notifier_interface;
 pub mod active_stats;
 pub mod ancestors;
-pub mod ancient_append_vecs;
+mod ancient_append_vecs;
 pub mod append_vec;
 pub mod blockhash_queue;
 mod bucket_map_holder;
