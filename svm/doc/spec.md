@@ -142,8 +142,8 @@ interactions.
 On a high level the control flow of SVM consists of loading program
 accounts, checking and verifying the loaded accounts, creating
 invocation context and invoking RBPF on programs implementing the
-instructions of a transaction. The SVM needs to have access to account
-database, sysvar cache via traits implemented for the corresponding
+instructions of a transaction. The SVM needs to have access to an account
+database, and a sysvar cache via traits implemented for the corresponding
 objects passed to it. The results of transaction execution are
 consumed by bank in Solana Validator use case. However, bank structure
 should not be part of the SVM.
