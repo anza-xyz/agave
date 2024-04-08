@@ -8,7 +8,7 @@ components responsible for transaction execution are designated as
 Solana Virtual Machine (SVM). SVM packaged as a stand-alone library
 can be used in applications outside the Solana Validator.
 
-This document represents specification of the SVM. It covers the API
+This document represents the SVM specification. It covers the API
 of using SVM in projects unrelated to Solana Validator and the
 internal workings of the SVM, including the descriptions of the inner
 data flow, data structures, and algorithms involved in the execution
