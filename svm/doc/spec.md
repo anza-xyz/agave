@@ -135,7 +135,7 @@ instantiating `TransactionBatchProcessor` and calling its method
 
 # Functional Model
 
-In this section we describe the functionality (logic) of the SVM in
+In this section, we describe the functionality (logic) of the SVM in
 terms of its components, relationships among components, and their
 interactions.
 
