@@ -75,7 +75,7 @@ receives results of transaction execution from SVM.
 
 ## Interfaces
 
-In this section we describe the API of using the SVM both in Solana
+In this section, we describe the API of using the SVM both in Solana
 Validator and in third-party applications.
 
 The interface to SVM is represented by the
