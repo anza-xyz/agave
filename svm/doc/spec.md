@@ -67,7 +67,7 @@ We envision the following applications for SVM
 In this section, SVM is represented as a single entity. We describe its
 interfaces to the parts of the Solana Validator external to SVM.
 
-In the context of Solana Validator the main entity external to SVM is
+In the context of Solana Validator, the main entity external to SVM is
 bank. It creates an SVM, submits transactions for execution and
 receives results of transaction execution from SVM.
 
