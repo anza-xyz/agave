@@ -184,8 +184,8 @@ Steps of `load_and_execute_sanitized_transactions`
       and a `Option<NonceFull>`.
 
 3. Execute each loaded transactions
-   1. Compute the sum of transaction account balances. This sum is
-      invariant of the transaction execution.
+   1. Compute the sum of transaction accounts' balances. This sum is
+      invariant in the transaction execution.
    2. Obtain rent state of each account before the transaction
       execution. This is later used in verifying the account state
       changes (step #7).
