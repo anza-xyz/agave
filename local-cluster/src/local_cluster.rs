@@ -1031,5 +1031,6 @@ impl Cluster for LocalCluster {
 impl Drop for LocalCluster {
     fn drop(&mut self) {
         self.close();
+        solana_net_utils::clear_used_ports();
     }
 }

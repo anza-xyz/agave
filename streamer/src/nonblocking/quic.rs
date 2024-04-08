@@ -12,9 +12,10 @@ use {
     },
     bytes::Bytes,
     crossbeam_channel::Sender,
+    futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
-    quinn::{Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
+    quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
     quinn_proto::VarIntBoundsExceeded,
     rand::{thread_rng, Rng},
     solana_measure::measure::Measure,
@@ -35,11 +36,13 @@ use {
     std::{
         iter::repeat_with,
         net::{IpAddr, SocketAddr, UdpSocket},
+        pin::Pin,
         // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
+        task::Poll,
         time::{Duration, Instant},
     },
     tokio::{
@@ -51,6 +54,7 @@ use {
         // but if we do, the scope of the RwLock must always be a subset of the async Mutex
         // (i.e. lock order is always async Mutex -> RwLock). Also, be careful not to
         // introduce any other awaits while holding the RwLock.
+        select,
         sync::{Mutex, MutexGuard},
         task::JoinHandle,
         time::timeout,
@@ -125,20 +129,55 @@ pub fn spawn_server(
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
 ) -> Result<(Endpoint, Arc<StreamStats>, JoinHandle<()>), QuicServerError> {
-    info!("Start {name} quic server on {sock:?}");
+    spawn_server_multi(
+        name,
+        vec![sock],
+        keypair,
+        packet_sender,
+        exit,
+        max_connections_per_peer,
+        staked_nodes,
+        max_staked_connections,
+        max_unstaked_connections,
+        wait_for_chunk_timeout,
+        coalesce,
+    )
+    .map(|(mut endpoints, stats, handle)| (endpoints.remove(0), stats, handle))
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn spawn_server_multi(
+    name: &'static str,
+    sockets: Vec<UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    exit: Arc<AtomicBool>,
+    max_connections_per_peer: usize,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    max_staked_connections: usize,
+    max_unstaked_connections: usize,
+    wait_for_chunk_timeout: Duration,
+    coalesce: Duration,
+) -> Result<(Vec<Endpoint>, Arc<StreamStats>, JoinHandle<()>), QuicServerError> {
+    info!("Start {name} quic server on {sockets:?}");
     let (config, _cert) = configure_server(keypair)?;
 
-    let endpoint = Endpoint::new(
-        EndpointConfig::default(),
-        Some(config),
-        sock,
-        Arc::new(TokioRuntime),
-    )
-    .map_err(QuicServerError::EndpointFailed)?;
+    let endpoints = sockets
+        .into_iter()
+        .map(|sock| {
+            Endpoint::new(
+                EndpointConfig::default(),
+                Some(config.clone()),
+                sock,
+                Arc::new(TokioRuntime),
+            )
+            .map_err(QuicServerError::EndpointFailed)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let stats = Arc::<StreamStats>::default();
     let handle = tokio::spawn(run_server(
         name,
-        endpoint.clone(),
+        endpoints.clone(),
         packet_sender,
         exit,
         max_connections_per_peer,
@@ -149,13 +188,13 @@ pub fn spawn_server(
         wait_for_chunk_timeout,
         coalesce,
     ));
-    Ok((endpoint, stats, handle))
+    Ok((endpoints, stats, handle))
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn run_server(
     name: &'static str,
-    incoming: Endpoint,
+    incoming: Vec<Endpoint>,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     max_connections_per_peer: usize,
@@ -185,8 +224,37 @@ async fn run_server(
         stats.clone(),
         coalesce,
     ));
+
+    let mut accepts = incoming
+        .iter()
+        .enumerate()
+        .map(|(i, incoming)| {
+            Box::pin(EndpointAccept {
+                accept: incoming.accept(),
+                endpoint: i,
+            })
+        })
+        .collect::<FuturesUnordered<_>>();
     while !exit.load(Ordering::Relaxed) {
-        let timeout_connection = timeout(WAIT_FOR_CONNECTION_TIMEOUT, incoming.accept()).await;
+        let timeout_connection = select! {
+            ready = accepts.next() => {
+                if let Some((connecting, i)) = ready {
+                    accepts.push(
+                        Box::pin(EndpointAccept {
+                            accept: incoming[i].accept(),
+                            endpoint: i,
+                        }
+                    ));
+                    Ok(connecting)
+                } else {
+                    // we can't really get here - we never poll an empty FuturesUnordered
+                    continue
+                }
+            }
+            _ = tokio::time::sleep(WAIT_FOR_CONNECTION_TIMEOUT) => {
+                Err(())
+            }
+        };
 
         if last_datapoint.elapsed().as_secs() >= 5 {
             stats.report(name);
@@ -1221,6 +1289,25 @@ impl ConnectionTable {
     }
 }
 
+struct EndpointAccept<'a> {
+    endpoint: usize,
+    accept: Accept<'a>,
+}
+
+impl<'a> Future for EndpointAccept<'a> {
+    type Output = (Option<quinn::Connecting>, usize);
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
+        let i = self.endpoint;
+        // Safety:
+        // self is pinned and accept is a field so it can't get moved out. See safety docs of
+        // map_unchecked_mut.
+        unsafe { self.map_unchecked_mut(|this| &mut this.accept) }
+            .poll(cx)
+            .map(|r| (r, i))
+    }
+}
+
 #[cfg(test)]
 pub mod test {
     use {
@@ -1234,6 +1321,10 @@ pub mod test {
         async_channel::unbounded as async_unbounded,
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ClientConfig, IdleTimeout, TransportConfig},
+        serial_test::serial,
+        solana_net_utils::{
+            bind_more_with_config, bind_to_with_config, bind_with_any_port, SocketConfig,
+        },
         solana_sdk::{
             net::DEFAULT_TPU_COALESCE,
             quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
@@ -1289,6 +1380,26 @@ pub mod test {
         config
     }
 
+    fn make_quic_sockets() -> Vec<UdpSocket> {
+        const NUM_QUIC_SOCKETS: usize = 10;
+
+        // find an available port.
+        let port = {
+            let t = bind_with_any_port("127.0.0.1".parse().unwrap()).unwrap();
+            t.local_addr().unwrap().port()
+        };
+
+        let mut config = SocketConfig {
+            reuseaddr: true,
+            reuseport: true,
+            first_reuse: true,
+        };
+        let socket =
+            bind_to_with_config("127.0.0.1".parse().unwrap(), port, config.clone()).unwrap();
+        config.first_reuse = false;
+        bind_more_with_config(socket, NUM_QUIC_SOCKETS - 1, config).unwrap()
+    }
+
     fn setup_quic_server(
         option_staked_nodes: Option<StakedNodes>,
         max_connections_per_peer: usize,
@@ -1299,15 +1410,15 @@ pub mod test {
         SocketAddr,
         Arc<StreamStats>,
     ) {
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let sockets = make_quic_sockets();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
-        let server_address = s.local_addr().unwrap();
+        let server_address = sockets[0].local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
-        let (_, stats, t) = spawn_server(
+        let (_, stats, t) = spawn_server_multi(
             "quic_streamer_test",
-            s,
+            sockets,
             &keypair,
             sender,
             exit.clone(),
@@ -1490,13 +1601,16 @@ pub mod test {
         }
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_exit() {
         let (t, exit, _receiver, _server_address, _stats) = setup_quic_server(None, 1);
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_timeout() {
         solana_logger::setup();
@@ -1504,8 +1618,10 @@ pub mod test {
         check_timeout(receiver, server_address).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_packet_batcher() {
         solana_logger::setup();
@@ -1553,8 +1669,10 @@ pub mod test {
         assert_eq!(i, num_packets);
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_stream_timeout() {
         solana_logger::setup();
@@ -1583,8 +1701,10 @@ pub mod test {
 
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
@@ -1592,8 +1712,10 @@ pub mod test {
         check_block_multiple_connections(server_address).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_multiple_connections_on_single_client_endpoint() {
         solana_logger::setup();
@@ -1651,8 +1773,10 @@ pub mod test {
 
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_multiple_writes() {
         solana_logger::setup();
@@ -1660,8 +1784,10 @@ pub mod test {
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_staked_connection_removal() {
         solana_logger::setup();
@@ -1685,8 +1811,10 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_zero_staked_connection_removal() {
         // In this test, the client has a pubkey, but is not in stake table.
@@ -1711,8 +1839,10 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_unstaked_connection_removal() {
         solana_logger::setup();
@@ -1729,8 +1859,10 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
@@ -1758,8 +1890,10 @@ pub mod test {
         check_unstaked_node_connect_failure(server_address).await;
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
+        solana_net_utils::clear_used_ports();
     }
 
+    #[serial]
     #[tokio::test]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();
@@ -1793,6 +1927,7 @@ pub mod test {
         t.await.unwrap();
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_connections.load(Ordering::Relaxed), 2);
+        solana_net_utils::clear_used_ports();
     }
 
     #[test]
