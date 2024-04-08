@@ -1,6 +1,7 @@
 use {
     crate::{
-        nonblocking::quic::ALPN_TPU_PROTOCOL_ID, streamer::StakedNodes,
+        nonblocking::quic::{ConnectionPeerType, ALPN_TPU_PROTOCOL_ID},
+        streamer::StakedNodes,
         tls_certificates::new_self_signed_tls_certificate,
     },
     crossbeam_channel::Sender,
@@ -10,19 +11,21 @@ use {
     solana_perf::packet::PacketBatch,
     solana_sdk::{
         packet::PACKET_DATA_SIZE,
+        pubkey::Pubkey,
         quic::{QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS},
         signature::Keypair,
     },
     std::{
+        collections::HashMap,
         net::{IpAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread,
-        time::{Duration, SystemTime},
+        time::{Duration, Instant, SystemTime},
     },
-    tokio::runtime::Runtime,
+    tokio::{runtime::Runtime, sync::Mutex},
 };
 
 pub const MAX_STAKED_CONNECTIONS: usize = 2000;
@@ -71,7 +74,6 @@ pub(crate) fn configure_server(
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(server_tls_config));
-    server_config.use_retry(true);
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
     // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability
@@ -98,6 +100,7 @@ pub(crate) fn configure_server(
 fn rt() -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name("quic-server")
+        .worker_threads(4)
         .enable_all()
         .build()
         .unwrap()
@@ -138,6 +141,8 @@ pub struct StreamStats {
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
+    // The total incoming connections received which have not gone through full handshake yet
+    pub(crate) incoming_connections_received: AtomicUsize,
     pub(crate) num_evictions: AtomicUsize,
     pub(crate) connection_added_from_staked_peer: AtomicUsize,
     pub(crate) connection_added_from_unstaked_peer: AtomicUsize,
@@ -156,11 +161,101 @@ pub struct StreamStats {
     pub(crate) connection_setup_error_locally_closed: AtomicUsize,
     pub(crate) connection_removed: AtomicUsize,
     pub(crate) connection_remove_failed: AtomicUsize,
+    pub(crate) connection_throttled: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
+    pub(crate) process_sampled_packets_us_hist: Mutex<histogram::Histogram>,
+    pub(crate) perf_track_overhead_us: AtomicU64,
+    pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
+    pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
+    pub(crate) throttled_staked_streams: AtomicUsize,
+    pub(crate) throttled_unstaked_streams: AtomicUsize,
+    pub(crate) received_streams: AtomicUsize,
+    pub(crate) received_unstaked_streams: AtomicUsize,
+    pub(crate) received_staked_streams: AtomicUsize,
+    pub(crate) peer_stats: PeerStatsRecorder,
+}
+
+/// Stats per peer
+pub struct PeerStats {
+    pub(crate) peer_type: ConnectionPeerType,
+    pub(crate) stakes: AtomicUsize,
+    pub(crate) received_streams: AtomicUsize,
+    pub(crate) throttled_streams: AtomicUsize,
+    pub(crate) packets_sent_for_batching: AtomicUsize,
+    pub(crate) bytes_sent_for_batching: AtomicUsize,
+    pub(crate) stream_read_errors: AtomicUsize,
+    pub(crate) stream_read_timeouts: AtomicUsize,
+    pub(crate) connection_count: AtomicUsize,
+    pub(crate) start_time: Instant,
+    pub(crate) end_time: Instant,
+}
+
+impl Default for PeerStats {
+    fn default() -> Self {
+        Self {
+            peer_type: ConnectionPeerType::default(),
+            stakes: AtomicUsize::default(),
+            received_streams: AtomicUsize::default(),
+            throttled_streams: AtomicUsize::default(),
+            packets_sent_for_batching: AtomicUsize::default(),
+            bytes_sent_for_batching: AtomicUsize::default(),
+            stream_read_errors: AtomicUsize::default(),
+            stream_read_timeouts: AtomicUsize::default(),
+            connection_count: AtomicUsize::default(),
+            start_time: Instant::now(),
+            end_time: Instant::now(),
+        }
+    }
+}
+
+impl Clone for PeerStats {
+    fn clone(&self) -> Self {
+        Self {
+            received_streams: AtomicUsize::new(self.received_streams.load(Ordering::Relaxed)),
+            throttled_streams: AtomicUsize::new(self.throttled_streams.load(Ordering::Relaxed)),
+            peer_type: self.peer_type,
+            connection_count: AtomicUsize::new(self.connection_count.load(Ordering::Relaxed)),
+            stakes: AtomicUsize::new(self.stakes.load(Ordering::Relaxed)),
+            stream_read_errors: AtomicUsize::new(self.stream_read_errors.load(Ordering::Relaxed)),
+            stream_read_timeouts: AtomicUsize::new(
+                self.stream_read_timeouts.load(Ordering::Relaxed),
+            ),
+            packets_sent_for_batching: AtomicUsize::new(
+                self.packets_sent_for_batching.load(Ordering::Relaxed),
+            ),
+            bytes_sent_for_batching: AtomicUsize::new(
+                self.bytes_sent_for_batching.load(Ordering::Relaxed),
+            ),
+            start_time: self.start_time,
+            end_time: self.end_time,
+        }
+    }
+}
+
+impl PeerStats {
+    pub fn new(peer_type: ConnectionPeerType, stakes: u64, connection_count: usize) -> Self {
+        Self {
+            peer_type,
+            stakes: AtomicUsize::new(stakes as usize),
+            connection_count: AtomicUsize::new(connection_count),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PeerStatsRecorder {
+    pub(crate) stats: Mutex<HashMap<Pubkey, PeerStats>>,
 }
 
 impl StreamStats {
-    pub fn report(&self, name: &'static str) {
+    pub async fn report(&self, name: &'static str) {
+        let process_sampled_packets_us_hist = {
+            let mut metrics = self.process_sampled_packets_us_hist.lock().await;
+            let process_sampled_packets_us_hist = metrics.clone();
+            metrics.clear();
+            process_sampled_packets_us_hist
+        };
         datapoint_info!(
             name,
             (
@@ -285,6 +380,11 @@ impl StreamStats {
                 i64
             ),
             (
+                "connection_throttled",
+                self.connection_throttled.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "invalid_chunk",
                 self.total_invalid_chunks.swap(0, Ordering::Relaxed),
                 i64
@@ -308,6 +408,18 @@ impl StreamStats {
             (
                 "packets_sent_for_batching",
                 self.total_packets_sent_for_batching
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "staked_packets_sent_for_batching",
+                self.total_staked_packets_sent_for_batching
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "unstaked_packets_sent_for_batching",
+                self.total_unstaked_packets_sent_for_batching
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -388,11 +500,143 @@ impl StreamStats {
                 i64
             ),
             (
+                "incoming_connections_received",
+                self.incoming_connections_received
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "throttled_streams",
                 self.throttled_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "throttled_unstaked_streams",
+                self.throttled_unstaked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "throttled_staked_streams",
+                self.throttled_staked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "process_sampled_packets_us_90pct",
+                process_sampled_packets_us_hist
+                    .percentile(90.0)
+                    .unwrap_or(0),
+                i64
+            ),
+            (
+                "process_sampled_packets_us_min",
+                process_sampled_packets_us_hist.minimum().unwrap_or(0),
+                i64
+            ),
+            (
+                "process_sampled_packets_us_max",
+                process_sampled_packets_us_hist.maximum().unwrap_or(0),
+                i64
+            ),
+            (
+                "process_sampled_packets_us_mean",
+                process_sampled_packets_us_hist.mean().unwrap_or(0),
+                i64
+            ),
+            (
+                "process_sampled_packets_count",
+                process_sampled_packets_us_hist.entries(),
+                i64
+            ),
+            (
+                "perf_track_overhead_us",
+                self.perf_track_overhead_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "received_streams",
+                self.received_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "received_unstaked_streams",
+                self.received_unstaked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "received_staked_streams",
+                self.received_staked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
+        self.report_peer_stats().await;
+    }
+
+    async fn report_peer_stats(&self) {
+        let map = {
+            let mut stats = self.peer_stats.stats.lock().await;
+            let new_map = HashMap::<Pubkey, PeerStats>::default();
+            std::mem::replace(&mut *stats, new_map)
+        };
+        // now we can report the stats without holding the lock
+        for (key, stats) in map {
+            info!(
+                "STREAMER_PEER_STATS: node={key}, type={:?}, stakes={}, received_streams={}, throttled_streams={}, packets_sent={}, bytes_sent={}, read_errors={}, read_timeouts={}, connection_count={} duration_us={}",
+                stats.peer_type,
+                stats.stakes.load(Ordering::Relaxed),
+                stats.received_streams.load(Ordering::Relaxed),
+                stats.throttled_streams.load(Ordering::Relaxed),
+                stats.packets_sent_for_batching.load(Ordering::Relaxed),
+                stats.bytes_sent_for_batching.load(Ordering::Relaxed),
+                stats.stream_read_errors.load(Ordering::Relaxed),
+                stats.stream_read_timeouts.load(Ordering::Relaxed),
+                stats.connection_count.load(Ordering::Relaxed),
+                stats.end_time.duration_since(stats.start_time).as_micros()
+            );
+        }
+    }
+
+    /// Update the peer stat for a peer given its key
+    pub async fn update_peer_stats(&self, pubkey: &Pubkey, peer_stat: &PeerStats) {
+        let mut stats = self.peer_stats.stats.lock().await;
+        stats
+            .entry(*pubkey)
+            .and_modify(|stat| {
+                stat.peer_type = peer_stat.peer_type;
+                stat.stakes
+                    .store(peer_stat.stakes.load(Ordering::Relaxed), Ordering::Relaxed);
+                stat.received_streams.fetch_add(
+                    peer_stat.received_streams.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.throttled_streams.fetch_add(
+                    peer_stat.throttled_streams.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.packets_sent_for_batching.fetch_add(
+                    peer_stat
+                        .packets_sent_for_batching
+                        .swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.bytes_sent_for_batching.fetch_add(
+                    peer_stat.bytes_sent_for_batching.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.stream_read_errors.fetch_add(
+                    peer_stat.stream_read_errors.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.stream_read_timeouts.fetch_add(
+                    peer_stat.stream_read_timeouts.swap(0, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.connection_count.store(
+                    peer_stat.connection_count.load(Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
+                stat.end_time = Instant::now();
+            })
+            .or_insert(peer_stat.clone());
     }
 }
 
@@ -411,12 +655,44 @@ pub fn spawn_server(
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
 ) -> Result<(Endpoint, thread::JoinHandle<()>), QuicServerError> {
+    spawn_server_multi(
+        name,
+        vec![sock],
+        keypair,
+        gossip_host,
+        packet_sender,
+        exit,
+        max_connections_per_peer,
+        staked_nodes,
+        max_staked_connections,
+        max_unstaked_connections,
+        wait_for_chunk_timeout,
+        coalesce,
+    )
+    .map(|(mut endpoints, thread_handle)| (endpoints.remove(0), thread_handle))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_server_multi(
+    name: &'static str,
+    sockets: Vec<UdpSocket>,
+    keypair: &Keypair,
+    gossip_host: IpAddr,
+    packet_sender: Sender<PacketBatch>,
+    exit: Arc<AtomicBool>,
+    max_connections_per_peer: usize,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    max_staked_connections: usize,
+    max_unstaked_connections: usize,
+    wait_for_chunk_timeout: Duration,
+    coalesce: Duration,
+) -> Result<(Vec<Endpoint>, thread::JoinHandle<()>), QuicServerError> {
     let runtime = rt();
-    let (endpoint, _stats, task) = {
+    let (endpoints, _stats, task) = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server(
+        crate::nonblocking::quic::spawn_server_multi(
             name,
-            sock,
+            sockets,
             keypair,
             gossip_host,
             packet_sender,
@@ -437,7 +713,7 @@ pub fn spawn_server(
             }
         })
         .unwrap();
-    Ok((endpoint, handle))
+    Ok((endpoints, handle))
 }
 
 #[cfg(test)]

@@ -205,6 +205,7 @@ generic-array = { version = "0.14.7", default-features = false }
 gethostname = "0.2.3"
 getrandom = "0.2.10"
 goauth = "0.13.1"
+governor = "0.6.3"
 hex = "0.4.3"
 hidapi = { version = "2.4.1", default-features = false }
 histogram = "0.6.9"
@@ -265,8 +266,10 @@ prost-types = "0.11.9"
 protobuf-src = "1.1.0"
 qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
-quinn = "0.10.2"
-quinn-proto = "0.10.5"
+#quinn = "0.10.2"
+#quinn-proto = "0.10.5"
+quinn = {git = "https://github.com/lijunwangs/quinn.git", rev = "5980492919744a8366ce74a837b64e052aff9944"}
+quinn-proto = {git = "https://github.com/lijunwangs/quinn.git", rev = "5980492919744a8366ce74a837b64e052aff9944"}
 quote = "1.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
@@ -296,7 +299,7 @@ sha3 = "0.10.4"
 signal-hook = "0.3.17"
 siphasher = "0.3.11"
 smpl_jwt = "0.7.1"
-socket2 = "0.5.4"
+socket2 = { version= "0.5.4", features=["all"]}
 soketto = "0.7"
 solana_rbpf = "=0.8.0"
 solana-account-decoder = { path = "account-decoder", version = "=1.17.30" }
@@ -365,6 +368,7 @@ solana-test-validator = { path = "test-validator", version = "=1.17.30" }
 solana-thin-client = { path = "thin-client", version = "=1.17.30" }
 solana-tpu-client = { path = "tpu-client", version = "=1.17.30", default-features = false }
 solana-transaction-status = { path = "transaction-status", version = "=1.17.30" }
+solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=1.17.30" }
 solana-turbine = { path = "turbine", version = "=1.17.30" }
 solana-udp-client = { path = "udp-client", version = "=1.17.30" }
 solana-version = { path = "version", version = "=1.17.30" }
