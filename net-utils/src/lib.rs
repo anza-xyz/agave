@@ -954,6 +954,45 @@ mod tests {
     }
 
     #[test]
+    fn test_port_binding() {
+        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let addr = SocketAddr::new(ip_addr, 3527);
+
+        let do_bind = |reuse1, reuse2, expect| {
+            let config = SocketConfig {
+                reuseaddr: false,
+                reuseport: reuse1,
+                first_reuse: false,
+            };
+            let sock = udp_socket_with_config(config).unwrap();
+            let b1 = sock.bind(&SockAddr::from(addr));
+
+            let config = SocketConfig {
+                reuseaddr: false,
+                reuseport: reuse2,
+                first_reuse: false,
+            };
+            let sock = udp_socket_with_config(config).unwrap();
+            let b2 = sock.bind(&SockAddr::from(addr));
+
+            assert_eq!((b1.is_ok(), b2.is_ok()), expect);
+        };
+
+        // Testing different config for binding two socks
+        // reuseport (false, false), expect first ok, second err.
+        do_bind(false, false, (true, false));
+
+        // reuseport (true, true), both should be ok.
+        do_bind(true, true, (true, true));
+
+        // reuseport (true, false), expect first ok, second err.
+        do_bind(true, false, (true, false));
+
+        // reuseport (false, true), expect first ok, second err.
+        do_bind(false, true, (true, false));
+    }
+
+    #[test]
     fn test_get_public_ip_addr_none() {
         solana_logger::setup();
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
