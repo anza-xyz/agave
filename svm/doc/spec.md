@@ -64,7 +64,7 @@ We envision the following applications for SVM
 
 # System Context
 
-In this section SVM is represented as a single entity. We describe its
+In this section, SVM is represented as a single entity. We describe its
 interfaces to the parts of the Solana Validator external to SVM.
 
 In the context of Solana Validator the main entity external to SVM is
