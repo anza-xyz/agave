@@ -4,7 +4,7 @@ use {
     dashmap::{mapref::entry::Entry, DashMap},
     index_list::{Index, IndexList},
     log::*,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::measure_us,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
@@ -66,6 +66,8 @@ impl ReadOnlyCacheStats {
     }
 }
 
+type AccountToStoreInCache = (Pubkey, Slot, AccountSharedData);
+
 #[derive(Debug)]
 pub(crate) struct ReadOnlyAccountsCache {
     cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
@@ -76,23 +78,23 @@ pub(crate) struct ReadOnlyAccountsCache {
     /// LRU eviction, cache entries are evicted from the front of the queue.
     queue: Arc<Mutex<IndexList<ReadOnlyCacheKey>>>,
     _max_data_size_lo: usize,
-    max_data_size_hi: usize,
+    _max_data_size_hi: usize,
     data_size: Arc<AtomicUsize>,
     // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
     ms_to_skip_lru_update: u32,
 
     // Performance statistics
     stats: Arc<ReadOnlyCacheStats>,
-    highest_slot_stored: AtomicU64,
+    highest_slot_stored: Arc<AtomicU64>,
 
-    /// Channel to send eviction requests
+    /// Channel to send cache store requests
     ///
-    /// NOTE: This field must be above `evictor` to ensure it is dropped before `evictor`.
-    evict_sender: crossbeam_channel::Sender<()>,
+    /// NOTE: This field must be above `store_processor` to ensure it is dropped before `store_processor`.
+    store_sender: crossbeam_channel::Sender<AccountToStoreInCache>,
     /// To the evictor goes the spoiled [sic]
     ///
     /// Evict from the cache in the background.
-    _evictor: thread::JoinHandle<()>,
+    _store_processor: thread::JoinHandle<()>,
 }
 
 impl ReadOnlyAccountsCache {
@@ -105,29 +107,32 @@ impl ReadOnlyAccountsCache {
         let cache = Arc::new(DashMap::default());
         let queue = Arc::new(Mutex::<IndexList<ReadOnlyCacheKey>>::default());
         let data_size = Arc::new(AtomicUsize::default());
+        let highest_slot_stored = Arc::new(AtomicU64::default());
         let stats = Arc::new(ReadOnlyCacheStats::default());
-        let (evict_sender, evict_receiver) = crossbeam_channel::bounded::<()>(1);
-        let evictor = Self::spawn_evictor(
-            evict_receiver,
+        let (store_sender, store_receiver) =
+            crossbeam_channel::unbounded::<AccountToStoreInCache>();
+        let store_processor = Self::spawn_store_processor(
+            store_receiver,
             max_data_size_lo,
             max_data_size_hi,
             data_size.clone(),
+            highest_slot_stored.clone(),
             cache.clone(),
             queue.clone(),
             stats.clone(),
         );
 
         Self {
-            highest_slot_stored: AtomicU64::default(),
+            highest_slot_stored,
             _max_data_size_lo: max_data_size_lo,
-            max_data_size_hi,
+            _max_data_size_hi: max_data_size_hi,
             cache,
             queue,
             data_size,
             ms_to_skip_lru_update,
             stats,
-            evict_sender,
-            _evictor: evictor,
+            store_sender,
+            _store_processor: store_processor,
         }
     }
 
@@ -179,37 +184,51 @@ impl ReadOnlyAccountsCache {
     }
 
     pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
-        let measure_store = Measure::start("");
-        self.highest_slot_stored.fetch_max(slot, Ordering::Release);
+        self.send_store((pubkey, slot, account));
+    }
+
+    fn do_store(
+        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>,
+        queue: &Mutex<IndexList<ReadOnlyCacheKey>>,
+        highest_slot_stored: &AtomicU64,
+        data_size: &AtomicUsize,
+        to_store: AccountToStoreInCache,
+        max_data_size_lo: usize,
+        max_data_size_hi: usize,
+    ) -> (u64, u64) {
+        let (pubkey, slot, account) = to_store;
+        highest_slot_stored.fetch_max(slot, Ordering::Release);
         let key = (pubkey, slot);
         let account_size = Self::account_size(&account);
-        self.data_size.fetch_add(account_size, Ordering::Relaxed);
+        data_size.fetch_add(account_size, Ordering::Relaxed);
         // self.queue is modified while holding a reference to the cache entry;
         // so that another thread cannot write to the same key.
-        match self.cache.entry(key) {
+        match cache.entry(key) {
             Entry::Vacant(entry) => {
                 // Insert the entry at the end of the queue.
-                let mut queue = self.queue.lock().unwrap();
+                let mut queue = queue.lock().unwrap();
                 let index = queue.insert_last(key);
                 entry.insert(ReadOnlyAccountCacheEntry::new(account, index));
             }
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
                 let account_size = Self::account_size(&entry.account);
-                self.data_size.fetch_sub(account_size, Ordering::Relaxed);
+                data_size.fetch_sub(account_size, Ordering::Relaxed);
                 entry.account = account;
                 // Move the entry to the end of the queue.
-                let mut queue = self.queue.lock().unwrap();
+                let mut queue = queue.lock().unwrap();
                 queue.remove(entry.index());
                 entry.set_index(queue.insert_last(key));
             }
         };
 
-        if self.data_size() > self.max_data_size_hi {
-            self.send_evict();
-        }
-        let store_us = measure_store.end_as_us();
-        self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
+        let (num_evicts, evict_us) =
+            measure_us!(if data_size.load(Ordering::Relaxed) > max_data_size_hi {
+                Self::evict(max_data_size_lo, data_size, cache, queue)
+            } else {
+                0
+            });
+        (num_evicts, evict_us)
     }
 
     /// true if any pubkeys could have ever been stored into the cache at `slot`
@@ -262,9 +281,9 @@ impl ReadOnlyAccountsCache {
         self.stats.get_and_reset_stats()
     }
 
-    /// Sends a message to the evictor to trigger evictions
-    fn send_evict(&self) {
-        let res = self.evict_sender.try_send(());
+    /// Sends an account to the store_processor to store
+    fn send_store(&self, to_store: AccountToStoreInCache) {
+        let res = self.store_sender.try_send(to_store);
         if let Err(err) = res {
             // It's possible multiple threads tried to send the evict message at the same time.
             // Since the channel's size is bounded to 1, only a single message will be sent,
@@ -274,11 +293,12 @@ impl ReadOnlyAccountsCache {
     }
 
     /// Spawns the background thread to handle evictions
-    fn spawn_evictor(
-        receiver: crossbeam_channel::Receiver<()>,
+    fn spawn_store_processor(
+        receiver: crossbeam_channel::Receiver<AccountToStoreInCache>,
         max_data_size_lo: usize,
         max_data_size_hi: usize,
         data_size: Arc<AtomicUsize>,
+        highest_slot_stored: Arc<AtomicU64>,
         cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
         queue: Arc<Mutex<IndexList<ReadOnlyCacheKey>>>,
         stats: Arc<ReadOnlyCacheStats>,
@@ -296,18 +316,19 @@ impl ReadOnlyAccountsCache {
                         break;
                     };
 
-                    // If a message was sent to the channel *while we were already evicting*, then
-                    // when we loop around we'll find a message that we should evict again.
-                    // However the current data size likely is not higher than the high water mark.
-                    // So, check the current size to see if this was a spurious wakeup.
-                    if data_size.load(Ordering::Relaxed) <= max_data_size_hi {
-                        continue;
-                    }
+                    let ((num_evicts, evict_us), store_us) = measure_us!(Self::do_store(
+                        &cache,
+                        &queue,
+                        &highest_slot_stored,
+                        &data_size,
+                        res.unwrap(),
+                        max_data_size_lo,
+                        max_data_size_hi
+                    ));
 
-                    let (num_evicts, evict_us) =
-                        measure_us!(Self::evict(max_data_size_lo, &data_size, &cache, &queue));
                     stats.evicts.fetch_add(num_evicts, Ordering::Relaxed);
                     stats.evict_us.fetch_add(evict_us, Ordering::Relaxed);
+                    stats.store_us.fetch_add(store_us, Ordering::Relaxed);
                 }
                 info!("AccountsReadCacheEvictor has stopped");
             })
@@ -390,14 +411,22 @@ mod tests {
     };
 
     impl ReadOnlyAccountsCache {
-        // Evict entries, but in the foreground
+        // Store entries, but in the foreground
         //
-        // Evicting in the background is non-deterministic w.r.t. when the evictor runs,
+        // Storing in the background is non-deterministic w.r.t. when the store_processor runs,
         // which can make asserting invariants difficult in tests.
-        fn evict_in_foreground(&self) {
+        fn store_in_foreground(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
+            let to_store = (pubkey, slot, account);
             #[allow(clippy::used_underscore_binding)]
-            let target_data_size = self._max_data_size_lo;
-            Self::evict(target_data_size, &self.data_size, &self.cache, &self.queue);
+            Self::do_store(
+                &self.cache,
+                &self.queue,
+                &self.highest_slot_stored,
+                &self.data_size,
+                to_store,
+                self._max_data_size_lo,
+                self._max_data_size_hi,
+            );
         }
     }
 
@@ -414,11 +443,8 @@ mod tests {
         let per_account_size = CACHE_ENTRY_SIZE;
         let data_size = 100;
         let max = data_size + per_account_size;
-        let cache = ReadOnlyAccountsCache::new(
-            max,
-            usize::MAX, // <-- do not evict in the background
-            READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE_FOR_TESTS,
-        );
+        let cache =
+            ReadOnlyAccountsCache::new(max, max, READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE_FOR_TESTS);
         let slot = 0;
         assert!(cache.load(Pubkey::default(), slot).is_none());
         assert_eq!(0, cache.cache_len());
@@ -435,18 +461,15 @@ mod tests {
         account2.checked_add_lamports(1).unwrap(); // so they compare differently
         let mut account3 = account1.clone();
         account3.checked_add_lamports(4).unwrap(); // so they compare differently
-        cache.store(key1, slot, account1.clone());
-        cache.evict_in_foreground();
+        cache.store_in_foreground(key1, slot, account1.clone());
         assert_eq!(100 + per_account_size, cache.data_size());
         assert!(accounts_equal(&cache.load(key1, slot).unwrap(), &account1));
         assert_eq!(1, cache.cache_len());
-        cache.store(key2, slot, account2.clone());
-        cache.evict_in_foreground();
+        cache.store_in_foreground(key2, slot, account2.clone());
         assert_eq!(100 + per_account_size, cache.data_size());
         assert!(accounts_equal(&cache.load(key2, slot).unwrap(), &account2));
         assert_eq!(1, cache.cache_len());
-        cache.store(key2, slot, account1.clone()); // overwrite key2 with account1
-        cache.evict_in_foreground();
+        cache.store_in_foreground(key2, slot, account1.clone()); // overwrite key2 with account1
         assert_eq!(100 + per_account_size, cache.data_size());
         assert!(accounts_equal(&cache.load(key2, slot).unwrap(), &account1));
         assert_eq!(1, cache.cache_len());
@@ -456,30 +479,23 @@ mod tests {
 
         // can store 2 items, 3rd item kicks oldest item out
         let max = (data_size + per_account_size) * 2;
-        let cache = ReadOnlyAccountsCache::new(
-            max,
-            usize::MAX, // <-- do not evict in the background
-            READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE_FOR_TESTS,
-        );
-        cache.store(key1, slot, account1.clone());
-        cache.evict_in_foreground();
+        let cache =
+            ReadOnlyAccountsCache::new(max, max, READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE_FOR_TESTS);
+        cache.store_in_foreground(key1, slot, account1.clone());
         assert_eq!(100 + per_account_size, cache.data_size());
         assert!(accounts_equal(&cache.load(key1, slot).unwrap(), &account1));
         assert_eq!(1, cache.cache_len());
-        cache.store(key2, slot, account2.clone());
-        cache.evict_in_foreground();
+        cache.store_in_foreground(key2, slot, account2.clone());
         assert_eq!(max, cache.data_size());
         assert!(accounts_equal(&cache.load(key1, slot).unwrap(), &account1));
         assert!(accounts_equal(&cache.load(key2, slot).unwrap(), &account2));
         assert_eq!(2, cache.cache_len());
-        cache.store(key2, slot, account1.clone()); // overwrite key2 with account1
-        cache.evict_in_foreground();
+        cache.store_in_foreground(key2, slot, account1.clone()); // overwrite key2 with account1
         assert_eq!(max, cache.data_size());
         assert!(accounts_equal(&cache.load(key1, slot).unwrap(), &account1));
         assert!(accounts_equal(&cache.load(key2, slot).unwrap(), &account1));
         assert_eq!(2, cache.cache_len());
-        cache.store(key3, slot, account3.clone());
-        cache.evict_in_foreground();
+        cache.store_in_foreground(key3, slot, account3.clone());
         assert_eq!(max, cache.data_size());
         assert!(cache.load(key1, slot).is_none()); // was lru purged
         assert!(accounts_equal(&cache.load(key2, slot).unwrap(), &account1));
@@ -498,7 +514,7 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(SEED);
         let cache = ReadOnlyAccountsCache::new(
             MAX_CACHE_SIZE,
-            usize::MAX, // <-- do not evict in the background
+            MAX_CACHE_SIZE,
             READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE_FOR_TESTS,
         );
         let slots: Vec<Slot> = repeat_with(|| rng.gen_range(0..1000)).take(5).collect();
@@ -532,8 +548,7 @@ mod tests {
                 let pubkey = *pubkeys.choose(&mut rng).unwrap();
                 let key = (pubkey, slot);
                 hash_map.insert(key, (account.clone(), ix));
-                cache.store(pubkey, slot, account);
-                cache.evict_in_foreground();
+                cache.store_in_foreground(pubkey, slot, account);
             }
         }
         assert_eq!(cache.cache_len(), 17);
@@ -554,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn test_evict_in_background() {
+    fn test_store_in_background() {
         const ACCOUNT_DATA_SIZE: usize = 200;
         const MAX_ENTRIES: usize = 7;
         const MAX_CACHE_SIZE: usize = MAX_ENTRIES * (CACHE_ENTRY_SIZE + ACCOUNT_DATA_SIZE);
@@ -569,6 +584,10 @@ mod tests {
             let account = AccountSharedData::new(i as u64, ACCOUNT_DATA_SIZE, &Pubkey::default());
             cache.store(pubkey, i as Slot, account);
         }
+
+        // wait for background thread to store the accounts
+        thread::sleep(Duration::from_millis(1000));
+
         // we haven't exceeded the max cache size yet, so no evictions should've happened
         assert_eq!(cache.cache_len(), MAX_ENTRIES);
         assert_eq!(cache.data_size(), MAX_CACHE_SIZE);
@@ -580,7 +599,7 @@ mod tests {
         let account = AccountSharedData::new(42, ACCOUNT_DATA_SIZE, &Pubkey::default());
         cache.store(pubkey, slot, account.clone());
 
-        // wait for the evictor to run...
+        // wait for the store to run...
         let timer = Instant::now();
         while cache.stats.evicts.load(Ordering::Relaxed) == 0 {
             assert!(
