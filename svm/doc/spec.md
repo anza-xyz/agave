@@ -221,7 +221,7 @@ Steps of `load_and_execute_sanitized_transactions`
    10. Extract `ExecutionRecord` components from transaction context.
    11. Check balances of accounts to match the sum of balances before
        transaction execution.
-   12. Updated loaded transaction accounts to new accounts.
+   12. Update loaded transaction accounts to new accounts.
    13. Extract changes in accounts data sizes
    14. Extract return data
    15. Return `TransactionExecutionResult` with wrapping the extracted
