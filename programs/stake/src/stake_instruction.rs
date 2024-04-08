@@ -73,19 +73,12 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         .map(|epoch_rewards| epoch_rewards.active)
         .unwrap_or(false);
 
-    let error_during_epoch_rewards = || {
-        if epoch_rewards_active {
-            Err::<(), InstructionError>(StakeError::EpochRewardsActive.into())
-        } else {
-            Ok(())
-        }
-    };
-
     let signers = instruction_context.get_signers(transaction_context)?;
 
     let stake_instruction: StakeInstruction = limited_deserialize(data)?;
-    if !matches!(stake_instruction, StakeInstruction::GetMinimumDelegation) {
-        error_during_epoch_rewards()?;
+    if epoch_rewards_active && !matches!(stake_instruction, StakeInstruction::GetMinimumDelegation)
+    {
+        return Err(StakeError::EpochRewardsActive.into());
     }
     match stake_instruction {
         StakeInstruction::Initialize(authorized, lockup) => {
