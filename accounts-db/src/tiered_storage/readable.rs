@@ -2,6 +2,7 @@ use {
     crate::{
         account_storage::meta::StoredAccountMeta,
         accounts_file::MatchAccountOwnerError,
+        append_vec::IndexInfo,
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -106,6 +107,30 @@ impl TieredStorageReader {
     ) -> TieredStorageResult<Vec<StoredAccountMeta>> {
         match self {
             Self::Hot(hot) => hot.accounts(index_offset),
+        }
+    }
+
+    /// iterate over all pubkeys
+    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) -> TieredStorageResult<()> {
+        match self {
+            Self::Hot(hot) => hot.scan_pubkeys(callback),
+        }
+    }
+
+    /// iterate over all entries to put in index
+    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) -> TieredStorageResult<()> {
+        match self {
+            Self::Hot(hot) => hot.scan_index(callback),
+        }
+    }
+
+    /// for each offset in `sorted_offsets`, return the account size
+    pub(crate) fn get_account_sizes(
+        &self,
+        sorted_offsets: &[usize],
+    ) -> TieredStorageResult<Vec<usize>> {
+        match self {
+            Self::Hot(hot) => hot.get_account_sizes(sorted_offsets),
         }
     }
 

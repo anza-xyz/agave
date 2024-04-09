@@ -1,5 +1,6 @@
 use {
     crate::{
+        account_info::AccountInfo,
         accounts_hash::AccountHash,
         append_vec::AppendVecStoredAccountMeta,
         storable_accounts::StorableAccounts,
@@ -127,14 +128,14 @@ impl<'storage> StoredAccountMeta<'storage> {
     pub fn stored_size(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.stored_size(),
-            Self::Hot(_) => unimplemented!(),
+            Self::Hot(hot) => hot.stored_size(),
         }
     }
 
     pub fn offset(&self) -> usize {
         match self {
             Self::AppendVec(av) => av.offset(),
-            Self::Hot(hot) => hot.index().0 as usize,
+            Self::Hot(hot) => AccountInfo::reduced_offset_to_offset(hot.index().0),
         }
     }
 

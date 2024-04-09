@@ -4700,12 +4700,14 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             continue;
         }
 
-        bank.add_builtin(
+        bank.transaction_processor.add_builtin(
+            &bank,
             vote_id,
             "mock_program1",
             LoadedProgram::new_builtin(0, 0, MockBuiltin::vm),
         );
-        bank.add_builtin(
+        bank.transaction_processor.add_builtin(
+            &bank,
             stake_id,
             "mock_program2",
             LoadedProgram::new_builtin(0, 0, MockBuiltin::vm),
@@ -6286,7 +6288,7 @@ fn test_ref_account_key_after_program_id() {
 fn test_fuzz_instructions() {
     solana_logger::setup();
     use rand::{thread_rng, Rng};
-    let mut bank = create_simple_test_bank(1_000_000_000);
+    let bank = create_simple_test_bank(1_000_000_000);
 
     let max_programs = 5;
     let program_keys: Vec<_> = (0..max_programs)
@@ -6294,7 +6296,8 @@ fn test_fuzz_instructions() {
         .map(|i| {
             let key = solana_sdk::pubkey::new_rand();
             let name = format!("program{i:?}");
-            bank.add_builtin(
+            bank.transaction_processor.add_builtin(
+                &bank,
                 key,
                 name.as_str(),
                 LoadedProgram::new_builtin(0, 0, MockBuiltin::vm),
@@ -6777,7 +6780,7 @@ fn test_add_builtin_account() {
 
         assert_capitalization_diff(
             &bank,
-            || bank.add_builtin_account("mock_program", &program_id, false),
+            || bank.add_builtin_account("mock_program", &program_id),
             |old, new| {
                 assert_eq!(old + 1, new);
                 pass == 0
@@ -6793,7 +6796,7 @@ fn test_add_builtin_account() {
         add_root_and_flush_write_cache(&bank.parent().unwrap());
         assert_capitalization_diff(
             &bank,
-            || bank.add_builtin_account("mock_program", &program_id, false),
+            || bank.add_builtin_account("mock_program", &program_id),
             |old, new| {
                 assert_eq!(old, new);
                 pass == 1
@@ -6807,11 +6810,11 @@ fn test_add_builtin_account() {
 
         let bank = Arc::new(new_from_parent(bank));
         add_root_and_flush_write_cache(&bank.parent().unwrap());
-        // When replacing builtin_program, name must change to disambiguate from repeated
-        // invocations.
+        // No builtin replacement should happen if the program id is already assigned to a
+        // builtin.
         assert_capitalization_diff(
             &bank,
-            || bank.add_builtin_account("mock_program v2", &program_id, true),
+            || bank.add_builtin_account("mock_program v2", &program_id),
             |old, new| {
                 assert_eq!(old, new);
                 pass == 2
@@ -6821,30 +6824,8 @@ fn test_add_builtin_account() {
             continue;
         }
 
-        assert_eq!(
-            bank.get_account_modified_slot(&program_id).unwrap().1,
-            bank.slot()
-        );
-
-        let bank = Arc::new(new_from_parent(bank));
-        add_root_and_flush_write_cache(&bank.parent().unwrap());
-        assert_capitalization_diff(
-            &bank,
-            || bank.add_builtin_account("mock_program v2", &program_id, true),
-            |old, new| {
-                assert_eq!(old, new);
-                pass == 3
-            },
-        );
-        if pass == 3 {
-            continue;
-        }
-
-        // replacing with same name shouldn't update account
-        assert_eq!(
-            bank.get_account_modified_slot(&program_id).unwrap().1,
-            bank.parent_slot()
-        );
+        // No replacement should have happened
+        assert_eq!(bank.get_account_modified_slot(&program_id).unwrap().1, slot);
     }
 }
 
@@ -6862,7 +6843,7 @@ fn test_add_builtin_account_inherited_cap_while_replacing() {
         let bank = Bank::new_for_tests(&genesis_config);
         let program_id = solana_sdk::pubkey::new_rand();
 
-        bank.add_builtin_account("mock_program", &program_id, false);
+        bank.add_builtin_account("mock_program", &program_id);
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
             assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
@@ -6883,7 +6864,7 @@ fn test_add_builtin_account_inherited_cap_while_replacing() {
             continue;
         }
 
-        bank.add_builtin_account("mock_program v2", &program_id, true);
+        bank.add_builtin_account("mock_program v2", &program_id);
         add_root_and_flush_write_cache(&bank);
         assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
     }
@@ -6910,7 +6891,7 @@ fn test_add_builtin_account_squatted_while_not_replacing() {
             continue;
         }
 
-        bank.add_builtin_account("mock_program", &program_id, false);
+        bank.add_builtin_account("mock_program", &program_id);
         add_root_and_flush_write_cache(&bank);
         assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
     }
@@ -6933,25 +6914,7 @@ fn test_add_builtin_account_after_frozen() {
     );
     bank.freeze();
 
-    bank.add_builtin_account("mock_program", &program_id, false);
-}
-
-#[test]
-#[should_panic(
-    expected = "There is no account to replace with builtin program (mock_program, \
-                CiXgo2KHKSDmDnV1F6B69eWFgNAPiSBjjYvfB4cvRNre)."
-)]
-fn test_add_builtin_account_replace_none() {
-    let slot = 123;
-    let program_id = Pubkey::from_str("CiXgo2KHKSDmDnV1F6B69eWFgNAPiSBjjYvfB4cvRNre").unwrap();
-
-    let bank = Bank::new_from_parent(
-        create_simple_test_arc_bank(100_000).0,
-        &Pubkey::default(),
-        slot,
-    );
-
-    bank.add_builtin_account("mock_program", &program_id, true);
+    bank.add_builtin_account("mock_program", &program_id);
 }
 
 #[test]

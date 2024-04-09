@@ -178,11 +178,26 @@ impl AccountsFile {
         AccountsFileIter::new(self)
     }
 
+    /// for each offset in `sorted_offsets`, return the account size
+    pub(crate) fn get_account_sizes(&self, sorted_offsets: &[usize]) -> Vec<usize> {
+        match self {
+            Self::AppendVec(av) => av.get_account_sizes(sorted_offsets),
+            Self::TieredStorage(ts) => ts
+                .reader()
+                .and_then(|reader| reader.get_account_sizes(sorted_offsets).ok())
+                .unwrap_or_default(),
+        }
+    }
+
     /// iterate over all entries to put in index
     pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) {
         match self {
             Self::AppendVec(av) => av.scan_index(callback),
-            Self::TieredStorage(_ts) => unimplemented!(),
+            Self::TieredStorage(ts) => {
+                if let Some(reader) = ts.reader() {
+                    _ = reader.scan_index(callback);
+                }
+            }
         }
     }
 
@@ -190,7 +205,11 @@ impl AccountsFile {
     pub(crate) fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) {
         match self {
             Self::AppendVec(av) => av.scan_pubkeys(callback),
-            Self::TieredStorage(_) => unimplemented!(),
+            Self::TieredStorage(ts) => {
+                if let Some(reader) = ts.reader() {
+                    _ = reader.scan_pubkeys(callback);
+                }
+            }
         }
     }
 
@@ -287,8 +306,9 @@ impl<'a> Iterator for AccountsFileIter<'a> {
 }
 
 /// An enum that creates AccountsFile instance with the specified format.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsFileProvider {
+    #[default]
     AppendVec,
     HotStorage,
 }

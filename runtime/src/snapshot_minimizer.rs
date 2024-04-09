@@ -9,9 +9,7 @@ use {
         prelude::ParallelSlice,
     },
     solana_accounts_db::{
-        accounts_db::{
-            AccountStorageEntry, AccountsDb, GetUniqueAccountsResult, PurgeStats, StoreReclaims,
-        },
+        accounts_db::{AccountStorageEntry, AccountsDb, GetUniqueAccountsResult, PurgeStats},
         accounts_partition,
     },
     solana_measure::measure,
@@ -114,7 +112,10 @@ impl<'a> SnapshotMinimizer<'a> {
     /// Used to get builtin accounts in `minimize`
     fn get_builtins(&self) {
         self.bank
-            .get_builtin_program_ids()
+            .get_transaction_processor()
+            .builtin_program_ids
+            .read()
+            .unwrap()
             .iter()
             .for_each(|program_id| {
                 self.minimized_account_set.insert(*program_id);
@@ -371,7 +372,6 @@ impl<'a> SnapshotMinimizer<'a> {
                 (slot, &accounts[..]),
                 Some(hashes),
                 new_storage,
-                StoreReclaims::Ignore,
             );
 
             new_storage.flush().unwrap();

@@ -390,7 +390,6 @@ impl CurrentAncientAccountsFile {
             (self.slot(), accounts, accounts_to_store.slot()),
             None::<Vec<AccountHash>>,
             self.accounts_file(),
-            StoreReclaims::Ignore,
         );
         let bytes_written =
             previous_available.saturating_sub(self.accounts_file().accounts.remaining_bytes());
@@ -765,7 +764,7 @@ pub type AtomicAccountsFileId = AtomicU32;
 pub type AccountsFileId = u32;
 
 type AccountSlots = HashMap<Pubkey, HashSet<Slot>>;
-type SlotOffsets = HashMap<Slot, HashSet<usize>>;
+type SlotOffsets = HashMap<Slot, IntSet<usize>>;
 type ReclaimResult = (AccountSlots, SlotOffsets);
 type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey>;
 type ShrinkCandidates = IntSet<Slot>;
@@ -917,17 +916,6 @@ impl<'a> LoadedAccount<'a> {
         match self {
             LoadedAccount::Stored(stored_account_meta) => stored_account_meta.pubkey(),
             LoadedAccount::Cached(cached_account) => cached_account.pubkey(),
-        }
-    }
-
-    pub fn compute_hash(&self, pubkey: &Pubkey) -> AccountHash {
-        match self {
-            LoadedAccount::Stored(stored_account_meta) => {
-                AccountsDb::hash_account(stored_account_meta, stored_account_meta.pubkey())
-            }
-            LoadedAccount::Cached(cached_account) => {
-                AccountsDb::hash_account(&cached_account.account, pubkey)
-            }
         }
     }
 
@@ -1424,6 +1412,9 @@ pub struct AccountsDb {
 
     /// debug feature to scan every append vec and verify refcounts are equal
     exhaustively_verify_refcounts: bool,
+
+    /// storage format to use for new storages
+    accounts_file_provider: AccountsFileProvider,
 
     /// this will live here until the feature for partitioned epoch rewards is activated.
     /// At that point, this and other code can be deleted.
@@ -2270,7 +2261,7 @@ impl<'a> AppendVecScan for ScanState<'a> {
 
         let hash_is_missing = loaded_hash == AccountHash(Hash::default());
         if self.config.check_hash || hash_is_missing {
-            let computed_hash = loaded_account.compute_hash(pubkey);
+            let computed_hash = AccountsDb::hash_account(loaded_account, loaded_account.pubkey());
             if hash_is_missing {
                 loaded_hash = computed_hash;
             } else if self.config.check_hash && computed_hash != loaded_hash {
@@ -2316,8 +2307,10 @@ impl AccountsDb {
         accounts_hash_cache_path: Option<PathBuf>,
     ) -> Self {
         let num_threads = get_thread_count();
-        // 400M bytes
-        const MAX_READ_ONLY_CACHE_DATA_SIZE: usize = 400_000_000;
+        // The high and low watermark sizes for the accounts read cache.  If the cache size exceeds
+        // MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
+        const MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 400_000_000;
+        const MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 400_000_000;
         // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
         const READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE: u32 = 100;
 
@@ -2357,7 +2350,8 @@ impl AccountsDb {
             accounts_cache: AccountsCache::default(),
             sender_bg_hasher: None,
             read_only_accounts_cache: ReadOnlyAccountsCache::new(
-                MAX_READ_ONLY_CACHE_DATA_SIZE,
+                MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
+                MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
                 READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
             ),
             uncleaned_pubkeys: DashMap::new(),
@@ -2402,6 +2396,7 @@ impl AccountsDb {
             accounts_update_notifier: None,
             log_dead_slots: AtomicBool::new(true),
             exhaustively_verify_refcounts: false,
+            accounts_file_provider: AccountsFileProvider::default(),
             partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
             epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             test_skip_rewrites_but_include_in_bank_hash: false,
@@ -2412,8 +2407,24 @@ impl AccountsDb {
         AccountsDb::new_for_tests(Vec::new(), &ClusterType::Development)
     }
 
+    pub fn new_single_for_tests_with_provider(file_provider: AccountsFileProvider) -> Self {
+        AccountsDb::new_for_tests_with_provider(
+            Vec::new(),
+            &ClusterType::Development,
+            file_provider,
+        )
+    }
+
     pub fn new_for_tests(paths: Vec<PathBuf>, cluster_type: &ClusterType) -> Self {
-        AccountsDb::new_with_config(
+        Self::new_for_tests_with_provider(paths, cluster_type, AccountsFileProvider::default())
+    }
+
+    fn new_for_tests_with_provider(
+        paths: Vec<PathBuf>,
+        cluster_type: &ClusterType,
+        accounts_file_provider: AccountsFileProvider,
+    ) -> Self {
+        let mut db = AccountsDb::new_with_config(
             paths,
             cluster_type,
             AccountSecondaryIndexes::default(),
@@ -2421,7 +2432,9 @@ impl AccountsDb {
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
-        )
+        );
+        db.accounts_file_provider = accounts_file_provider;
+        db
     }
 
     pub fn new_with_config(
@@ -2544,7 +2557,7 @@ impl AccountsDb {
             slot,
             self.next_id(),
             size,
-            AccountsFileProvider::AppendVec,
+            self.accounts_file_provider,
         )
     }
 
@@ -3982,7 +3995,6 @@ impl AccountsDb {
                 (slot, &shrink_collect.alive_accounts.alive_accounts()[..]),
                 None::<Vec<AccountHash>>,
                 shrink_in_progress.new_storage(),
-                StoreReclaims::Ignore,
             );
 
             rewrite_elapsed.stop();
@@ -5731,33 +5743,25 @@ impl AccountsDb {
         // with this function call. This means, if we get into this case, we can be
         // confident that the entire state for this slot has been flushed to the storage
         // already.
-        let mut scan_storages_elasped = Measure::start("scan_storages_elasped");
-        type ScanResult = ScanStorageResult<Pubkey, Arc<Mutex<HashSet<(Pubkey, Slot)>>>>;
-        let scan_result: ScanResult = self.scan_account_storage(
-            remove_slot,
-            |loaded_account: LoadedAccount| Some(*loaded_account.pubkey()),
-            |accum: &Arc<Mutex<HashSet<(Pubkey, Slot)>>>, loaded_account: LoadedAccount| {
-                accum
-                    .lock()
-                    .unwrap()
-                    .insert((*loaded_account.pubkey(), remove_slot));
-            },
-        );
-        scan_storages_elasped.stop();
+        let mut scan_storages_elapsed = Measure::start("scan_storages_elapsed");
+        let mut stored_keys = HashSet::new();
+        if let Some(storage) = self
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
+        {
+            storage.accounts.scan_pubkeys(|pk| {
+                stored_keys.insert((*pk, remove_slot));
+            });
+        }
+        scan_storages_elapsed.stop();
         purge_stats
             .scan_storages_elapsed
-            .fetch_add(scan_storages_elasped.as_us(), Ordering::Relaxed);
+            .fetch_add(scan_storages_elapsed.as_us(), Ordering::Relaxed);
 
         let mut purge_accounts_index_elapsed = Measure::start("purge_accounts_index_elapsed");
-        let (reclaims, pubkeys_removed_from_accounts_index) = match scan_result {
-            ScanStorageResult::Cached(_) => {
-                panic!("Should not see cached keys in this `else` branch, since we checked this slot did not exist in the cache above");
-            }
-            ScanStorageResult::Stored(stored_keys) => {
-                // Purge this slot from the accounts index
-                self.purge_keys_exact(stored_keys.lock().unwrap().iter())
-            }
-        };
+        // Purge this slot from the accounts index
+        let (reclaims, pubkeys_removed_from_accounts_index) =
+            self.purge_keys_exact(stored_keys.iter());
         purge_accounts_index_elapsed.stop();
         purge_stats
             .purge_accounts_index_elapsed
@@ -6287,13 +6291,9 @@ impl AccountsDb {
             // will be able to find the account in storage
             let flushed_store =
                 self.create_and_insert_store(slot, flush_stats.total_size.0, "flush_slot_cache");
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
-                .store_accounts_frozen(
-                    (slot, &accounts[..]),
-                    Some(hashes),
-                    &flushed_store,
-                    StoreReclaims::Ignore,
-                ));
+            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(
+                self.store_accounts_frozen((slot, &accounts[..]), Some(hashes), &flushed_store,)
+            );
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
             flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
 
@@ -6620,8 +6620,7 @@ impl AccountsDb {
                                             let balance = loaded_account.lamports();
                                             let hash_is_missing = loaded_hash == AccountHash(Hash::default());
                                             if config.check_hash || hash_is_missing {
-                                                let computed_hash =
-                                                    loaded_account.compute_hash(pubkey);
+                                                let computed_hash = AccountsDb::hash_account(&loaded_account, loaded_account.pubkey());
                                                 if hash_is_missing {
                                                     loaded_hash = computed_hash;
                                                 }
@@ -7902,10 +7901,9 @@ impl AccountsDb {
                 }
                 else {
                     let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
+                    // sort so offsets are in order. This improves efficiency of loading the accounts.
                     offsets.sort_unstable();
-                    let dead_bytes = offsets.iter().map(|offset| {
-                        let account = store.accounts.get_account(*offset).unwrap();
-                        account.0.stored_size()}).sum();
+                    let dead_bytes = store.accounts.get_account_sizes(&offsets).iter().sum();
                     store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
                     if Self::is_shrinking_productive(*slot, &store)
                         && self.is_candidate_for_shrink(&store, false)
@@ -8398,7 +8396,6 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a, T>,
         hashes: Option<Vec<impl Borrow<AccountHash>>>,
         storage: &Arc<AccountStorageEntry>,
-        reclaim: StoreReclaims,
     ) -> StoreAccountsTiming {
         // stores on a frozen slot should not reset
         // the append vec so that hashing could happen on the store
@@ -8410,7 +8407,7 @@ impl AccountsDb {
             &StoreTo::Storage(storage),
             reset_accounts,
             None,
-            reclaim,
+            StoreReclaims::Ignore,
             UpdateIndexThreadSelection::PoolWithThreshold,
         )
     }
@@ -9646,10 +9643,11 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_generate_index_duplicates_within_slot() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::HotStorage)]
+    fn test_generate_index_duplicates_within_slot(accounts_file_provider: AccountsFileProvider) {
         for reverse in [false, true] {
-            let db = AccountsDb::new_single_for_tests();
+            let db = AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
             let slot0 = 0;
 
             let pubkey = Pubkey::from([1; 32]);
@@ -9694,7 +9692,10 @@ pub mod tests {
             // index entry should only contain a single entry for the pubkey since index cannot hold more than 1 entry per slot
             let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
             assert_eq!(entry.slot_list.read().unwrap().len(), 1);
-            assert_eq!(append_vec.alive_bytes(), expected_alive_bytes);
+            if accounts_file_provider == AccountsFileProvider::AppendVec {
+                // alive bytes doesn't match account size for tiered storage
+                assert_eq!(append_vec.alive_bytes(), expected_alive_bytes);
+            }
             // total # accounts in append vec
             assert_eq!(append_vec.approx_stored_count(), 2);
             // # alive accounts
@@ -13991,9 +13992,10 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_alive_bytes() {
-        let accounts_db = AccountsDb::new_single_for_tests();
+    #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::HotStorage)]
+    fn test_alive_bytes(accounts_file_provider: AccountsFileProvider) {
+        let accounts_db = AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
         let slot: Slot = 0;
         let num_keys = 10;
 
@@ -14024,7 +14026,12 @@ pub mod tests {
             let reclaims = [account_info];
             accounts_db.remove_dead_accounts(reclaims.iter(), None, true);
             let after_size = storage0.alive_bytes.load(Ordering::Acquire);
-            assert_eq!(before_size, after_size + account.stored_size());
+            if storage0.count() == 0 && AccountsFileProvider::HotStorage == accounts_file_provider {
+                // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
+                assert_eq!(after_size, 0);
+            } else {
+                assert_eq!(before_size, after_size + account.stored_size());
+            }
         }
     }
 
@@ -15329,10 +15336,13 @@ pub mod tests {
     ///     - ensure Account1 has *not* been purged
     /// - call `clean_accounts()` with `last_full_snapshot_slot` set to 3
     ///     - ensure Account1 *has* been purged
-    #[test]
-    fn test_clean_accounts_with_last_full_snapshot_slot() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::HotStorage)]
+    fn test_clean_accounts_with_last_full_snapshot_slot(
+        accounts_file_provider: AccountsFileProvider,
+    ) {
         solana_logger::setup();
-        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts_db = AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
         let pubkey = solana_sdk::pubkey::new_rand();
         let owner = solana_sdk::pubkey::new_rand();
         let space = 0;
