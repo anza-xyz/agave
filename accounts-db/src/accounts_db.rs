@@ -5374,8 +5374,8 @@ impl AccountsDb {
             However, by the assumption for contradiction above ,  'A' has already been updated in 'S' which means '(S, A)'
             must exist in the write cache, which is a contradiction.
             */
-            self.read_only_accounts_cache
-                .store(*pubkey, slot, account.clone());
+            let to_store = Arc::new((*pubkey, slot, account.clone()));
+            self.read_only_accounts_cache.store(to_store);
         }
         Some((account, slot))
     }

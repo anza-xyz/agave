@@ -101,7 +101,7 @@ pub(crate) struct ReadOnlyAccountsCache {
     /// Channel to send cache store requests
     ///
     /// NOTE: This field must be above `store_processor` to ensure it is dropped before `store_processor`.
-    store_sender: crossbeam_channel::Sender<AccountToStoreInCache>,
+    store_sender: crossbeam_channel::Sender<Arc<AccountToStoreInCache>>,
     /// To the evictor goes the spoiled [sic]
     ///
     /// Evict from the cache in the background.
@@ -121,7 +121,7 @@ impl ReadOnlyAccountsCache {
         let highest_slot_stored = Arc::new(AtomicU64::default());
         let stats = Arc::new(ReadOnlyCacheStats::default());
         let (store_sender, store_receiver) =
-            crossbeam_channel::unbounded::<AccountToStoreInCache>();
+            crossbeam_channel::unbounded::<Arc<AccountToStoreInCache>>();
         let store_processor = Self::spawn_store_processor(
             store_receiver,
             max_data_size_lo,
@@ -194,8 +194,8 @@ impl ReadOnlyAccountsCache {
         CACHE_ENTRY_SIZE + account.data().len()
     }
 
-    pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
-        let (_, store_us) = measure_us!(self.send_store((pubkey, slot, account)));
+    pub(crate) fn store(&self, to_store: Arc<AccountToStoreInCache>) {
+        let (_, store_us) = measure_us!(self.send_store(to_store));
         self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
     }
 
@@ -204,13 +204,13 @@ impl ReadOnlyAccountsCache {
         queue: &Mutex<IndexList<ReadOnlyCacheKey>>,
         highest_slot_stored: &AtomicU64,
         data_size: &AtomicUsize,
-        to_store: AccountToStoreInCache,
+        to_store: &AccountToStoreInCache,
         max_data_size_lo: usize,
         max_data_size_hi: usize,
     ) -> (u64, u64) {
         let (pubkey, slot, account) = to_store;
-        highest_slot_stored.fetch_max(slot, Ordering::Release);
-        let key = (pubkey, slot);
+        highest_slot_stored.fetch_max(*slot, Ordering::Release);
+        let key = (*pubkey, *slot);
         let account_size = Self::account_size(&account);
         data_size.fetch_add(account_size, Ordering::Relaxed);
         // self.queue is modified while holding a reference to the cache entry;
@@ -220,13 +220,13 @@ impl ReadOnlyAccountsCache {
                 // Insert the entry at the end of the queue.
                 let mut queue = queue.lock().unwrap();
                 let index = queue.insert_last(key);
-                entry.insert(ReadOnlyAccountCacheEntry::new(account, index));
+                entry.insert(ReadOnlyAccountCacheEntry::new(account.clone(), index));
             }
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
                 let account_size = Self::account_size(&entry.account);
                 data_size.fetch_sub(account_size, Ordering::Relaxed);
-                entry.account = account;
+                entry.account = account.clone();
                 // Move the entry to the end of the queue.
                 let mut queue = queue.lock().unwrap();
                 queue.remove(entry.index());
@@ -294,7 +294,7 @@ impl ReadOnlyAccountsCache {
     }
 
     /// Sends an account to the store_processor to store
-    fn send_store(&self, to_store: AccountToStoreInCache) {
+    fn send_store(&self, to_store: Arc<AccountToStoreInCache>) {
         let res = self.store_sender.try_send(to_store);
         if let Err(err) = res {
             // It's possible multiple threads tried to send the evict message at the same time.
@@ -306,7 +306,7 @@ impl ReadOnlyAccountsCache {
 
     /// Spawns the background thread to handle evictions
     fn spawn_store_processor(
-        receiver: crossbeam_channel::Receiver<AccountToStoreInCache>,
+        receiver: crossbeam_channel::Receiver<Arc<AccountToStoreInCache>>,
         max_data_size_lo: usize,
         max_data_size_hi: usize,
         data_size: Arc<AtomicUsize>,
@@ -320,27 +320,29 @@ impl ReadOnlyAccountsCache {
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
                 loop {
-                    let res = receiver.recv();
-                    if let Err(err) = res {
-                        // The only error is when the channel is empty and disconnected.
-                        // Disconnecting the channel is the intended way to stop the evictor.
-                        trace!("AccountsReadCacheEvictor is shutting down... {err}");
-                        break;
-                    };
+                    match receiver.recv() {
+                        Ok(to_store) => {
+                            let ((num_evicts, evict_us), store_us) = measure_us!(Self::do_store(
+                                &cache,
+                                &queue,
+                                &highest_slot_stored,
+                                &data_size,
+                                &to_store,
+                                max_data_size_lo,
+                                max_data_size_hi
+                            ));
 
-                    let ((num_evicts, evict_us), store_us) = measure_us!(Self::do_store(
-                        &cache,
-                        &queue,
-                        &highest_slot_stored,
-                        &data_size,
-                        res.unwrap(),
-                        max_data_size_lo,
-                        max_data_size_hi
-                    ));
-
-                    stats.evicts.fetch_add(num_evicts, Ordering::Relaxed);
-                    stats.evict_us.fetch_add(evict_us, Ordering::Relaxed);
-                    stats.store_bg_us.fetch_add(store_us, Ordering::Relaxed);
+                            stats.evicts.fetch_add(num_evicts, Ordering::Relaxed);
+                            stats.evict_us.fetch_add(evict_us, Ordering::Relaxed);
+                            stats.store_bg_us.fetch_add(store_us, Ordering::Relaxed);
+                        }
+                        Err(err) => {
+                            // The only error is when the channel is empty and disconnected.
+                            // Disconnecting the channel is the intended way to stop the store processor.
+                            trace!("AccountsReadCacheEvictor is shutting down... {err}");
+                            break;
+                        }
+                    }
                 }
                 info!("AccountsReadCacheEvictor has stopped");
             })
@@ -435,7 +437,7 @@ mod tests {
                 &self.queue,
                 &self.highest_slot_stored,
                 &self.data_size,
-                to_store,
+                &to_store,
                 self._max_data_size_lo,
                 self._max_data_size_hi,
             );
@@ -594,7 +596,7 @@ mod tests {
         for i in 0..MAX_ENTRIES {
             let pubkey = Pubkey::new_unique();
             let account = AccountSharedData::new(i as u64, ACCOUNT_DATA_SIZE, &Pubkey::default());
-            cache.store(pubkey, i as Slot, account);
+            cache.store(Arc::new((pubkey, i as Slot, account)));
         }
 
         // wait for background thread to store the accounts
@@ -609,7 +611,7 @@ mod tests {
         let slot = MAX_ENTRIES as Slot;
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::new(42, ACCOUNT_DATA_SIZE, &Pubkey::default());
-        cache.store(pubkey, slot, account.clone());
+        cache.store(Arc::new((pubkey, slot, account.clone())));
 
         // wait for the store to run...
         let timer = Instant::now();
