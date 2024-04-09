@@ -937,6 +937,11 @@ impl<'a> LoadedAccount<'a> {
             LoadedAccount::Cached(_) => true,
         }
     }
+
+    /// data_len can be calculated without having access to `&data` in future implementations
+    pub fn data_len(&self) -> usize {
+        self.data().len()
+    }
 }
 
 impl<'a> ReadableAccount for LoadedAccount<'a> {
@@ -7571,7 +7576,14 @@ impl AccountsDb {
                 |accum: &DashMap<Pubkey, AccountHash>, loaded_account: LoadedAccount| {
                     let mut loaded_hash = loaded_account.loaded_hash();
                     if loaded_hash == AccountHash(Hash::default()) {
-                        loaded_hash = Self::hash_account(&loaded_account, loaded_account.pubkey())
+                        loaded_hash = Self::hash_account_data(
+                            loaded_account.lamports(),
+                            loaded_account.owner(),
+                            loaded_account.executable(),
+                            loaded_account.rent_epoch(),
+                            loaded_account.data(),
+                            loaded_account.pubkey(),
+                        )
                     }
                     accum.insert(*loaded_account.pubkey(), loaded_hash);
                 },
@@ -7605,13 +7617,12 @@ impl AccountsDb {
              loaded_account: LoadedAccount| {
                 // Storage may have duplicates so only keep the latest version for each key
                 let mut loaded_hash = loaded_account.loaded_hash();
+                let key = *loaded_account.pubkey();
+                let account = loaded_account.take_account();
                 if loaded_hash == AccountHash(Hash::default()) {
-                    loaded_hash = Self::hash_account(&loaded_account, loaded_account.pubkey())
+                    loaded_hash = Self::hash_account(&account, &key)
                 }
-                accum.insert(
-                    *loaded_account.pubkey(),
-                    (loaded_hash, loaded_account.take_account()),
-                );
+                accum.insert(key, (loaded_hash, account));
             },
         );
 
@@ -9119,11 +9130,12 @@ impl AccountsDb {
                                 maybe_storage_entry.map(|entry| (entry, account_info.offset())),
                             );
                             let loaded_account = accessor.check_and_get_loaded_account();
-                            accounts_data_len_from_duplicates += loaded_account.data().len();
+                            let data_len = loaded_account.data_len();
+                            accounts_data_len_from_duplicates += data_len;
                             if let Some(lamports_to_top_off) = Self::stats_for_rent_payers(
                                 pubkey,
                                 loaded_account.lamports(),
-                                loaded_account.data().len(),
+                                data_len,
                                 loaded_account.rent_epoch(),
                                 loaded_account.executable(),
                                 rent_collector,
