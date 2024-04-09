@@ -121,7 +121,7 @@ impl ReadOnlyAccountsCache {
         let highest_slot_stored = Arc::new(AtomicU64::default());
         let stats = Arc::new(ReadOnlyCacheStats::default());
         let (store_sender, store_receiver) =
-            crossbeam_channel::unbounded::<Arc<AccountToStoreInCache>>();
+            crossbeam_channel::bounded::<Arc<AccountToStoreInCache>>(1);
         let store_processor = Self::spawn_store_processor(
             store_receiver,
             max_data_size_lo,
@@ -211,7 +211,7 @@ impl ReadOnlyAccountsCache {
         let (pubkey, slot, account) = to_store;
         highest_slot_stored.fetch_max(*slot, Ordering::Release);
         let key = (*pubkey, *slot);
-        let account_size = Self::account_size(&account);
+        let account_size = Self::account_size(account);
         data_size.fetch_add(account_size, Ordering::Relaxed);
         // self.queue is modified while holding a reference to the cache entry;
         // so that another thread cannot write to the same key.
