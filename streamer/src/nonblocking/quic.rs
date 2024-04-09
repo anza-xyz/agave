@@ -165,8 +165,16 @@ async fn run_server(
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
+<<<<<<< HEAD
     let unstaked_connection_table: Arc<Mutex<ConnectionTable>> = Arc::new(Mutex::new(
         ConnectionTable::new(ConnectionPeerType::Unstaked),
+=======
+    let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
+        Arc::new(Mutex::new(ConnectionTable::new()));
+    let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
+        stats.clone(),
+        max_unstaked_connections,
+>>>>>>> 592107a907 (corrected to not use hardcoded connections count for unstaked (#633))
     ));
     let staked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new(ConnectionPeerType::Staked)));
