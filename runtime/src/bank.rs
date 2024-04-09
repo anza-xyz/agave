@@ -6896,7 +6896,7 @@ impl TransactionProcessingCallback for Bank {
 
     // NOTE: must hold idempotent for the same set of arguments
     /// Add a builtin program account
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey, must_replace: bool) {
+    fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
         let existing_genuine_program =
             self.get_account_with_fixed_root(program_id)
                 .and_then(|account| {
@@ -6912,25 +6912,10 @@ impl TransactionProcessingCallback for Bank {
                     }
                 });
 
-        if must_replace {
-            // updating builtin program
-            match &existing_genuine_program {
-                None => panic!(
-                    "There is no account to replace with builtin program ({name}, {program_id})."
-                ),
-                Some(account) => {
-                    if *name == String::from_utf8_lossy(account.data()) {
-                        // The existing account is well formed
-                        return;
-                    }
-                }
-            }
-        } else {
-            // introducing builtin program
-            if existing_genuine_program.is_some() {
-                // The existing account is sufficient
-                return;
-            }
+        // introducing builtin program
+        if existing_genuine_program.is_some() {
+            // The existing account is sufficient
+            return;
         }
 
         assert!(

@@ -529,7 +529,7 @@ mod tests {
             self.feature_set.clone()
         }
 
-        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey, _must_replace: bool) {
+        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {
             todo!()
         }
     }

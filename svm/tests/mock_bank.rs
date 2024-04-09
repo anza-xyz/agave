@@ -48,7 +48,7 @@ impl TransactionProcessingCallback for MockBankCallback {
         self.feature_set.clone()
     }
 
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey, _must_replace: bool) {
+    fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
         let account_data = native_loader::create_loadable_account_with_fields(name, (5000, 0));
 
         self.account_shared_data

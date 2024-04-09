@@ -109,7 +109,7 @@ pub trait TransactionProcessingCallback {
         LoadedProgramMatchCriteria::NoCriteria
     }
 
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey, must_replace: bool);
+    fn add_builtin_account(&self, name: &str, program_id: &Pubkey);
 }
 
 #[derive(Debug)]
@@ -971,7 +971,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         builtin: LoadedProgram,
     ) {
         debug!("Adding program {} under {:?}", name, program_id);
-        callbacks.add_builtin_account(name, &program_id, false);
+        callbacks.add_builtin_account(name, &program_id);
         self.builtin_program_ids.write().unwrap().insert(program_id);
         self.program_cache
             .write()
@@ -1051,7 +1051,7 @@ mod tests {
             self.feature_set.clone()
         }
 
-        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey, _must_replace: bool) {
+        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {
             unimplemented!()
         }
     }
