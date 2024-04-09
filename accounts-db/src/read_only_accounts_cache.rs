@@ -41,6 +41,7 @@ struct ReadOnlyCacheStats {
     evicts: AtomicU64,
     load_us: AtomicU64,
     store_us: AtomicU64,
+    store_bg_us: AtomicU64,
     evict_us: AtomicU64,
 }
 
@@ -51,18 +52,28 @@ impl ReadOnlyCacheStats {
         self.evicts.store(0, Ordering::Relaxed);
         self.load_us.store(0, Ordering::Relaxed);
         self.store_us.store(0, Ordering::Relaxed);
+        self.store_bg_us.store(0, Ordering::Relaxed);
         self.evict_us.store(0, Ordering::Relaxed);
     }
 
-    fn get_and_reset_stats(&self) -> (u64, u64, u64, u64, u64, u64) {
+    fn get_and_reset_stats(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
         let hits = self.hits.swap(0, Ordering::Relaxed);
         let misses = self.misses.swap(0, Ordering::Relaxed);
         let evicts = self.evicts.swap(0, Ordering::Relaxed);
         let load_us = self.load_us.swap(0, Ordering::Relaxed);
         let store_us = self.store_us.swap(0, Ordering::Relaxed);
+        let store_bg_us = self.store_bg_us.swap(0, Ordering::Relaxed);
         let evict_us = self.evict_us.swap(0, Ordering::Relaxed);
 
-        (hits, misses, evicts, load_us, store_us, evict_us)
+        (
+            hits,
+            misses,
+            evicts,
+            load_us,
+            store_us,
+            store_bg_us,
+            evict_us,
+        )
     }
 }
 
@@ -184,7 +195,8 @@ impl ReadOnlyAccountsCache {
     }
 
     pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
-        self.send_store((pubkey, slot, account));
+        let (_, store_us) = measure_us!(self.send_store((pubkey, slot, account)));
+        self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
     }
 
     fn do_store(
@@ -277,7 +289,7 @@ impl ReadOnlyAccountsCache {
         self.data_size.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn get_and_reset_stats(&self) -> (u64, u64, u64, u64, u64, u64) {
+    pub(crate) fn get_and_reset_stats(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
         self.stats.get_and_reset_stats()
     }
 
@@ -328,7 +340,7 @@ impl ReadOnlyAccountsCache {
 
                     stats.evicts.fetch_add(num_evicts, Ordering::Relaxed);
                     stats.evict_us.fetch_add(evict_us, Ordering::Relaxed);
-                    stats.store_us.fetch_add(store_us, Ordering::Relaxed);
+                    stats.store_bg_us.fetch_add(store_us, Ordering::Relaxed);
                 }
                 info!("AccountsReadCacheEvictor has stopped");
             })

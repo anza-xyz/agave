@@ -8231,6 +8231,7 @@ impl AccountsDb {
                 read_only_cache_evicts,
                 read_only_cache_load_us,
                 read_only_cache_store_us,
+                read_only_cache_store_bg_us,
                 read_only_cache_evict_us,
             ) = self.read_only_accounts_cache.get_and_reset_stats();
             datapoint_info!(
@@ -8306,6 +8307,11 @@ impl AccountsDb {
                 (
                     "read_only_accounts_cache_store_us",
                     read_only_cache_store_us,
+                    i64
+                ),
+                (
+                    "read_only_accounts_cache_store_bg_us",
+                    read_only_cache_store_bg_us,
                     i64
                 ),
                 (
