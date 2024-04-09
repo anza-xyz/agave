@@ -2,13 +2,14 @@
 
 use {
     crate::{
+        heaviest_fork_aggregate::HeaviestForkAggregate,
         last_voted_fork_slots_aggregate::{
             LastVotedForkSlotsAggregate, LastVotedForkSlotsFinalResult,
         },
         solana::wen_restart_proto::{
-            self, HeaviestFork, LastVotedForkSlotsAggregateFinal,
-            LastVotedForkSlotsAggregateRecord, LastVotedForkSlotsRecord, State as RestartState,
-            WenRestartProgress,
+            self, HeaviestForkAggregateFinal, HeaviestForkAggregateRecord, HeaviestForkRecord,
+            LastVotedForkSlotsAggregateFinal, LastVotedForkSlotsAggregateRecord,
+            LastVotedForkSlotsRecord, State as RestartState, WenRestartProgress,
         },
     },
     anyhow::Result,
@@ -65,6 +66,7 @@ pub enum WenRestartError {
     InvalidLastVoteType(VoteTransaction),
     MalformedLastVotedForkSlotsProtobuf(Option<LastVotedForkSlotsRecord>),
     MissingLastVotedForkSlots,
+    NotEnoughStakeAgreeingWithUs(Slot, Hash, HashMap<(Slot, Hash), u64>),
     UnexpectedState(wen_restart_proto::State),
 }
 
@@ -109,6 +111,13 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::MissingLastVotedForkSlots => {
                 write!(f, "Missing last voted fork slots")
             }
+            WenRestartError::NotEnoughStakeAgreeingWithUs(slot, hash, block_stake_map) => {
+                write!(
+                    f,
+                    "Not enough stake agreeing with our slot: {} hash: {}\n {:?}",
+                    slot, hash, block_stake_map,
+                )
+            }
             WenRestartError::UnexpectedState(state) => {
                 write!(f, "Unexpected state: {:?}", state)
             }
@@ -133,8 +142,9 @@ pub(crate) enum WenRestartProgressInternalState {
     },
     FindHeaviestFork {
         aggregate_final_result: LastVotedForkSlotsFinalResult,
-        my_heaviest_fork: Option<HeaviestFork>,
+        my_heaviest_fork: Option<HeaviestForkRecord>,
     },
+    HeaviestFork,
     Done,
 }
 
@@ -405,6 +415,143 @@ fn find_bankhash_of_heaviest_fork(
     Ok(parent_bank.hash())
 }
 
+// Aggregate the heaviest fork and send updates to the cluster.
+pub(crate) fn aggregate_restart_heaviest_fork(
+    wen_restart_path: &PathBuf,
+    wait_for_supermajority_threshold_percent: u64,
+    cluster_info: Arc<ClusterInfo>,
+    bank_forks: Arc<RwLock<BankForks>>,
+    exit: Arc<AtomicBool>,
+    progress: &mut WenRestartProgress,
+) -> Result<()> {
+    let mut my_heaviest_fork = progress.my_heaviest_fork.clone().unwrap();
+
+    let root_bank = bank_forks.read().unwrap().root_bank();
+    let heaviest_fork_slot = my_heaviest_fork.slot;
+    let heaviest_fork_hash = Hash::from_str(&my_heaviest_fork.bankhash)?;
+    cluster_info.push_restart_heaviest_fork(
+        heaviest_fork_slot,
+        heaviest_fork_hash,
+        my_heaviest_fork.total_active_stake,
+    );
+
+    let epoch_stakes = root_bank.epoch_stakes(root_bank.epoch()).unwrap();
+    let total_stake = epoch_stakes.total_stake();
+    let mut heaviest_fork_aggregate = HeaviestForkAggregate::new(
+        wait_for_supermajority_threshold_percent,
+        cluster_info.my_shred_version(),
+        epoch_stakes,
+        heaviest_fork_slot,
+        heaviest_fork_hash,
+        &cluster_info.id(),
+    );
+    if let Some(aggregate_record) = &progress.heaviest_fork_aggregate {
+        for (key_string, message) in &aggregate_record.received {
+            if let Err(e) = heaviest_fork_aggregate.aggregate_from_record(key_string, message) {
+                error!("Failed to aggregate from record: {:?}", e);
+            }
+        }
+    } else {
+        progress.heaviest_fork_aggregate = Some(HeaviestForkAggregateRecord {
+            received: HashMap::new(),
+            final_result: None,
+        });
+    }
+
+    let mut cursor = solana_gossip::crds::Cursor::default();
+    loop {
+        if exit.load(Ordering::Relaxed) {
+            return Err(WenRestartError::Exiting.into());
+        }
+        let mut progress_changed = false;
+        let start = timestamp();
+        for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor) {
+            let from = new_heaviest_fork.from.to_string();
+            if let Some(record) = heaviest_fork_aggregate.aggregate(new_heaviest_fork) {
+                progress
+                    .heaviest_fork_aggregate
+                    .as_mut()
+                    .unwrap()
+                    .received
+                    .insert(from, record);
+                progress_changed = true;
+            }
+        }
+        let current_total_active_stake = heaviest_fork_aggregate.total_active_stake();
+        if current_total_active_stake > my_heaviest_fork.total_active_stake {
+            my_heaviest_fork.total_active_stake = current_total_active_stake;
+            cluster_info.push_restart_heaviest_fork(
+                heaviest_fork_slot,
+                heaviest_fork_hash,
+                current_total_active_stake,
+            );
+            progress
+                .my_heaviest_fork
+                .as_mut()
+                .unwrap()
+                .total_active_stake = current_total_active_stake;
+            progress_changed = true;
+        }
+        if progress_changed {
+            write_wen_restart_records(wen_restart_path, progress)?;
+            let total_active_stake_seeing_supermajority =
+                heaviest_fork_aggregate.total_active_stake_seeing_supermajority();
+            info!(
+                "Total active stake seeing supermajority: {} Total active stake: {} Total stake {}",
+                total_active_stake_seeing_supermajority,
+                heaviest_fork_aggregate.total_active_stake(),
+                total_stake
+            );
+            if total_active_stake_seeing_supermajority as f64 * 100.0 / total_stake as f64
+                > wait_for_supermajority_threshold_percent as f64
+            {
+                break;
+            }
+        }
+        let elapsed = timestamp().saturating_sub(start);
+        let time_left = GOSSIP_SLEEP_MILLIS.saturating_sub(elapsed);
+        if time_left > 0 {
+            sleep(Duration::from_millis(time_left));
+        }
+    }
+
+    // Final check to see if supermajority agrees with us.
+    let total_active_stake = heaviest_fork_aggregate.total_active_stake();
+    let total_active_stake_seeing_supermajority =
+        heaviest_fork_aggregate.total_active_stake_seeing_supermajority();
+    let block_stake_map = heaviest_fork_aggregate.block_stake_map();
+    let total_active_stake_agreeing_with_me = *block_stake_map
+        .get(&(heaviest_fork_slot, heaviest_fork_hash))
+        .unwrap_or(&0);
+    if total_active_stake_agreeing_with_me as f64 * 100.0 / total_stake as f64
+        > wait_for_supermajority_threshold_percent as f64
+    {
+        info!(
+            "Heaviest fork agreed upon by supermajority: slot: {}, bankhash: {}",
+            heaviest_fork_slot, heaviest_fork_hash
+        );
+        progress
+            .heaviest_fork_aggregate
+            .as_mut()
+            .unwrap()
+            .final_result = Some(HeaviestForkAggregateFinal {
+            total_active_stake,
+            total_active_stake_seeing_supermajority,
+            total_active_stake_agreeing_with_me,
+        });
+        Ok(())
+    } else {
+        info!("Not enough stake agreeing with our heaviest fork: slot: {}, bankhash: {}, stake aggreeing with us {} out of {}",
+            heaviest_fork_slot, heaviest_fork_hash, total_active_stake_agreeing_with_me, total_active_stake);
+        Err(WenRestartError::NotEnoughStakeAgreeingWithUs(
+            heaviest_fork_slot,
+            heaviest_fork_hash,
+            block_stake_map,
+        )
+        .into())
+    }
+}
+
 pub fn wait_for_wen_restart(
     wen_restart_path: &PathBuf,
     last_vote: VoteTransaction,
@@ -474,10 +621,12 @@ pub fn wait_for_wen_restart(
                             "Heaviest fork found: slot: {}, bankhash: {}",
                             slot, bankhash
                         );
-                        HeaviestFork {
+                        HeaviestForkRecord {
                             slot,
                             bankhash: bankhash.to_string(),
                             total_active_stake,
+                            wallclock: 0,
+                            shred_version: cluster_info.my_shred_version() as u32,
                         }
                     }
                 };
@@ -485,6 +634,17 @@ pub fn wait_for_wen_restart(
                     aggregate_final_result,
                     my_heaviest_fork: Some(heaviest_fork),
                 }
+            }
+            WenRestartProgressInternalState::HeaviestFork => {
+                aggregate_restart_heaviest_fork(
+                    wen_restart_path,
+                    wait_for_supermajority_threshold_percent,
+                    cluster_info.clone(),
+                    bank_forks.clone(),
+                    exit.clone(),
+                    &mut progress,
+                )?;
+                WenRestartProgressInternalState::HeaviestFork
             }
             WenRestartProgressInternalState::Done => return Ok(()),
         };
@@ -535,12 +695,15 @@ pub(crate) fn increment_and_write_wen_restart_records(
             my_heaviest_fork,
         } => {
             if let Some(my_heaviest_fork) = my_heaviest_fork {
-                progress.set_state(RestartState::Done);
                 progress.my_heaviest_fork = Some(my_heaviest_fork.clone());
-                WenRestartProgressInternalState::Done
+                WenRestartProgressInternalState::HeaviestFork
             } else {
                 return Err(WenRestartError::UnexpectedState(RestartState::HeaviestFork).into());
             }
+        }
+        WenRestartProgressInternalState::HeaviestFork => {
+            progress.set_state(RestartState::Done);
+            WenRestartProgressInternalState::Done
         }
         WenRestartProgressInternalState::Done => {
             return Err(WenRestartError::UnexpectedState(RestartState::Done).into())
@@ -695,7 +858,7 @@ mod tests {
             crds::GossipRoute,
             crds_value::{CrdsData, CrdsValue},
             legacy_contact_info::LegacyContactInfo,
-            restart_crds_values::RestartLastVotedForkSlots,
+            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         solana_ledger::{
             blockstore::{create_new_ledger, entries_to_test_shreds, Blockstore},
@@ -751,6 +914,36 @@ mod tests {
                     .is_ok());
             }
         }
+    }
+
+    fn push_restart_heaviest_fork(
+        cluster_info: Arc<ClusterInfo>,
+        node: &LegacyContactInfo,
+        heaviest_fork_slot: Slot,
+        heaviest_fork_hash: &Hash,
+        observed_stake: u64,
+        node_keypair: &Keypair,
+        wallclock: u64,
+    ) {
+        let heaviest_fork = RestartHeaviestFork {
+            from: *node.pubkey(),
+            wallclock,
+            last_slot: heaviest_fork_slot,
+            last_slot_hash: *heaviest_fork_hash,
+            observed_stake,
+            shred_version: SHRED_VERSION,
+        };
+        assert!(cluster_info
+            .gossip
+            .crds
+            .write()
+            .unwrap()
+            .insert(
+                CrdsValue::new_signed(CrdsData::RestartHeaviestFork(heaviest_fork), node_keypair),
+                /*now=*/ 0,
+                GossipRoute::LocalMessage
+            )
+            .is_ok());
     }
 
     struct WenRestartTestInitResult {
@@ -962,7 +1155,7 @@ mod tests {
             })
             .unwrap();
         let mut rng = rand::thread_rng();
-        let mut expected_messages = HashMap::new();
+        let mut expected_received_last_voted_fork_slots = HashMap::new();
         // Skip the first 2 validators, because 0 is myself, we only need 8 more to reach > 80%.
         let mut last_voted_fork_slots_from_others = test_state.last_voted_fork_slots.clone();
         last_voted_fork_slots_from_others.reverse();
@@ -980,7 +1173,7 @@ mod tests {
                 &keypairs.node_keypair,
                 now,
             );
-            expected_messages.insert(
+            expected_received_last_voted_fork_slots.insert(
                 node_pubkey.to_string(),
                 LastVotedForkSlotsRecord {
                     last_voted_fork_slots: last_voted_fork_slots_from_others.clone(),
@@ -1000,6 +1193,47 @@ mod tests {
             test_state.last_blockhash,
         );
 
+        let expected_heaviest_fork_slot = last_vote_slot + 2;
+        let expected_heaviest_fork_bankhash;
+        loop {
+            if let Some(bank) = test_state
+                .bank_forks
+                .read()
+                .unwrap()
+                .get(expected_heaviest_fork_slot)
+            {
+                expected_heaviest_fork_bankhash = bank.hash();
+                break;
+            }
+            sleep(Duration::from_millis(100));
+        }
+        // Now simulate receiving HeaviestFork messages.
+        let mut expected_received_heaviest_fork = HashMap::new();
+        for keypairs in test_state.validator_voting_keypairs.iter().skip(2) {
+            let node_pubkey = keypairs.node_keypair.pubkey();
+            let node = LegacyContactInfo::new_rand(&mut rng, Some(node_pubkey));
+            let now = timestamp();
+            push_restart_heaviest_fork(
+                test_state.cluster_info.clone(),
+                &node,
+                expected_heaviest_fork_slot,
+                &expected_heaviest_fork_bankhash,
+                900,
+                &keypairs.node_keypair,
+                now,
+            );
+            expected_received_heaviest_fork.insert(
+                node_pubkey.to_string(),
+                HeaviestForkRecord {
+                    slot: expected_heaviest_fork_slot,
+                    bankhash: expected_heaviest_fork_bankhash.to_string(),
+                    total_active_stake: 900,
+                    shred_version: SHRED_VERSION as u32,
+                    wallclock: now,
+                },
+            );
+        }
+
         let _ = wen_restart_thread_handle.join();
         let progress = read_wen_restart_records(&test_state.wen_restart_proto_path).unwrap();
         let progress_start_time = progress
@@ -1013,14 +1247,6 @@ mod tests {
             .map(|slot| (*slot, 900))
             .collect();
         expected_slots_stake_map.extend(expected_slots_to_repair.iter().map(|slot| (*slot, 800)));
-        let expected_heaviest_fork_slot = last_vote_slot + 2;
-        let expected_heaviest_fork_bankhash = test_state
-            .bank_forks
-            .read()
-            .unwrap()
-            .get(expected_heaviest_fork_slot)
-            .unwrap()
-            .hash();
         assert_eq!(
             progress,
             WenRestartProgress {
@@ -1032,16 +1258,26 @@ mod tests {
                     wallclock: progress_start_time,
                 }),
                 last_voted_fork_slots_aggregate: Some(LastVotedForkSlotsAggregateRecord {
-                    received: expected_messages,
+                    received: expected_received_last_voted_fork_slots,
                     final_result: Some(LastVotedForkSlotsAggregateFinal {
                         slots_stake_map: expected_slots_stake_map,
                         total_active_stake: 900,
                     }),
                 }),
-                my_heaviest_fork: Some(HeaviestFork {
+                my_heaviest_fork: Some(HeaviestForkRecord {
                     slot: expected_heaviest_fork_slot,
                     bankhash: expected_heaviest_fork_bankhash.to_string(),
-                    total_active_stake: 900
+                    total_active_stake: 900,
+                    shred_version: SHRED_VERSION as u32,
+                    wallclock: 0,
+                }),
+                heaviest_fork_aggregate: Some(HeaviestForkAggregateRecord {
+                    received: expected_received_heaviest_fork,
+                    final_result: Some(HeaviestForkAggregateFinal {
+                        total_active_stake: 900,
+                        total_active_stake_seeing_supermajority: 900,
+                        total_active_stake_agreeing_with_me: 900,
+                    }),
                 }),
             }
         );
@@ -1239,7 +1475,6 @@ mod tests {
 
     #[test]
     fn test_wen_restart_aggregate_last_voted_fork_stop_and_restart() {
-        solana_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let test_state = wen_restart_test_init(&ledger_path);
         let last_vote_slot: Slot = test_state.last_voted_fork_slots[0];
@@ -1399,6 +1634,14 @@ mod tests {
                 total_active_stake: 900,
             }),
         });
+        let heaviest_fork_aggregate = Some(HeaviestForkAggregateRecord {
+            received: HashMap::new(),
+            final_result: Some(HeaviestForkAggregateFinal {
+                total_active_stake: 900,
+                total_active_stake_seeing_supermajority: 900,
+                total_active_stake_agreeing_with_me: 900,
+            }),
+        });
         let expected_slots_stake_map: HashMap<Slot, u64> =
             vec![(0, 900), (1, 800)].into_iter().collect();
         for (entrance_state, exit_state, entrance_progress, exit_progress) in [
@@ -1456,13 +1699,15 @@ mod tests {
                         slots_stake_map: expected_slots_stake_map,
                         total_active_stake: 900,
                     },
-                    my_heaviest_fork: Some(HeaviestFork {
+                    my_heaviest_fork: Some(HeaviestForkRecord {
                         slot: 1,
                         bankhash: Hash::default().to_string(),
                         total_active_stake: 900,
+                        shred_version: SHRED_VERSION as u32,
+                        wallclock: 0,
                     }),
                 },
-                WenRestartProgressInternalState::Done,
+                WenRestartProgressInternalState::HeaviestFork,
                 WenRestartProgress {
                     state: RestartState::HeaviestFork.into(),
                     my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
@@ -1470,14 +1715,47 @@ mod tests {
                     ..Default::default()
                 },
                 WenRestartProgress {
-                    state: RestartState::Done.into(),
+                    state: RestartState::HeaviestFork.into(),
                     my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
                     last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
-                    my_heaviest_fork: Some(HeaviestFork {
+                    my_heaviest_fork: Some(HeaviestForkRecord {
                         slot: 1,
                         bankhash: Hash::default().to_string(),
                         total_active_stake: 900,
+                        shred_version: SHRED_VERSION as u32,
+                        wallclock: 0,
                     }),
+                    ..Default::default()
+                },
+            ),
+            (
+                WenRestartProgressInternalState::HeaviestFork,
+                WenRestartProgressInternalState::Done,
+                WenRestartProgress {
+                    state: RestartState::HeaviestFork.into(),
+                    my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
+                    last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
+                    my_heaviest_fork: Some(HeaviestForkRecord {
+                        slot: 1,
+                        bankhash: Hash::default().to_string(),
+                        total_active_stake: 900,
+                        shred_version: SHRED_VERSION as u32,
+                        wallclock: 0,
+                    }),
+                    heaviest_fork_aggregate: heaviest_fork_aggregate.clone(),
+                },
+                WenRestartProgress {
+                    state: RestartState::Done.into(),
+                    my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
+                    last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
+                    my_heaviest_fork: Some(HeaviestForkRecord {
+                        slot: 1,
+                        bankhash: Hash::default().to_string(),
+                        total_active_stake: 900,
+                        shred_version: SHRED_VERSION as u32,
+                        wallclock: 0,
+                    }),
+                    heaviest_fork_aggregate,
                 },
             ),
         ] {
@@ -1659,6 +1937,61 @@ mod tests {
             WenRestartError::BlockNotFrozenAfterReplay(
                 missing_parent,
                 Some("invalid block error: incomplete block".to_string())
+            ),
+        );
+    }
+
+    #[test]
+    fn test_aggregate_heaviest_fork_failures() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let test_state = wen_restart_test_init(&ledger_path);
+        let heaviest_fork_slot = test_state.last_voted_fork_slots[0] + 3;
+        let heaviest_fork_bankhash = Hash::new_unique();
+        let progress = wen_restart_proto::WenRestartProgress {
+            state: RestartState::HeaviestFork.into(),
+            my_heaviest_fork: Some(HeaviestForkRecord {
+                slot: heaviest_fork_slot,
+                bankhash: heaviest_fork_bankhash.to_string(),
+                total_active_stake: 900,
+                shred_version: SHRED_VERSION as u32,
+                wallclock: 0,
+            }),
+            ..Default::default()
+        };
+        let different_bankhash = Hash::new_unique();
+        for keypair in test_state.validator_voting_keypairs.iter().skip(2) {
+            let node_pubkey = keypair.node_keypair.pubkey();
+            let node = LegacyContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
+            let now = timestamp();
+            push_restart_heaviest_fork(
+                test_state.cluster_info.clone(),
+                &node,
+                heaviest_fork_slot,
+                &different_bankhash,
+                900,
+                &keypair.node_keypair,
+                now,
+            );
+        }
+        let mut expected_block_stake_map = HashMap::new();
+        expected_block_stake_map.insert((heaviest_fork_slot, heaviest_fork_bankhash), 100);
+        expected_block_stake_map.insert((heaviest_fork_slot, different_bankhash), 800);
+        assert_eq!(
+            aggregate_restart_heaviest_fork(
+                &test_state.wen_restart_proto_path,
+                80,
+                test_state.cluster_info.clone(),
+                test_state.bank_forks.clone(),
+                Arc::new(AtomicBool::new(false)),
+                &mut progress.clone(),
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::NotEnoughStakeAgreeingWithUs(
+                heaviest_fork_slot,
+                heaviest_fork_bankhash,
+                expected_block_stake_map
             ),
         );
     }
