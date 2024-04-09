@@ -37,7 +37,7 @@ impl SkipClientVerification {
 }
 
 pub struct SpawnServerResult {
-    pub endpoint: Endpoint,
+    pub endpoints: Vec<Endpoint>,
     pub thread: thread::JoinHandle<()>,
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
@@ -120,14 +120,16 @@ pub enum QuicServerError {
 }
 
 pub struct EndpointKeyUpdater {
-    endpoint: Endpoint,
+    endpoints: Vec<Endpoint>,
     gossip_host: IpAddr,
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let (config, _) = configure_server(key, self.gossip_host)?;
-        self.endpoint.set_server_config(Some(config));
+        for endpoint in &self.endpoints {
+            endpoint.set_server_config(Some(config.clone()));
+        }
         Ok(())
     }
 }
@@ -448,12 +450,43 @@ pub fn spawn_server(
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
 ) -> Result<SpawnServerResult, QuicServerError> {
+    spawn_server_multi(
+        name,
+        vec![sock],
+        keypair,
+        gossip_host,
+        packet_sender,
+        exit,
+        max_connections_per_peer,
+        staked_nodes,
+        max_staked_connections,
+        max_unstaked_connections,
+        wait_for_chunk_timeout,
+        coalesce,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_server_multi(
+    name: &'static str,
+    sockets: Vec<UdpSocket>,
+    keypair: &Keypair,
+    gossip_host: IpAddr,
+    packet_sender: Sender<PacketBatch>,
+    exit: Arc<AtomicBool>,
+    max_connections_per_peer: usize,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    max_staked_connections: usize,
+    max_unstaked_connections: usize,
+    wait_for_chunk_timeout: Duration,
+    coalesce: Duration,
+) -> Result<SpawnServerResult, QuicServerError> {
     let runtime = rt();
-    let (endpoint, _stats, task) = {
+    let (endpoints, _stats, task) = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server(
+        crate::nonblocking::quic::spawn_server_multi(
             name,
-            sock,
+            sockets,
             keypair,
             gossip_host,
             packet_sender,
@@ -475,11 +508,11 @@ pub fn spawn_server(
         })
         .unwrap();
     let updater = EndpointKeyUpdater {
-        endpoint: endpoint.clone(),
+        endpoints: endpoints.clone(),
         gossip_host,
     };
     Ok(SpawnServerResult {
-        endpoint,
+        endpoints,
         thread: handle,
         key_updater: Arc::new(updater),
     })
@@ -509,7 +542,7 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnServerResult {
-            endpoint: _,
+            endpoints: _,
             thread: t,
             key_updater: _,
         } = spawn_server(
@@ -569,7 +602,7 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnServerResult {
-            endpoint: _,
+            endpoints: _,
             thread: t,
             key_updater: _,
         } = spawn_server(
@@ -616,7 +649,7 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnServerResult {
-            endpoint: _,
+            endpoints: _,
             thread: t,
             key_updater: _,
         } = spawn_server(

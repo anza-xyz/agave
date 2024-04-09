@@ -46,9 +46,7 @@ use {
     },
     solana_stake_program::stake_state,
     solana_streamer::socket::SocketAddrSpace,
-    solana_tpu_client::tpu_client::{
-        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
-    },
+    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC},
     solana_vote_program::{
         vote_instruction,
         vote_state::{self, VoteInit},
@@ -293,7 +291,7 @@ impl LocalCluster {
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
+            true,
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -508,7 +506,7 @@ impl LocalCluster {
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
+            true,
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -905,7 +903,7 @@ impl Cluster for LocalCluster {
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
+            true,
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
