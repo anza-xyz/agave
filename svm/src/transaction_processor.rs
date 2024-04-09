@@ -109,7 +109,7 @@ pub trait TransactionProcessingCallback {
         LoadedProgramMatchCriteria::NoCriteria
     }
 
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey);
+    fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
 }
 
 #[derive(Debug)]
@@ -1049,10 +1049,6 @@ mod tests {
 
         fn get_feature_set(&self) -> Arc<FeatureSet> {
             self.feature_set.clone()
-        }
-
-        fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {
-            unimplemented!()
         }
     }
 
