@@ -1,3 +1,5 @@
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
 use {
     assert_matches::assert_matches,
     solana_program_test::*,
@@ -8,18 +10,8 @@ use {
     },
 };
 
-// Since ed25519_dalek is still using the old version of rand, this test
-// copies the `generate` implementation at:
-// https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
-fn generate_keypair() -> ed25519_dalek::Keypair {
-    use rand::RngCore;
-    let mut rng = rand::thread_rng();
-    let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-    rng.fill_bytes(&mut seed);
-    let secret =
-        ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH]).unwrap();
-    let public = ed25519_dalek::PublicKey::from(&secret);
-    ed25519_dalek::Keypair { secret, public }
+fn generate_keypair() -> SigningKey {
+    SigningKey::generate(&mut OsRng)
 }
 
 #[tokio::test]

@@ -1,4 +1,5 @@
 #![cfg(test)]
+use rand::rngs::OsRng;
 #[allow(deprecated)]
 use solana_sdk::sysvar::fees::Fees;
 use {
@@ -9954,17 +9955,7 @@ fn test_call_precomiled_program() {
     // Since ed25519_dalek is still using the old version of rand, this test
     // copies the `generate` implementation at:
     // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
-    let privkey = {
-        use rand::RngCore;
-        let mut rng = rand::thread_rng();
-        let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-        rng.fill_bytes(&mut seed);
-        let secret =
-            ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH])
-                .unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        ed25519_dalek::Keypair { secret, public }
-    };
+    let privkey = ed25519_dalek::SigningKey::generate(&mut OsRng);
     let message_arr = b"hello";
     let instruction =
         solana_sdk::ed25519_instruction::new_ed25519_instruction(&privkey, message_arr);

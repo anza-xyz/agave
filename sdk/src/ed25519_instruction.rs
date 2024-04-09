@@ -193,6 +193,7 @@ pub mod test {
             signature::{Keypair, Signer},
             transaction::Transaction,
         },
+        rand::rngs::OsRng,
         rand0_7::{thread_rng, Rng},
     };
 
@@ -352,7 +353,7 @@ pub mod test {
     fn test_ed25519() {
         solana_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut OsRng);
         let message_arr = b"hello";
         let mut instruction = new_ed25519_instruction(&privkey, message_arr);
         let mint_keypair = Keypair::new();

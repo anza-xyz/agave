@@ -725,6 +725,7 @@ pub fn unix_timestamp_to_string(unix_timestamp: UnixTimestamp) -> String {
 mod test {
     use {
         super::*,
+        console::Key,
         solana_sdk::{
             message::{
                 v0::{self, LoadedAddresses},
@@ -740,10 +741,7 @@ mod test {
     };
 
     fn new_test_keypair() -> Keypair {
-        let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        let keypair = ed25519_dalek::Keypair { secret, public };
-        Keypair::from_bytes(&keypair.to_bytes()).unwrap()
+        Keypair::new()
     }
 
     fn new_test_v0_transaction() -> VersionedTransaction {

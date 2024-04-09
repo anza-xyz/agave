@@ -461,6 +461,7 @@ impl TryFrom<&[u8]> for ElGamalPubkey {
 
         Ok(ElGamalPubkey(
             CompressedRistretto::from_slice(bytes)
+                .map_err(|_| ElGamalError::PubkeyDeserialization)?
                 .decompress()
                 .ok_or(ElGamalError::PubkeyDeserialization)?,
         ))
@@ -630,10 +631,13 @@ impl TryFrom<&[u8]> for ElGamalSecretKey {
     type Error = ElGamalError;
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         match bytes.try_into() {
-            Ok(bytes) => Ok(ElGamalSecretKey::from(
-                Scalar::from_canonical_bytes(bytes)
-                    .ok_or(ElGamalError::SecretKeyDeserialization)?,
-            )),
+            Ok(bytes) => {
+                let scalar = Scalar::from_canonical_bytes(bytes);
+                if scalar.is_none().into() {
+                    return Err(ElGamalError::SecretKeyDeserialization);
+                };
+                Ok(ElGamalSecretKey::from(scalar.unwrap()))
+            }
             _ => Err(ElGamalError::SecretKeyDeserialization),
         }
     }
