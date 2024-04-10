@@ -1,14 +1,6 @@
 use {
     crate::{
-<<<<<<< HEAD
         quic::{configure_server, QuicServerError, StreamStats, MAX_UNSTAKED_CONNECTIONS},
-=======
-        nonblocking::stream_throttle::{
-            ConnectionStreamCounter, StakedStreamLoadEMA, MAX_STREAMS_PER_MS,
-            STREAM_STOP_CODE_THROTTLING, STREAM_THROTTLING_INTERVAL_MS,
-        },
-        quic::{configure_server, QuicServerError, StreamStats},
->>>>>>> 92ebf0f80c (Treat super low staked as unstaked in streamer QOS (#701))
         streamer::StakedNodes,
         tls_certificates::get_pubkey_from_tls_certificate,
     },
@@ -503,20 +495,16 @@ async fn setup_connection(
                         stats.clone(),
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
-<<<<<<< HEAD
-=======
                         // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
-                        // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
-                        let min_stake_ratio =
-                            1_f64 / (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) as f64;
+                        // interval during which we allow max (MAX_STREAMS_PER_100MS * 100) streams.
+                        let min_stake_ratio = 1_f64 / (MAX_STREAMS_PER_100MS * 100) as f64;
                         let stake_ratio = stake as f64 / total_stake as f64;
-                        let peer_type = if stake_ratio < min_stake_ratio {
+                        let stake = if stake_ratio < min_stake_ratio {
                             // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
-                            ConnectionPeerType::Unstaked
+                            0
                         } else {
-                            ConnectionPeerType::Staked(stake)
+                            stake
                         };
->>>>>>> 92ebf0f80c (Treat super low staked as unstaked in streamer QOS (#701))
                         NewConnectionHandlerParams {
                             packet_sender,
                             remote_pubkey: Some(pubkey),
