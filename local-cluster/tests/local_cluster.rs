@@ -360,10 +360,7 @@ fn test_forwarding() {
         ),
         ..ClusterConfig::default()
     };
-<<<<<<< HEAD
-=======
 
->>>>>>> e91a5e2744 (default staked client in LocalCluster (#716))
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     let cluster_nodes = discover_cluster(
