@@ -28,6 +28,10 @@ type ReadOnlyCacheKey = Pubkey;
 #[derive(Debug)]
 struct ReadOnlyAccountCacheEntry {
     account: AccountSharedData,
+    /// 'slot' tracks when the 'account' is stored. This important for
+    /// correctness. When 'loading' from the cache by pubkey+slot, we need to
+    /// make sure that both pubkey and slot matches in the cache. Otherwise, we
+    /// may return the wrong account.
     slot: Slot,
     /// Index of the entry in the eviction queue.
     index: AtomicU32,
@@ -143,8 +147,8 @@ impl ReadOnlyAccountsCache {
 
     /// true if pubkey is in cache at slot
     pub(crate) fn in_cache(&self, pubkey: &Pubkey, slot: Slot) -> bool {
-        if let Some(e) = self.cache.get(pubkey) {
-            e.slot == slot
+        if let Some(entry) = self.cache.get(pubkey) {
+            entry.slot == slot
         } else {
             false
         }
@@ -152,6 +156,7 @@ impl ReadOnlyAccountsCache {
 
     pub(crate) fn load(&self, pubkey: Pubkey, slot: Slot) -> Option<AccountSharedData> {
         let (account, load_us) = measure_us!({
+            let mut found = None;
             if let Some(entry) = self.cache.get(&pubkey) {
                 if entry.slot == slot {
                     // Move the entry to the end of the queue.
@@ -170,15 +175,14 @@ impl ReadOnlyAccountsCache {
                     let account = entry.account.clone();
                     drop(entry);
                     self.stats.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(account)
-                } else {
-                    self.stats.misses.fetch_add(1, Ordering::Relaxed);
-                    None
+                    found = Some(account);
                 }
-            } else {
-                self.stats.misses.fetch_add(1, Ordering::Relaxed);
-                None
             }
+
+            if found.is_none() {
+                self.stats.misses.fetch_add(1, Ordering::Relaxed);
+            }
+            found
         });
         self.stats.load_us.fetch_add(load_us, Ordering::Relaxed);
         account
@@ -446,6 +450,10 @@ mod tests {
         cache.evict_in_foreground();
         assert_eq!(100 + per_account_size, cache.data_size());
         assert!(accounts_equal(&cache.load(key1, slot).unwrap(), &account1));
+        // pass a wrong slot and check that load fails
+        assert!(cache.load(key1, slot + 1).is_none());
+        // insert another entry for slot+1, and assert only one entry for key1 is in the cache
+        cache.store(key1, slot + 1, account1.clone());
         assert_eq!(1, cache.cache_len());
         cache.store(key2, slot, account2.clone());
         cache.evict_in_foreground();
