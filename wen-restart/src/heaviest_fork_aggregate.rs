@@ -348,6 +348,38 @@ mod tests {
             expected_total_active_stake
         );
 
+        // If everyone is seeing only 70%, the total active stake seeing supermajority is 0.
+        for validator_voting_keypair in test_state.validator_voting_keypairs.iter().take(6) {
+            let pubkey = validator_voting_keypair.node_keypair.pubkey();
+            let now = timestamp();
+            assert_eq!(
+                test_state
+                    .heaviest_fork_aggregate
+                    .aggregate(RestartHeaviestFork {
+                        from: pubkey,
+                        wallclock: now,
+                        last_slot: test_state.heaviest_slot,
+                        last_slot_hash: test_state.heaviest_hash,
+                        observed_stake: 700,
+                        shred_version: SHRED_VERSION,
+                    },),
+                Some(HeaviestForkRecord {
+                    slot: test_state.heaviest_slot,
+                    bankhash: test_state.heaviest_hash.to_string(),
+                    total_active_stake: 700,
+                    shred_version: SHRED_VERSION as u32,
+                    wallclock: now,
+                }),
+            );
+        }
+        assert_eq!(test_state.heaviest_fork_aggregate.total_active_stake(), 700);
+        assert_eq!(
+            test_state
+                .heaviest_fork_aggregate
+                .total_active_stake_seeing_supermajority(),
+            0
+        );
+
         // test that when 80% of the stake is seeing supermajority,
         // the active percent seeing supermajority is 80%.
         for validator_voting_keypair in test_state.validator_voting_keypairs.iter().take(7) {
