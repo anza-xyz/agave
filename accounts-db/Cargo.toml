@@ -21,6 +21,7 @@ index_list = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 lazy_static = { workspace = true }
+libc = { workspace = true }
 log = { workspace = true }
 lz4 = { workspace = true }
 memmap2 = { workspace = true }
@@ -33,6 +34,7 @@ rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
+slab = { workspace = true }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-bucket-map = { workspace = true }
 solana-frozen-abi = { workspace = true }
@@ -51,6 +53,9 @@ static_assertions = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
