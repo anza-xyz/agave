@@ -1,7 +1,7 @@
 //! Vote program instructions
 
 use {
-    super::state::TowerSync,
+    super::state::{TowerSync, VoteState},
     crate::{
         clock::{Slot, UnixTimestamp},
         hash::Hash,
@@ -13,7 +13,7 @@ use {
             state::{
                 serde_compact_vote_state_update, serde_tower_sync, Vote, VoteAuthorize,
                 VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs, VoteInit,
-                VoteStateUpdate, VoteStateVersions,
+                VoteStateUpdate,
             },
         },
     },
@@ -251,7 +251,7 @@ pub struct CreateVoteAccountConfig<'a> {
 impl<'a> Default for CreateVoteAccountConfig<'a> {
     fn default() -> Self {
         Self {
-            space: VoteStateVersions::vote_state_size_of(false) as u64,
+            space: VoteState::size_of() as u64,
             with_seed: None,
         }
     }

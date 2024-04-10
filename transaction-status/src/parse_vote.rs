@@ -292,7 +292,7 @@ mod test {
             sysvar,
             vote::{
                 instruction as vote_instruction,
-                state::{Vote, VoteAuthorize, VoteInit, VoteStateUpdate, VoteStateVersions},
+                state::{Vote, VoteAuthorize, VoteInit, VoteState, VoteStateUpdate},
             },
         },
     };
@@ -319,7 +319,7 @@ mod test {
             &vote_init,
             lamports,
             vote_instruction::CreateVoteAccountConfig {
-                space: VoteStateVersions::vote_state_size_of(true) as u64,
+                space: VoteState::size_of() as u64,
                 ..vote_instruction::CreateVoteAccountConfig::default()
             },
         );

@@ -68,7 +68,7 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
         },
         vote_lamports,
         vote_instruction::CreateVoteAccountConfig {
-            space: vote_state::VoteStateVersions::vote_state_size_of(true) as u64,
+            space: vote_state::VoteState::size_of() as u64,
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     ));
