@@ -56,12 +56,9 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE,
-        snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
-        snapshot_package::SnapshotKind,
-        snapshot_utils::{self},
+        commitment::VOTE_THRESHOLD_SIZE, snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_package::SnapshotKind,
+        snapshot_utils,
     },
     solana_sdk::{
         account::AccountSharedData,
@@ -363,6 +360,7 @@ fn test_forwarding() {
         ),
         ..ClusterConfig::default()
     };
+
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     let cluster_nodes = discover_cluster(

@@ -1,8 +1,8 @@
 use {
     crate::{
         accounts_db::{
-            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanStorageResult,
-            VerifyAccountsHashAndLamportsConfig,
+            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, ScanAccountStorageData,
+            ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanResult, ZeroLamport},
         ancestors::Ancestors,
@@ -201,21 +201,22 @@ impl Accounts {
     /// returns only the latest/current version of B for this slot
     pub fn scan_slot<F, B>(&self, slot: Slot, func: F) -> Vec<B>
     where
-        F: Fn(LoadedAccount) -> Option<B> + Send + Sync,
+        F: Fn(&LoadedAccount) -> Option<B> + Send + Sync,
         B: Sync + Send + Default + std::cmp::Eq,
     {
         let scan_result = self.accounts_db.scan_account_storage(
             slot,
-            |loaded_account: LoadedAccount| {
+            |loaded_account: &LoadedAccount| {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
             },
-            |accum: &DashMap<Pubkey, B>, loaded_account: LoadedAccount| {
+            |accum: &DashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
                 let loaded_account_pubkey = *loaded_account.pubkey();
                 if let Some(val) = func(loaded_account) {
                     accum.insert(loaded_account_pubkey, val);
                 }
             },
+            ScanAccountStorageData::NoData,
         );
 
         match scan_result {
