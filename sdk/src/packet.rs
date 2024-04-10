@@ -33,13 +33,8 @@ bitflags! {
         /// the packet is built.
         /// This field can be removed when the above feature gate is adopted by mainnet-beta.
         const ROUND_COMPUTE_UNIT_PRICE = 0b0010_0000;
-<<<<<<< HEAD
-=======
-        /// For tracking performance
-        const PERF_TRACK_PACKET  = 0b0100_0000;
         /// For marking packets from staked nodes
         const FROM_STAKED_NODE = 0b1000_0000;
->>>>>>> 1744e9efd7 (BankingStage Forwarding Filter (#685))
     }
 }
 
