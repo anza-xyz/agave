@@ -62,6 +62,7 @@ impl Bank {
             distributed_rewards,
             credit_start,
             num_partitions,
+            total_points,
         );
 
         datapoint_info!(
