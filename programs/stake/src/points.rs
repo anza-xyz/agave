@@ -139,6 +139,44 @@ pub(crate) fn calculate_stake_points_and_credits(
     }
 }
 
+pub(crate) fn calculate_stake_points_and_credits_through_epoch(
+    max_epoch: Epoch,
+    stake: &Stake,
+    new_vote_state: &VoteState,
+    stake_history: &StakeHistory,
+    inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
+    new_rate_activation_epoch: Option<Epoch>,
+) -> CalculatedStakePoints {
+    let credits_in_stake = stake.credits_observed;
+    let credits_in_vote = new_vote_state.credits_for_recent_epoch(max_epoch);
+    // if there is no newer credits since observed, return no point
+    if let Some(result) = compare_stake_vote_credits(
+        credits_in_vote,
+        credits_in_stake,
+        &inflation_point_calc_tracer,
+    ) {
+        return result;
+    }
+
+    let (points, new_credits_observed) = handle_epoch_credits(
+        new_vote_state
+            .epoch_credits()
+            .iter()
+            .take_while(|(epoch, _, _)| *epoch <= max_epoch)
+            .copied(),
+        stake,
+        stake_history,
+        new_rate_activation_epoch,
+        &inflation_point_calc_tracer,
+    );
+
+    CalculatedStakePoints {
+        points,
+        new_credits_observed,
+        force_credits_update_with_skipped_reward: false,
+    }
+}
+
 fn compare_stake_vote_credits(
     credits_in_vote: u64,
     credits_in_stake: u64,

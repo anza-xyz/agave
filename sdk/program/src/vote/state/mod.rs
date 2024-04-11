@@ -745,7 +745,7 @@ impl VoteState {
                 return *credits;
             }
         }
-        return 0;
+        0
     }
 
     /// Number of "credits" owed to this account from the mining pool on a per-epoch basis,

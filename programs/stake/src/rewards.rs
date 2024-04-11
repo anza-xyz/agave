@@ -3,8 +3,8 @@
 
 use {
     crate::points::{
-        calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
-        PointValue, SkippedReason,
+        calculate_stake_points_and_credits_through_epoch, CalculatedStakePoints,
+        InflationPointCalculationEvent, PointValue, SkippedReason,
     },
     solana_sdk::{
         account::{AccountSharedData, WritableAccount},
@@ -138,7 +138,8 @@ fn calculate_stake_rewards(
         points,
         new_credits_observed,
         mut force_credits_update_with_skipped_reward,
-    } = calculate_stake_points_and_credits(
+    } = calculate_stake_points_and_credits_through_epoch(
+        rewarded_epoch,
         stake,
         vote_state,
         stake_history,
@@ -228,7 +229,10 @@ fn calculate_stake_rewards(
 mod tests {
     use {
         super::*,
-        crate::{points::null_tracer, stake_state::new_stake},
+        crate::{
+            points::{calculate_stake_points_and_credits, null_tracer},
+            stake_state::new_stake,
+        },
         solana_sdk::{native_token, pubkey::Pubkey},
     };
 
