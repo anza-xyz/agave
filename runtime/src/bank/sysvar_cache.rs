@@ -6,7 +6,7 @@ mod tests {
     use {
         super::*,
         solana_sdk::{
-            feature_set, genesis_config::create_genesis_config, hash::Hash, pubkey::Pubkey,
+            feature_set, genesis_config::create_genesis_config, pubkey::Pubkey,
             sysvar::epoch_rewards::EpochRewards,
         },
         std::sync::Arc,
@@ -123,7 +123,7 @@ mod tests {
         let expected_epoch_rewards = EpochRewards {
             distribution_starting_block_height: 42,
             num_partitions: 0,
-            parent_blockhash: Hash::default(),
+            parent_blockhash: bank1.parent().unwrap().last_blockhash(),
             total_points: 0,
             total_rewards: 100,
             distributed_rewards: 10,

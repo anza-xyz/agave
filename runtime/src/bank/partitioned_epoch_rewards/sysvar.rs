@@ -30,10 +30,18 @@ impl Bank {
 
         assert!(total_rewards >= distributed_rewards);
 
+        // If Bank::parent() does not exist, as in slot 0, use Hash::default()
+        // for the parent_blockhash.
+        let parent_blockhash = self
+            .parent()
+            .map(|bank| bank.last_blockhash())
+            .unwrap_or_default();
+
         let epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             total_rewards,
             distributed_rewards,
             distribution_starting_block_height,
+            parent_blockhash,
             active: true,
             ..sysvar::epoch_rewards::EpochRewards::default()
         };
@@ -110,8 +118,9 @@ mod tests {
         crate::bank::tests::create_genesis_config,
         solana_sdk::{
             account::ReadableAccount, epoch_schedule::EpochSchedule, feature_set, hash::Hash,
-            native_token::LAMPORTS_PER_SOL,
+            native_token::LAMPORTS_PER_SOL, pubkey::Pubkey,
         },
+        std::sync::Arc,
     };
 
     /// Test `EpochRewards` sysvar creation, distribution, and burning.
@@ -152,6 +161,24 @@ mod tests {
         let epoch_rewards: sysvar::epoch_rewards::EpochRewards = from_account(&account).unwrap();
         assert_eq!(epoch_rewards, expected_epoch_rewards);
 
+        // Create a child bank to test parent_blockhash
+        let parent_blockhash = bank.last_blockhash();
+        let parent_slot = bank.slot();
+        let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), parent_slot + 1);
+        // Also note that running `create_epoch_rewards_sysvar()` against a bank
+        // with an existing EpochRewards sysvar clobbers the previous values
+        bank.create_epoch_rewards_sysvar(total_rewards, 10, 42);
+
+        let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
+            distribution_starting_block_height: 42,
+            num_partitions: 0,
+            parent_blockhash,
+            total_points: 0,
+            total_rewards,
+            distributed_rewards: 10,
+            active: true,
+        };
+
         let epoch_rewards = bank.get_epoch_rewards_sysvar();
         assert_eq!(epoch_rewards, expected_epoch_rewards);
 
@@ -164,7 +191,7 @@ mod tests {
         let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height: 42,
             num_partitions: 0,
-            parent_blockhash: Hash::default(),
+            parent_blockhash,
             total_points: 0,
             total_rewards,
             distributed_rewards: 20,
