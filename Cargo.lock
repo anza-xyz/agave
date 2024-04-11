@@ -116,7 +116,7 @@ dependencies = [
  "dirs-next",
  "indicatif",
  "lazy_static",
- "nix 0.26.4",
+ "nix",
  "reqwest",
  "scopeguard",
  "semver",
@@ -361,9 +361,9 @@ checksum = "8901269c6307e8d93993578286ac0edf7f195079ffff5ebdeea6a59ffb7e36bc"
 
 [[package]]
 name = "anyhow"
-version = "1.0.81"
+version = "1.0.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0952808a6c2afd1aa8947271f3a60f1a6763c7b912d210184c5149b5cf147247"
+checksum = "f538837af36e6f6a9be0faa67f9a314f8119e4e4b5867c6ab40ed60360142519"
 
 [[package]]
 name = "aquamarine"
@@ -1664,7 +1664,7 @@ version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "672465ae37dc1bc6380a6547a8883d5dd397b0f1faaad4f265726cc7042a5345"
 dependencies = [
- "nix 0.28.0",
+ "nix",
  "windows-sys 0.52.0",
 ]
 
@@ -3498,19 +3498,6 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.26.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
-dependencies = [
- "bitflags 1.3.2",
- "cfg-if 1.0.0",
- "libc",
- "memoffset 0.7.1",
- "pin-utils",
-]
-
-[[package]]
-name = "nix"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
@@ -3519,6 +3506,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "cfg_aliases",
  "libc",
+ "memoffset 0.9.0",
 ]
 
 [[package]]
@@ -5214,9 +5202,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.13.1"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6ecd384b10a64542d77071bd64bd7b231f4ed5940fba55e98c3de13824cf3d7"
+checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
 name = "smpl_jwt"
@@ -5913,7 +5901,6 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "dashmap",
- "eager",
  "etcd-client",
  "fs_extra",
  "futures 0.3.30",
@@ -6294,6 +6281,7 @@ dependencies = [
  "chrono-humanize",
  "crossbeam-channel",
  "dashmap",
+ "eager",
  "fs_extra",
  "futures 0.3.30",
  "itertools",
@@ -6493,7 +6481,7 @@ dependencies = [
  "clap 3.2.25",
  "crossbeam-channel",
  "log",
- "nix 0.26.4",
+ "nix",
  "rand 0.8.5",
  "serde",
  "serde_derive",
@@ -6537,7 +6525,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "nix 0.26.4",
+ "nix",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
@@ -7238,13 +7226,14 @@ dependencies = [
  "itertools",
  "libc",
  "log",
- "nix 0.26.4",
+ "nix",
  "pem",
  "percentage",
  "quinn",
  "quinn-proto",
  "rand 0.8.5",
  "rustls",
+ "smallvec",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
