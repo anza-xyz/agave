@@ -2,9 +2,7 @@ use {
     super::Bank,
     log::info,
     solana_sdk::{
-        account::{
-            create_account_shared_data_with_fields as create_account, from_account, ReadableAccount,
-        },
+        account::{create_account_shared_data_with_fields as create_account, from_account},
         sysvar,
     },
 };
@@ -15,10 +13,7 @@ impl Bank {
         if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {
             let epoch_rewards: sysvar::epoch_rewards::EpochRewards =
                 from_account(&account).unwrap();
-            info!(
-                "{prefix} epoch_rewards sysvar: {:?}",
-                (account.lamports(), epoch_rewards)
-            );
+            info!("{prefix} epoch_rewards sysvar: {:?}", epoch_rewards);
         } else {
             info!("{prefix} epoch_rewards sysvar: none");
         }
@@ -105,7 +100,8 @@ mod tests {
         super::*,
         crate::bank::tests::create_genesis_config,
         solana_sdk::{
-            epoch_schedule::EpochSchedule, feature_set, hash::Hash, native_token::LAMPORTS_PER_SOL,
+            account::ReadableAccount, epoch_schedule::EpochSchedule, feature_set, hash::Hash,
+            native_token::LAMPORTS_PER_SOL,
         },
     };
 
