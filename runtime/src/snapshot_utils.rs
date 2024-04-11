@@ -1229,9 +1229,9 @@ pub fn hard_link_storages_to_snapshot(
 
     let mut account_paths: HashSet<PathBuf> = HashSet::new();
     for storage in snapshot_storages {
-        let storage_path = storage.accounts.get_path();
+        let storage_path = storage.accounts.path();
         let snapshot_hardlink_dir = get_snapshot_accounts_hardlink_dir(
-            &storage_path,
+            storage_path,
             bank_slot,
             &mut account_paths,
             &accounts_hardlinks_dir,
@@ -1240,8 +1240,12 @@ pub fn hard_link_storages_to_snapshot(
         // Use the storage slot and id to compose a consistent file name for the hard-link file.
         let hardlink_filename = AppendVec::file_name(storage.slot(), storage.append_vec_id());
         let hard_link_path = snapshot_hardlink_dir.join(hardlink_filename);
-        fs::hard_link(&storage_path, &hard_link_path).map_err(|err| {
-            HardLinkStoragesToSnapshotError::HardLinkStorage(err, storage_path, hard_link_path)
+        fs::hard_link(storage_path, &hard_link_path).map_err(|err| {
+            HardLinkStoragesToSnapshotError::HardLinkStorage(
+                err,
+                storage_path.to_path_buf(),
+                hard_link_path,
+            )
         })?;
     }
     Ok(())
