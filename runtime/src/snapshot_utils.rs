@@ -808,14 +808,16 @@ pub fn archive_snapshot_package(
                     storage.append_vec_id(),
                 ));
                 let mut header = tar::Header::new_gnu();
-                header
-                    .set_path(path_in_archive)
-                    .map_err(|err| E::ArchiveAccountStorageFile(err, storage.get_path()))?;
+                header.set_path(path_in_archive).map_err(|err| {
+                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                })?;
                 header.set_size(storage.capacity());
                 header.set_cksum();
                 archive
                     .append(&header, storage.accounts.data_for_archive())
-                    .map_err(|err| E::ArchiveAccountStorageFile(err, storage.get_path()))?;
+                    .map_err(|err| {
+                        E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                    })?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;

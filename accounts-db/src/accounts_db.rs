@@ -1194,8 +1194,9 @@ impl AccountStorageEntry {
         count
     }
 
-    pub fn get_path(&self) -> PathBuf {
-        self.accounts.path().to_path_buf()
+    /// Returns the path to the underlying accounts storage file
+    pub fn path(&self) -> &Path {
+        self.accounts.path()
     }
 }
 
