@@ -54,6 +54,7 @@ pub(super) struct VoteRewardsAccounts {
 struct CalculateValidatorRewardsResult {
     vote_rewards_accounts: VoteRewardsAccounts,
     stake_reward_calculation: StakeRewardCalculation,
+    total_points: u128,
 }
 
 /// hold reward calc info to avoid recalculation across functions

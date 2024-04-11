@@ -209,6 +209,7 @@ impl Bank {
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
             stake_reward_calculation: mut stake_rewards,
+            total_points,
         } = self
             .calculate_validator_rewards(
                 prev_epoch,
@@ -264,6 +265,7 @@ impl Bank {
             metrics,
         )
         .map(|point_value| {
+            let total_points = point_value.points;
             let (vote_rewards_accounts, stake_reward_calculation) = self
                 .calculate_stake_vote_rewards(
                     &reward_calculate_param,
@@ -276,6 +278,7 @@ impl Bank {
             CalculateValidatorRewardsResult {
                 vote_rewards_accounts,
                 stake_reward_calculation,
+                total_points,
             }
         })
     }
