@@ -232,6 +232,7 @@ impl LatestUnprocessedVotes {
         // and when a new vote account starts voting.
         let mut latest_votes_per_pubkey = self.latest_votes_per_pubkey.write().unwrap();
         latest_votes_per_pubkey.insert(pubkey, Arc::new(RwLock::new(vote)));
+        self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
         None
     }
 
