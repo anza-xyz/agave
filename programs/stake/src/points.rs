@@ -124,49 +124,13 @@ pub(crate) fn calculate_stake_points_and_credits(
         return result;
     }
 
-    let mut points = 0;
-    let mut new_credits_observed = credits_in_stake;
-
-    for (epoch, final_epoch_credits, initial_epoch_credits) in
-        new_vote_state.epoch_credits().iter().copied()
-    {
-        let stake_amount = u128::from(stake.delegation.stake(
-            epoch,
-            stake_history,
-            new_rate_activation_epoch,
-        ));
-
-        // figure out how much this stake has seen that
-        //   for which the vote account has a record
-        let earned_credits = if credits_in_stake < initial_epoch_credits {
-            // the staker observed the entire epoch
-            final_epoch_credits - initial_epoch_credits
-        } else if credits_in_stake < final_epoch_credits {
-            // the staker registered sometime during the epoch, partial credit
-            final_epoch_credits - new_credits_observed
-        } else {
-            // the staker has already observed or been redeemed this epoch
-            //  or was activated after this epoch
-            0
-        };
-        let earned_credits = u128::from(earned_credits);
-
-        // don't want to assume anything about order of the iterator...
-        new_credits_observed = new_credits_observed.max(final_epoch_credits);
-
-        // finally calculate points for this epoch
-        let earned_points = stake_amount * earned_credits;
-        points += earned_points;
-
-        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-            inflation_point_calc_tracer(&InflationPointCalculationEvent::CalculatedPoints(
-                epoch,
-                stake_amount,
-                earned_credits,
-                earned_points,
-            ));
-        }
-    }
+    let (points, new_credits_observed) = handle_epoch_credits(
+        new_vote_state.epoch_credits().iter().copied(),
+        stake,
+        stake_history,
+        new_rate_activation_epoch,
+        &inflation_point_calc_tracer,
+    );
 
     CalculatedStakePoints {
         points,
@@ -222,6 +186,58 @@ fn compare_stake_vote_credits(
         }
         Ordering::Greater => None,
     }
+}
+
+fn handle_epoch_credits(
+    epoch_credits_iter: impl Iterator<Item = (Epoch, u64, u64)>,
+    stake: &Stake,
+    stake_history: &StakeHistory,
+    new_rate_activation_epoch: Option<Epoch>,
+    inflation_point_calc_tracer: &Option<impl Fn(&InflationPointCalculationEvent)>,
+) -> (u128, u64) {
+    let credits_in_stake = stake.credits_observed;
+    let mut points = 0;
+    let mut new_credits_observed = credits_in_stake;
+
+    for (epoch, final_epoch_credits, initial_epoch_credits) in epoch_credits_iter {
+        let stake_amount = u128::from(stake.delegation.stake(
+            epoch,
+            stake_history,
+            new_rate_activation_epoch,
+        ));
+
+        // figure out how much this stake has seen that
+        //   for which the vote account has a record
+        let earned_credits = if credits_in_stake < initial_epoch_credits {
+            // the staker observed the entire epoch
+            final_epoch_credits - initial_epoch_credits
+        } else if credits_in_stake < final_epoch_credits {
+            // the staker registered sometime during the epoch, partial credit
+            final_epoch_credits - new_credits_observed
+        } else {
+            // the staker has already observed or been redeemed this epoch
+            //  or was activated after this epoch
+            0
+        };
+        let earned_credits = u128::from(earned_credits);
+
+        // don't want to assume anything about order of the iterator...
+        new_credits_observed = new_credits_observed.max(final_epoch_credits);
+
+        // finally calculate points for this epoch
+        let earned_points = stake_amount * earned_credits;
+        points += earned_points;
+
+        if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
+            inflation_point_calc_tracer(&InflationPointCalculationEvent::CalculatedPoints(
+                epoch,
+                stake_amount,
+                earned_credits,
+                earned_points,
+            ));
+        }
+    }
+    (points, new_credits_observed)
 }
 
 #[cfg(test)]
