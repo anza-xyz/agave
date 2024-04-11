@@ -39,6 +39,7 @@ impl Bank {
         let CalculateRewardsAndDistributeVoteRewardsResult {
             total_rewards,
             distributed_rewards,
+            total_points,
             stake_rewards_by_partition,
         } = self.calculate_rewards_and_distribute_vote_rewards(
             parent_epoch,
@@ -159,6 +160,7 @@ impl Bank {
         CalculateRewardsAndDistributeVoteRewardsResult {
             total_rewards: validator_rewards_paid + total_stake_rewards_lamports,
             distributed_rewards: validator_rewards_paid,
+            total_points,
             stake_rewards_by_partition,
         }
     }

@@ -92,6 +92,10 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     pub(super) total_rewards: u64,
     /// distributed vote rewards
     pub(super) distributed_rewards: u64,
+    /// total rewards points calculated for the current epoch, where points
+    /// equals the sum of (delegated stake * credits observed) for all
+    /// delegations
+    pub(super) total_points: u128,
     /// stake rewards that still need to be distributed, grouped by partition
     pub(super) stake_rewards_by_partition: Vec<StakeRewards>,
 }
