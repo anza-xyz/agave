@@ -1548,4 +1548,66 @@ mod test {
         );
         assert_ne!(duplicate_status.repair_pubkey_and_addr, dummy_addr);
     }
+<<<<<<< HEAD
+=======
+
+    #[test]
+    fn test_generate_repairs_for_wen_restart() {
+        solana_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let max_repairs = 3;
+
+        let slots: Vec<u64> = vec![2, 3, 5, 7];
+        let num_entries_per_slot = max_ticks_per_n_shreds(3, None) + 1;
+
+        let shreds = make_chaining_slot_entries(&slots, num_entries_per_slot, 0);
+        for (i, (mut slot_shreds, _)) in shreds.into_iter().enumerate() {
+            slot_shreds.remove(i);
+            blockstore.insert_shreds(slot_shreds, None, false).unwrap();
+        }
+
+        let mut slots_to_repair: Vec<Slot> = vec![];
+
+        // When slots_to_repair is empty, ignore all and return empty result.
+        let result = RepairService::generate_repairs_for_wen_restart(
+            &blockstore,
+            max_repairs,
+            &slots_to_repair,
+        );
+        assert!(result.is_empty());
+
+        // When asked to repair slot with missing shreds and some unknown slot, return correct results.
+        slots_to_repair = vec![3, 81];
+        let result = RepairService::generate_repairs_for_wen_restart(
+            &blockstore,
+            max_repairs,
+            &slots_to_repair,
+        );
+        assert_eq!(
+            result,
+            vec![
+                ShredRepairType::Shred(3, 1),
+                ShredRepairType::HighestShred(81, 0),
+            ],
+        );
+
+        // Test that it will not generate more than max_repairs.e().unwrap();
+        slots_to_repair = vec![2, 82, 7, 83, 84];
+        let result = RepairService::generate_repairs_for_wen_restart(
+            &blockstore,
+            max_repairs,
+            &slots_to_repair,
+        );
+        assert_eq!(result.len(), max_repairs);
+        assert_eq!(
+            result,
+            vec![
+                ShredRepairType::Shred(2, 0),
+                ShredRepairType::HighestShred(82, 0),
+                ShredRepairType::Shred(7, 3),
+            ],
+        );
+    }
+>>>>>>> 293414f482 (pads last erasure batch with empty data shreds (#639))
 }
