@@ -40,12 +40,12 @@ impl Bank {
             .unwrap_or_default();
 
         let epoch_rewards = sysvar::epoch_rewards::EpochRewards {
+            distribution_starting_block_height,
+            num_partitions,
+            parent_blockhash,
+            total_points,
             total_rewards,
             distributed_rewards,
-            distribution_starting_block_height,
-            parent_blockhash,
-            num_partitions,
-            total_points,
             active: true,
         };
 
