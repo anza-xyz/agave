@@ -1,5 +1,3 @@
-#![allow(clippy::arithmetic_side_effects)]
-
 use {
     crate::{
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
@@ -2477,7 +2475,7 @@ pub fn get_epoch_boundary_timestamps(
                 break block_time;
             }
             Err(_) => {
-                epoch_start_slot += 1;
+                epoch_start_slot = epoch_start_slot.saturating_add(1);
             }
         }
     };
@@ -2491,7 +2489,8 @@ pub fn make_cli_reward(
 ) -> Option<CliEpochReward> {
     let wallclock_epoch_duration = epoch_end_time.checked_sub(epoch_start_time)?;
     if reward.post_balance > reward.amount {
-        let rate_change = reward.amount as f64 / (reward.post_balance - reward.amount) as f64;
+        let rate_change =
+            reward.amount as f64 / (reward.post_balance.saturating_sub(reward.amount)) as f64;
 
         let wallclock_epochs_per_year =
             (SECONDS_PER_DAY * 365) as f64 / wallclock_epoch_duration as f64;
