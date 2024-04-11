@@ -76,6 +76,7 @@ pub(super) struct PartitionedRewardsCalculation {
     pub(super) foundation_rate: f64,
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
+    total_points: u128,
 }
 
 /// result of calculating the stake rewards at beginning of new epoch

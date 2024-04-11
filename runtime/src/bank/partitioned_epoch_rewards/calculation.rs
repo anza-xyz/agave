@@ -90,6 +90,7 @@ impl Bank {
             foundation_rate,
             prev_epoch_duration_in_years,
             capitalization,
+            total_points,
         } = self.calculate_rewards_for_partitioning(
             prev_epoch,
             reward_calc_tracer,
@@ -243,6 +244,7 @@ impl Bank {
             foundation_rate,
             prev_epoch_duration_in_years,
             capitalization,
+            total_points,
         }
     }
 
