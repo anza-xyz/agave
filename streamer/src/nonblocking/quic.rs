@@ -496,8 +496,8 @@ async fn setup_connection(
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
                         // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
-                        // interval during which we allow max (MAX_STREAMS_PER_100MS * 100) streams.
-                        let min_stake_ratio = 1_f64 / (MAX_STREAMS_PER_100MS * 100) as f64;
+                        // interval during which we allow max MAX_STREAMS_PER_100MS streams.
+                        let min_stake_ratio = 1_f64 / MAX_STREAMS_PER_100MS as f64;
                         let stake_ratio = stake as f64 / total_stake as f64;
                         let stake = if stake_ratio < min_stake_ratio {
                             // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
