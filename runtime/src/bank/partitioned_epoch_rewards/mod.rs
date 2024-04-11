@@ -5,7 +5,7 @@ mod epoch_rewards_hasher;
 mod sysvar;
 
 use {
-    super::Bank,
+    super::{Bank, StakeRewardCalculation},
     crate::{stake_account::StakeAccount, stake_history::StakeHistory},
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
@@ -48,6 +48,12 @@ pub(super) struct VoteRewardsAccounts {
     /// Some if account is to be stored.
     /// None if to be skipped.
     pub(super) accounts_to_store: Vec<Option<AccountSharedData>>,
+}
+
+#[derive(Debug, Default)]
+struct CalculateValidatorRewardsResult {
+    vote_rewards_accounts: VoteRewardsAccounts,
+    stake_reward_calculation: StakeRewardCalculation,
 }
 
 /// hold reward calc info to avoid recalculation across functions
