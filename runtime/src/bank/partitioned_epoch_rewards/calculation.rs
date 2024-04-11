@@ -49,11 +49,18 @@ impl Bank {
         let slot = self.slot();
         let credit_start = self.block_height() + self.get_reward_calculation_num_blocks();
 
+        let num_partitions = stake_rewards_by_partition.len() as u64;
+
         self.set_epoch_reward_status_active(stake_rewards_by_partition);
 
         // create EpochRewards sysvar that holds the balance of undistributed rewards with
         // (total_rewards, distributed_rewards, credit_start), total capital will increase by (total_rewards - distributed_rewards)
-        self.create_epoch_rewards_sysvar(total_rewards, distributed_rewards, credit_start);
+        self.create_epoch_rewards_sysvar(
+            total_rewards,
+            distributed_rewards,
+            credit_start,
+            num_partitions,
+        );
 
         datapoint_info!(
             "epoch-rewards-status-update",

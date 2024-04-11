@@ -214,7 +214,8 @@ mod tests {
 
         // Set up epoch_rewards sysvar with rewards with 1e9 lamports to distribute.
         let total_rewards = 1_000_000_000;
-        bank.create_epoch_rewards_sysvar(total_rewards, 0, 42);
+        let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
+        bank.create_epoch_rewards_sysvar(total_rewards, 0, 42, num_partitions);
         let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
         let expected_balance =
             bank.get_minimum_balance_for_rent_exemption(pre_epoch_rewards_account.data().len());
