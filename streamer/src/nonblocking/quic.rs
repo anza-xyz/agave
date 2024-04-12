@@ -1,6 +1,6 @@
 use {
     crate::{
-        quic::{configure_server, QuicServerError, StreamStats, MAX_UNSTAKED_CONNECTIONS},
+        quic::{configure_server, QuicServerError, StreamStats},
         streamer::StakedNodes,
         tls_certificates::get_pubkey_from_tls_certificate,
     },
@@ -165,16 +165,8 @@ async fn run_server(
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
     let mut last_datapoint = Instant::now();
-<<<<<<< HEAD
     let unstaked_connection_table: Arc<Mutex<ConnectionTable>> = Arc::new(Mutex::new(
         ConnectionTable::new(ConnectionPeerType::Unstaked),
-=======
-    let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
-        Arc::new(Mutex::new(ConnectionTable::new()));
-    let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-        stats.clone(),
-        max_unstaked_connections,
->>>>>>> 592107a907 (corrected to not use hardcoded connections count for unstaked (#633))
     ));
     let staked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new(ConnectionPeerType::Staked)));
@@ -756,7 +748,7 @@ fn max_streams_for_connection_in_100ms(
     } else {
         Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT)
             .apply_to(max_streams_per_interval)
-            .saturating_div(MAX_UNSTAKED_CONNECTIONS as u64)
+            .saturating_div(max_unstaked_connections as u64)
     };
 
     let min_staked_streams_per_100ms = if max_unstaked_connections == 0 {
