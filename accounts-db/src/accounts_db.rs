@@ -9683,6 +9683,40 @@ pub mod tests {
         };
     }
 
+    macro_rules! define_accounts_db_test_should_panic {
+        ($name:ident, $panic_message:literal, |$accounts_db:ident| $inner: tt) => {
+            #[test_case(AccountsFileProvider::AppendVec; "append_vec")]
+            #[test_case(AccountsFileProvider::HotStorage; "hot_storage")]
+            #[should_panic(expected = $panic_message)]
+            fn $name(accounts_file_provider: AccountsFileProvider) {
+                fn run_test($accounts_db: AccountsDb) {
+                    $inner
+                }
+
+                let accounts_db =
+                    AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
+                run_test(accounts_db);
+            }
+        };
+    }
+
+    macro_rules! define_accounts_db_test_should_panic {
+        ($name:ident, $panic_message:literal, |$accounts_db:ident| $inner: tt) => {
+            #[test_case(AccountsFileProvider::AppendVec; "append_vec")]
+            #[test_case(AccountsFileProvider::HotStorage; "hot_storage")]
+            #[should_panic(expected = $panic_message)]
+            fn $name(accounts_file_provider: AccountsFileProvider) {
+                fn run_test($accounts_db: AccountsDb) {
+                    $inner
+                }
+
+                let accounts_db =
+                    AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
+                run_test(accounts_db);
+            }
+        };
+    }
+
     fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
         let slot0 = 0;
 
@@ -12667,18 +12701,19 @@ pub mod tests {
         assert_eq!(1, db.get_snapshot_storages(slot..=slot + 1).0.len());
     }
 
-    #[test]
-    #[should_panic(expected = "double remove of account in slot: 0/store: 0!!")]
-    fn test_storage_remove_account_double_remove() {
-        let accounts = AccountsDb::new_single_for_tests();
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-        accounts.store_for_tests(0, &[(&pubkey, &account)]);
-        accounts.add_root_and_flush_write_cache(0);
-        let storage_entry = accounts.storage.get_slot_storage_entry(0).unwrap();
-        storage_entry.remove_accounts(0, true, 1);
-        storage_entry.remove_accounts(0, true, 1);
-    }
+    define_accounts_db_test_should_panic!(
+        test_storage_remove_account_double_remove,
+        "double remove of account in slot: 0/store: 0!!",
+        |accounts| {
+            let pubkey = solana_sdk::pubkey::new_rand();
+            let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+            accounts.store_for_tests(0, &[(&pubkey, &account)]);
+            accounts.add_root_and_flush_write_cache(0);
+            let storage_entry = accounts.storage.get_slot_storage_entry(0).unwrap();
+            storage_entry.remove_accounts(0, true, 1);
+            storage_entry.remove_accounts(0, true, 1);
+        }
+    );
 
     fn do_full_clean_refcount(store1_first: bool, store_size: u64) {
         let pubkey1 = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
