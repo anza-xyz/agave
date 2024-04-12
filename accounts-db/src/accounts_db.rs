@@ -14011,10 +14011,7 @@ pub mod tests {
         }
     }
 
-    #[test_case(AccountsFileProvider::AppendVec)]
-    #[test_case(AccountsFileProvider::HotStorage)]
-    fn test_alive_bytes(accounts_file_provider: AccountsFileProvider) {
-        let accounts_db = AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
+    define_accounts_db_test!(test_alive_bytes, |accounts_db| {
         let slot: Slot = 0;
         let num_keys = 10;
 
@@ -14045,14 +14042,16 @@ pub mod tests {
             let reclaims = [account_info];
             accounts_db.remove_dead_accounts(reclaims.iter(), None, true);
             let after_size = storage0.alive_bytes.load(Ordering::Acquire);
-            if storage0.count() == 0 && AccountsFileProvider::HotStorage == accounts_file_provider {
+            if storage0.count() == 0
+                && AccountsFileProvider::HotStorage == accounts_db.accounts_file_provider
+            {
                 // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
                 assert_eq!(after_size, 0);
             } else {
                 assert_eq!(before_size, after_size + account.stored_size());
             }
         }
-    }
+    });
 
     fn setup_accounts_db_cache_clean(
         num_slots: usize,
