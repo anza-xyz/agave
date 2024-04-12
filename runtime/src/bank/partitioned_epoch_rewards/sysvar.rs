@@ -56,6 +56,8 @@ impl Bank {
         assert!(self.is_partitioned_rewards_code_enabled());
 
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
+        assert!(epoch_rewards.active);
+
         epoch_rewards.distribute(distributed);
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
