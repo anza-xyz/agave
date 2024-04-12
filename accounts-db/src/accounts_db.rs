@@ -9669,86 +9669,87 @@ pub mod tests {
 
     macro_rules! define_accounts_db_test {
         ($name:ident, |$accounts_db:ident| $inner: tt) => {
-            #[test_case(AccountsFileProvider::AppendVec)]
-            #[test_case(AccountsFileProvider::HotStorage)]
+            #[test_case(AccountsFileProvider::AppendVec; "append_vec")]
+            #[test_case(AccountsFileProvider::HotStorage; "hot_storage")]
             fn $name(accounts_file_provider: AccountsFileProvider) {
-
-                fn run_test($accounts_db : AccountsDb)
+                fn run_test($accounts_db: AccountsDb) {
                     $inner
+                }
 
-                solana_logger::setup();
                 let accounts_db =
                     AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
-
                 run_test(accounts_db);
             }
         };
     }
 
-    #[test_case(AccountsFileProvider::AppendVec)]
-    #[test_case(AccountsFileProvider::HotStorage)]
-    fn test_generate_index_duplicates_within_slot(accounts_file_provider: AccountsFileProvider) {
-        for reverse in [false, true] {
-            let db = AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
-            let slot0 = 0;
+    fn run_genereate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
+        let slot0 = 0;
 
-            let pubkey = Pubkey::from([1; 32]);
+        let pubkey = Pubkey::from([1; 32]);
 
-            let append_vec = db.create_and_insert_store(slot0, 1000, "test");
+        let append_vec = db.create_and_insert_store(slot0, 1000, "test");
 
-            let mut account_small = AccountSharedData::default();
-            account_small.set_data(vec![1]);
-            account_small.set_lamports(1);
-            let mut account_big = AccountSharedData::default();
-            account_big.set_data(vec![5; 10]);
-            account_big.set_lamports(2);
-            assert_ne!(
-                aligned_stored_size(account_big.data().len()),
-                aligned_stored_size(account_small.data().len())
-            );
-            // same account twice with different data lens
-            // Rules are the last one of each pubkey is the one that ends up in the index.
-            let mut data = vec![(&pubkey, &account_big), (&pubkey, &account_small)];
-            if reverse {
-                data = data.into_iter().rev().collect();
-            }
-            let expected_accounts_data_len = data.last().unwrap().1.data().len();
-            let expected_alive_bytes = aligned_stored_size(expected_accounts_data_len);
-            let storable = (slot0, &data[..]);
-            let hashes = data
-                .iter()
-                .map(|_| AccountHash(Hash::default()))
-                .collect::<Vec<_>>();
-            let append = StorableAccountsWithHashes::new_with_hashes(&storable, hashes);
-
-            // construct append vec with account to generate an index from
-            append_vec.accounts.append_accounts(&append, 0);
-            // append vecs set this at load
-            append_vec
-                .approx_store_count
-                .store(data.len(), Ordering::Relaxed);
-
-            let genesis_config = GenesisConfig::default();
-            assert!(!db.accounts_index.contains(&pubkey));
-            let result = db.generate_index(None, false, &genesis_config);
-            // index entry should only contain a single entry for the pubkey since index cannot hold more than 1 entry per slot
-            let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
-            assert_eq!(entry.slot_list.read().unwrap().len(), 1);
-            if accounts_file_provider == AccountsFileProvider::AppendVec {
-                // alive bytes doesn't match account size for tiered storage
-                assert_eq!(append_vec.alive_bytes(), expected_alive_bytes);
-            }
-            // total # accounts in append vec
-            assert_eq!(append_vec.approx_stored_count(), 2);
-            // # alive accounts
-            assert_eq!(append_vec.count(), 1);
-            // all account data alive
-            assert_eq!(
-                result.accounts_data_len as usize, expected_accounts_data_len,
-                "reverse: {reverse}"
-            );
+        let mut account_small = AccountSharedData::default();
+        account_small.set_data(vec![1]);
+        account_small.set_lamports(1);
+        let mut account_big = AccountSharedData::default();
+        account_big.set_data(vec![5; 10]);
+        account_big.set_lamports(2);
+        assert_ne!(
+            aligned_stored_size(account_big.data().len()),
+            aligned_stored_size(account_small.data().len())
+        );
+        // same account twice with different data lens
+        // Rules are the last one of each pubkey is the one that ends up in the index.
+        let mut data = vec![(&pubkey, &account_big), (&pubkey, &account_small)];
+        if reverse {
+            data = data.into_iter().rev().collect();
         }
+        let expected_accounts_data_len = data.last().unwrap().1.data().len();
+        let expected_alive_bytes = aligned_stored_size(expected_accounts_data_len);
+        let storable = (slot0, &data[..]);
+        let hashes = data
+            .iter()
+            .map(|_| AccountHash(Hash::default()))
+            .collect::<Vec<_>>();
+        let append = StorableAccountsWithHashes::new_with_hashes(&storable, hashes);
+
+        // construct append vec with account to generate an index from
+        append_vec.accounts.append_accounts(&append, 0);
+        // append vecs set this at load
+        append_vec
+            .approx_store_count
+            .store(data.len(), Ordering::Relaxed);
+
+        let genesis_config = GenesisConfig::default();
+        assert!(!db.accounts_index.contains(&pubkey));
+        let result = db.generate_index(None, false, &genesis_config);
+        // index entry should only contain a single entry for the pubkey since index cannot hold more than 1 entry per slot
+        let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
+        assert_eq!(entry.slot_list.read().unwrap().len(), 1);
+        if db.accounts_file_provider == AccountsFileProvider::AppendVec {
+            // alive bytes doesn't match account size for tiered storage
+            assert_eq!(append_vec.alive_bytes(), expected_alive_bytes);
+        }
+        // total # accounts in append vec
+        assert_eq!(append_vec.approx_stored_count(), 2);
+        // # alive accounts
+        assert_eq!(append_vec.count(), 1);
+        // all account data alive
+        assert_eq!(
+            result.accounts_data_len as usize, expected_accounts_data_len,
+            "reverse: {reverse}"
+        );
     }
+
+    define_accounts_db_test!(test_generate_index_duplicates_within_slot, |db| {
+        run_genereate_index_duplicates_within_slot_test(db, false);
+    });
+
+    define_accounts_db_test!(test_generate_index_duplicates_within_slot_reverse, |db| {
+        run_genereate_index_duplicates_within_slot_test(db, true);
+    });
 
     /// Reserve ancient storage size is not supported for TiredStorage
     #[test]
@@ -11164,7 +11165,6 @@ pub mod tests {
     fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
         let unrooted_slot = 9;
         let unrooted_bank_id = 9;
-        //let db = AccountsDb::new_single_for_tests();
         let key = Pubkey::default();
         let account0 = AccountSharedData::new(1, 0, &key);
         let ancestors = vec![(unrooted_slot, 1)].into_iter().collect();
@@ -15342,22 +15342,22 @@ pub mod tests {
         assert!(db.storage.get_slot_storage_entry(slot).is_none());
     }
 
+    // Test to make sure `clean_accounts()` works properly with the `last_full_snapshot_slot`
+    // parameter.  Basically:
+    //
+    // - slot 1: set Account1's balance to non-zero
+    // - slot 2: set Account1's balance to a different non-zero amount
+    // - slot 3: set Account1's balance to zero
+    // - call `clean_accounts()` with `max_clean_root` set to 2
+    //     - ensure Account1 has *not* been purged
+    //     - ensure the store from slot 1 is cleaned up
+    // - call `clean_accounts()` with `last_full_snapshot_slot` set to 2
+    //     - ensure Account1 has *not* been purged
+    // - call `clean_accounts()` with `last_full_snapshot_slot` set to 3
+    //     - ensure Account1 *has* been purged
     define_accounts_db_test!(
         test_clean_accounts_with_last_full_snapshot_slot,
         |accounts_db| {
-            // Test to make sure `clean_accounts()` works properly with the `last_full_snapshot_slot`
-            // parameter.  Basically:
-            //
-            // - slot 1: set Account1's balance to non-zero
-            // - slot 2: set Account1's balance to a different non-zero amount
-            // - slot 3: set Account1's balance to zero
-            // - call `clean_accounts()` with `max_clean_root` set to 2
-            //     - ensure Account1 has *not* been purged
-            //     - ensure the store from slot 1 is cleaned up
-            // - call `clean_accounts()` with `last_full_snapshot_slot` set to 2
-            //     - ensure Account1 has *not* been purged
-            // - call `clean_accounts()` with `last_full_snapshot_slot` set to 3
-            //     - ensure Account1 *has* been purged
             let pubkey = solana_sdk::pubkey::new_rand();
             let owner = solana_sdk::pubkey::new_rand();
             let space = 0;
