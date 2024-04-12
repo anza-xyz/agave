@@ -391,9 +391,7 @@ mod tests {
         solana_measure::measure::Measure,
         solana_perf::test_tx::test_tx,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            clock, hash::hash, pubkey::Pubkey, timing, transaction::VersionedTransaction,
-        },
+        solana_sdk::{clock, hash::hash, timing, transaction::VersionedTransaction},
         std::{thread::sleep, time::Duration},
     };
 
@@ -419,6 +417,7 @@ mod tests {
             };
             let exit = Arc::new(AtomicBool::new(false));
 
+<<<<<<< HEAD
             let ticks_per_slot = bank.ticks_per_slot();
             let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
             let blockstore = Arc::new(blockstore);
@@ -437,6 +436,25 @@ mod tests {
             let poh_recorder = Arc::new(RwLock::new(poh_recorder));
             let ticks_per_slot = bank.ticks_per_slot();
             let bank_slot = bank.slot();
+=======
+        let ticks_per_slot = bank.ticks_per_slot();
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let blockstore = Arc::new(blockstore);
+        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            prev_hash,
+            bank.clone(),
+            Some((4, 4)),
+            ticks_per_slot,
+            blockstore,
+            &leader_schedule_cache,
+            &poh_config,
+            exit.clone(),
+        );
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let ticks_per_slot = bank.ticks_per_slot();
+        let bank_slot = bank.slot();
+>>>>>>> c4996d6e52 (Remove stale poh recorder validator id (#700))
 
             // specify RUN_TIME to run in a benchmark-like mode
             // to calibrate batch size

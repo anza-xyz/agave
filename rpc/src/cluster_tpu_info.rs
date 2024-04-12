@@ -147,6 +147,7 @@ mod test {
             );
             let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
+<<<<<<< HEAD
             let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
                 0,
                 bank.last_blockhash(),
@@ -159,6 +160,19 @@ mod test {
                 &PohConfig::default(),
                 Arc::new(AtomicBool::default()),
             );
+=======
+        let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+            0,
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((2, 2)),
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+>>>>>>> c4996d6e52 (Remove stale poh recorder validator id (#700))
 
             let node_keypair = Arc::new(Keypair::new());
             let cluster_info = Arc::new(ClusterInfo::new(
