@@ -15,7 +15,7 @@ use {
     thiserror::Error,
 };
 
-pub const FOOTER_FORMAT_VERSION: u64 = 1;
+pub const FOOTER_FORMAT_VERSION: u64 = 2;
 
 /// The size of the footer struct + the magic number at the end.
 pub const FOOTER_SIZE: usize =
@@ -159,9 +159,9 @@ impl Default for TieredStorageFooter {
             owner_entry_size: 0,
             index_block_offset: 0,
             owners_block_offset: 0,
-            hash: Hash::new_unique(),
             min_account_address: Pubkey::default(),
             max_account_address: Pubkey::default(),
+            hash: Hash::default(),
             format_version: FOOTER_FORMAT_VERSION,
             footer_size: FOOTER_SIZE as u64,
         }
@@ -174,9 +174,33 @@ impl TieredStorageFooter {
         Self::new_from_footer_block(&file)
     }
 
-    pub fn write_footer_block(&self, file: &mut TieredWritableFile) -> TieredStorageResult<()> {
+    /// Presist the footer to the specified TieredStorageWritableFile.
+    /// The `hash` field of the footer will also be updated.
+    pub fn write_footer_block(&mut self, file: &mut TieredWritableFile) -> TieredStorageResult<()> {
         // SAFETY: The footer does not contain any uninitialized bytes.
-        unsafe { file.write_type(self)? };
+        unsafe {
+            file.write_type(&self.account_meta_format)?;
+            file.write_type(&self.owners_block_format)?;
+            file.write_type(&self.index_block_format)?;
+            file.write_type(&self.account_block_format)?;
+        }
+
+        file.write_pod(&self.account_entry_count)?;
+        file.write_pod(&self.account_meta_entry_size)?;
+        file.write_pod(&self.account_block_size)?;
+        file.write_pod(&self.owner_count)?;
+        file.write_pod(&self.owner_entry_size)?;
+        file.write_pod(&self.index_block_offset)?;
+        file.write_pod(&self.owners_block_offset)?;
+        file.write_pod(&self.min_account_address)?;
+        file.write_pod(&self.max_account_address)?;
+
+        // everything before the FooterTail will be hashed
+        self.hash = file.hash();
+        file.write_pod(&self.hash)?;
+
+        file.write_pod(&self.format_version)?;
+        file.write_pod(&self.footer_size)?;
         file.write_pod(&TieredStorageMagicNumber::default())?;
 
         Ok(())
@@ -313,13 +337,12 @@ mod tests {
             append_vec::test_utils::get_append_vec_path, tiered_storage::file::TieredWritableFile,
         },
         memoffset::offset_of,
-        solana_sdk::hash::Hash,
     };
 
     #[test]
     fn test_footer() {
         let path = get_append_vec_path("test_file_footer");
-        let expected_footer = TieredStorageFooter {
+        let mut expected_footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,
             owners_block_format: OwnersBlockFormat::AddressesOnly,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
@@ -331,12 +354,15 @@ mod tests {
             owner_entry_size: 32,
             index_block_offset: 1069600,
             owners_block_offset: 1081200,
-            hash: Hash::new_unique(),
             min_account_address: Pubkey::default(),
             max_account_address: Pubkey::new_unique(),
             format_version: FOOTER_FORMAT_VERSION,
             footer_size: FOOTER_SIZE as u64,
+            ..TieredStorageFooter::default()
         };
+        // Copy the original footer as the we will update the hash field of
+        // the expected footer.
+        let raw_footer = expected_footer;
 
         // Persist the expected footer.
         {
@@ -349,6 +375,29 @@ mod tests {
         {
             let footer = TieredStorageFooter::new_from_path(&path.path).unwrap();
             assert_eq!(expected_footer, footer);
+
+            // Expect everything is the same as the original footer except the hash
+            assert_eq!(footer.account_meta_format, raw_footer.account_meta_format);
+            assert_eq!(footer.owners_block_format, raw_footer.owners_block_format);
+            assert_eq!(footer.index_block_format, raw_footer.index_block_format);
+            assert_eq!(footer.account_block_format, raw_footer.account_block_format);
+            assert_eq!(footer.account_entry_count, raw_footer.account_entry_count);
+            assert_eq!(
+                footer.account_meta_entry_size,
+                raw_footer.account_meta_entry_size
+            );
+            assert_eq!(footer.account_block_size, raw_footer.account_block_size);
+            assert_eq!(footer.owner_count, raw_footer.owner_count);
+            assert_eq!(footer.owner_entry_size, raw_footer.owner_entry_size);
+            assert_eq!(footer.index_block_offset, raw_footer.index_block_offset);
+            assert_eq!(footer.owners_block_offset, raw_footer.owners_block_offset);
+            assert_eq!(footer.min_account_address, raw_footer.min_account_address);
+            assert_eq!(footer.max_account_address, raw_footer.max_account_address);
+            assert_eq!(footer.format_version, raw_footer.format_version);
+            assert_eq!(footer.footer_size, raw_footer.footer_size);
+
+            // Expect hash mismatch as the footer should include an updated hash
+            assert_ne!(footer.hash, raw_footer.hash);
         }
     }
 

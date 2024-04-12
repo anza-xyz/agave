@@ -1,4 +1,7 @@
-use {super::footer::SanitizeFooterError, std::path::PathBuf, thiserror::Error};
+use {
+    super::footer::SanitizeFooterError, solana_sdk::hash::Hash, std::path::PathBuf,
+    thiserror::Error,
+};
 
 #[derive(Error, Debug)]
 pub enum TieredStorageError {
@@ -31,4 +34,7 @@ pub enum TieredStorageError {
 
     #[error("OffsetAlignmentError: offset {0} must be multiple of {1}")]
     OffsetAlignmentError(usize, usize),
+
+    #[error("FileHashMismatch: {0} {1}")]
+    FileHashMismatch(Hash, Hash),
 }

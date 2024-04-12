@@ -665,32 +665,32 @@ fn stored_size(data_len: usize) -> usize {
     data_len + std::mem::size_of::<Pubkey>()
 }
 
-fn write_optional_fields(
-    file: &mut TieredWritableFile,
-    opt_fields: &AccountMetaOptionalFields,
-) -> TieredStorageResult<usize> {
-    let mut size = 0;
-    if let Some(rent_epoch) = opt_fields.rent_epoch {
-        size += file.write_pod(&rent_epoch)?;
-    }
-
-    debug_assert_eq!(size, opt_fields.size());
-
-    Ok(size)
-}
-
 /// The writer that creates a hot accounts file.
 #[derive(Debug)]
 pub struct HotStorageWriter {
-    storage: TieredWritableFile,
+    file: TieredWritableFile,
 }
 
 impl HotStorageWriter {
     /// Create a new HotStorageWriter with the specified path.
     pub fn new(file_path: impl AsRef<Path>) -> TieredStorageResult<Self> {
         Ok(Self {
-            storage: TieredWritableFile::new(file_path)?,
+            file: TieredWritableFile::new(file_path)?,
         })
+    }
+
+    fn write_optional_fields(
+        &mut self,
+        opt_fields: &AccountMetaOptionalFields,
+    ) -> TieredStorageResult<usize> {
+        let mut size = 0;
+        if let Some(rent_epoch) = opt_fields.rent_epoch {
+            size += self.file.write_pod(&rent_epoch)?;
+        }
+
+        debug_assert_eq!(size, opt_fields.size());
+
+        Ok(size)
     }
 
     /// Persists an account with the specified information and returns
@@ -718,12 +718,12 @@ impl HotStorageWriter {
 
         let mut stored_size = 0;
 
-        stored_size += self.storage.write_pod(&meta)?;
-        stored_size += self.storage.write_bytes(account_data)?;
+        stored_size += self.file.write_pod(&meta)?;
+        stored_size += self.file.write_bytes(account_data)?;
         stored_size += self
-            .storage
+            .file
             .write_bytes(&PADDING_BUFFER[0..(padding_len as usize)])?;
-        stored_size += write_optional_fields(&mut self.storage, &optional_fields)?;
+        stored_size += self.write_optional_fields(&optional_fields)?;
 
         Ok(stored_size)
     }
@@ -803,13 +803,13 @@ impl HotStorageWriter {
         footer.index_block_offset = cursor as u64;
         cursor += footer
             .index_block_format
-            .write_index_block(&mut self.storage, &index)?;
+            .write_index_block(&mut self.file, &index)?;
         if cursor % HOT_BLOCK_ALIGNMENT != 0 {
             // In case it is not yet aligned, it is due to the fact that
             // the index block has an odd number of entries.  In such case,
             // we expect the amount off is equal to 4.
             assert_eq!(cursor % HOT_BLOCK_ALIGNMENT, 4);
-            cursor += self.storage.write_pod(&0u32)?;
+            cursor += self.file.write_pod(&0u32)?;
         }
 
         // writing owners block
@@ -818,10 +818,10 @@ impl HotStorageWriter {
         footer.owner_count = owners_table.len() as u32;
         footer
             .owners_block_format
-            .write_owners_block(&mut self.storage, &owners_table)?;
+            .write_owners_block(&mut self.file, &owners_table)?;
         footer.min_account_address = *address_range.min;
         footer.max_account_address = *address_range.max;
-        footer.write_footer_block(&mut self.storage)?;
+        footer.write_footer_block(&mut self.file)?;
 
         Ok(stored_infos)
     }
@@ -834,7 +834,10 @@ pub mod tests {
         crate::tiered_storage::{
             byte_block::ByteBlockWriter,
             file::{TieredStorageMagicNumber, TieredWritableFile},
-            footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
+            footer::{
+                AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_FORMAT_VERSION,
+                FOOTER_SIZE,
+            },
             hot::{HotAccountMeta, HotStorageReader},
             index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
             meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
@@ -842,6 +845,7 @@ pub mod tests {
             test_utils::{create_test_account, verify_test_account},
         },
         assert_matches::assert_matches,
+        blake3::traits::digest::Digest,
         memoffset::offset_of,
         rand::{seq::SliceRandom, Rng},
         solana_sdk::{
@@ -999,7 +1003,7 @@ pub mod tests {
         // Generate a new temp path that is guaranteed to NOT already have a file.
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_hot_storage_footer");
-        let expected_footer = TieredStorageFooter {
+        let mut expected_footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,
             owners_block_format: OwnersBlockFormat::AddressesOnly,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
@@ -1011,11 +1015,11 @@ pub mod tests {
             owner_entry_size: 32,
             index_block_offset: 1069600,
             owners_block_offset: 1081200,
-            hash: Hash::new_unique(),
+            hash: Hash::new_from_array(blake3::Hasher::new().finalize().into()),
             min_account_address: Pubkey::default(),
             max_account_address: Pubkey::new_unique(),
             footer_size: FOOTER_SIZE as u64,
-            format_version: 1,
+            format_version: FOOTER_FORMAT_VERSION,
         };
 
         {
@@ -1093,7 +1097,7 @@ pub mod tests {
             .path()
             .join("test_get_acount_meta_from_offset_out_of_bounds");
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,
             index_block_offset: 160,
             ..TieredStorageFooter::default()
@@ -1182,7 +1186,7 @@ pub mod tests {
             .take(NUM_OWNERS)
             .collect();
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,
             // meta/data nor index block in this test
             owners_block_offset: 0,
@@ -1410,7 +1414,6 @@ pub mod tests {
                 .owners_block_format
                 .write_owners_block(&mut file, &owners_table)
                 .unwrap();
-
             footer.write_footer_block(&mut file).unwrap();
         }
 
@@ -1555,11 +1558,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_hot_storage_writer_twice_on_same_path() {
+    fn test_hot_storage_file_twice_on_same_path() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir
             .path()
-            .join("test_hot_storage_writer_twice_on_same_path");
+            .join("test_hot_storage_file_twice_on_same_path");
 
         // Expect the first returns Ok
         assert_matches!(HotStorageWriter::new(&path), Ok(_));

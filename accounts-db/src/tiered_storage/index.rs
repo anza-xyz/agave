@@ -216,7 +216,7 @@ mod tests {
             .path()
             .join("test_get_account_address_out_of_bounds");
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             account_entry_count: 100,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
             ..TieredStorageFooter::default()
@@ -249,7 +249,7 @@ mod tests {
             .path()
             .join("test_get_account_address_exceeds_index_block_boundary");
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             account_entry_count: 100,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
             index_block_offset: 1024,
@@ -287,7 +287,7 @@ mod tests {
             .path()
             .join("test_get_account_offset_out_of_bounds");
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             account_entry_count: 100,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
             ..TieredStorageFooter::default()
@@ -324,7 +324,7 @@ mod tests {
             .path()
             .join("test_get_account_offset_exceeds_index_block_boundary");
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             account_entry_count: 100,
             index_block_format: IndexBlockFormat::AddressesThenOffsets,
             index_block_offset: 1024,

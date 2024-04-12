@@ -131,7 +131,7 @@ mod tests {
             .take(NUM_OWNERS as usize)
             .collect();
 
-        let footer = TieredStorageFooter {
+        let mut footer = TieredStorageFooter {
             // Set owners_block_offset to 0 as we didn't write any account
             // meta/data nor index block.
             owners_block_offset: 0,
