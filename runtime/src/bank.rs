@@ -4111,7 +4111,7 @@ impl Bank {
                         message.recent_blockhash(),
                     )?;
                 let fee = self.get_fee_for_message_with_lamports_per_signature(
-                    tx.message(),
+                    message,
                     lamports_per_signature,
                 );
 
@@ -4185,10 +4185,10 @@ impl Bank {
     }
 
     fn get_details_from_execution_result<'a>(
-        &'a self,
+        &self,
         execution_result: &'a TransactionExecutionResult,
         transaction_blockhash: &Hash,
-    ) -> Result<(&transaction::Result<()>, bool, u64)> {
+    ) -> Result<(&'a transaction::Result<()>, bool, u64)> {
         let (execution_status, durable_nonce_fee) = match &execution_result {
             TransactionExecutionResult::Executed { details, .. } => {
                 Ok((&details.status, details.durable_nonce_fee.as_ref()))

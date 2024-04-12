@@ -110,7 +110,7 @@ impl FeeStructure {
             .saturating_mul(heap_cost)
     }
 
-    /// Backward compatibility - lamports_per_sisgnature == 0 means to clear
+    /// Backward compatibility - lamports_per_signature == 0 means to clear
     /// transaction fee to zero
     pub fn to_clear_transaction_fee(lamports_per_signature: u64) -> bool {
         lamports_per_signature == 0
