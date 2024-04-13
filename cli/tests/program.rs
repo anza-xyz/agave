@@ -2402,7 +2402,6 @@ fn test_cli_program_upgrade_auto_extend_program_data_account() {
     // Wait one slot to avoid "Program was deployed in this block already" error
     wait_n_slots(&rpc_client, 1);
 
-    // Extend program for larger program, minus 1 required byte
     let mut file = File::open(noop_large_path.to_str().unwrap()).unwrap();
     let mut new_program_data = Vec::new();
     file.read_to_end(&mut new_program_data).unwrap();
@@ -2425,6 +2424,7 @@ fn test_cli_program_upgrade_auto_extend_program_data_account() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        // Enable auto_extend_program
         auto_extend_program: true,
     });
     process_command(&config).unwrap();
