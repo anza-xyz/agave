@@ -277,7 +277,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .long("auto-extend-program")
                                 .takes_value(false)
                                 .help(
-                                    "Automatically extend the program data account size to match the updated program's data size",
+                                    "Automatically extend the program data account's size to match the updated program's data size",
                                 ),
                         ),
                 )
@@ -2511,7 +2511,6 @@ fn do_process_program_upgrade(
         let additional_bytes = program_len
             .sub(program_data_account.data.len())
             .saturating_add(metadata_size);
-        println!("additional_bytes: {}", additional_bytes);
         if auto_extend_program {
             Some(bpf_loader_upgradeable::extend_program(
                 program_id,
