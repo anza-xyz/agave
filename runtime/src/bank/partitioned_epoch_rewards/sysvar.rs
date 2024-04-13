@@ -20,6 +20,8 @@ impl Bank {
     }
 
     /// Create EpochRewards sysvar with calculated rewards
+    /// This method must be called before a new Bank advances its
+    /// last_blockhash.
     pub(in crate::bank) fn create_epoch_rewards_sysvar(
         &self,
         total_rewards: u64,
@@ -32,12 +34,7 @@ impl Bank {
 
         assert!(total_rewards >= distributed_rewards);
 
-        // If Bank::parent() does not exist, as in slot 0, use Hash::default()
-        // for the parent_blockhash.
-        let parent_blockhash = self
-            .parent()
-            .map(|bank| bank.last_blockhash())
-            .unwrap_or_default();
+        let parent_blockhash = self.last_blockhash();
 
         let epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height,
@@ -120,7 +117,7 @@ mod tests {
         super::*,
         crate::bank::tests::create_genesis_config,
         solana_sdk::{
-            account::ReadableAccount, epoch_schedule::EpochSchedule, feature_set, hash::Hash,
+            account::ReadableAccount, epoch_schedule::EpochSchedule, feature_set,
             native_token::LAMPORTS_PER_SOL, pubkey::Pubkey,
         },
         std::sync::Arc,
@@ -145,7 +142,7 @@ mod tests {
         let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height: 42,
             num_partitions,
-            parent_blockhash: Hash::default(),
+            parent_blockhash: bank.last_blockhash(),
             total_points,
             total_rewards,
             distributed_rewards: 10,
