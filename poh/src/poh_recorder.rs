@@ -280,8 +280,9 @@ pub struct PohRecorder {
     pub poh: Arc<Mutex<Poh>>,
     tick_height: u64,
     clear_bank_signal: Option<Sender<bool>>,
-    start_bank: Arc<Bank>,         // parent slot
-    start_tick_height: u64,        // first tick_height this recorder will observe
+    start_bank: Arc<Bank>, // parent slot
+    start_bank_active_descendants: Vec<Slot>,
+    start_tick_height: u64, // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     working_bank: Option<WorkingBank>,
     sender: Sender<WorkingBankEntry>,
@@ -460,6 +461,14 @@ impl PohRecorder {
         }
     }
 
+    // Active descendants of the last reset bank that are smaller than the
+    // next leader slot could soon become the new reset bank.
+    fn is_new_reset_bank_pending(&self, next_slot: Slot) -> bool {
+        self.start_bank_active_descendants
+            .iter()
+            .any(|pending_slot| *pending_slot < next_slot)
+    }
+
     fn reached_leader_tick(
         &self,
         my_pubkey: &Pubkey,
@@ -475,8 +484,12 @@ impl PohRecorder {
             || self.start_tick_height + self.grace_ticks
                 == leader_first_tick_height_including_grace_ticks
             || (self.tick_height >= ideal_target_tick_height
-                && (self.prev_slot_was_mine(my_pubkey, next_slot)
-                    || !self.is_same_fork_as_previous_leader(next_slot)))
+                && (self.prev_slot_was_mine(my_pubkey, next_slot) || {
+                    // If the start bank isn't for the previous leader and there is no
+                    // new reset bank pending, don't apply grace ticks
+                    !self.is_same_fork_as_previous_leader(next_slot)
+                        && !self.is_new_reset_bank_pending(next_slot)
+                }))
     }
 
     pub fn start_slot(&self) -> Slot {
@@ -566,9 +579,16 @@ impl PohRecorder {
         self.tick_cache = vec![];
         if reset_start_bank {
             self.start_bank = reset_bank;
+            self.start_bank_active_descendants = vec![];
         }
         self.tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
         self.start_tick_height = self.tick_height + 1;
+    }
+
+    // update the list of active descendants of the start bank to make a better
+    // decision about whether to use grace ticks
+    pub fn update_start_bank_active_descendants(&mut self, active_descendants: &[Slot]) {
+        self.start_bank_active_descendants = active_descendants.to_vec();
     }
 
     // synchronize PoH with a bank
@@ -973,6 +993,7 @@ impl PohRecorder {
                 poh_timing_point_sender,
                 clear_bank_signal,
                 start_bank,
+                start_bank_active_descendants: vec![],
                 start_tick_height: tick_height + 1,
                 leader_first_tick_height_including_grace_ticks,
                 leader_last_tick_height,
@@ -2029,6 +2050,51 @@ mod tests {
                 parent_slot: 4,
             }
         );
+
+        // Test that grace ticks are not required if the previous leader's 4
+        // slots got skipped.
+        {
+            poh_recorder.reset(bank4.clone(), Some((9, 9)));
+
+            // Tick until leader slot
+            for _ in 0..4 * bank4.ticks_per_slot() {
+                poh_recorder.tick();
+            }
+
+            // We are due to lead
+            assert_eq!(
+                poh_recorder.reached_leader_slot(&test_validator_pubkey),
+                PohLeaderStatus::Reached {
+                    poh_slot: 9,
+                    parent_slot: 4,
+                }
+            );
+
+            // Add an active descendant which is considered to be a pending new
+            // reset bank
+            poh_recorder.update_start_bank_active_descendants(&[5]);
+            assert!(poh_recorder.is_new_reset_bank_pending(8));
+
+            // We should now require grace ticks
+            assert_eq!(
+                poh_recorder.reached_leader_slot(&test_validator_pubkey),
+                PohLeaderStatus::NotReached,
+            );
+
+            // Tick through grace ticks
+            for _ in 0..poh_recorder.grace_ticks {
+                poh_recorder.tick();
+            }
+
+            // After grace ticks, we are due to lead
+            assert_eq!(
+                poh_recorder.reached_leader_slot(&test_validator_pubkey),
+                PohLeaderStatus::Reached {
+                    poh_slot: 9,
+                    parent_slot: 4,
+                }
+            );
+        }
     }
 
     #[test]
