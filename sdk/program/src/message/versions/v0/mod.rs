@@ -363,14 +363,13 @@ impl Message {
         key_index: usize,
         reserved_account_keys: Option<&HashSet<Pubkey>>,
     ) -> bool {
+        let mut is_maybe_reserved = false;
         if let Some(reserved_account_keys) = reserved_account_keys {
-            self.account_keys
-                .get(key_index)
-                .map(|key| reserved_account_keys.contains(key))
-                .unwrap_or_default()
-        } else {
-            false
+            if let Some(key) = self.account_keys.get(key_index) {
+                is_maybe_reserved = reserved_account_keys.contains(key);
+            }
         }
+        is_maybe_reserved
     }
 }
 
