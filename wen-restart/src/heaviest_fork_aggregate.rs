@@ -20,14 +20,14 @@ pub(crate) struct HeaviestForkAggregate {
     heaviest_forks: HashMap<Pubkey, RestartHeaviestFork>,
     block_stake_map: HashMap<(Slot, Hash), u64>,
     active_peers: HashSet<Pubkey>,
-    active_peers_seeing_supermajority: HashSet<Pubkey>,
+    active_peers_seen_supermajority: HashSet<Pubkey>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeaviestForkFinalResult {
     pub block_stake_map: HashMap<(Slot, Hash), u64>,
     pub total_active_stake: u64,
-    pub total_active_stake_seeing_supermajority: u64,
+    pub total_active_stake_seen_supermajority: u64,
 }
 
 impl HeaviestForkAggregate {
@@ -35,15 +35,15 @@ impl HeaviestForkAggregate {
         wait_for_supermajority_threshold_percent: u64,
         my_shred_version: u16,
         epoch_stakes: &EpochStakes,
-        heaviest_fork_slot: Slot,
-        heaviest_fork_hash: Hash,
+        my_heaviest_fork_slot: Slot,
+        my_heaviest_fork_hash: Hash,
         my_pubkey: &Pubkey,
     ) -> Self {
         let mut active_peers = HashSet::new();
         active_peers.insert(*my_pubkey);
         let mut block_stake_map = HashMap::new();
         block_stake_map.insert(
-            (heaviest_fork_slot, heaviest_fork_hash),
+            (my_heaviest_fork_slot, my_heaviest_fork_hash),
             Self::validator_stake(epoch_stakes, my_pubkey),
         );
         Self {
@@ -54,10 +54,11 @@ impl HeaviestForkAggregate {
             heaviest_forks: HashMap::new(),
             block_stake_map,
             active_peers,
-            active_peers_seeing_supermajority: HashSet::new(),
+            active_peers_seen_supermajority: HashSet::new(),
         }
     }
 
+    // TODO(wen): this will a function in separate EpochStakesMap class later.
     fn validator_stake(epoch_stakes: &EpochStakes, pubkey: &Pubkey) -> u64 {
         epoch_stakes
             .node_id_to_vote_accounts()
@@ -86,10 +87,10 @@ impl HeaviestForkAggregate {
 
     pub(crate) fn aggregate(
         &mut self,
-        new_heaviest_fork: RestartHeaviestFork,
+        received_heaviest_fork: RestartHeaviestFork,
     ) -> Option<HeaviestForkRecord> {
         let total_stake = self.epoch_stakes.total_stake();
-        let from = &new_heaviest_fork.from;
+        let from = &received_heaviest_fork.from;
         let sender_stake = Self::validator_stake(&self.epoch_stakes, from);
         if sender_stake == 0 {
             warn!(
@@ -98,30 +99,31 @@ impl HeaviestForkAggregate {
             );
             return None;
         }
-        if new_heaviest_fork.shred_version != self.my_shred_version {
+        if received_heaviest_fork.shred_version != self.my_shred_version {
             warn!(
                 "Gossip should not accept RestartLastVotedFork with different shred version {} from {:?}",
-                new_heaviest_fork.shred_version, from
+                received_heaviest_fork.shred_version, from
             );
             return None;
         }
         self.active_peers.insert(*from);
-        if new_heaviest_fork.observed_stake as f64 / total_stake as f64
+        if received_heaviest_fork.observed_stake as f64 / total_stake as f64
             >= self.supermajority_threshold
         {
-            self.active_peers_seeing_supermajority.insert(*from);
+            self.active_peers_seen_supermajority.insert(*from);
         }
         let record = HeaviestForkRecord {
-            slot: new_heaviest_fork.last_slot,
-            bankhash: new_heaviest_fork.last_slot_hash.to_string(),
-            total_active_stake: new_heaviest_fork.observed_stake,
-            shred_version: new_heaviest_fork.shred_version as u32,
-            wallclock: new_heaviest_fork.wallclock,
+            slot: received_heaviest_fork.last_slot,
+            bankhash: received_heaviest_fork.last_slot_hash.to_string(),
+            total_active_stake: received_heaviest_fork.observed_stake,
+            shred_version: received_heaviest_fork.shred_version as u32,
+            wallclock: received_heaviest_fork.wallclock,
         };
-        if let Some(old_heaviest_fork) =
-            self.heaviest_forks.insert(*from, new_heaviest_fork.clone())
+        if let Some(old_heaviest_fork) = self
+            .heaviest_forks
+            .insert(*from, received_heaviest_fork.clone())
         {
-            if old_heaviest_fork == new_heaviest_fork {
+            if old_heaviest_fork == received_heaviest_fork {
                 return None;
             } else {
                 let entry = self
@@ -131,24 +133,27 @@ impl HeaviestForkAggregate {
                         old_heaviest_fork.last_slot_hash,
                     ))
                     .unwrap();
+                info!(
+                    "{:?} Replacing old heaviest fork from {:?} with {:?}",
+                    from, old_heaviest_fork, received_heaviest_fork
+                );
                 *entry = entry.saturating_sub(sender_stake);
             }
         }
         let entry = self
             .block_stake_map
             .entry((
-                new_heaviest_fork.last_slot,
-                new_heaviest_fork.last_slot_hash,
+                received_heaviest_fork.last_slot,
+                received_heaviest_fork.last_slot_hash,
             ))
             .or_insert(0);
         *entry = entry.saturating_add(sender_stake);
         if !self
-            .active_peers_seeing_supermajority
+            .active_peers_seen_supermajority
             .contains(&self.my_pubkey)
             && self.total_active_stake() as f64 / total_stake as f64 >= self.supermajority_threshold
         {
-            self.active_peers_seeing_supermajority
-                .insert(self.my_pubkey);
+            self.active_peers_seen_supermajority.insert(self.my_pubkey);
         }
         Some(record)
     }
@@ -160,8 +165,8 @@ impl HeaviestForkAggregate {
         })
     }
 
-    pub(crate) fn total_active_stake_seeing_supermajority(&self) -> u64 {
-        self.active_peers_seeing_supermajority
+    pub(crate) fn total_active_stake_seen_supermajority(&self) -> u64 {
+        self.active_peers_seen_supermajority
             .iter()
             .fold(0, |sum: u64, pubkey| {
                 sum.saturating_add(Self::validator_stake(&self.epoch_stakes, pubkey))
@@ -376,7 +381,7 @@ mod tests {
         assert_eq!(
             test_state
                 .heaviest_fork_aggregate
-                .total_active_stake_seeing_supermajority(),
+                .total_active_stake_seen_supermajority(),
             0
         );
 
@@ -412,7 +417,7 @@ mod tests {
         assert_eq!(
             test_state
                 .heaviest_fork_aggregate
-                .total_active_stake_seeing_supermajority(),
+                .total_active_stake_seen_supermajority(),
             800
         );
     }

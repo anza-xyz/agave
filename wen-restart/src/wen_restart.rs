@@ -502,15 +502,15 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         }
         if progress_changed {
             write_wen_restart_records(wen_restart_path, progress)?;
-            let total_active_stake_seeing_supermajority =
-                heaviest_fork_aggregate.total_active_stake_seeing_supermajority();
+            let total_active_stake_seen_supermajority =
+                heaviest_fork_aggregate.total_active_stake_seen_supermajority();
             info!(
                 "Total active stake seeing supermajority: {} Total active stake: {} Total stake {}",
-                total_active_stake_seeing_supermajority,
+                total_active_stake_seen_supermajority,
                 heaviest_fork_aggregate.total_active_stake(),
                 total_stake
             );
-            if total_active_stake_seeing_supermajority as f64 * 100.0 / total_stake as f64
+            if total_active_stake_seen_supermajority as f64 * 100.0 / total_stake as f64
                 > wait_for_supermajority_threshold_percent as f64
             {
                 break;
@@ -525,13 +525,13 @@ pub(crate) fn aggregate_restart_heaviest_fork(
 
     // Final check to see if supermajority agrees with us.
     let total_active_stake = heaviest_fork_aggregate.total_active_stake();
-    let total_active_stake_seeing_supermajority =
-        heaviest_fork_aggregate.total_active_stake_seeing_supermajority();
+    let total_active_stake_seen_supermajority =
+        heaviest_fork_aggregate.total_active_stake_seen_supermajority();
     let block_stake_map = heaviest_fork_aggregate.block_stake_map();
-    let total_active_stake_agreeing_with_me = *block_stake_map
+    let total_active_stake_agreed_with_me = *block_stake_map
         .get(&(heaviest_fork_slot, heaviest_fork_hash))
         .unwrap_or(&0);
-    if total_active_stake_agreeing_with_me as f64 * 100.0 / total_stake as f64
+    if total_active_stake_agreed_with_me as f64 * 100.0 / total_stake as f64
         > wait_for_supermajority_threshold_percent as f64
     {
         info!(
@@ -544,13 +544,13 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             .unwrap()
             .final_result = Some(HeaviestForkAggregateFinal {
             total_active_stake,
-            total_active_stake_seeing_supermajority,
-            total_active_stake_agreeing_with_me,
+            total_active_stake_seen_supermajority,
+            total_active_stake_agreed_with_me,
         });
         Ok(())
     } else {
         info!("Not enough stake agreeing with our heaviest fork: slot: {}, bankhash: {}, stake aggreeing with us {} out of {}",
-            heaviest_fork_slot, heaviest_fork_hash, total_active_stake_agreeing_with_me, total_active_stake);
+            heaviest_fork_slot, heaviest_fork_hash, total_active_stake_agreed_with_me, total_active_stake);
         Err(WenRestartError::NotEnoughStakeAgreeingWithUs(
             heaviest_fork_slot,
             heaviest_fork_hash,
@@ -1282,8 +1282,8 @@ mod tests {
                     received: expected_received_heaviest_fork,
                     final_result: Some(HeaviestForkAggregateFinal {
                         total_active_stake: 900,
-                        total_active_stake_seeing_supermajority: 900,
-                        total_active_stake_agreeing_with_me: 900,
+                        total_active_stake_seen_supermajority: 900,
+                        total_active_stake_agreed_with_me: 900,
                     }),
                 }),
             }
@@ -1645,8 +1645,8 @@ mod tests {
             received: HashMap::new(),
             final_result: Some(HeaviestForkAggregateFinal {
                 total_active_stake: 900,
-                total_active_stake_seeing_supermajority: 900,
-                total_active_stake_agreeing_with_me: 900,
+                total_active_stake_seen_supermajority: 900,
+                total_active_stake_agreed_with_me: 900,
             }),
         });
         let expected_slots_stake_map: HashMap<Slot, u64> =

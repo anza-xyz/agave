@@ -38,8 +38,8 @@ message HeaviestForkRecord {
 
 message HeaviestForkAggregateFinal {
     uint64 total_active_stake = 1;
-    uint64 total_active_stake_seeing_supermajority = 2;
-    uint64 total_active_stake_agreeing_with_me = 3;
+    uint64 total_active_stake_seen_supermajority = 2;
+    uint64 total_active_stake_agreed_with_me = 3;
 }
 
 message HeaviestForkAggregateRecord {
