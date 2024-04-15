@@ -4116,7 +4116,7 @@ impl Bank {
                 );
 
                 self.check_execution_status_and_charge_fee(
-                    tx.message(),
+                    message,
                     execution_status,
                     is_nonce,
                     fee,
