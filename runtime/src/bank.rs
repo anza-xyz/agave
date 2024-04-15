@@ -4098,6 +4098,7 @@ impl Bank {
         txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
+        let hash_queue = self.blockhash_queue.read().unwrap();
         let mut fees = 0;
 
         let results = txs
@@ -4105,8 +4106,9 @@ impl Bank {
             .zip(execution_results)
             .map(|(tx, execution_result)| {
                 let message = tx.message();
-                let (execution_status, is_nonce, lamports_per_signature) = self
-                    .get_details_from_execution_result(
+                let (execution_status, is_nonce, lamports_per_signature) =
+                    Self::get_details_from_execution_result(
+                        &hash_queue,
                         execution_result,
                         message.recent_blockhash(),
                     )?;
@@ -4138,6 +4140,7 @@ impl Bank {
         txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
+        let hash_queue = self.blockhash_queue.read().unwrap();
         let mut accumulated_fee_details = FeeDetails::default();
 
         let results = txs
@@ -4145,8 +4148,9 @@ impl Bank {
             .zip(execution_results)
             .map(|(tx, execution_result)| {
                 let message = tx.message();
-                let (execution_status, is_nonce, lamports_per_signature) = self
-                    .get_details_from_execution_result(
+                let (execution_status, is_nonce, lamports_per_signature) =
+                    Self::get_details_from_execution_result(
+                        &hash_queue,
                         execution_result,
                         message.recent_blockhash(),
                     )?;
@@ -4185,7 +4189,7 @@ impl Bank {
     }
 
     fn get_details_from_execution_result<'a>(
-        &self,
+        hash_queue_readonly: &RwLockReadGuard<'a, BlockhashQueue>,
         execution_result: &'a TransactionExecutionResult,
         transaction_blockhash: &Hash,
     ) -> Result<(&'a transaction::Result<()>, bool, u64)> {
@@ -4200,9 +4204,8 @@ impl Bank {
             .map(|durable_nonce_fee| durable_nonce_fee.lamports_per_signature())
             .map(|maybe_lamports_per_signature| (maybe_lamports_per_signature, true))
             .unwrap_or_else(|| {
-                let hash_queue = self.blockhash_queue.read().unwrap();
                 (
-                    hash_queue.get_lamports_per_signature(transaction_blockhash),
+                    hash_queue_readonly.get_lamports_per_signature(transaction_blockhash),
                     false,
                 )
             });
