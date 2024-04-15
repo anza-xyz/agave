@@ -106,12 +106,6 @@ impl HeaviestForkAggregate {
             );
             return None;
         }
-        self.active_peers.insert(*from);
-        if received_heaviest_fork.observed_stake as f64 / total_stake as f64
-            >= self.supermajority_threshold
-        {
-            self.active_peers_seen_supermajority.insert(*from);
-        }
         let record = HeaviestForkRecord {
             slot: received_heaviest_fork.last_slot,
             bankhash: received_heaviest_fork.last_slot_hash.to_string(),
@@ -148,6 +142,12 @@ impl HeaviestForkAggregate {
             ))
             .or_insert(0);
         *entry = entry.saturating_add(sender_stake);
+        self.active_peers.insert(*from);
+        if received_heaviest_fork.observed_stake as f64 / total_stake as f64
+            >= self.supermajority_threshold
+        {
+            self.active_peers_seen_supermajority.insert(*from);
+        }
         if !self
             .active_peers_seen_supermajority
             .contains(&self.my_pubkey)
