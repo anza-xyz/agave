@@ -11,12 +11,31 @@ use {
         partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
     },
     solana_sdk::{
-        account::AccountSharedData, clock::Slot, feature_set, pubkey::Pubkey,
-        reward_info::RewardInfo, stake::state::Delegation,
+        account::AccountSharedData,
+        clock::Slot,
+        feature_set,
+        pubkey::Pubkey,
+        reward_info::RewardInfo,
+        stake::state::{Delegation, Stake},
     },
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
 };
+
+#[derive(AbiExample, Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct PartitionedStakeReward {
+    /// Stake account address
+    pub stake_pubkey: Pubkey,
+    /// `Stake` state to be stored in account
+    pub stake: Stake,
+    /// RewardInfo for recording in the Bank on distribution. Most of these
+    /// fields are available on calculation, but RewardInfo::post_balance must
+    /// be updated based on current account state before recording.
+    pub stake_reward_info: RewardInfo,
+}
+
+#[allow(dead_code)]
+type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
 
 #[derive(AbiExample, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StartBlockHeightAndRewards {
