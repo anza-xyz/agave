@@ -14479,10 +14479,9 @@ pub mod tests {
         run_test_shrink_unref(true)
     }
 
-    #[test]
-    fn test_partial_clean() {
-        solana_logger::setup();
-        let db = AccountsDb::new_single_for_tests();
+    define_accounts_db_test!(test_partial_clean, |db| {
+        //solana_logger::setup();
+        //let db = AccountsDb::new_single_for_tests();
         let account_key1 = Pubkey::new_unique();
         let account_key2 = Pubkey::new_unique();
         let account1 = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
@@ -14539,7 +14538,7 @@ pub mod tests {
 
         assert!(db.storage.is_empty_entry(0));
         assert!(!db.storage.is_empty_entry(1));
-    }
+    });
 
     const RACY_SLEEP_MS: u64 = 10;
     const RACE_TIME: u64 = 5;
