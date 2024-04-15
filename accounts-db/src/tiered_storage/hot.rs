@@ -731,15 +731,9 @@ impl HotStorageWriter {
     /// Persists `accounts` into the underlying hot accounts file associated
     /// with this HotStorageWriter.  The first `skip` number of accounts are
     /// *not* persisted.
-    pub fn write_accounts<
-        'a,
-        'b,
-        T: ReadableAccount + Sync,
-        U: StorableAccounts<'a, T>,
-        V: Borrow<AccountHash>,
-    >(
+    pub fn write_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
         &mut self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, T, U, V>,
+        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
         skip: usize,
     ) -> TieredStorageResult<Vec<StoredAccountInfo>> {
         let mut footer = new_hot_footer();
@@ -755,7 +749,7 @@ impl HotStorageWriter {
         for i in skip..len {
             let (account, address, _account_hash) = accounts.get(i);
             let index_entry = AccountIndexWriterEntry {
-                address,
+                address: *address,
                 offset: HotAccountOffset::new(cursor)?,
             };
             address_range.update(address);
@@ -763,6 +757,7 @@ impl HotStorageWriter {
             // Obtain necessary fields from the account, or default fields
             // for a zero-lamport account in the None case.
             let (lamports, owner, data, executable, rent_epoch) = account
+                .as_ref()
                 .map(|acc| {
                     (
                         acc.lamports(),
@@ -819,8 +814,8 @@ impl HotStorageWriter {
         footer
             .owners_block_format
             .write_owners_block(&mut self.storage, &owners_table)?;
-        footer.min_account_address = *address_range.min;
-        footer.max_account_address = *address_range.max;
+        footer.min_account_address = address_range.min;
+        footer.max_account_address = address_range.max;
         footer.write_footer_block(&mut self.storage)?;
 
         Ok(stored_infos)
@@ -927,7 +922,7 @@ mod tests {
                         .write_bytes(&padding_buffer[0..padding_bytes(data.len()) as usize])
                         .unwrap();
                     AccountIndexWriterEntry {
-                        address,
+                        address: *address,
                         offset: HotAccountOffset::new(prev_offset).unwrap(),
                     }
                 })
@@ -1242,7 +1237,7 @@ mod tests {
         let index_writer_entries: Vec<_> = addresses
             .iter()
             .map(|address| AccountIndexWriterEntry {
-                address,
+                address: *address,
                 offset: HotAccountOffset::new(
                     rng.gen_range(0..u32::MAX) as usize * HOT_ACCOUNT_ALIGNMENT,
                 )
@@ -1280,7 +1275,7 @@ mod tests {
             let account_address = hot_storage
                 .get_account_address(IndexOffset(i as u32))
                 .unwrap();
-            assert_eq!(account_address, index_writer_entry.address);
+            assert_eq!(account_address, &index_writer_entry.address);
         }
     }
 
@@ -1565,7 +1560,7 @@ mod tests {
                 .unwrap();
 
             let (account, address, _account_hash) = storable_accounts.get(i);
-            verify_test_account(&stored_account_meta, account, address);
+            verify_test_account(&stored_account_meta, account.as_ref(), address);
 
             assert_eq!(i + 1, next.0 as usize);
         }
@@ -1583,7 +1578,7 @@ mod tests {
                 .unwrap();
 
             let (account, address, _account_hash) = storable_accounts.get(stored_info.offset);
-            verify_test_account(&stored_account_meta, account, address);
+            verify_test_account(&stored_account_meta, account.as_ref(), address);
         }
 
         // verify get_accounts
@@ -1592,7 +1587,7 @@ mod tests {
         // first, we verify everything
         for (i, stored_meta) in accounts.iter().enumerate() {
             let (account, address, _account_hash) = storable_accounts.get(i);
-            verify_test_account(stored_meta, account, address);
+            verify_test_account(stored_meta, account.as_ref(), address);
         }
 
         // second, we verify various initial position

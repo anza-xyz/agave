@@ -10,11 +10,7 @@ use {
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        pubkey::Pubkey,
-    },
+    solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
     std::{
         borrow::Borrow,
         io::Read,
@@ -141,9 +137,9 @@ impl AccountsFile {
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_stored_account(&self, offset: usize) -> Option<AccountSharedData> {
+    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {
-            Self::AppendVec(av) => av.get_stored_account(offset),
+            Self::AppendVec(av) => av.get_account_shared_data(offset),
             Self::TieredStorage(ts) => {
                 // Note: The conversion here is needed as the AccountsDB currently
                 // assumes all offsets are multiple of 8 while TieredStorage uses
@@ -249,15 +245,9 @@ impl AccountsFile {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<
-        'a,
-        'b,
-        T: ReadableAccount + Sync,
-        U: StorableAccounts<'a, T>,
-        V: Borrow<AccountHash>,
-    >(
+    pub fn append_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, T, U, V>,
+        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
         skip: usize,
     ) -> Option<Vec<StoredAccountInfo>> {
         match self {
