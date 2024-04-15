@@ -60,7 +60,7 @@ lazy_static! {
 
 #[deprecated(
     since = "2.0.0",
-    note = "please use solana_sdk::reserved_account_keys::ReservedAccountKeys instead"
+    note = "please use `solana_sdk::reserved_account_keys::ReservedAccountKeys::is_reserved` instead"
 )]
 #[allow(deprecated)]
 pub fn is_builtin_key_or_sysvar(key: &Pubkey) -> bool {
@@ -597,14 +597,13 @@ impl Message {
         key_index: usize,
         reserved_account_keys: Option<&HashSet<Pubkey>>,
     ) -> bool {
+        let mut is_maybe_reserved = false;
         if let Some(reserved_account_keys) = reserved_account_keys {
-            self.account_keys
-                .get(key_index)
-                .map(|key| reserved_account_keys.contains(key))
-                .unwrap_or_default()
-        } else {
-            false
+            if let Some(key) = self.account_keys.get(key_index) {
+                is_maybe_reserved = reserved_account_keys.contains(key);
+            }
         }
+        is_maybe_reserved
     }
 
     pub fn is_signer(&self, i: usize) -> bool {
