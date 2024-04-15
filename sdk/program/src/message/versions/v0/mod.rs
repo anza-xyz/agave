@@ -338,7 +338,9 @@ impl Message {
 
     /// Returns true if the account at the specified index was requested as
     /// writable. Before loading addresses, we can't demote write locks properly
-    /// so this should not be used by the runtime.
+    /// so this should not be used by the runtime. The `reserved_account_keys`
+    /// param is optional to allow clients to approximate writability without
+    /// requiring fetching the latest set of reserved account keys.
     pub fn is_maybe_writable(
         &self,
         key_index: usize,

@@ -576,9 +576,11 @@ impl Message {
     }
 
     /// Returns true if the account at the specified index is writable by the
-    /// instructions in this message. Since the dynamic set of reserved accounts
-    /// isn't used here to demote write locks, this shouldn't be used in the
-    /// runtime.
+    /// instructions in this message. The `reserved_account_keys` param has been
+    /// optional to allow clients to approximate writability without requiring
+    /// fetching the latest set of reserved account keys. If this method is
+    /// called by the runtime, the latest set of reserved account keys must be
+    /// passed.
     pub fn is_maybe_writable(
         &self,
         i: usize,
@@ -589,9 +591,8 @@ impl Message {
             && !self.demote_program_id(i)
     }
 
-    /// Returns true if the account at the specified index is in the reserved
-    /// account keys set. Before loading addresses, we can't detect reserved
-    /// account keys properly so this shouldn't be used by the runtime.
+    /// Returns true if the account at the specified index is in the optional
+    /// reserved account keys set.
     fn is_account_maybe_reserved(
         &self,
         key_index: usize,
