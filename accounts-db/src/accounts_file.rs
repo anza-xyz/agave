@@ -15,7 +15,12 @@ use {
         clock::Slot,
         pubkey::Pubkey,
     },
-    std::{borrow::Borrow, io::Read, mem, path::PathBuf},
+    std::{
+        borrow::Borrow,
+        io::Read,
+        mem,
+        path::{Path, PathBuf},
+    },
     thiserror::Error,
 };
 
@@ -119,15 +124,15 @@ impl AccountsFile {
     /// Return (account metadata, next_index) pair for the account at the
     /// specified `offset` if any.  Otherwise return None.   Also return the
     /// index of the next entry.
-    pub fn get_account(&self, offset: usize) -> Option<(StoredAccountMeta<'_>, usize)> {
+    pub fn get_stored_account_meta(&self, offset: usize) -> Option<(StoredAccountMeta<'_>, usize)> {
         match self {
-            Self::AppendVec(av) => av.get_account(offset),
+            Self::AppendVec(av) => av.get_stored_account_meta(offset),
             // Note: The conversion here is needed as the AccountsDB currently
             // assumes all offsets are multiple of 8 while TieredStorage uses
             // IndexOffset that is equivalent to AccountInfo::reduced_offset.
             Self::TieredStorage(ts) => ts
                 .reader()?
-                .get_account(IndexOffset(AccountInfo::get_reduced_offset(offset)))
+                .get_stored_account_meta(IndexOffset(AccountInfo::get_reduced_offset(offset)))
                 .ok()?
                 .map(|(metas, index_offset)| {
                     (metas, AccountInfo::reduced_offset_to_offset(index_offset.0))
@@ -136,10 +141,16 @@ impl AccountsFile {
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_stored_account(&self, offset: usize) -> Option<AccountSharedData> {
+    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {
-            Self::AppendVec(av) => av.get_stored_account(offset),
-            Self::TieredStorage(_) => unimplemented!(),
+            Self::AppendVec(av) => av.get_account_shared_data(offset),
+            Self::TieredStorage(ts) => {
+                // Note: The conversion here is needed as the AccountsDB currently
+                // assumes all offsets are multiple of 8 while TieredStorage uses
+                // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+                let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
+                ts.reader()?.get_account_shared_data(index_offset).ok()?
+            }
         }
     }
 
@@ -166,10 +177,10 @@ impl AccountsFile {
     }
 
     /// Return the path of the underlying account file.
-    pub fn get_path(&self) -> PathBuf {
+    pub fn path(&self) -> &Path {
         match self {
-            Self::AppendVec(av) => av.get_path(),
-            Self::TieredStorage(ts) => ts.path().to_path_buf(),
+            Self::AppendVec(av) => av.path(),
+            Self::TieredStorage(ts) => ts.path(),
         }
     }
 
@@ -296,7 +307,7 @@ impl<'a> Iterator for AccountsFileIter<'a> {
     type Item = StoredAccountMeta<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some((account, next_offset)) = self.file_entry.get_account(self.offset) {
+        if let Some((account, next_offset)) = self.file_entry.get_stored_account_meta(self.offset) {
             self.offset = next_offset;
             Some(account)
         } else {

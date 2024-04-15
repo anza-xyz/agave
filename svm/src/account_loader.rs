@@ -110,7 +110,7 @@ pub fn validate_fee_payer(
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[SanitizedTransaction],
-    lock_results: &[TransactionCheckResult],
+    check_results: &[TransactionCheckResult],
     error_counters: &mut TransactionErrorMetrics,
     fee_structure: &FeeStructure,
     account_overrides: Option<&AccountOverrides>,
@@ -119,7 +119,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
 ) -> Vec<TransactionLoadResult> {
     let feature_set = callbacks.get_feature_set();
     txs.iter()
-        .zip(lock_results)
+        .zip(check_results)
         .map(|etx| match etx {
             (tx, (Ok(()), nonce, lamports_per_signature)) => {
                 let message = tx.message();
@@ -491,6 +491,7 @@ mod tests {
             rent::Rent,
             rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
             rent_debits::RentDebits,
+            reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signature, Signer},
             system_program, system_transaction, sysvar,
             transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
@@ -568,6 +569,18 @@ mod tests {
             features.active.retain(|k, _v| !exclude.contains(k));
         }
         features
+    }
+
+    fn new_sanitized_message(message: Message) -> SanitizedMessage {
+        SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+            .unwrap()
+    }
+
+    fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
+        SanitizedMessage::Legacy(LegacyMessage::new(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        ))
     }
 
     fn load_accounts_with_fee(
@@ -689,7 +702,7 @@ mod tests {
             instructions,
         );
 
-        let message = SanitizedMessage::try_from_legacy_message(tx.message().clone()).unwrap();
+        let message = new_sanitized_message(tx.message().clone());
         let fee = FeeStructure::default().calculate_fee(
             &message,
             lamports_per_signature,
@@ -1217,7 +1230,7 @@ mod tests {
             Hash::default(),
         );
 
-        let message = SanitizedMessage::try_from_legacy_message(tx.message().clone()).unwrap();
+        let message = new_sanitized_message(tx.message().clone());
         let fee = FeeStructure::default().calculate_fee(
             &message,
             lamports_per_signature,
@@ -1441,8 +1454,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mock_bank = TestCallbacks::default();
         let mut error_counter = TransactionErrorMetrics::default();
         let loaded_programs = LoadedProgramsForTxBatch::default();
@@ -1479,8 +1491,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         mock_bank
             .accounts_map
@@ -1548,8 +1559,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
@@ -1593,8 +1603,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
@@ -1637,8 +1646,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
@@ -1684,8 +1692,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(native_loader::id());
@@ -1754,8 +1761,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -1807,8 +1813,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -1868,8 +1873,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -1957,8 +1961,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -2110,8 +2113,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -2135,13 +2137,13 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let lock_results =
+        let check_result =
             (Ok(()), Some(NoncePartial::default()), Some(20u64)) as TransactionCheckResult;
 
         let results = load_accounts(
             &mock_bank,
             &[sanitized_transaction],
-            &[lock_results],
+            &[check_result],
             &mut error_counter,
             &FeeStructure::default(),
             None,
@@ -2202,21 +2204,20 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
             false,
         );
 
-        let lock_results = (Ok(()), Some(NoncePartial::default()), None) as TransactionCheckResult;
+        let check_result = (Ok(()), Some(NoncePartial::default()), None) as TransactionCheckResult;
         let fee_structure = FeeStructure::default();
 
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
-            &[lock_results],
+            &[check_result],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
             None,
@@ -2229,13 +2230,13 @@ mod tests {
             vec![(Err(TransactionError::BlockhashNotFound), None)]
         );
 
-        let lock_results =
+        let check_result =
             (Ok(()), Some(NoncePartial::default()), Some(20u64)) as TransactionCheckResult;
 
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
-            &[lock_results.clone()],
+            &[check_result.clone()],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
             None,
@@ -2245,7 +2246,7 @@ mod tests {
 
         assert_eq!(result, vec![(Err(TransactionError::AccountNotFound), None)]);
 
-        let lock_results = (
+        let check_result = (
             Err(TransactionError::InvalidWritableAccount),
             Some(NoncePartial::default()),
             Some(20u64),
@@ -2254,7 +2255,7 @@ mod tests {
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
-            &[lock_results],
+            &[check_result],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
             None,

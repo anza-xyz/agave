@@ -189,7 +189,8 @@ pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, K
 }
 
 fn new_sanitized_message(message: Message) -> SanitizedMessage {
-    SanitizedMessage::try_from_legacy_message(message).unwrap()
+    SanitizedMessage::try_from_legacy_message(message, &ReservedAccountKeys::empty_key_set())
+        .unwrap()
 }
 
 #[test]
@@ -7126,7 +7127,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     );
     let upgrade_authority_keypair = Keypair::new();
 
-    // Invoke not yet deployed program
+    // Test nonexistent program invocation
     let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
     let invocation_message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let binding = mint_keypair.insecure_clone();
@@ -7193,6 +7194,32 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         &bpf_loader_upgradeable::id(),
     );
 
+    // Test uninitialized program invocation
+    bank.store_account(&program_keypair.pubkey(), &program_account);
+    let transaction = Transaction::new(
+        &[&binding],
+        invocation_message.clone(),
+        bank.last_blockhash(),
+    );
+    assert_eq!(
+        bank.process_transaction(&transaction),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidAccountData
+        )),
+    );
+    {
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert_eq!(slot_versions.len(), 1);
+        assert_eq!(slot_versions[0].deployment_slot, 0);
+        assert_eq!(slot_versions[0].effective_slot, 0);
+        assert!(matches!(
+            slot_versions[0].program,
+            LoadedProgramType::Closed,
+        ));
+    }
+
     // Test buffer invocation
     bank.store_account(&buffer_address, &buffer_account);
     let instruction = Instruction::new_with_bytes(buffer_address, &[], Vec::new());
@@ -7209,6 +7236,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&buffer_address);
         assert_eq!(slot_versions.len(), 1);
+        assert_eq!(slot_versions[0].deployment_slot, 0);
+        assert_eq!(slot_versions[0].effective_slot, 0);
         assert!(matches!(
             slot_versions[0].program,
             LoadedProgramType::Closed,
@@ -7305,6 +7334,23 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // Invoke the deployed program
     let transaction = Transaction::new(&[&binding], invocation_message, bank.last_blockhash());
     assert!(bank.process_transaction(&transaction).is_ok());
+    {
+        let program_cache = bank.transaction_processor.program_cache.read().unwrap();
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
+        assert_eq!(slot_versions.len(), 2);
+        assert_eq!(slot_versions[0].deployment_slot, 0);
+        assert_eq!(slot_versions[0].effective_slot, 0);
+        assert!(matches!(
+            slot_versions[0].program,
+            LoadedProgramType::Closed,
+        ));
+        assert_eq!(slot_versions[1].deployment_slot, 0);
+        assert_eq!(slot_versions[1].effective_slot, 1);
+        assert!(matches!(
+            slot_versions[1].program,
+            LoadedProgramType::LegacyV1(_),
+        ));
+    }
 
     // Test initialized program account
     bank.clear_signatures();
@@ -7905,6 +7951,32 @@ fn test_compute_active_feature_set() {
     let (feature_set, new_activations) = bank.compute_active_feature_set(true);
     assert!(new_activations.is_empty());
     assert!(feature_set.is_active(&test_feature));
+}
+
+#[test]
+fn test_reserved_account_keys() {
+    let bank0 = create_simple_test_arc_bank(100_000).0;
+    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    bank.feature_set = Arc::new(FeatureSet::default());
+
+    assert_eq!(
+        bank.get_reserved_account_keys().len(),
+        20,
+        "before activating the new feature, bank should already have active reserved keys"
+    );
+
+    // Activate `add_new_reserved_account_keys` feature
+    bank.store_account(
+        &feature_set::add_new_reserved_account_keys::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+
+    assert_eq!(
+        bank.get_reserved_account_keys().len(),
+        29,
+        "after activating the new feature, bank should have new active reserved keys"
+    );
 }
 
 #[test]
