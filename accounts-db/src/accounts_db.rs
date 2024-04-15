@@ -14480,8 +14480,6 @@ pub mod tests {
     }
 
     define_accounts_db_test!(test_partial_clean, |db| {
-        //solana_logger::setup();
-        //let db = AccountsDb::new_single_for_tests();
         let account_key1 = Pubkey::new_unique();
         let account_key2 = Pubkey::new_unique();
         let account1 = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
@@ -14490,8 +14488,12 @@ pub mod tests {
         let account4 = AccountSharedData::new(4, 0, AccountSharedData::default().owner());
 
         // Store accounts into slots 0 and 1
-        db.store_uncached(0, &[(&account_key1, &account1)]);
-        db.store_uncached(0, &[(&account_key2, &account1)]);
+        if db.accounts_file_provider == AccountsFileProvider::HotStorage {
+            db.store_uncached(0, &[(&account_key1, &account1), (&account_key2, &account1)]);
+        } else {
+            db.store_uncached(0, &[(&account_key1, &account1)]);
+            db.store_uncached(0, &[(&account_key2, &account1)]);
+        }
         db.store_uncached(1, &[(&account_key1, &account2)]);
         db.calculate_accounts_delta_hash(0);
         db.calculate_accounts_delta_hash(1);
@@ -14513,8 +14515,12 @@ pub mod tests {
         db.add_root_and_flush_write_cache(0);
 
         // store into slot 2
-        db.store_uncached(2, &[(&account_key2, &account3)]);
-        db.store_uncached(2, &[(&account_key1, &account3)]);
+        if db.accounts_file_provider == AccountsFileProvider::HotStorage {
+            db.store_uncached(2, &[(&account_key2, &account3), (&account_key1, &account3)]);
+        } else {
+            db.store_uncached(2, &[(&account_key2, &account3)]);
+            db.store_uncached(2, &[(&account_key1, &account3)]);
+        }
         db.calculate_accounts_delta_hash(2);
         db.clean_accounts_for_tests();
         db.print_accounts_stats("post-clean2");
