@@ -42,7 +42,7 @@ use {
             Arc, RwLock,
         },
         thread::sleep,
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
 
@@ -466,12 +466,13 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         total_active_stake,
     );
 
+    let mut progress_last_sent = Instant::now();
     let mut cursor = solana_gossip::crds::Cursor::default();
+    let mut progress_changed = false;
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
-        let mut progress_changed = false;
         let start = timestamp();
         for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor) {
             let from = new_heaviest_fork.from.to_string();
@@ -488,11 +489,6 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         let current_total_active_stake = heaviest_fork_aggregate.total_active_stake();
         if current_total_active_stake > total_active_stake {
             total_active_stake = current_total_active_stake;
-            cluster_info.push_restart_heaviest_fork(
-                heaviest_fork_slot,
-                heaviest_fork_hash,
-                current_total_active_stake,
-            );
             progress
                 .my_heaviest_fork
                 .as_mut()
@@ -501,7 +497,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             progress_changed = true;
         }
         if progress_changed {
-            write_wen_restart_records(wen_restart_path, progress)?;
+            progress_changed = false;
             let total_active_stake_seen_supermajority =
                 heaviest_fork_aggregate.total_active_stake_seen_supermajority();
             info!(
@@ -510,9 +506,20 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 heaviest_fork_aggregate.total_active_stake(),
                 total_stake
             );
-            if total_active_stake_seen_supermajority as f64 * 100.0 / total_stake as f64
-                > wait_for_supermajority_threshold_percent as f64
-            {
+            let can_exit = total_active_stake_seen_supermajority as f64 * 100.0
+                / total_stake as f64
+                > wait_for_supermajority_threshold_percent as f64;
+            // Only send out updates every 30 minutes or when we can exit.
+            if progress_last_sent.elapsed().as_secs() >= 1800 || can_exit {
+                cluster_info.push_restart_heaviest_fork(
+                    heaviest_fork_slot,
+                    heaviest_fork_hash,
+                    current_total_active_stake,
+                );
+                write_wen_restart_records(wen_restart_path, progress)?;
+                progress_last_sent = Instant::now();
+            }
+            if can_exit {
                 break;
             }
         }
@@ -2001,93 +2008,5 @@ mod tests {
                 expected_block_stake_map
             ),
         );
-    }
-
-    #[test]
-    fn test_wen_restart_aggregate_heaviest_fork_stop_and_restart() {
-        solana_logger::setup();
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let test_state = wen_restart_test_init(&ledger_path);
-        let heaviest_fork_slot = test_state.last_voted_fork_slots[0] + 3;
-        let heaviest_fork_bankhash = Hash::new_unique();
-        let progress = WenRestartProgress {
-            state: RestartState::HeaviestFork.into(),
-            my_heaviest_fork: Some(HeaviestForkRecord {
-                slot: heaviest_fork_slot,
-                bankhash: heaviest_fork_bankhash.to_string(),
-                total_active_stake: 0,
-                shred_version: SHRED_VERSION as u32,
-                wallclock: 0,
-            }),
-            ..Default::default()
-        };
-        assert!(write_wen_restart_records(&test_state.wen_restart_proto_path, &progress).is_ok());
-        let mut rng = rand::thread_rng();
-        let mut expected_messages = HashMap::new();
-        for i in 0..8 {
-            let keypairs = &test_state.validator_voting_keypairs[i + 2];
-            let wen_restart_proto_path_clone = test_state.wen_restart_proto_path.clone();
-            let cluster_info_clone = test_state.cluster_info.clone();
-            let bank_forks_clone = test_state.bank_forks.clone();
-            let exit = Arc::new(AtomicBool::new(false));
-            let exit_clone = exit.clone();
-            let mut progress_clone = progress.clone();
-            let wen_restart_thread_handle = Builder::new()
-                .name("solana-wen-restart".to_string())
-                .spawn(move || {
-                    let _ = aggregate_restart_heaviest_fork(
-                        &wen_restart_proto_path_clone,
-                        80,
-                        cluster_info_clone,
-                        bank_forks_clone,
-                        exit_clone,
-                        &mut progress_clone,
-                    );
-                })
-                .unwrap();
-            let node_pubkey = keypairs.node_keypair.pubkey();
-            let node = LegacyContactInfo::new_rand(&mut rng, Some(node_pubkey));
-            let total_active_stake = (i + 2) as u64 * 100;
-            let now = timestamp();
-            push_restart_heaviest_fork(
-                test_state.cluster_info.clone(),
-                &node,
-                heaviest_fork_slot,
-                &heaviest_fork_bankhash,
-                total_active_stake,
-                &keypairs.node_keypair,
-                now,
-            );
-            expected_messages.insert(
-                node_pubkey.to_string(),
-                HeaviestForkRecord {
-                    slot: heaviest_fork_slot,
-                    bankhash: heaviest_fork_bankhash.to_string(),
-                    total_active_stake,
-                    shred_version: SHRED_VERSION as u32,
-                    wallclock: now,
-                },
-            );
-            wait_on_expected_progress_with_timeout(
-                test_state.wen_restart_proto_path.clone(),
-                WenRestartProgress {
-                    state: RestartState::HeaviestFork.into(),
-                    my_heaviest_fork: Some(HeaviestForkRecord {
-                        slot: heaviest_fork_slot,
-                        bankhash: heaviest_fork_bankhash.to_string(),
-                        total_active_stake,
-                        shred_version: SHRED_VERSION as u32,
-                        wallclock: 0,
-                    }),
-                    heaviest_fork_aggregate: Some(HeaviestForkAggregateRecord {
-                        received: expected_messages.clone(),
-                        final_result: None,
-                    }),
-                    ..Default::default()
-                },
-            );
-            exit.store(true, Ordering::Relaxed);
-            let _ = wen_restart_thread_handle.join();
-        }
     }
 }
