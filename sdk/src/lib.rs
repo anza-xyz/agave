@@ -39,8 +39,6 @@ extern crate self as solana_sdk;
 pub use signer::signers;
 // These solana_program imports could be *-imported, but that causes a bunch of
 // confusing duplication in the docs due to a rustdoc bug. #26211
-#[allow(deprecated)]
-pub use solana_program::address_lookup_table_account;
 #[cfg(not(target_os = "solana"))]
 pub use solana_program::program_stubs;
 pub use solana_program::{

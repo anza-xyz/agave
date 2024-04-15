@@ -10,7 +10,6 @@
 //! [future message format]: https://docs.solanalabs.com/proposals/versioned-transactions
 
 use crate::{
-    address_lookup_table_account::AddressLookupTableAccount,
     bpf_loader_upgradeable,
     hash::Hash,
     instruction::{CompiledInstruction, Instruction},
@@ -26,6 +25,13 @@ use crate::{
 pub use loaded::*;
 
 mod loaded;
+
+/// The definition of address lookup table accounts.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct AddressLookupTableAccount {
+    pub key: crate::pubkey::Pubkey,
+    pub addresses: Vec<crate::pubkey::Pubkey>,
+}
 
 /// Address table lookups describe an on-chain address lookup table to use
 /// for loading more readonly and writable accounts in a single tx.
@@ -196,9 +202,8 @@ impl Message {
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_program::address_lookup_table::{self, state::{AddressLookupTable, LookupTableMeta}};
     /// use solana_sdk::{
-    ///      address_lookup_table_account::AddressLookupTableAccount,
     ///      instruction::{AccountMeta, Instruction},
-    ///      message::{VersionedMessage, v0},
+    ///      message::{VersionedMessage, v0::{self, AddressLookupTableAccount}},
     ///      pubkey::Pubkey,
     ///      signature::{Keypair, Signer},
     ///      transaction::VersionedTransaction,
