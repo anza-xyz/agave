@@ -733,15 +733,9 @@ impl AppendVec {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<
-        'a,
-        'b,
-        T: ReadableAccount + Sync,
-        U: StorableAccounts<'a, T>,
-        V: Borrow<AccountHash>,
-    >(
+    pub fn append_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, T, U, V>,
+        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
         skip: usize,
     ) -> Option<Vec<StoredAccountInfo>> {
         let _lock = self.append_lock.lock().unwrap();
@@ -753,43 +747,49 @@ impl AppendVec {
         // to compute the StoredAccountInfo of the last entry.
         let offsets_len = len - skip + 1;
         let mut offsets = Vec::with_capacity(offsets_len);
+        let mut stop = false;
         for i in skip..len {
-            let (account, pubkey, hash) = accounts.get(i);
-            let account_meta = account
-                .map(|account| AccountMeta {
-                    lamports: account.lamports(),
-                    owner: *account.owner(),
-                    rent_epoch: account.rent_epoch(),
-                    executable: account.executable(),
-                })
-                .unwrap_or_default();
-
-            let stored_meta = StoredMeta {
-                pubkey: *pubkey,
-                data_len: account
-                    .map(|account| account.data().len())
-                    .unwrap_or_default() as u64,
-                write_version_obsolete: 0,
-            };
-            let meta_ptr = &stored_meta as *const StoredMeta;
-            let account_meta_ptr = &account_meta as *const AccountMeta;
-            let data_len = stored_meta.data_len as usize;
-            let data_ptr = account
-                .map(|account| account.data())
-                .unwrap_or_default()
-                .as_ptr();
-            let hash_ptr = bytemuck::bytes_of(hash).as_ptr();
-            let ptrs = [
-                (meta_ptr as *const u8, mem::size_of::<StoredMeta>()),
-                (account_meta_ptr as *const u8, mem::size_of::<AccountMeta>()),
-                (hash_ptr, mem::size_of::<AccountHash>()),
-                (data_ptr, data_len),
-            ];
-            if let Some(res) = self.append_ptrs_locked(&mut offset, &ptrs) {
-                offsets.push(res)
-            } else {
+            if stop {
                 break;
             }
+            accounts.get(i, |(account, pubkey, hash)| {
+                let account_meta = account
+                    .map(|account| AccountMeta {
+                        lamports: account.lamports(),
+                        owner: *account.owner(),
+                        rent_epoch: account.rent_epoch(),
+                        executable: account.executable(),
+                    })
+                    .unwrap_or_default();
+
+                let stored_meta = StoredMeta {
+                    pubkey: *pubkey,
+                    data_len: account
+                        .map(|account| account.data().len())
+                        .unwrap_or_default() as u64,
+                    write_version_obsolete: 0,
+                };
+                let meta_ptr = &stored_meta as *const StoredMeta;
+                let account_meta_ptr = &account_meta as *const AccountMeta;
+                let data_len = stored_meta.data_len as usize;
+                let data_ptr = account
+                    .as_ref()
+                    .map(|account| account.data())
+                    .unwrap_or_default()
+                    .as_ptr();
+                let hash_ptr = bytemuck::bytes_of(hash).as_ptr();
+                let ptrs = [
+                    (meta_ptr as *const u8, mem::size_of::<StoredMeta>()),
+                    (account_meta_ptr as *const u8, mem::size_of::<AccountMeta>()),
+                    (hash_ptr, mem::size_of::<AccountHash>()),
+                    (data_ptr, data_len),
+                ];
+                if let Some(res) = self.append_ptrs_locked(&mut offset, &ptrs) {
+                    offsets.push(res)
+                } else {
+                    stop = true;
+                }
+            });
         }
 
         if offsets.is_empty() {
@@ -902,7 +902,7 @@ pub mod tests {
         // for (Slot, &'a [(&'a Pubkey, &'a T)])
         let slot = 0 as Slot;
         let pubkey = Pubkey::default();
-        StorableAccountsWithHashes::<'_, '_, _, _, &AccountHash>::new(&(
+        StorableAccountsWithHashes::<'_, '_, _, &AccountHash>::new(&(
             slot,
             &[(&pubkey, &account)][..],
         ));
@@ -960,9 +960,10 @@ pub mod tests {
         assert_eq!(storable.len(), pubkeys.len());
         assert!(!storable.is_empty());
         (0..2).for_each(|i| {
-            let (_, pubkey, hash) = storable.get(i);
-            assert_eq!(hash, &hashes[i]);
-            assert_eq!(pubkey, &pubkeys[i]);
+            storable.get(i, |(_, pubkey, hash)| {
+                assert_eq!(hash, &hashes[i]);
+                assert_eq!(pubkey, &pubkeys[i]);
+            });
         });
     }
 
@@ -981,8 +982,9 @@ pub mod tests {
         let accounts = [(&pubkey, &account)];
         let accounts2 = (slot, &accounts[..]);
         let storable = StorableAccountsWithHashes::new_with_hashes(&accounts2, hashes.clone());
-        let get_account = storable.account(0);
-        assert!(get_account.is_none());
+        storable.account(0, |get_account| {
+            assert!(get_account.is_none());
+        });
 
         // non-zero lamports, data should be correct
         let account = Account {
@@ -995,8 +997,9 @@ pub mod tests {
         let accounts = [(&pubkey, &account)];
         let accounts2 = (slot, &accounts[..]);
         let storable = StorableAccountsWithHashes::new_with_hashes(&accounts2, hashes);
-        let get_account = storable.account(0);
-        assert!(accounts_equal(&account, get_account.unwrap()));
+        storable.account(0, |get_account| {
+            assert!(accounts_equal(&account, &get_account.unwrap()));
+        });
     }
 
     #[test]
