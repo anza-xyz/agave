@@ -9683,7 +9683,7 @@ pub mod tests {
         };
     }
 
-    fn run_genereate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
+    fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
         let slot0 = 0;
 
         let pubkey = Pubkey::from([1; 32]);
@@ -9744,11 +9744,11 @@ pub mod tests {
     }
 
     define_accounts_db_test!(test_generate_index_duplicates_within_slot, |db| {
-        run_genereate_index_duplicates_within_slot_test(db, false);
+        run_generate_index_duplicates_within_slot_test(db, false);
     });
 
     define_accounts_db_test!(test_generate_index_duplicates_within_slot_reverse, |db| {
-        run_genereate_index_duplicates_within_slot_test(db, true);
+        run_generate_index_duplicates_within_slot_test(db, true);
     });
 
     /// Reserve ancient storage size is not supported for TiredStorage
