@@ -79,15 +79,10 @@ impl SecondaryIndexEntry for RwLockSecondaryIndexEntry {
             return;
         }
 
-        let mut w_account_keys = self.account_keys.write().unwrap();
-
-        // check again if the key exists, as another thread may've inserted it
-        if w_account_keys.contains(key) {
-            return;
+        let was_newly_inserted = self.account_keys.write().unwrap().insert(*key);
+        if was_newly_inserted {
+            inner_keys_count.fetch_add(1, Ordering::Relaxed);
         }
-
-        w_account_keys.insert(*key);
-        inner_keys_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn remove_inner_key(&self, key: &Pubkey) -> bool {
