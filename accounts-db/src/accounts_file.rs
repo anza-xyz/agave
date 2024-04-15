@@ -86,7 +86,17 @@ impl AccountsFile {
     pub fn remaining_bytes(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.remaining_bytes(),
-            Self::TieredStorage(ts) => ts.capacity().saturating_sub(ts.len() as u64),
+            Self::TieredStorage(ts) => {
+                // remaining_bytes() for `hot_storage` is a bit tricky.
+                // `hot_storage` is designed to be written only once. Thus,
+                // capacity() and len() should be equal for most of the time.
+                // The exception is when a `hot_storage` account file is newly
+                // created, but no accounts has written to it. In this case, the
+                // capacity will be max allowed file size (16G) temporally. Once
+                // any accounts written to the `hot_storage`, the capacity() and
+                // len() will change to the actual size of what's written.
+                ts.capacity().saturating_sub(ts.len() as u64)
+            }
         }
     }
 
