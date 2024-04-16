@@ -58,11 +58,7 @@ use {
         slot_history,
         stake::{self, state::StakeStateV2},
         system_instruction,
-        sysvar::{
-            self,
-            slot_history::SlotHistory,
-            stake_history::{self},
-        },
+        sysvar::{self, slot_history::SlotHistory, stake_history},
         transaction::Transaction,
     },
     solana_transaction_status::{
@@ -1786,28 +1782,26 @@ pub fn process_show_stakes(
     let vote_account_pubkeys = match vote_account_pubkeys {
         Some(pubkeys) => {
             let vote_accounts = rpc_client.get_vote_accounts()?;
-            
-            let pubkeys: HashSet<String> = pubkeys
-            .iter()
-            .map(|pubkey| pubkey.to_string())
-            .collect();
-            
+
+            let pubkeys: HashSet<String> =
+                pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
+
             let vote_account_pubkeys: HashSet<String> = vote_accounts
                 .current
                 .iter()
                 .chain(vote_accounts.delinquent.iter())
-                .filter(|&vote_acc| 
-                    pubkeys.contains(&vote_acc.node_pubkey) 
-                    || pubkeys.contains(&vote_acc.vote_pubkey)
-                )
+                .filter(|&vote_acc| {
+                    pubkeys.contains(&vote_acc.node_pubkey)
+                        || pubkeys.contains(&vote_acc.vote_pubkey)
+                })
                 .map(|vote_acc| vote_acc.vote_pubkey.to_string())
                 .collect();
 
             if vote_account_pubkeys.len() != pubkeys.len() {
                 return Err(CliError::RpcRequestError(
-                    "Failed to retrieve matching vote account for pubkey(s)."
-                    .to_string()
-                ).into());
+                    "Failed to retrieve matching vote account for pubkey(s).".to_string(),
+                )
+                .into());
             }
             vote_account_pubkeys
         }
@@ -1823,57 +1817,49 @@ pub fn process_show_stakes(
         ..RpcProgramAccountsConfig::default()
     };
 
-    // withdrawer filter
-    let withdraw_authority_filter = withdraw_authority_pubkey
-    .map(|pubkey|  
-        RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
-            44, 
-            pubkey.as_ref()
-        ))
-    );
-
     let stake_account_progress_bar = new_spinner_progress_bar();
     stake_account_progress_bar.set_message("Fetching stake accounts...");
 
-    let mut all_stake_accounts = Vec::new();
-    if vote_account_pubkeys.is_empty() {
-        if let Some(withdraw_authority_filter) = &withdraw_authority_filter {
-            program_accounts_config.filters.as_mut().unwrap().push(
-                withdraw_authority_filter.clone()
-            );
-        }
-        all_stake_accounts.append(
-            &mut rpc_client.get_program_accounts_with_config(
-                &stake::program::id(), 
-                program_accounts_config
-            )?
-        );
-    } else {
-        for vote_account_pubkey in &vote_account_pubkeys {
-            program_accounts_config.filters = Some(vec![
-                // Filter by `StakeStateV2::Stake(_, _)`
-                RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
-                // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
-                RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
-                    124,
-                    Pubkey::from_str(vote_account_pubkey).unwrap().as_ref(),
-                )),
-            ]);
-            if let Some(withdraw_authority_filter) = &withdraw_authority_filter {
-                program_accounts_config.filters.as_mut().unwrap().push(
-                    withdraw_authority_filter.clone()
-                );
-            }
-            all_stake_accounts.append(
-                &mut rpc_client.get_program_accounts_with_config(
-                    &stake::program::id(), 
-                    program_accounts_config.clone()
-                )?
-            );
-        }
+    program_accounts_config.filters = Some(vec![
+        // // Filter by `StakeStateV2::Stake(_, _)`
+        // RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
+    ]);
+
+    if let Some(withdraw_authority_pubkey) = withdraw_authority_pubkey {
+        // withdrawer filter
+        program_accounts_config
+            .filters
+            .as_mut()
+            .unwrap()
+            .push(RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+                44,
+                withdraw_authority_pubkey.as_ref(),
+            )));
     }
 
-    let stake_history_account = rpc_client.get_account(&stake_history::id())?; 
+    let mut all_stake_accounts = Vec::new();
+    if vote_account_pubkeys.len() == 1 {
+        program_accounts_config.filters.as_mut().unwrap().push(
+            // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+                124,
+                Pubkey::from_str(vote_account_pubkeys.iter().next().unwrap())
+                    .unwrap()
+                    .as_ref(),
+            )),
+        );
+        all_stake_accounts.append(
+            &mut rpc_client
+                .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?,
+        );
+    } else {
+        all_stake_accounts.append(
+            &mut rpc_client
+                .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?,
+        );
+    }
+
+    let stake_history_account = rpc_client.get_account(&stake_history::id())?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id())?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
@@ -1907,9 +1893,8 @@ pub fn process_show_stakes(
                 }
                 StakeStateV2::Stake(_, stake, _) => {
                     if vote_account_pubkeys.is_empty()
-                        || vote_account_pubkeys
-                            .contains(&stake.delegation.voter_pubkey.to_string())
-                    {   
+                        || vote_account_pubkeys.contains(&stake.delegation.voter_pubkey.to_string())
+                    {
                         stake_accounts.push(CliKeyedStakeState {
                             stake_pubkey: stake_pubkey.to_string(),
                             stake_state: build_stake_state(
