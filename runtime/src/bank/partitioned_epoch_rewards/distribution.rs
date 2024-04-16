@@ -230,6 +230,7 @@ mod tests {
             feature_set,
             hash::Hash,
             native_token::LAMPORTS_PER_SOL,
+            rent::Rent,
             reward_info::RewardInfo,
             reward_type::RewardType,
             stake::{
@@ -238,6 +239,8 @@ mod tests {
             },
             sysvar,
         },
+        solana_stake_program::stake_state,
+        solana_vote_program::vote_state,
     };
 
     #[test]
@@ -291,6 +294,32 @@ mod tests {
         bank.distribute_partitioned_epoch_rewards();
     }
 
+    fn populate_starting_stake_accounts_from_stake_rewards(bank: &Bank, rewards: &[StakeReward]) {
+        let rent = Rent::free();
+        let validator_pubkey = Pubkey::new_unique();
+        let validator_vote_pubkey = Pubkey::new_unique();
+        let starting_lamports = 20;
+
+        let validator_vote_account = vote_state::create_account(
+            &validator_vote_pubkey,
+            &validator_pubkey,
+            10,
+            starting_lamports,
+        );
+
+        for stake_reward in rewards.iter() {
+            // store account in Bank, since distribution now checks for account existence
+            let validator_stake_account = stake_state::create_account(
+                &stake_reward.stake_pubkey,
+                &validator_vote_pubkey,
+                &validator_vote_account,
+                &rent,
+                starting_lamports,
+            );
+            bank.store_account(&stake_reward.stake_pubkey, &validator_stake_account);
+        }
+    }
+
     /// Test distribute partitioned epoch rewards
     #[test]
     fn test_distribute_partitioned_epoch_rewards_bank_capital_and_sysvar_balance() {
@@ -316,6 +345,7 @@ mod tests {
         let mut stake_rewards = (0..expected_num)
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
+        populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
         let mut rewards_to_distribute = 0;
         for stake_reward in &mut stake_rewards {
             stake_reward.credit(100);
@@ -378,10 +408,17 @@ mod tests {
         let pre_update_history_len = bank.rewards.read().unwrap().len();
 
         for stake_rewards in stake_rewards_bucket {
-            let total_rewards_in_lamports = bank.store_stake_accounts_in_partition(&stake_rewards);
+            let converted_rewards: Vec<_> = stake_rewards
+                .iter()
+                .map(|stake_reward| PartitionedStakeReward::maybe_from(stake_reward).unwrap())
+                .collect();
+            let DistributionStorageResults {
+                lamports_distributed,
+                ..
+            } = bank.store_stake_accounts_in_partition(converted_rewards);
             let num_history_updates = bank.update_reward_history_in_partition(&stake_rewards);
             assert_eq!(stake_rewards.len(), num_history_updates);
-            total_rewards += total_rewards_in_lamports;
+            total_rewards += lamports_distributed;
             total_num_updates += num_history_updates;
         }
 
@@ -473,7 +510,7 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(&stakes_cache_accounts, partitioned_stake_reward)
+            Bank::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
                 .unwrap_err(),
             DistributionError::AccountNotFound
         );
@@ -503,7 +540,7 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(&stakes_cache_accounts, partitioned_stake_reward)
+            Bank::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
                 .unwrap_err(),
             DistributionError::ArithmeticOverflow
         );
@@ -556,7 +593,7 @@ mod tests {
             stake_reward_info,
         };
         assert_eq!(
-            Bank::build_updated_stake_reward(&stakes_cache_accounts, partitioned_stake_reward)
+            Bank::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
                 .unwrap(),
             expected_stake_reward
         );
@@ -585,14 +622,22 @@ mod tests {
         let stake_rewards = (0..expected_num)
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
+        populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
+        let converted_rewards: Vec<_> = stake_rewards
+            .iter()
+            .map(|stake_reward| PartitionedStakeReward::maybe_from(stake_reward).unwrap())
+            .collect();
 
-        let expected_total = stake_rewards
+        let expected_total = converted_rewards
             .iter()
             .map(|stake_reward| stake_reward.stake_reward_info.lamports)
             .sum::<i64>() as u64;
 
-        let total_rewards_in_lamports = bank.store_stake_accounts_in_partition(&stake_rewards);
-        assert_eq!(expected_total, total_rewards_in_lamports);
+        let DistributionStorageResults {
+            lamports_distributed,
+            ..
+        } = bank.store_stake_accounts_in_partition(converted_rewards);
+        assert_eq!(expected_total, lamports_distributed);
     }
 
     #[test]
@@ -604,7 +649,10 @@ mod tests {
 
         let expected_total = 0;
 
-        let total_rewards_in_lamports = bank.store_stake_accounts_in_partition(&stake_rewards);
-        assert_eq!(expected_total, total_rewards_in_lamports);
+        let DistributionStorageResults {
+            lamports_distributed,
+            ..
+        } = bank.store_stake_accounts_in_partition(stake_rewards);
+        assert_eq!(expected_total, lamports_distributed);
     }
 }
