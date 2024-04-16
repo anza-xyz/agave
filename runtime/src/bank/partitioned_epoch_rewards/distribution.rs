@@ -4,7 +4,20 @@ use {
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
     std::sync::atomic::Ordering::Relaxed,
+    thiserror::Error,
 };
+
+#[derive(Serialize, Deserialize, Debug, Error, PartialEq, Eq, Clone)]
+enum DistributionError {
+    #[error("stake account not found")]
+    AccountNotFound,
+
+    #[error("rewards arithmetic overflowed")]
+    ArithmeticOverflow,
+
+    #[error("stake account set_state failed")]
+    UnabletToSetState,
+}
 
 impl Bank {
     /// Process reward distribution for the block if it is inside reward interval.
