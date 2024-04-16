@@ -97,7 +97,7 @@ lazy_static! {
 /// All legacy callers do not have a unique slot per account to store.
 pub trait StorableAccounts<'a>: Sync {
     /// account at 'index'
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         callback: impl for<'b> FnMut(AccountForStorage<'b>) -> Ret,
