@@ -120,6 +120,7 @@ impl Bank {
             store_stake_accounts_us,
             store_stake_accounts_count: this_partition_stake_rewards.len(),
             distributed_rewards: lamports_distributed,
+            burned_rewards: lamports_burned,
         };
 
         report_partitioned_reward_metrics(self, metrics);
