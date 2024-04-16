@@ -772,7 +772,6 @@ impl AppendVec {
                 let account_meta_ptr = &account_meta as *const AccountMeta;
                 let data_len = stored_meta.data_len as usize;
                 let data_ptr = account.data().as_ptr();
-                let hash_ptr = bytemuck::bytes_of(hash).as_ptr();
                 let hash_ptr = bytemuck::bytes_of(&default_hash).as_ptr();
                 let ptrs = [
                     (meta_ptr as *const u8, mem::size_of::<StoredMeta>()),
