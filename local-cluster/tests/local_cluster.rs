@@ -3561,7 +3561,7 @@ fn test_fork_choice_refresh_old_votes() {
                 )
                 .unwrap();
 
-                // Open ledgers
+                // Check if sufficient blockhashes have expired on the smaller fork
                 {
                     let smallest_blockstore = open_blockstore(&smallest_ledger_path);
                     let lighter_fork_blockstore = open_blockstore(&lighter_fork_ledger_path);
@@ -3650,7 +3650,6 @@ fn test_fork_choice_refresh_old_votes() {
                             smallest_ledger_path,
                         );
 
-                        // Restart the smallest validator that we killed earlier in `on_partition_start()`
                         drop(smallest_blockstore);
                         break;
                     }
@@ -3663,6 +3662,7 @@ fn test_fork_choice_refresh_old_votes() {
                 )));
             }
 
+            // Restart the smallest validator that we killed earlier in `on_partition_start()`
             cluster.restart_node(
                 &smallest_validator_key,
                 context.smallest_validator_info.take().unwrap(),
