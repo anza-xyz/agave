@@ -179,6 +179,12 @@ mod tests {
             feature_set,
             hash::Hash,
             native_token::LAMPORTS_PER_SOL,
+            reward_info::RewardInfo,
+            reward_type::RewardType,
+            stake::{
+                stake_flags::StakeFlags,
+                state::{Meta, Stake},
+            },
             sysvar,
         },
     };
@@ -384,6 +390,126 @@ mod tests {
 
             assert_eq!(num_in_history, expected_num);
         }
+    }
+
+    #[test]
+    fn test_build_updated_stake_reward() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        let voter_pubkey = Pubkey::new_unique();
+        let new_stake = Stake {
+            delegation: Delegation {
+                voter_pubkey,
+                stake: 55_555,
+                ..Delegation::default()
+            },
+            credits_observed: 42,
+        };
+        let stake_reward_info = RewardInfo {
+            reward_type: RewardType::Staking,
+            lamports: 100,
+            post_balance: 0,
+            commission: None,
+        };
+
+        let nonexistent_account = Pubkey::new_unique();
+        let partitioned_stake_reward = PartitionedStakeReward {
+            stake_pubkey: nonexistent_account,
+            stake: new_stake,
+            stake_reward_info,
+        };
+        let stakes_cache = bank.stakes_cache.stakes();
+        let stakes_cache_accounts = stakes_cache.stake_delegations();
+        assert_eq!(
+            Bank::build_updated_stake_reward(&stakes_cache_accounts, partitioned_stake_reward)
+                .unwrap_err(),
+            DistributionError::AccountNotFound
+        );
+        drop(stakes_cache);
+
+        let rent_exempt_reserve = 2_282_880;
+
+        let overflowing_account = Pubkey::new_unique();
+        let mut stake_account = AccountSharedData::new(
+            u64::MAX - 99,
+            StakeStateV2::size_of(),
+            &solana_sdk::stake::program::id(),
+        );
+        stake_account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                new_stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+        bank.store_account(&overflowing_account, &stake_account);
+        let partitioned_stake_reward = PartitionedStakeReward {
+            stake_pubkey: overflowing_account,
+            stake: new_stake,
+            stake_reward_info,
+        };
+        let stakes_cache = bank.stakes_cache.stakes();
+        let stakes_cache_accounts = stakes_cache.stake_delegations();
+        assert_eq!(
+            Bank::build_updated_stake_reward(&stakes_cache_accounts, partitioned_stake_reward)
+                .unwrap_err(),
+            DistributionError::ArithmeticOverflow
+        );
+        drop(stakes_cache);
+
+        let successful_account = Pubkey::new_unique();
+        let mut stake_account = AccountSharedData::new(
+            rent_exempt_reserve,
+            StakeStateV2::size_of(),
+            &solana_sdk::stake::program::id(),
+        );
+        let other_stake = Stake {
+            delegation: Delegation {
+                voter_pubkey,
+                stake: 11_111,
+                ..Delegation::default()
+            },
+            credits_observed: 11,
+        };
+        stake_account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                other_stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+        bank.store_account(&successful_account, &stake_account);
+        let partitioned_stake_reward = PartitionedStakeReward {
+            stake_pubkey: successful_account,
+            stake: new_stake,
+            stake_reward_info,
+        };
+        let stakes_cache = bank.stakes_cache.stakes();
+        let stakes_cache_accounts = stakes_cache.stake_delegations();
+        let mut expected_stake_account = AccountSharedData::new(
+            rent_exempt_reserve + stake_reward_info.lamports as u64,
+            StakeStateV2::size_of(),
+            &solana_sdk::stake::program::id(),
+        );
+        expected_stake_account
+            .set_state(&StakeStateV2::Stake(
+                Meta::default(),
+                new_stake,
+                StakeFlags::default(),
+            ))
+            .unwrap();
+        let expected_stake_reward = StakeReward {
+            stake_pubkey: successful_account,
+            stake_account: expected_stake_account,
+            stake_reward_info,
+        };
+        assert_eq!(
+            Bank::build_updated_stake_reward(&stakes_cache_accounts, partitioned_stake_reward)
+                .unwrap(),
+            expected_stake_reward
+        );
+        drop(stakes_cache);
     }
 
     #[test]
