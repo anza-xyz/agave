@@ -98,7 +98,7 @@ impl Bank {
             DistributionStorageResults {
                 lamports_distributed,
                 lamports_burned,
-                ..
+                updated_stake_rewards,
             },
             store_stake_accounts_us,
         ) = measure_us!(self.store_stake_accounts_in_partition(converted_rewards));
@@ -110,7 +110,7 @@ impl Bank {
         self.update_epoch_rewards_sysvar(lamports_distributed + lamports_burned);
 
         // update reward history for this partitioned distribution
-        self.update_reward_history_in_partition(this_partition_stake_rewards);
+        self.update_reward_history_in_partition(&updated_stake_rewards);
 
         let metrics = RewardsStoreMetrics {
             pre_capitalization,
