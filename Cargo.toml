@@ -33,6 +33,7 @@ members = [
     "download-utils",
     "entry",
     "faucet",
+#    "fuzzer",
     "frozen-abi",
     "frozen-abi/macro",
     "genesis",
@@ -123,7 +124,7 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/tests/example-programs"]
+exclude = ["programs/sbf", "svm/tests/example-programs", "fuzzer"]
 
 resolver = "2"
 
