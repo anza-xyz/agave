@@ -1,5 +1,5 @@
 use {
-    super::{Bank, EpochRewardStatus},
+    super::{Bank, EpochRewardStatus, StakeRewards},
     crate::bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
@@ -53,7 +53,7 @@ impl Bank {
     /// Store the rewards to AccountsDB, update reward history record and total capitalization.
     fn distribute_epoch_rewards_in_partition(
         &self,
-        all_stake_rewards: &[Vec<StakeReward>],
+        all_stake_rewards: &[StakeRewards],
         partition_index: u64,
     ) {
         let pre_capitalization = self.capitalization();
