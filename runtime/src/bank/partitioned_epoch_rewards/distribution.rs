@@ -227,6 +227,7 @@ mod tests {
             tests::create_genesis_config,
         },
         rand::Rng,
+        solana_accounts_db::stake_rewards::StakeReward,
         solana_sdk::{
             account::from_account,
             epoch_schedule::EpochSchedule,
@@ -417,9 +418,11 @@ mod tests {
                 .collect();
             let DistributionStorageResults {
                 lamports_distributed,
+                updated_stake_rewards,
                 ..
             } = bank.store_stake_accounts_in_partition(converted_rewards);
-            let num_history_updates = bank.update_reward_history_in_partition(&stake_rewards);
+            let num_history_updates =
+                bank.update_reward_history_in_partition(&updated_stake_rewards);
             assert_eq!(stake_rewards.len(), num_history_updates);
             total_rewards += lamports_distributed;
             total_num_updates += num_history_updates;
