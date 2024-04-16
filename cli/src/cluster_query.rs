@@ -1779,6 +1779,7 @@ pub fn process_show_stakes(
     let vote_account_progress_bar = new_spinner_progress_bar();
     vote_account_progress_bar.set_message("Searching for matching vote accounts...");
 
+    // fetching corresponding vote pubkey from identity pubkey
     let vote_account_pubkeys = match vote_account_pubkeys {
         Some(pubkeys) => {
             let vote_accounts = rpc_client.get_vote_accounts()?;
@@ -1820,26 +1821,11 @@ pub fn process_show_stakes(
     let stake_account_progress_bar = new_spinner_progress_bar();
     stake_account_progress_bar.set_message("Fetching stake accounts...");
 
-    program_accounts_config.filters = Some(vec![
-        // // Filter by `StakeStateV2::Stake(_, _)`
-        // RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
-    ]);
-
-    if let Some(withdraw_authority_pubkey) = withdraw_authority_pubkey {
-        // withdrawer filter
-        program_accounts_config
-            .filters
-            .as_mut()
-            .unwrap()
-            .push(RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
-                44,
-                withdraw_authority_pubkey.as_ref(),
-            )));
-    }
-
-    let mut all_stake_accounts = Vec::new();
+    // Use server-side filtering if only one vote account is provided
     if vote_account_pubkeys.len() == 1 {
-        program_accounts_config.filters.as_mut().unwrap().push(
+        program_accounts_config.filters = Some(vec![
+            // Filter by `StakeStateV2::Stake(_, _)`
+            RpcFilterType::Memcmp(Memcmp::new_base58_encoded(0, &[2, 0, 0, 0])),
             // Filter by `Delegation::voter_pubkey`, which begins at byte offset 124
             RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
                 124,
@@ -1847,18 +1833,21 @@ pub fn process_show_stakes(
                     .unwrap()
                     .as_ref(),
             )),
-        );
-        all_stake_accounts.append(
-            &mut rpc_client
-                .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?,
-        );
-    } else {
-        all_stake_accounts.append(
-            &mut rpc_client
-                .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?,
-        );
+        ]);
     }
 
+    if let Some(withdraw_authority_pubkey) = withdraw_authority_pubkey {
+        // withdrawer filter
+        let withdrawer_filter = RpcFilterType::Memcmp(Memcmp::new_base58_encoded(
+            44,
+            withdraw_authority_pubkey.as_ref(),
+        ));
+        let filters = program_accounts_config.filters.get_or_insert(vec![]);
+        filters.push(withdrawer_filter);
+    }
+
+    let all_stake_accounts = rpc_client
+        .get_program_accounts_with_config(&stake::program::id(), program_accounts_config)?;
     let stake_history_account = rpc_client.get_account(&stake_history::id())?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id())?;
     let clock: Clock = from_account(&clock_account).ok_or_else(|| {
