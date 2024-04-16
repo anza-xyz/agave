@@ -10,7 +10,7 @@ use {
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
     solana_sdk::{
-        account::{AccountSharedData, WritableAccount},
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
         pubkey::Pubkey,
         stake::state::{Delegation, StakeStateV2},
@@ -163,9 +163,11 @@ impl Bank {
                 flags,
             ))
             .map_err(|_| DistributionError::UnabletToSetState)?;
+        let mut stake_reward_info = partitioned_stake_reward.stake_reward_info;
+        stake_reward_info.post_balance = account.lamports();
         Ok(StakeReward {
             stake_pubkey: partitioned_stake_reward.stake_pubkey,
-            stake_reward_info: partitioned_stake_reward.stake_reward_info,
+            stake_reward_info,
             stake_account: account,
         })
     }
@@ -226,7 +228,7 @@ mod tests {
         },
         rand::Rng,
         solana_sdk::{
-            account::{from_account, ReadableAccount},
+            account::from_account,
             epoch_schedule::EpochSchedule,
             feature_set,
             hash::Hash,
@@ -576,8 +578,9 @@ mod tests {
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
+        let expected_lamports = rent_exempt_reserve + stake_reward_info.lamports as u64;
         let mut expected_stake_account = AccountSharedData::new(
-            rent_exempt_reserve + stake_reward_info.lamports as u64,
+            expected_lamports,
             StakeStateV2::size_of(),
             &solana_sdk::stake::program::id(),
         );
@@ -588,10 +591,12 @@ mod tests {
                 StakeFlags::default(),
             ))
             .unwrap();
+        let mut expected_reward_info = stake_reward_info;
+        expected_reward_info.post_balance = expected_lamports;
         let expected_stake_reward = StakeReward {
             stake_pubkey: successful_account,
             stake_account: expected_stake_account,
-            stake_reward_info,
+            stake_reward_info: expected_reward_info,
         };
         assert_eq!(
             Bank::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
