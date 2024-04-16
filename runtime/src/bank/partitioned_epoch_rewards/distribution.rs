@@ -1,8 +1,17 @@
 use {
-    super::{Bank, EpochRewardStatus, StakeRewards},
-    crate::bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
+    super::{Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards},
+    crate::{
+        bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
+        stake_account::StakeAccount,
+    },
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
+    solana_sdk::{
+        account::{AccountSharedData, WritableAccount},
+        account_utils::StateMut,
+        pubkey::Pubkey,
+        stake::state::{Delegation, StakeStateV2},
+    },
     std::sync::atomic::Ordering::Relaxed,
     thiserror::Error,
 };
@@ -108,6 +117,37 @@ impl Bank {
             .filter(|x| x.get_stake_reward() > 0)
             .for_each(|x| rewards.push((x.stake_pubkey, x.stake_reward_info)));
         rewards.len().saturating_sub(initial_len)
+    }
+
+    fn build_updated_stake_reward(
+        stakes_cache_accounts: &im::HashMap<Pubkey, StakeAccount<Delegation>>,
+        partitioned_stake_reward: PartitionedStakeReward,
+    ) -> Result<StakeReward, DistributionError> {
+        let stake_account = stakes_cache_accounts
+            .get(&partitioned_stake_reward.stake_pubkey)
+            .ok_or(DistributionError::AccountNotFound)?
+            .clone();
+
+        let (mut account, stake_state): (AccountSharedData, StakeStateV2) = stake_account.into();
+        let StakeStateV2::Stake(meta, _stake, flags) = stake_state else {
+            // StakesCache only stores accounts where StakeStateV2::delegation().is_some()
+            unreachable!()
+        };
+        account
+            .checked_add_lamports(partitioned_stake_reward.stake_reward_info.lamports as u64)
+            .map_err(|_| DistributionError::ArithmeticOverflow)?;
+        account
+            .set_state(&StakeStateV2::Stake(
+                meta,
+                partitioned_stake_reward.stake,
+                flags,
+            ))
+            .map_err(|_| DistributionError::UnabletToSetState)?;
+        Ok(StakeReward {
+            stake_pubkey: partitioned_stake_reward.stake_pubkey,
+            stake_reward_info: partitioned_stake_reward.stake_reward_info,
+            stake_account: account,
+        })
     }
 
     /// store stake rewards in partition
