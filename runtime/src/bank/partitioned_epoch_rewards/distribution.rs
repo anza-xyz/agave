@@ -1,9 +1,12 @@
 use {
-    super::{Bank, EpochRewardStatus, PartitionedStakeReward, StakeRewards},
+    super::{
+        Bank, EpochRewardStatus, PartitionedStakeReward, PartitionedStakeRewards, StakeRewards,
+    },
     crate::{
         bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
         stake_account::StakeAccount,
     },
+    log::debug,
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
     solana_sdk::{
@@ -26,6 +29,12 @@ enum DistributionError {
 
     #[error("stake account set_state failed")]
     UnabletToSetState,
+}
+
+struct DistributionStorageResults {
+    lamports_distributed: u64,
+    lamports_burned: u64,
+    updated_stake_rewards: StakeRewards,
 }
 
 impl Bank {
@@ -79,16 +88,26 @@ impl Bank {
     ) {
         let pre_capitalization = self.capitalization();
         let this_partition_stake_rewards = &all_stake_rewards[partition_index as usize];
+        let converted_rewards: Vec<_> = this_partition_stake_rewards
+            .iter()
+            .map(|stake_reward| PartitionedStakeReward::maybe_from(stake_reward)
+                .expect("StakeRewards should only be deserializable accounts with state StakeStateV2::Stake"))
+            .collect();
 
-        let (total_rewards_in_lamports, store_stake_accounts_us) =
-            measure_us!(self.store_stake_accounts_in_partition(this_partition_stake_rewards));
+        let (
+            DistributionStorageResults {
+                lamports_distributed,
+                lamports_burned,
+                ..
+            },
+            store_stake_accounts_us,
+        ) = measure_us!(self.store_stake_accounts_in_partition(converted_rewards));
 
         // increase total capitalization by the distributed rewards
-        self.capitalization
-            .fetch_add(total_rewards_in_lamports, Relaxed);
+        self.capitalization.fetch_add(lamports_distributed, Relaxed);
 
         // decrease distributed capital from epoch rewards sysvar
-        self.update_epoch_rewards_sysvar(total_rewards_in_lamports);
+        self.update_epoch_rewards_sysvar(lamports_distributed + lamports_burned);
 
         // update reward history for this partitioned distribution
         self.update_reward_history_in_partition(this_partition_stake_rewards);
@@ -100,7 +119,7 @@ impl Bank {
             partition_index,
             store_stake_accounts_us,
             store_stake_accounts_count: this_partition_stake_rewards.len(),
-            distributed_rewards: total_rewards_in_lamports,
+            distributed_rewards: lamports_distributed,
         };
 
         report_partitioned_reward_metrics(self, metrics);
@@ -150,17 +169,49 @@ impl Bank {
         })
     }
 
-    /// store stake rewards in partition
-    /// return the sum of all the stored rewards
+    /// Store stake rewards in partition
+    /// Returns DistributionStorageResults containing the sum of all the rewards
+    /// stored, the sum of all rewards burned, and the updated StakeRewards.
+    /// Because stake accounts are checked in calculation, and further state
+    /// mutation prevents by stake-program restrictions, there should never be
+    /// rewards burned.
     ///
-    /// Note: even if staker's reward is 0, the stake account still needs to be stored because
-    /// credits observed has changed
-    fn store_stake_accounts_in_partition(&self, stake_rewards: &[StakeReward]) -> u64 {
-        self.store_accounts((self.slot(), stake_rewards));
-        stake_rewards
-            .iter()
-            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
-            .sum::<i64>() as u64
+    /// Note: even if staker's reward is 0, the stake account still needs to be
+    /// stored because credits observed has changed
+    fn store_stake_accounts_in_partition(
+        &self,
+        stake_rewards: PartitionedStakeRewards,
+    ) -> DistributionStorageResults {
+        let mut lamports_distributed = 0;
+        let mut lamports_burned = 0;
+        let mut updated_stake_rewards = vec![];
+        let stakes_cache = self.stakes_cache.stakes();
+        let stakes_cache_accounts = stakes_cache.stake_delegations();
+        for partitioned_stake_reward in stake_rewards.into_iter() {
+            let stake_pubkey = partitioned_stake_reward.stake_pubkey;
+            let reward_amount = partitioned_stake_reward.stake_reward_info.lamports as u64;
+            match Self::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
+            {
+                Ok(stake_reward) => {
+                    lamports_distributed += reward_amount;
+                    updated_stake_rewards.push(stake_reward);
+                }
+                Err(err) => {
+                    debug!(
+                        "bank::distribution::store_stake_accounts_in_partition() failed for {}: {:?}",
+                        stake_pubkey, err
+                    );
+                    lamports_burned += reward_amount;
+                }
+            }
+        }
+        drop(stakes_cache);
+        self.store_accounts((self.slot(), &updated_stake_rewards[..]));
+        DistributionStorageResults {
+            lamports_distributed,
+            lamports_burned,
+            updated_stake_rewards,
+        }
     }
 }
 
