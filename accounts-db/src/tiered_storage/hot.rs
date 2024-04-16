@@ -759,10 +759,16 @@ impl HotStorageWriter {
         let total_input_accounts = len - skip;
         let mut stored_infos = Vec::with_capacity(total_input_accounts);
         for i in skip..len {
-            accounts.get::<TieredStorageResult<()>>(i, |account, _account_hash| {
+            let mut result = Ok(());
+            accounts.get::<()>(i, |account, _account_hash| {
+                let offset = HotAccountOffset::new(cursor);
+                let Ok(offset) = offset else {
+                    result = offset.map(|_| ());
+                    return;
+                };
                 let index_entry = AccountIndexWriterEntry {
                     address: *account.pubkey(),
-                    offset: HotAccountOffset::new(cursor)?,
+                    offset,
                 };
                 address_range.update(account.pubkey());
 
@@ -781,7 +787,11 @@ impl HotStorageWriter {
                 };
                 let owner_offset = owners_table.insert(owner);
                 let stored_size =
-                    self.write_account(lamports, owner_offset, data, executable, rent_epoch)?;
+                    self.write_account(lamports, owner_offset, data, executable, rent_epoch);
+                let Ok(stored_size) = stored_size else {
+                    result = stored_size.map(|_| ());
+                    return;
+                };
                 cursor += stored_size;
 
                 stored_infos.push(StoredAccountInfo {
@@ -799,8 +809,8 @@ impl HotStorageWriter {
                     size: stored_size + footer.index_block_format.entry_size::<HotAccountOffset>(),
                 });
                 index.push(index_entry);
-                Ok(())
-            })?;
+            });
+            result?;
         }
         footer.account_entry_count = total_input_accounts as u32;
 

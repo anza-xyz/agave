@@ -22,7 +22,7 @@ impl StakeReward {
 
 /// allow [StakeReward] to be passed to `StoreAccounts` directly without copies or vec construction
 impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,

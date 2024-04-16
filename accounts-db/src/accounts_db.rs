@@ -9631,7 +9631,7 @@ pub mod tests {
     where
         AccountForStorage<'a>: From<&'a T>,
     {
-        fn account<Ret>(
+        fn account<Ret: Default>(
             &self,
             index: usize,
             mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,

@@ -97,10 +97,13 @@ lazy_static! {
 /// All legacy callers do not have a unique slot per account to store.
 pub trait StorableAccounts<'a>: Sync {
     /// account at 'index'
-    fn account<Ret>(&self, index: usize, callback: impl FnMut(AccountForStorage<'a>) -> Ret)
-        -> Ret;
+    fn account<Ret: Default>(
+        &self,
+        index: usize,
+        callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+    ) -> Ret;
     /// None if account is zero lamports
-    fn account_default_if_zero_lamport<Ret>(
+    fn account_default_if_zero_lamport<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
@@ -163,7 +166,7 @@ impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for StorableAccountsMov
 where
     AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
 {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
@@ -187,7 +190,7 @@ impl<'a: 'b, 'b, T: ReadableAccount + Sync + 'a> StorableAccounts<'a>
 where
     AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
 {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
@@ -209,7 +212,7 @@ impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [&'a (Pu
 where
     AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
 {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
@@ -229,7 +232,7 @@ where
 }
 
 impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
@@ -318,7 +321,7 @@ impl<'a> StorableAccountsBySlot<'a> {
 }
 
 impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
@@ -351,7 +354,7 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
 /// this tuple contains a single different source slot that applies to all accounts
 /// accounts are StoredAccountMeta
 impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) {
-    fn account<Ret>(
+    fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,

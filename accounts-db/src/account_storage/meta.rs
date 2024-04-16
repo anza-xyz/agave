@@ -61,7 +61,7 @@ impl<'a: 'b, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>
     }
 
     /// get all account fields at 'index'
-    pub fn get<Ret>(
+    pub fn get<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl FnMut(AccountForStorage, &AccountHash) -> Ret,
@@ -79,7 +79,7 @@ impl<'a: 'b, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>
     /// None if account at index has lamports == 0
     /// Otherwise, Some(account)
     /// This is the only way to access the account.
-    pub fn account<Ret>(
+    pub fn account<Ret: Default>(
         &self,
         index: usize,
         callback: impl FnMut(AccountForStorage<'a>) -> Ret,
