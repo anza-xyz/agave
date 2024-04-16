@@ -401,6 +401,9 @@ mod tests {
             expected_rewards += 1;
         }
 
+        // Push extra StakeReward to simulate non-existent account
+        stake_rewards.push(StakeReward::new_random());
+
         let stake_rewards_bucket =
             hash_rewards_into_partitions(stake_rewards, &Hash::new(&[1; 32]), 100);
         bank.set_epoch_reward_status_active(stake_rewards_bucket.clone());
@@ -423,7 +426,7 @@ mod tests {
             } = bank.store_stake_accounts_in_partition(converted_rewards);
             let num_history_updates =
                 bank.update_reward_history_in_partition(&updated_stake_rewards);
-            assert_eq!(stake_rewards.len(), num_history_updates);
+            assert_eq!(updated_stake_rewards.len(), num_history_updates);
             total_rewards += lamports_distributed;
             total_num_updates += num_history_updates;
         }
