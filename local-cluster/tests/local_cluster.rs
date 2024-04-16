@@ -3603,7 +3603,7 @@ fn test_fork_choice_refresh_old_votes() {
                     // Because we don't have a simple method of parsing blockstore for all votes, we proxy this check
                     // by ensuring the heavier fork was long enough to land a vote. The minimum length would be 4 more
                     // than the last common ancestor N, because the first vote would be made at least by N+3 (if threshold check failed on slot N+1),
-                    // and then woudl land by slot N + 4.
+                    // and then would land by slot N + 4.
                     assert!(heavier_ancestors.len() > last_common_ancestor_index + 4);
                     context.first_slot_in_lighter_partition = *different_ancestor;
                     distance_from_tip = lighter_ancestors.len() - different_ancestor_index - 1;
