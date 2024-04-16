@@ -178,7 +178,10 @@ mod tests {
         hot::HOT_FORMAT,
         index::IndexOffset,
         solana_sdk::{
-            account::AccountSharedData, clock::Slot, hash::Hash, pubkey::Pubkey,
+            account::{AccountSharedData, ReadableAccount},
+            clock::Slot,
+            hash::Hash,
+            pubkey::Pubkey,
             system_instruction::MAX_PERMITTED_DATA_LENGTH,
         },
         std::{
@@ -352,8 +355,14 @@ mod tests {
 
         let mut expected_accounts_map = HashMap::new();
         for i in 0..num_accounts {
-            let (account, address, _account_hash) = storable_accounts.get(i);
-            expected_accounts_map.insert(address, account);
+            storable_accounts.get(i, |(account, address, _account_hash)| {
+                expected_accounts_map.insert(
+                    *address,
+                    account
+                        .map(|account| account.to_account_shared_data())
+                        .unwrap_or_default(),
+                );
+            });
         }
 
         let mut index_offset = IndexOffset(0);
@@ -371,7 +380,7 @@ mod tests {
             if let Some(account) = expected_accounts_map.get(stored_account_meta.pubkey()) {
                 verify_test_account_with_footer(
                     &stored_account_meta,
-                    account.as_ref(),
+                    account,
                     stored_account_meta.pubkey(),
                     footer,
                 );
