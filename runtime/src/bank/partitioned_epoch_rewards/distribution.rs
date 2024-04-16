@@ -3,7 +3,6 @@ use {
     crate::bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
-    solana_sdk::account::ReadableAccount,
     std::sync::atomic::Ordering::Relaxed,
 };
 
@@ -104,31 +103,6 @@ impl Bank {
     /// Note: even if staker's reward is 0, the stake account still needs to be stored because
     /// credits observed has changed
     fn store_stake_accounts_in_partition(&self, stake_rewards: &[StakeReward]) -> u64 {
-        // Verify that stake account `lamports + reward_amount` matches what we have in the
-        // rewarded account. This code will have a performance hit - an extra load and compare of
-        // the stake accounts. This is for debugging. Once we are confident, we can disable the
-        // check.
-        const VERIFY_REWARD_LAMPORT: bool = true;
-
-        if VERIFY_REWARD_LAMPORT {
-            for r in stake_rewards {
-                let stake_pubkey = r.stake_pubkey;
-                let reward_amount = r.get_stake_reward();
-                let post_stake_account = &r.stake_account;
-                if let Some(curr_stake_account) = self.get_account_with_fixed_root(&stake_pubkey) {
-                    let pre_lamport = curr_stake_account.lamports();
-                    let post_lamport = post_stake_account.lamports();
-                    assert_eq!(
-                        pre_lamport + u64::try_from(reward_amount).unwrap(),
-                        post_lamport,
-                        "stake account balance has changed since the reward calculation! \
-                         account: {stake_pubkey}, pre balance: {pre_lamport}, \
-                         post balance: {post_lamport}, rewards: {reward_amount}"
-                    );
-                }
-            }
-        }
-
         self.store_accounts((self.slot(), stake_rewards));
         stake_rewards
             .iter()
@@ -147,8 +121,12 @@ mod tests {
         },
         rand::Rng,
         solana_sdk::{
-            account::from_account, epoch_schedule::EpochSchedule, feature_set, hash::Hash,
-            native_token::LAMPORTS_PER_SOL, sysvar,
+            account::{from_account, ReadableAccount},
+            epoch_schedule::EpochSchedule,
+            feature_set,
+            hash::Hash,
+            native_token::LAMPORTS_PER_SOL,
+            sysvar,
         },
     };
 
