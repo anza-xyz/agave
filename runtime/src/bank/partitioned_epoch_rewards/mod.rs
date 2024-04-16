@@ -12,11 +12,12 @@ use {
     },
     solana_sdk::{
         account::AccountSharedData,
+        account_utils::StateMut,
         clock::Slot,
         feature_set,
         pubkey::Pubkey,
         reward_info::RewardInfo,
-        stake::state::{Delegation, Stake},
+        stake::state::{Delegation, Stake, StakeStateV2},
     },
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
@@ -32,6 +33,20 @@ struct PartitionedStakeReward {
     /// fields are available on calculation, but RewardInfo::post_balance must
     /// be updated based on current account state before recording.
     pub stake_reward_info: RewardInfo,
+}
+
+impl PartitionedStakeReward {
+    fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
+        if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) = stake_reward.stake_account.state() {
+            Some(Self {
+                stake_pubkey: stake_reward.stake_pubkey,
+                stake,
+                stake_reward_info: stake_reward.stake_reward_info,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[allow(dead_code)]
