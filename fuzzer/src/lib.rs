@@ -1,28 +1,29 @@
 #![allow(clippy::missing_safety_doc)]
 
-use lazy_static::lazy_static;
-use prost::Message;
-use solana_program_runtime::compute_budget::ComputeBudget;
-use solana_program_runtime::invoke_context::InvokeContext;
-use solana_program_runtime::loaded_programs::LoadedProgram;
-use solana_program_runtime::loaded_programs::LoadedProgramsForTxBatch;
-use solana_program_runtime::sysvar_cache::SysvarCache;
-use solana_program_runtime::timings::ExecuteTimings;
-use solana_sdk::account::ReadableAccount;
-use solana_sdk::account::{Account, AccountSharedData};
-use solana_sdk::feature_set::*;
-use solana_sdk::instruction::AccountMeta;
-use solana_sdk::instruction::InstructionError;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::stable_layout::stable_instruction::StableInstruction;
-use solana_sdk::sysvar::rent::Rent;
-use solana_sdk::transaction_context::{
-    IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+use {
+    lazy_static::lazy_static,
+    prost::Message,
+    solana_program_runtime::{
+        compute_budget::ComputeBudget,
+        invoke_context::InvokeContext,
+        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch},
+        sysvar_cache::SysvarCache,
+        timings::ExecuteTimings,
+    },
+    solana_sdk::{
+        account::{Account, AccountSharedData, ReadableAccount},
+        feature_set::*,
+        instruction::{AccountMeta, InstructionError},
+        pubkey::Pubkey,
+        stable_layout::stable_instruction::StableInstruction,
+        sysvar::rent::Rent,
+        transaction_context::{
+            IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        },
+    },
+    std::{collections::HashMap, ffi::c_int, sync::Arc},
+    thiserror::Error,
 };
-use std::collections::HashMap;
-use std::ffi::c_int;
-use std::sync::Arc;
-use thiserror::Error;
 
 // macro to rewrite &[IDENTIFIER, ...] to &[feature_u64(IDENTIFIER::id()), ...]
 macro_rules! feature_list {
@@ -275,9 +276,8 @@ impl From<InstrEffects> for proto::InstrEffects {
 }
 
 pub fn execute_instr_proto(input: proto::InstrContext) -> Option<proto::InstrEffects> {
-    let instr_context = match InstrContext::try_from(input) {
-        Ok(context) => context,
-        Err(_) => return None,
+    let Ok(instr_context) = InstrContext::try_from(input) else {
+        return None;
     };
     let instr_effects = execute_instr(instr_context);
     instr_effects.map(Into::into)
@@ -359,7 +359,7 @@ fn execute_instr(input: InstrContext) -> Option<InstrEffects> {
     }
 
     let mut transaction_accounts =
-        Vec::<TransactionAccount>::with_capacity(input.accounts.len() + 1);
+        Vec::<TransactionAccount>::with_capacity(input.accounts.len().saturating_add(1));
     #[allow(deprecated)]
     input
         .accounts
@@ -383,7 +383,7 @@ fn execute_instr(input: InstrContext) -> Option<InstrEffects> {
                 rent_epoch: 0,
             }),
         ));
-        transaction_accounts.len() - 1
+        transaction_accounts.len().saturating_sub(1)
     };
 
     // Skip if the program account is not owned by the native loader
@@ -406,7 +406,7 @@ fn execute_instr(input: InstrContext) -> Option<InstrEffects> {
     let mut programs_modified_by_tx = LoadedProgramsForTxBatch::default();
 
     #[allow(deprecated)]
-        let (blockhash, lamports_per_signature) = sysvar_cache
+    let (blockhash, lamports_per_signature) = sysvar_cache
         .get_recent_blockhashes()
         .ok()
         .and_then(|x| (*x).last().cloned())
@@ -434,7 +434,7 @@ fn execute_instr(input: InstrContext) -> Option<InstrEffects> {
     let mut instruction_accounts: Vec<InstructionAccount> =
         Vec::with_capacity(input.instruction.accounts.len());
     for (instruction_account_index, account_meta) in
-    input.instruction.accounts.as_ref().iter().enumerate()
+        input.instruction.accounts.as_ref().iter().enumerate()
     {
         let index_in_transaction = transaction_accounts
             .iter()
@@ -484,11 +484,11 @@ fn execute_instr(input: InstrContext) -> Option<InstrEffects> {
             .deconstruct_without_keys()
             .unwrap()
             .into_iter()
-            .take(transaction_accounts.len() - 1)
+            .take(transaction_accounts.len().saturating_sub(1))
             .enumerate()
             .map(|(index, data)| (transaction_accounts[index].0, data.into()))
             .collect(),
-        cu_avail: input.cu_avail - compute_units_consumed,
+        cu_avail: input.cu_avail.saturating_sub(compute_units_consumed),
     })
 }
 
@@ -573,13 +573,11 @@ pub unsafe extern "C" fn sol_compat_instr_execute_v1(
     in_sz: u64,
 ) -> c_int {
     let in_slice = std::slice::from_raw_parts(in_ptr, in_sz as usize);
-    let instr_context = match proto::InstrContext::decode(in_slice) {
-        Ok(context) => context,
-        Err(_) => return 0,
+    let Ok(instr_context) = proto::InstrContext::decode(in_slice) else {
+        return 0;
     };
-    let instr_effects = match execute_instr_proto(instr_context) {
-        Some(v) => v,
-        None => return 0,
+    let Some(instr_effects) = execute_instr_proto(instr_context) else {
+        return 0;
     };
     let out_slice = std::slice::from_raw_parts_mut(out_ptr, (*out_psz) as usize);
     let out_vec = instr_effects.encode_to_vec();

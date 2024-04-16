@@ -1,5 +1,4 @@
-use std::io::Result;
-use std::process::Command;
+use std::{io::Result, process::Command};
 
 fn main() -> Result<()> {
     let proto_base_path = std::path::PathBuf::from("proto");

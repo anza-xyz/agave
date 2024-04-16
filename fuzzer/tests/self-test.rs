@@ -1,4 +1,3 @@
-
 #[test]
 fn sanity_test() {
     #[cfg(target_os = "linux")]
@@ -6,10 +5,10 @@ fn sanity_test() {
         use std::process::Command;
 
         #[cfg(target_arch = "x86_64")]
-            let name = "x86_64-unknown-linux-gnu";
+        let name = "x86_64-unknown-linux-gnu";
 
         #[cfg(target_arch = "aarch64")]
-            let name = "aarch64-unknown-linux-gnu";
+        let name = "aarch64-unknown-linux-gnu";
 
         let folder = "target/" + name + "/release/libsolfuzz_agave.so";
         let output = Command::new("target/self_test")

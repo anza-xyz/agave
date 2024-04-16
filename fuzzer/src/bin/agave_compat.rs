@@ -1,7 +1,4 @@
-use clap::Parser;
-use prost::Message;
-use std::path::PathBuf;
-use agave_fuzzer::proto::InstrContext;
+use {agave_fuzzer::proto::InstrContext, clap::Parser, prost::Message, std::path::PathBuf};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -12,12 +9,9 @@ struct Cli {
 fn exec(input: &PathBuf) {
     let blob = std::fs::read(input).unwrap();
     let context = InstrContext::decode(&blob[..]).unwrap();
-    let effects = match agave_fuzzer::execute_instr_proto(context) {
-        Some(e) => e,
-        None => {
-            println!("No instruction effects returned.");
-            return;
-        }
+    let Some(effects) = agave_fuzzer::execute_instr_proto(context) else {
+        println!("No instruction effects returned.");
+        return;
     };
     eprintln!("Effects: {:?}", effects);
 }
