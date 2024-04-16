@@ -541,14 +541,14 @@ impl AppendVec {
     }
 
     /// calls `callback` with the account located at the specified index offset.
-    pub fn get_stored_account_meta_callback<'a>(
+    pub fn get_stored_account_meta_callback<'a, Ret: Default>(
         &'a self,
         offset: usize,
-        mut callback: impl FnMut(StoredAccountMeta<'a>),
-    ) {
-        if let Some((account, _offset)) = self.get_stored_account_meta(offset) {
-            callback(account)
-        }
+        mut callback: impl FnMut(StoredAccountMeta<'a>) -> Ret,
+    ) -> Ret {
+        self.get_stored_account_meta(offset)
+            .map(|(account, _offset)| callback(account))
+            .unwrap_or_default()
     }
 
     /// return an `AccountSharedData` for an account at `offset`.

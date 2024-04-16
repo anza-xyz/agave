@@ -1,7 +1,9 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
     crate::{
-        account_storage::meta::StoredAccountMeta, accounts_hash::AccountHash,
+        account_storage::meta::StoredAccountMeta,
+        accounts_db::{AccountFromStorage, AccountsDb},
+        accounts_hash::AccountHash,
         accounts_index::ZeroLamport,
     },
     solana_sdk::{
@@ -261,7 +263,7 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
 pub struct StorableAccountsBySlot<'a> {
     target_slot: Slot,
     /// each element is (source slot, accounts moving FROM source slot)
-    slots_and_accounts: &'a [(Slot, &'a [&'a StoredAccountMeta<'a>])],
+    slots_and_accounts: &'a [(Slot, &'a [&'a AccountFromStorage])],
 
     /// This is calculated based off slots_and_accounts.
     /// cumulative offset of all account slices prior to this one
@@ -272,13 +274,15 @@ pub struct StorableAccountsBySlot<'a> {
     contains_multiple_slots: bool,
     /// total len of all accounts, across all slots_and_accounts
     len: usize,
+    db: &'a AccountsDb,
 }
 
 impl<'a> StorableAccountsBySlot<'a> {
     /// each element of slots_and_accounts is (source slot, accounts moving FROM source slot)
     pub fn new(
         target_slot: Slot,
-        slots_and_accounts: &'a [(Slot, &'a [&'a StoredAccountMeta<'a>])],
+        slots_and_accounts: &'a [(Slot, &'a [&'a AccountFromStorage])],
+        db: &'a AccountsDb,
     ) -> Self {
         let mut cumulative_len = 0usize;
         let mut starting_offsets = Vec::with_capacity(slots_and_accounts.len());
@@ -298,6 +302,7 @@ impl<'a> StorableAccountsBySlot<'a> {
             starting_offsets,
             contains_multiple_slots,
             len: cumulative_len,
+            db,
         }
     }
     /// given an overall index for all accounts in self:
@@ -327,7 +332,18 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         mut callback: impl for<'b> FnMut(AccountForStorage<'b>) -> Ret,
     ) -> Ret {
         let indexes = self.find_internal_index(index);
-        callback(self.slots_and_accounts[indexes.0].1[indexes.1].into())
+        let data = self.slots_and_accounts[indexes.0].1[indexes.1];
+        // assert_eq!(self.slot, self.slot(index)); // maybe we should not keep the slot separate here?
+        let storage = self
+            .db
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(self.slot(index))
+            .unwrap();
+        storage
+            .accounts
+            .get_stored_account_meta_callback(data.index_info.offset(), |account| {
+                callback((&account).into())
+            })
     }
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
@@ -342,24 +358,27 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn contains_multiple_slots(&self) -> bool {
         self.contains_multiple_slots
     }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        let indexes = self.find_internal_index(index);
-        self.slots_and_accounts[indexes.0].1[indexes.1].hash()
-    }
 }
 
 /// this tuple contains a single different source slot that applies to all accounts
 /// accounts are StoredAccountMeta
-impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) {
+impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a AccountFromStorage], Slot, &AccountsDb) {
     fn account<Ret: Default>(
         &self,
         index: usize,
         mut callback: impl for<'b> FnMut(AccountForStorage<'b>) -> Ret,
     ) -> Ret {
-        callback(self.1[index].into())
+        let data = self.1[index];
+        let storage = self
+            .3
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(self.2)
+            .unwrap();
+        storage
+            .accounts
+            .get_stored_account_meta_callback(data.index_info.offset(), |account| {
+                callback((&account).into())
+            })
     }
     fn slot(&self, _index: usize) -> Slot {
         // same other slot for all accounts
@@ -372,11 +391,13 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) 
         self.1.len()
     }
     fn has_hash(&self) -> bool {
-        true
+        false
     }
+    /*
     fn hash(&self, index: usize) -> &AccountHash {
         self.1[index].hash()
     }
+    */
 }
 
 #[cfg(test)]
