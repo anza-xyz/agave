@@ -306,6 +306,8 @@ pub struct PohRecorder {
     last_metric: Instant,
     record_sender: Sender<Record>,
     leader_bank_notifier: Arc<LeaderBankNotifier>,
+    delay_leader_block_for_pending_fork: bool,
+    last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
     pub is_exited: Arc<AtomicBool>,
 }
 
@@ -485,11 +487,37 @@ impl PohRecorder {
                 == leader_first_tick_height_including_grace_ticks
             || (self.tick_height >= ideal_target_tick_height
                 && (self.prev_slot_was_mine(my_pubkey, next_slot) || {
-                    // If the start bank isn't for the previous leader and there is no
-                    // new reset bank pending, don't apply grace ticks
+                    // If we are not reset to a bank by the previous leader, skip grace
+                    // ticks unless there is a pending reset bank and we are configured
+                    // to apply grace ticks when we detect a pending reset bank.
                     !self.is_same_fork_as_previous_leader(next_slot)
-                        && !self.is_new_reset_bank_pending(next_slot)
+                        && (!self.is_new_reset_bank_pending(next_slot) || {
+                            self.report_pending_fork_was_detected(next_slot);
+                            !self.delay_leader_block_for_pending_fork
+                        })
                 }))
+    }
+
+    // Report metrics when poh recorder detects a pending fork that could
+    // soon lead to poh reset.
+    fn report_pending_fork_was_detected(&self, next_slot: Slot) {
+        // Only report once per next leader slot to avoid spamming metrics. It's
+        // enough to know that a leader decided to delay or not once per slot
+        let mut last_slot = self.last_reported_slot_for_pending_fork.lock().unwrap();
+        if *last_slot == next_slot {
+            return;
+        }
+        *last_slot = next_slot;
+
+        datapoint_info!(
+            "poh_recorder-detected_pending_fork",
+            ("next_leader_slot", next_slot, i64),
+            (
+                "did_delay_leader_slot",
+                self.delay_leader_block_for_pending_fork,
+                bool
+            ),
+        );
     }
 
     pub fn start_slot(&self) -> Slot {
@@ -961,6 +989,7 @@ impl PohRecorder {
         start_bank: Arc<Bank>,
         next_leader_slot: Option<(Slot, Slot)>,
         ticks_per_slot: u64,
+        delay_leader_block_for_pending_fork: bool,
         blockstore: Arc<Blockstore>,
         clear_bank_signal: Option<Sender<bool>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
@@ -1014,6 +1043,8 @@ impl PohRecorder {
                 last_metric: Instant::now(),
                 record_sender,
                 leader_bank_notifier: Arc::default(),
+                delay_leader_block_for_pending_fork,
+                last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
             },
             receiver,
@@ -1036,12 +1067,14 @@ impl PohRecorder {
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
     ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+        let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,
             last_entry_hash,
             start_bank,
             next_leader_slot,
             ticks_per_slot,
+            delay_leader_block_for_pending_fork,
             blockstore,
             None,
             leader_schedule_cache,
@@ -1751,6 +1784,7 @@ mod tests {
                 bank.clone(),
                 None,
                 bank.ticks_per_slot(),
+                false,
                 Arc::new(blockstore),
                 Some(sender),
                 &Arc::new(LeaderScheduleCache::default()),
@@ -2075,7 +2109,17 @@ mod tests {
             poh_recorder.update_start_bank_active_descendants(&[5]);
             assert!(poh_recorder.is_new_reset_bank_pending(8));
 
-            // We should now require grace ticks
+            // Without setting delay_leader_block_for_pending_fork, skip grace ticks
+            assert_eq!(
+                poh_recorder.reached_leader_slot(&test_validator_pubkey),
+                PohLeaderStatus::Reached {
+                    poh_slot: 9,
+                    parent_slot: 4,
+                }
+            );
+
+            // After setting delay_leader_block_for_pending_fork, grace ticks are required
+            poh_recorder.delay_leader_block_for_pending_fork = true;
             assert_eq!(
                 poh_recorder.reached_leader_slot(&test_validator_pubkey),
                 PohLeaderStatus::NotReached,
