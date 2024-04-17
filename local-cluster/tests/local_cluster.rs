@@ -3140,8 +3140,7 @@ fn test_optimistic_confirmation_violation_without_tower() {
 
 // A bit convoluted test case; but this roughly follows this test theoretical scenario:
 // Validator A, B, C have 31, 36, 33 % of stake respectively. Leader schedule is split, first half
-// of the test B is always leader, second half C is. Additionally we have a non voting validator D with 0
-// stake to propagate gossip info.
+// of the test B is always leader, second half C is.
 //
 // Step 1: Kill C, only A, B and D should be running
 //
@@ -3183,7 +3182,6 @@ fn do_test_optimistic_confirmation_violation_with_or_without_tower(with_tower: b
         31 * DEFAULT_NODE_STAKE,
         36 * DEFAULT_NODE_STAKE,
         33 * DEFAULT_NODE_STAKE,
-        0,
     ];
 
     let base_slot: Slot = 26; // S2
