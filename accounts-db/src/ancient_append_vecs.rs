@@ -12,15 +12,14 @@ use {
         },
         accounts_file::AccountsFile,
         accounts_hash::AccountHash,
-        accounts_index::{AccountsIndexScanResult, ZeroLamport},
+        accounts_index::AccountsIndexScanResult,
         active_stats::ActiveStatItem,
-        append_vec::aligned_stored_size,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
     },
     rand::{thread_rng, Rng},
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_measure::measure_us,
-    solana_sdk::{account::ReadableAccount, clock::Slot},
+    solana_sdk::clock::Slot,
     std::{
         collections::HashMap,
         num::{NonZeroU64, Saturating},
@@ -441,10 +440,10 @@ impl AccountsDb {
     /// create append vec of size 'bytes'
     /// write 'accounts_to_write' into it
     /// return shrink_in_progress and some metrics
-    fn write_ancient_accounts<'a, 'b: 'a, T: ReadableAccount + Sync + ZeroLamport + 'a>(
+    fn write_ancient_accounts<'a, 'b: 'a>(
         &'b self,
         bytes: u64,
-        accounts_to_write: impl StorableAccounts<'a, T>,
+        accounts_to_write: impl StorableAccounts<'a>,
         write_ancient_accounts: &mut WriteAncientAccounts<'b>,
     ) {
         let target_slot = accounts_to_write.target_slot();
@@ -822,7 +821,7 @@ impl<'a> PackedAncientStorage<'a> {
                     // look at each account and stop when we exceed the ideal size
                     while partial_inner_index_max_exclusive < alive_accounts.accounts.len() {
                         let account = alive_accounts.accounts[partial_inner_index_max_exclusive];
-                        let account_size = aligned_stored_size(account.data().len());
+                        let account_size = account.stored_size();
                         let new_size = bytes_total.saturating_add(account_size);
                         if new_size > ideal_size && bytes_total > 0 {
                             full = true;
@@ -3166,7 +3165,7 @@ pub mod tests {
         let data_size = None;
         let (_db, storages, _slots, _infos) = get_sample_storages(num_slots, data_size);
 
-        let account = storages[0].accounts.get_account(0).unwrap().0;
+        let account = storages[0].accounts.get_stored_account_meta(0).unwrap().0;
         let slot = 1;
         let capacity = 0;
         for i in 0..4usize {

@@ -20,8 +20,8 @@ use {
         invoke_context::InvokeContext,
         loaded_programs::{
             ForkGraph, LoadProgramMetrics, LoadedProgram, LoadedProgramMatchCriteria,
-            LoadedProgramType, LoadedProgramsForTxBatch, ProgramCache, ProgramRuntimeEnvironment,
-            DELAY_VISIBILITY_SLOT_OFFSET,
+            LoadedProgramOwner, LoadedProgramType, LoadedProgramsForTxBatch, ProgramCache,
+            ProgramRuntimeEnvironment, DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
         sysvar_cache::SysvarCache,
@@ -30,6 +30,7 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         account_utils::StateMut,
+        bpf_loader, bpf_loader_deprecated,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Epoch, Slot},
         epoch_schedule::EpochSchedule,
@@ -114,8 +115,9 @@ pub trait TransactionProcessingCallback {
 
 #[derive(Debug)]
 enum ProgramAccountLoadResult {
-    InvalidAccountData,
-    ProgramOfLoaderV1orV2(AccountSharedData),
+    InvalidAccountData(LoadedProgramOwner),
+    ProgramOfLoaderV1(AccountSharedData),
+    ProgramOfLoaderV2(AccountSharedData),
     ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
@@ -411,12 +413,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let mut loaded_program = match self.load_program_accounts(callbacks, pubkey)? {
-            ProgramAccountLoadResult::InvalidAccountData => Ok(LoadedProgram::new_tombstone(
-                self.slot,
-                LoadedProgramType::Closed,
-            )),
+            ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
+                LoadedProgram::new_tombstone(self.slot, owner, LoadedProgramType::Closed),
+            ),
 
-            ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account) => {
+            ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => {
                 Self::load_program_from_bytes(
                     &mut load_program_metrics,
                     program_account.data(),
@@ -426,7 +427,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     environments.program_runtime_v1.clone(),
                     reload,
                 )
-                .map_err(|_| (0, environments.program_runtime_v1.clone()))
+                .map_err(|_| (0, LoadedProgramOwner::LoaderV1))
+            }
+
+            ProgramAccountLoadResult::ProgramOfLoaderV2(program_account) => {
+                Self::load_program_from_bytes(
+                    &mut load_program_metrics,
+                    program_account.data(),
+                    program_account.owner(),
+                    program_account.data().len(),
+                    0,
+                    environments.program_runtime_v1.clone(),
+                    reload,
+                )
+                .map_err(|_| (0, LoadedProgramOwner::LoaderV2))
             }
 
             ProgramAccountLoadResult::ProgramOfLoaderV3(
@@ -451,7 +465,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         reload,
                     )
                 })
-                .map_err(|_| (slot, environments.program_runtime_v1.clone())),
+                .map_err(|_| (slot, LoadedProgramOwner::LoaderV3)),
 
             ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot) => program_account
                 .data()
@@ -468,10 +482,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         reload,
                     )
                 })
-                .map_err(|_| (slot, environments.program_runtime_v2.clone())),
+                .map_err(|_| (slot, LoadedProgramOwner::LoaderV4)),
         }
-        .unwrap_or_else(|(slot, env)| {
-            LoadedProgram::new_tombstone(slot, LoadedProgramType::FailedVerification(env))
+        .unwrap_or_else(|(slot, owner)| {
+            let env = if let LoadedProgramOwner::LoaderV4 = &owner {
+                environments.program_runtime_v2.clone()
+            } else {
+                environments.program_runtime_v1.clone()
+            };
+            LoadedProgram::new_tombstone(slot, owner, LoadedProgramType::FailedVerification(env))
         });
 
         let mut timings = ExecuteDetailsTimings::default();
@@ -856,14 +875,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
                     })
                     .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-                    .unwrap_or(ProgramAccountLoadResult::InvalidAccountData),
+                    .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
+                        LoadedProgramOwner::LoaderV4,
+                    )),
             );
         }
 
-        if !bpf_loader_upgradeable::check_id(program_account.owner()) {
-            return Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(
-                program_account,
-            ));
+        if bpf_loader_deprecated::check_id(program_account.owner()) {
+            return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
+        }
+
+        if bpf_loader::check_id(program_account.owner()) {
+            return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
         }
 
         if let Ok(UpgradeableLoaderState::Program {
@@ -886,7 +909,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 }
             }
         }
-        Some(ProgramAccountLoadResult::InvalidAccountData)
+        Some(ProgramAccountLoadResult::InvalidAccountData(
+            LoadedProgramOwner::LoaderV3,
+        ))
     }
 
     /// Extract the InnerInstructionsList from a TransactionContext
@@ -985,10 +1010,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 mod tests {
     use {
         super::*,
-        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
         solana_program_runtime::{
             loaded_programs::{BlockRelation, ProgramRuntimeEnvironments},
-            solana_rbpf::{elf::Executable, program::BuiltinProgram},
+            solana_rbpf::program::BuiltinProgram,
         },
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
@@ -996,6 +1020,7 @@ mod tests {
             fee_calculator::FeeCalculator,
             message::{LegacyMessage, Message, MessageHeader},
             rent_debits::RentDebits,
+            reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signature},
             sysvar::{self, rent::Rent},
             transaction::{SanitizedTransaction, Transaction, TransactionError},
@@ -1007,6 +1032,13 @@ mod tests {
             io::Read,
         },
     };
+
+    fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
+        SanitizedMessage::Legacy(LegacyMessage::new(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        ))
+    }
 
     struct TestForkGraph {}
 
@@ -1132,7 +1164,7 @@ mod tests {
         let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData)
+            Some(ProgramAccountLoadResult::InvalidAccountData(_))
         ));
 
         account_data.set_data(Vec::new());
@@ -1145,7 +1177,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData)
+            Some(ProgramAccountLoadResult::InvalidAccountData(_))
         ));
     }
 
@@ -1164,7 +1196,7 @@ mod tests {
         let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData)
+            Some(ProgramAccountLoadResult::InvalidAccountData(_))
         ));
 
         account_data.set_data(vec![0; 64]);
@@ -1175,7 +1207,7 @@ mod tests {
         let result = batch_processor.load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData)
+            Some(ProgramAccountLoadResult::InvalidAccountData(_))
         ));
 
         let loader_data = LoaderV4State {
@@ -1220,7 +1252,8 @@ mod tests {
 
         let result = batch_processor.load_program_accounts(&mock_bank, &key);
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(data)) => {
+            Some(ProgramAccountLoadResult::ProgramOfLoaderV1(data))
+            | Some(ProgramAccountLoadResult::ProgramOfLoaderV2(data)) => {
                 assert_eq!(data, account_data);
             }
             _ => panic!("Invalid result"),
@@ -1344,6 +1377,7 @@ mod tests {
 
         let loaded_program = LoadedProgram::new_tombstone(
             0,
+            LoadedProgramOwner::LoaderV4,
             LoadedProgramType::FailedVerification(
                 batch_processor
                     .program_cache
@@ -1373,6 +1407,7 @@ mod tests {
         let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 20);
         let loaded_program = LoadedProgram::new_tombstone(
             0,
+            LoadedProgramOwner::LoaderV2,
             LoadedProgramType::FailedVerification(
                 batch_processor
                     .program_cache
@@ -1443,6 +1478,7 @@ mod tests {
         let result = batch_processor.load_program_with_pubkey(&mock_bank, &key1, false, 0);
         let loaded_program = LoadedProgram::new_tombstone(
             0,
+            LoadedProgramOwner::LoaderV3,
             LoadedProgramType::FailedVerification(
                 batch_processor
                     .program_cache
@@ -1519,6 +1555,7 @@ mod tests {
         let result = batch_processor.load_program_with_pubkey(&mock_bank, &key, false, 0);
         let loaded_program = LoadedProgram::new_tombstone(
             0,
+            LoadedProgramOwner::LoaderV4,
             LoadedProgramType::FailedVerification(
                 batch_processor
                     .program_cache
@@ -1712,8 +1749,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let loaded_programs = LoadedProgramsForTxBatch::default();
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1837,8 +1873,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
         let loaded_programs = LoadedProgramsForTxBatch::default();
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1955,8 +1990,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
 
         let sanitized_transaction_1 = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1986,8 +2020,7 @@ mod tests {
             recent_blockhash: Hash::default(),
         };
 
-        let legacy = LegacyMessage::new(message);
-        let sanitized_message = SanitizedMessage::Legacy(legacy);
+        let sanitized_message = new_unchecked_sanitized_message(message);
 
         let sanitized_transaction_2 = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -2373,27 +2406,16 @@ mod tests {
     fn test_add_builtin() {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        batch_processor.program_cache.write().unwrap().fork_graph =
+            Some(Arc::new(RwLock::new(TestForkGraph {})));
 
         let key = Pubkey::new_unique();
         let name = "a_builtin_name";
-        let program = LoadedProgram {
-            program: LoadedProgramType::LegacyV0(
-                Executable::load(
-                    load_test_program().as_slice(),
-                    Arc::new(
-                        create_program_runtime_environment_v1(
-                            &FeatureSet::default(),
-                            &ComputeBudget::default(),
-                            false,
-                            false,
-                        )
-                        .unwrap(),
-                    ),
-                )
-                .unwrap(),
-            ),
-            ..Default::default()
-        };
+        let program = LoadedProgram::new_builtin(
+            0,
+            name.len(),
+            |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+        );
 
         batch_processor.add_builtin(&mock_bank, key, name, program);
 
@@ -2402,41 +2424,24 @@ mod tests {
             name.as_bytes()
         );
 
-        assert!(batch_processor
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .contains(&key));
-        let fetched_program = batch_processor
-            .program_cache
-            .read()
-            .unwrap()
-            .get_flattened_entries(true, true);
-        let entry = fetched_program
-            .iter()
-            .find(|(entry_key, _)| *entry_key == key)
-            .map(|(_, value)| value.clone())
-            .unwrap();
+        let mut loaded_programs_for_tx_batch = LoadedProgramsForTxBatch::new_from_cache(
+            0,
+            0,
+            &batch_processor.program_cache.read().unwrap(),
+        );
+        batch_processor.program_cache.write().unwrap().extract(
+            &mut vec![(key, (LoadedProgramMatchCriteria::NoCriteria, 1))],
+            &mut loaded_programs_for_tx_batch,
+            true,
+        );
+        let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
 
         // Repeating code because LoadedProgram does not implement clone.
-        let program = LoadedProgram {
-            program: LoadedProgramType::LegacyV0(
-                Executable::load(
-                    load_test_program().as_slice(),
-                    Arc::new(
-                        create_program_runtime_environment_v1(
-                            &FeatureSet::default(),
-                            &ComputeBudget::default(),
-                            false,
-                            false,
-                        )
-                        .unwrap(),
-                    ),
-                )
-                .unwrap(),
-            ),
-            ..Default::default()
-        };
+        let program = LoadedProgram::new_builtin(
+            0,
+            name.len(),
+            |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
+        );
         assert_eq!(entry, Arc::new(program));
     }
 }

@@ -13,20 +13,14 @@ pub mod readable;
 mod test_utils;
 
 use {
-    crate::{
-        account_storage::meta::{StorableAccountsWithHashes, StoredAccountInfo},
-        accounts_hash::AccountHash,
-        storable_accounts::StorableAccounts,
-    },
+    crate::{account_storage::meta::StoredAccountInfo, storable_accounts::StorableAccounts},
     error::TieredStorageError,
     footer::{AccountBlockFormat, AccountMetaFormat},
     hot::{HotStorageWriter, HOT_FORMAT},
     index::IndexBlockFormat,
     owners::OwnersBlockFormat,
     readable::TieredStorageReader,
-    solana_sdk::account::ReadableAccount,
     std::{
-        borrow::Borrow,
         fs, io,
         path::{Path, PathBuf},
         sync::{
@@ -111,15 +105,9 @@ impl TieredStorage {
     ///
     /// Note that this function can only be called once per a TieredStorage
     /// instance.  Otherwise, it will trigger panic.
-    pub fn write_accounts<
-        'a,
-        'b,
-        T: ReadableAccount + Sync,
-        U: StorableAccounts<'a, T>,
-        V: Borrow<AccountHash>,
-    >(
+    pub fn write_accounts<'a>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, T, U, V>,
+        accounts: &impl StorableAccounts<'a>,
         skip: usize,
         format: &TieredStorageFormat,
     ) -> TieredStorageResult<Vec<StoredAccountInfo>> {
@@ -185,7 +173,9 @@ mod tests {
         hot::HOT_FORMAT,
         index::IndexOffset,
         solana_sdk::{
-            account::AccountSharedData, clock::Slot, hash::Hash, pubkey::Pubkey,
+            account::{AccountSharedData, ReadableAccount},
+            clock::Slot,
+            pubkey::Pubkey,
             system_instruction::MAX_PERMITTED_DATA_LENGTH,
         },
         std::{
@@ -210,9 +200,7 @@ mod tests {
     ) {
         let slot_ignored = Slot::MAX;
         let account_refs = Vec::<(&Pubkey, &AccountSharedData)>::new();
-        let account_data = (slot_ignored, account_refs.as_slice());
-        let storable_accounts =
-            StorableAccountsWithHashes::new_with_hashes(&account_data, Vec::<AccountHash>::new());
+        let storable_accounts = (slot_ignored, account_refs.as_slice());
 
         let result = tiered_storage.write_accounts(&storable_accounts, 0, &HOT_FORMAT);
 
@@ -341,12 +329,7 @@ mod tests {
             .collect();
 
         // Slot information is not used here
-        let account_data = (Slot::MAX, &account_refs[..]);
-        let hashes: Vec<_> = std::iter::repeat_with(|| AccountHash(Hash::new_unique()))
-            .take(account_data_sizes.len())
-            .collect();
-
-        let storable_accounts = StorableAccountsWithHashes::new_with_hashes(&account_data, hashes);
+        let storable_accounts = (Slot::MAX, &account_refs[..]);
 
         let temp_dir = tempdir().unwrap();
         let tiered_storage_path = temp_dir.path().join(path_suffix);
@@ -359,8 +342,9 @@ mod tests {
 
         let mut expected_accounts_map = HashMap::new();
         for i in 0..num_accounts {
-            let (account, address, _account_hash) = storable_accounts.get(i);
-            expected_accounts_map.insert(address, account);
+            storable_accounts.account_default_if_zero_lamport(i, |account| {
+                expected_accounts_map.insert(*account.pubkey(), account.to_account_shared_data());
+            });
         }
 
         let mut index_offset = IndexOffset(0);
@@ -372,20 +356,22 @@ mod tests {
         let mut min_pubkey_ref = &MAX_PUBKEY;
         let mut max_pubkey_ref = &MIN_PUBKEY;
 
-        while let Some((stored_meta, next)) = reader.get_account(index_offset).unwrap() {
-            if let Some(account) = expected_accounts_map.get(stored_meta.pubkey()) {
+        while let Some((stored_account_meta, next)) =
+            reader.get_stored_account_meta(index_offset).unwrap()
+        {
+            if let Some(account) = expected_accounts_map.get(stored_account_meta.pubkey()) {
                 verify_test_account_with_footer(
-                    &stored_meta,
-                    *account,
-                    stored_meta.pubkey(),
+                    &stored_account_meta,
+                    account,
+                    stored_account_meta.pubkey(),
                     footer,
                 );
-                verified_accounts.insert(stored_meta.pubkey());
-                if *min_pubkey_ref > *stored_meta.pubkey() {
-                    min_pubkey_ref = stored_meta.pubkey();
+                verified_accounts.insert(stored_account_meta.pubkey());
+                if *min_pubkey_ref > *stored_account_meta.pubkey() {
+                    min_pubkey_ref = stored_account_meta.pubkey();
                 }
-                if *max_pubkey_ref < *stored_meta.pubkey() {
-                    max_pubkey_ref = stored_meta.pubkey();
+                if *max_pubkey_ref < *stored_account_meta.pubkey() {
+                    max_pubkey_ref = stored_account_meta.pubkey();
                 }
             }
             index_offset = next;

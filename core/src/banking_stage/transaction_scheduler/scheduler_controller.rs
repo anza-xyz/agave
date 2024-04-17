@@ -26,13 +26,7 @@ use {
     solana_program_runtime::compute_budget_processor::process_compute_budget_instructions,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
-        clock::MAX_PROCESSING_AGE,
-        feature_set::{
-            include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation,
-        },
-        fee::FeeBudgetLimits,
-        saturating_add_assign,
+        clock::MAX_PROCESSING_AGE, fee::FeeBudgetLimits, saturating_add_assign,
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -381,7 +375,12 @@ impl SchedulerController {
             let (transactions, fee_budget_limits_vec): (Vec<_>, Vec<_>) = chunk
                 .iter()
                 .filter_map(|packet| {
-                    packet.build_sanitized_transaction(feature_set, vote_only, bank.as_ref())
+                    packet.build_sanitized_transaction(
+                        feature_set,
+                        vote_only,
+                        bank.as_ref(),
+                        bank.get_reserved_account_keys(),
+                    )
                 })
                 .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
                 .filter(|tx| {
@@ -489,15 +488,7 @@ impl SchedulerController {
         bank: &Bank,
     ) -> (u64, u64) {
         let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
-        let fee = bank.fee_structure.calculate_fee(
-            transaction.message(),
-            5_000, // this just needs to be non-zero
-            fee_budget_limits,
-            bank.feature_set
-                .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-            bank.feature_set
-                .is_active(&remove_rounding_in_fee_calculation::id()),
-        );
+        let reward = bank.calculate_reward_for_transaction(transaction, fee_budget_limits);
 
         // We need a multiplier here to avoid rounding down too aggressively.
         // For many transactions, the cost will be greater than the fees in terms of raw lamports.
@@ -506,7 +497,8 @@ impl SchedulerController {
         // An offset of 1 is used in the denominator to explicitly avoid division by zero.
         const MULTIPLIER: u64 = 1_000_000;
         (
-            fee.saturating_mul(MULTIPLIER)
+            reward
+                .saturating_mul(MULTIPLIER)
                 .saturating_div(cost.saturating_add(1)),
             cost,
         )
@@ -580,7 +572,6 @@ mod tests {
             bank.clone(),
             Some((4, 4)),
             bank.ticks_per_slot(),
-            &Pubkey::new_unique(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
             &PohConfig::default(),

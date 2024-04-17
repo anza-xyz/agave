@@ -8,7 +8,7 @@ use {
         tiered_storage::hot::HotStorageWriter,
     },
     solana_sdk::{
-        account::Account, clock::Slot, hash::Hash, pubkey::Pubkey,
+        account::AccountSharedData, clock::Slot, hash::Hash, pubkey::Pubkey,
         rent_collector::RENT_EXEMPT_RENT_EPOCH,
     },
 };
@@ -34,7 +34,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
         let accounts: Vec<_> = std::iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                Account::new_rent_epoch(
+                AccountSharedData::new_rent_epoch(
                     lamports,
                     space,
                     &Pubkey::new_unique(),
@@ -59,7 +59,9 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                     AppendVec::new(path, true, file_size)
                 },
                 |append_vec| {
-                    let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
+                    let res = append_vec
+                        .append_accounts(storable_accounts.accounts, 0)
+                        .unwrap();
                     let accounts_written_count = res.len();
                     assert_eq!(accounts_written_count, accounts_count);
                 },
@@ -77,7 +79,9 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                     HotStorageWriter::new(path).unwrap()
                 },
                 |hot_storage| {
-                    let res = hot_storage.write_accounts(&storable_accounts, 0).unwrap();
+                    let res = hot_storage
+                        .write_accounts(storable_accounts.accounts, 0)
+                        .unwrap();
                     let accounts_written_count = res.len();
                     assert_eq!(accounts_written_count, accounts_count);
                 },

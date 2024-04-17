@@ -118,8 +118,13 @@ impl Bank {
                 if let Some(curr_stake_account) = self.get_account_with_fixed_root(&stake_pubkey) {
                     let pre_lamport = curr_stake_account.lamports();
                     let post_lamport = post_stake_account.lamports();
-                    assert_eq!(pre_lamport + u64::try_from(reward_amount).unwrap(), post_lamport,
-                               "stake account balance has changed since the reward calculation! account: {stake_pubkey}, pre balance: {pre_lamport}, post balance: {post_lamport}, rewards: {reward_amount}");
+                    assert_eq!(
+                        pre_lamport + u64::try_from(reward_amount).unwrap(),
+                        post_lamport,
+                        "stake account balance has changed since the reward calculation! \
+                         account: {stake_pubkey}, pre balance: {pre_lamport}, \
+                         post balance: {post_lamport}, rewards: {reward_amount}"
+                    );
                 }
             }
         }
@@ -209,7 +214,9 @@ mod tests {
 
         // Set up epoch_rewards sysvar with rewards with 1e9 lamports to distribute.
         let total_rewards = 1_000_000_000;
-        bank.create_epoch_rewards_sysvar(total_rewards, 0, 42);
+        let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
+        let total_points = (total_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
+        bank.create_epoch_rewards_sysvar(total_rewards, 0, 42, num_partitions, total_points);
         let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
         let expected_balance =
             bank.get_minimum_balance_for_rent_exemption(pre_epoch_rewards_account.data().len());

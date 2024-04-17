@@ -50,6 +50,22 @@ pub(super) struct VoteRewardsAccounts {
     pub(super) accounts_to_store: Vec<Option<AccountSharedData>>,
 }
 
+#[derive(Debug, Default)]
+/// result of calculating the stake rewards at end of epoch
+struct StakeRewardCalculation {
+    /// each individual stake account to reward
+    stake_rewards: StakeRewards,
+    /// total lamports across all `stake_rewards`
+    total_stake_rewards_lamports: u64,
+}
+
+#[derive(Debug, Default)]
+struct CalculateValidatorRewardsResult {
+    vote_rewards_accounts: VoteRewardsAccounts,
+    stake_reward_calculation: StakeRewardCalculation,
+    total_points: u128,
+}
+
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
@@ -69,6 +85,7 @@ pub(super) struct PartitionedRewardsCalculation {
     pub(super) foundation_rate: f64,
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
+    total_points: u128,
 }
 
 /// result of calculating the stake rewards at beginning of new epoch
@@ -84,6 +101,10 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     pub(super) total_rewards: u64,
     /// distributed vote rewards
     pub(super) distributed_rewards: u64,
+    /// total rewards points calculated for the current epoch, where points
+    /// equals the sum of (delegated stake * credits observed) for all
+    /// delegations
+    pub(super) total_points: u128,
     /// stake rewards that still need to be distributed, grouped by partition
     pub(super) stake_rewards_by_partition: Vec<StakeRewards>,
 }

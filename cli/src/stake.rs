@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     crate::{
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
@@ -5,7 +7,7 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
-        compute_unit_price::WithComputeUnitPrice,
+        compute_budget::WithComputeUnitPrice,
         feature::get_feature_activation_epoch,
         memo::WithMemo,
         nonce::check_nonce_account,
@@ -1371,37 +1373,34 @@ pub fn parse_show_stake_account(
     } else {
         None
     };
-    Ok(CliCommandInfo {
-        command: CliCommand::ShowStakeAccount {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowStakeAccount {
             pubkey: stake_account_pubkey,
             use_lamports_unit,
             with_rewards,
             use_csv,
         },
-        signers: vec![],
-    })
+    ))
 }
 
 pub fn parse_show_stake_history(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let use_lamports_unit = matches.is_present("lamports");
     let limit_results = value_of(matches, "limit").unwrap();
-    Ok(CliCommandInfo {
-        command: CliCommand::ShowStakeHistory {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowStakeHistory {
             use_lamports_unit,
             limit_results,
         },
-        signers: vec![],
-    })
+    ))
 }
 
 pub fn parse_stake_minimum_delegation(
     matches: &ArgMatches<'_>,
 ) -> Result<CliCommandInfo, CliError> {
     let use_lamports_unit = matches.is_present("lamports");
-    Ok(CliCommandInfo {
-        command: CliCommand::StakeMinimumDelegation { use_lamports_unit },
-        signers: vec![],
-    })
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::StakeMinimumDelegation { use_lamports_unit },
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
