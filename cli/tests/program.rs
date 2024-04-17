@@ -99,7 +99,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -148,7 +148,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap();
     let account1 = rpc_client
@@ -206,7 +206,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     let err = process_command(&config).unwrap_err();
     assert_eq!(
@@ -232,7 +232,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap_err();
 }
@@ -296,7 +296,7 @@ fn test_cli_program_deploy_no_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -326,7 +326,7 @@ fn test_cli_program_deploy_no_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap_err();
 }
@@ -391,7 +391,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -443,7 +443,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -489,7 +489,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).unwrap();
@@ -567,7 +567,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).unwrap();
@@ -649,7 +649,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap_err();
 
@@ -669,7 +669,7 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -776,7 +776,7 @@ fn test_cli_program_close_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -889,7 +889,7 @@ fn test_cli_program_extend_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -939,7 +939,7 @@ fn test_cli_program_extend_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap_err();
 
@@ -974,7 +974,7 @@ fn test_cli_program_extend_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap();
 }
@@ -1329,7 +1329,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let error = process_command(&config).unwrap_err();
@@ -1459,7 +1459,7 @@ fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap_err();
@@ -1507,7 +1507,7 @@ fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -1593,7 +1593,7 @@ fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap_err();
 
@@ -1613,7 +1613,7 @@ fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     process_command(&config).unwrap();
 }
@@ -1699,7 +1699,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -1933,7 +1933,7 @@ fn test_cli_program_show() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let min_slot = rpc_client.get_slot().unwrap();
@@ -2210,7 +2210,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         skip_fee_check: false,
         compute_unit_price,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -2320,7 +2320,7 @@ fn test_cli_program_deploy_with_compute_unit_price() {
 }
 
 #[test]
-fn test_cli_program_upgrade_auto_extend_program_data_account() {
+fn test_cli_program_upgrade_results_in_error_if_no_extend_program_flag_is_set() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2385,7 +2385,7 @@ fn test_cli_program_upgrade_auto_extend_program_data_account() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend_program: false,
+        no_auto_extend_program: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -2424,8 +2424,15 @@ fn test_cli_program_upgrade_auto_extend_program_data_account() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        // Enable auto_extend_program
-        auto_extend_program: true,
+        // set no_auto_extend_program
+        no_auto_extend_program: true,
     });
-    process_command(&config).unwrap();
+    let err = process_command(&config).unwrap_err();
+    let err_string_to_match = format!(
+        r#"Program Data Account space is not enough
+please extend the program data account with command: solana program extend {} 3184,
+please disable the --no-extend-program flag to automatically extend the program account size"#,
+        program_keypair.pubkey()
+    );
+    assert_eq!(err.to_string(), err_string_to_match);
 }
