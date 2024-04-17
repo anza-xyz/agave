@@ -1986,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate_heaviest_fork_failures() {
+    fn test_aggregate_heaviest_fork() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let test_state = wen_restart_test_init(&ledger_path);
         let heaviest_fork_slot = test_state.last_voted_fork_slots[0] + 3;
@@ -2038,5 +2038,29 @@ mod tests {
                 expected_block_stake_map
             ),
         );
+        // If we have enough stake agreeing with us, we should be able to aggregate the heaviest fork.
+        for keypair in test_state.validator_voting_keypairs.iter().skip(2) {
+            let node_pubkey = keypair.node_keypair.pubkey();
+            let node = LegacyContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
+            let now = timestamp();
+            push_restart_heaviest_fork(
+                test_state.cluster_info.clone(),
+                &node,
+                heaviest_fork_slot,
+                &heaviest_fork_bankhash,
+                900,
+                &keypair.node_keypair,
+                now,
+            );
+        }
+        assert!(aggregate_restart_heaviest_fork(
+            &test_state.wen_restart_proto_path,
+            80,
+            test_state.cluster_info.clone(),
+            test_state.bank_forks.clone(),
+            Arc::new(AtomicBool::new(false)),
+            &mut progress.clone(),
+        )
+        .is_ok());
     }
 }
