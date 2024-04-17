@@ -5,8 +5,8 @@ use {
         account_info::AccountInfo,
         account_storage::meta::{StoredAccountInfo, StoredAccountMeta},
         accounts_file::MatchAccountOwnerError,
-        accounts_hash::AccountHash,
         append_vec::{IndexInfo, IndexInfoInner},
+        storable_accounts::StorableAccounts,
         tiered_storage::{
             byte_block,
             file::{TieredReadableFile, TieredWritableFile},
@@ -17,8 +17,7 @@ use {
             },
             mmap_utils::{get_pod, get_slice},
             owners::{OwnerOffset, OwnersBlockFormat, OwnersTable},
-            StorableAccounts, StorableAccountsWithHashes, TieredStorageError, TieredStorageFormat,
-            TieredStorageResult,
+            TieredStorageError, TieredStorageFormat, TieredStorageResult,
         },
     },
     bytemuck::{Pod, Zeroable},
@@ -30,7 +29,7 @@ use {
         rent_collector::RENT_EXEMPT_RENT_EPOCH,
         stake_history::Epoch,
     },
-    std::{borrow::Borrow, option::Option, path::Path},
+    std::{option::Option, path::Path},
 };
 
 pub const HOT_FORMAT: TieredStorageFormat = TieredStorageFormat {
@@ -743,9 +742,9 @@ impl HotStorageWriter {
     /// Persists `accounts` into the underlying hot accounts file associated
     /// with this HotStorageWriter.  The first `skip` number of accounts are
     /// *not* persisted.
-    pub fn write_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
+    pub fn write_accounts<'a>(
         &mut self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
+        accounts: &impl StorableAccounts<'a>,
         skip: usize,
     ) -> TieredStorageResult<Vec<StoredAccountInfo>> {
         let mut footer = new_hot_footer();
@@ -755,11 +754,11 @@ impl HotStorageWriter {
         let mut address_range = AccountAddressRange::default();
 
         // writing accounts blocks
-        let len = accounts.accounts.len();
+        let len = accounts.len();
         let total_input_accounts = len - skip;
         let mut stored_infos = Vec::with_capacity(total_input_accounts);
         for i in skip..len {
-            accounts.get::<TieredStorageResult<()>>(i, |account, _account_hash| {
+            accounts.account_default_if_zero_lamport::<TieredStorageResult<()>>(i, |account| {
                 let index_entry = AccountIndexWriterEntry {
                     address: *account.pubkey(),
                     offset: HotAccountOffset::new(cursor)?,
@@ -838,15 +837,18 @@ impl HotStorageWriter {
 mod tests {
     use {
         super::*,
-        crate::tiered_storage::{
-            byte_block::ByteBlockWriter,
-            file::{TieredStorageMagicNumber, TieredWritableFile},
-            footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
-            hot::{HotAccountMeta, HotStorageReader},
-            index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
-            meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
-            owners::{OwnersBlockFormat, OwnersTable},
-            test_utils::{create_test_account, verify_test_account},
+        crate::{
+            account_storage::meta::StorableAccountsWithoutHashes,
+            tiered_storage::{
+                byte_block::ByteBlockWriter,
+                file::{TieredStorageMagicNumber, TieredWritableFile},
+                footer::{AccountBlockFormat, AccountMetaFormat, TieredStorageFooter, FOOTER_SIZE},
+                hot::{HotAccountMeta, HotStorageReader},
+                index::{AccountIndexWriterEntry, IndexBlockFormat, IndexOffset},
+                meta::{AccountMetaFlags, AccountMetaOptionalFields, TieredAccountMeta},
+                owners::{OwnersBlockFormat, OwnersTable},
+                test_utils::{create_test_account, verify_test_account},
+            },
         },
         assert_matches::assert_matches,
         memoffset::offset_of,
@@ -1547,18 +1549,15 @@ mod tests {
 
         // Slot information is not used here
         let account_data = (Slot::MAX, &account_refs[..]);
-        let hashes: Vec<_> = std::iter::repeat_with(|| AccountHash(Hash::new_unique()))
-            .take(account_data_sizes.len())
-            .collect();
-
-        let storable_accounts =
-            StorableAccountsWithHashes::new_with_hashes(&account_data, hashes.clone());
+        let storable_accounts = StorableAccountsWithoutHashes::new(&account_data);
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_write_account_and_index_blocks");
         let stored_infos = {
             let mut writer = HotStorageWriter::new(&path).unwrap();
-            writer.write_accounts(&storable_accounts, 0).unwrap()
+            writer
+                .write_accounts(storable_accounts.accounts, 0)
+                .unwrap()
         };
 
         let file = TieredReadableFile::new(&path).unwrap();
@@ -1571,7 +1570,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
 
-            storable_accounts.get(i, |account, _account_hash| {
+            storable_accounts.get(i, |account| {
                 verify_test_account(
                     &stored_account_meta,
                     &account.to_account_shared_data(),
@@ -1594,7 +1593,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
 
-            storable_accounts.get(stored_info.offset, |account, _account_hash| {
+            storable_accounts.get(stored_info.offset, |account| {
                 verify_test_account(
                     &stored_account_meta,
                     &account.to_account_shared_data(),
@@ -1608,7 +1607,7 @@ mod tests {
 
         // first, we verify everything
         for (i, stored_meta) in accounts.iter().enumerate() {
-            storable_accounts.get(i, |account, _account_hash| {
+            storable_accounts.get(i, |account| {
                 verify_test_account(
                     stored_meta,
                     &account.to_account_shared_data(),

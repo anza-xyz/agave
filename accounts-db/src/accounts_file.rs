@@ -1,9 +1,10 @@
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::meta::{StorableAccountsWithHashes, StoredAccountInfo, StoredAccountMeta},
+        account_storage::meta::{
+            StorableAccountsWithoutHashes, StoredAccountInfo, StoredAccountMeta,
+        },
         accounts_db::AccountsFileId,
-        accounts_hash::AccountHash,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
         storable_accounts::StorableAccounts,
         tiered_storage::{
@@ -12,7 +13,6 @@ use {
     },
     solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
     std::{
-        borrow::Borrow,
         io::Read,
         mem,
         path::{Path, PathBuf},
@@ -267,18 +267,18 @@ impl AccountsFile {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
+    pub fn append_accounts<'a, 'b, U: StorableAccounts<'a>>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
+        accounts: &StorableAccountsWithoutHashes<'a, 'b, U>,
         skip: usize,
     ) -> Option<Vec<StoredAccountInfo>> {
         match self {
-            Self::AppendVec(av) => av.append_accounts(accounts, skip),
+            Self::AppendVec(av) => av.append_accounts(accounts.accounts, skip),
             // Note: The conversion here is needed as the AccountsDB currently
             // assumes all offsets are multiple of 8 while TieredStorage uses
             // IndexOffset that is equivalent to AccountInfo::reduced_offset.
             Self::TieredStorage(ts) => ts
-                .write_accounts(accounts, skip, &HOT_FORMAT)
+                .write_accounts(accounts.accounts, skip, &HOT_FORMAT)
                 .map(|mut infos| {
                     infos.iter_mut().for_each(|info| {
                         info.offset = AccountInfo::reduced_offset_to_offset(info.offset as u32);

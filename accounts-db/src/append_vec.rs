@@ -7,8 +7,7 @@
 use {
     crate::{
         account_storage::meta::{
-            AccountMeta, StorableAccountsWithHashes, StoredAccountInfo, StoredAccountMeta,
-            StoredMeta, StoredMetaWriteVersion,
+            AccountMeta, StoredAccountInfo, StoredAccountMeta, StoredMeta, StoredMetaWriteVersion,
         },
         accounts_file::{AccountsFileError, MatchAccountOwnerError, Result, ALIGN_BOUNDARY_OFFSET},
         accounts_hash::AccountHash,
@@ -25,7 +24,6 @@ use {
         stake_history::Epoch,
     },
     std::{
-        borrow::Borrow,
         convert::TryFrom,
         fs::{remove_file, OpenOptions},
         io::{Seek, SeekFrom, Write},
@@ -747,15 +745,16 @@ impl AppendVec {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
+    pub fn append_accounts<'a>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
+        accounts: &impl StorableAccounts<'a>,
         skip: usize,
     ) -> Option<Vec<StoredAccountInfo>> {
         let _lock = self.append_lock.lock().unwrap();
         let default_hash: Hash = Hash::default(); // [0_u8; 32];
         let mut offset = self.len();
-        let len = accounts.accounts.len();
+        let len = accounts.len();
+
         // Here we have `len - skip` number of accounts.  The +1 extra capacity
         // is for storing the aligned offset of the last entry to that is used
         // to compute the StoredAccountInfo of the last entry.
@@ -766,7 +765,7 @@ impl AppendVec {
             if stop {
                 break;
             }
-            accounts.get(i, |account, _hash| {
+            accounts.account_default_if_zero_lamport(i, |account| {
                 let account_meta = AccountMeta {
                     lamports: account.lamports(),
                     owner: *account.owner(),
@@ -827,12 +826,12 @@ impl AppendVec {
 pub mod tests {
     use {
         super::{test_utils::*, *},
+        crate::account_storage::meta::StorableAccountsWithoutHashes,
         assert_matches::assert_matches,
         memoffset::offset_of,
         rand::{thread_rng, Rng},
         solana_sdk::{
             account::{accounts_equal, Account, AccountSharedData, WritableAccount},
-            hash::Hash,
             timing::duration_as_ms,
         },
         std::{mem::ManuallyDrop, time::Instant},
@@ -848,11 +847,9 @@ pub mod tests {
             let accounts = [(&data.0.pubkey, &data.1)];
             let slice = &accounts[..];
             let account_data = (slot_ignored, slice);
-            let hash = AccountHash(Hash::default());
-            let storable_accounts =
-                StorableAccountsWithHashes::new_with_hashes(&account_data, vec![&hash]);
+            let storable_accounts = StorableAccountsWithoutHashes::new(&account_data);
 
-            self.append_accounts(&storable_accounts, 0)
+            self.append_accounts(storable_accounts.accounts, 0)
                 .map(|res| res[0].offset)
         }
     }
@@ -902,72 +899,18 @@ pub mod tests {
     static_assertions::assert_eq_align!(u64, StoredMeta, AccountMeta);
 
     #[test]
-    #[should_panic(expected = "accounts.has_hash()")]
     fn test_storable_accounts_with_hashes_new() {
-        let account = AccountSharedData::default();
-        // for (Slot, &'a [(&'a Pubkey, &'a T)])
-        let slot = 0 as Slot;
-        let pubkey = Pubkey::default();
-        StorableAccountsWithHashes::<'_, '_, _, &AccountHash>::new(&(
-            slot,
-            &[(&pubkey, &account)][..],
-        ));
-    }
-
-    fn test_mismatch(correct_hashes: bool) {
-        let account = AccountSharedData::default();
-        // for (Slot, &'a [(&'a Pubkey, &'a T)])
-        let slot = 0 as Slot;
-        let pubkey = Pubkey::default();
-        // mismatch between lens of accounts and hashes
-        let mut hashes = Vec::default();
-        if correct_hashes {
-            hashes.push(AccountHash(Hash::default()));
-        }
-        StorableAccountsWithHashes::new_with_hashes(&(slot, &[(&pubkey, &account)][..]), hashes);
-    }
-
-    #[test]
-    // rust 1.73+ (our as-of-writing nightly version) changed panic message. we're stuck with this
-    // short common substring until the monorepo is fully 1.73+ including stable.
-    #[should_panic(expected = "left == right")]
-    fn test_storable_accounts_with_hashes_new2() {
-        test_mismatch(false);
-    }
-
-    #[test]
-    fn test_storable_accounts_with_hashes_empty() {
-        // for (Slot, &'a [(&'a Pubkey, &'a T)])
-        let account = AccountSharedData::default();
-        let slot = 0 as Slot;
-        let pubkeys = [Pubkey::default()];
-        let hashes = Vec::<AccountHash>::default();
-        let mut accounts = vec![(&pubkeys[0], &account)];
-        accounts.clear();
-        let accounts2 = (slot, &accounts[..]);
-        let storable = StorableAccountsWithHashes::new_with_hashes(&accounts2, hashes);
-        assert_eq!(storable.len(), 0);
-        assert!(storable.is_empty());
-    }
-
-    #[test]
-    fn test_storable_accounts_with_hashes_hash() {
         // for (Slot, &'a [(&'a Pubkey, &'a T)])
         let account = AccountSharedData::default();
         let slot = 0 as Slot;
         let pubkeys = [Pubkey::from([5; 32]), Pubkey::from([6; 32])];
-        let hashes = vec![
-            AccountHash(Hash::new(&[3; 32])),
-            AccountHash(Hash::new(&[4; 32])),
-        ];
         let accounts = [(&pubkeys[0], &account), (&pubkeys[1], &account)];
         let accounts2 = (slot, &accounts[..]);
-        let storable = StorableAccountsWithHashes::new_with_hashes(&accounts2, hashes.clone());
+        let storable = StorableAccountsWithoutHashes::new(&accounts2);
         assert_eq!(storable.len(), pubkeys.len());
         assert!(!storable.is_empty());
         (0..2).for_each(|i| {
-            storable.get(i, |account, hash| {
-                assert_eq!(hash, &hashes[i]);
+            storable.get(i, |account| {
                 assert_eq!(account.pubkey(), &pubkeys[i]);
             });
         });
@@ -984,10 +927,9 @@ pub mod tests {
         // for (Slot, &'a [(&'a Pubkey, &'a T)])
         let slot = 0 as Slot;
         let pubkey = Pubkey::default();
-        let hashes = vec![AccountHash(Hash::default())];
         let accounts = [(&pubkey, &account)];
         let accounts2 = (slot, &accounts[..]);
-        let storable = StorableAccountsWithHashes::new_with_hashes(&accounts2, hashes.clone());
+        let storable = StorableAccountsWithoutHashes::new(&accounts2);
         storable.account(0, |get_account| {
             assert!(accounts_equal(&get_account, &AccountSharedData::default()));
         });
@@ -1002,7 +944,7 @@ pub mod tests {
         // for (Slot, &'a [(&'a Pubkey, &'a T)])
         let accounts = [(&pubkey, &account)];
         let accounts2 = (slot, &accounts[..]);
-        let storable = StorableAccountsWithHashes::new_with_hashes(&accounts2, hashes);
+        let storable = StorableAccountsWithoutHashes::new(&accounts2);
         storable.account(0, |get_account| {
             assert!(accounts_equal(&account, &get_account));
         });
