@@ -557,8 +557,11 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         });
         Ok(())
     } else {
-        info!("Not enough stake agreeing with our heaviest fork: slot: {}, bankhash: {}, stake aggreeing with us {} out of {}",
-            heaviest_fork_slot, heaviest_fork_hash, total_active_stake_agreed_with_me, total_active_stake);
+        info!(
+            "Not enough stake agreeing with our heaviest fork: slot: {},
+            bankhash: {}, stake aggreeing with us {} out of {}",
+            heaviest_fork_slot, heaviest_fork_hash,
+            total_active_stake_agreed_with_me, total_active_stake);
         let mut max_slot_hash = (0, Hash::default());
         let mut max_stake = 0;
         for (slot, hash) in block_stake_map.keys() {
@@ -574,9 +577,12 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 block_stake_map[&(*slot, *hash)]
             );
         }
-        warn!("Max stake slot: {}, hash: {}, stake: {}% does not agree with my choice, please go to discord 
-               to download the snapshot and restart the validator with --wait-for-supermajority.",
-            max_slot_hash.0, max_slot_hash.1, max_stake as f64 * 100.0 / total_active_stake as f64);
+        warn!(
+            "Max stake slot: {}, hash: {}, stake: {}% does not agree with my
+            choice, please go to discord to download the snapshot and restart
+            the validator with --wait-for-supermajority.",
+            max_slot_hash.0, max_slot_hash.1,
+            max_stake as f64 * 100.0 / total_active_stake as f64);
         Err(WenRestartError::NotEnoughStakeAgreeingWithUs(
             heaviest_fork_slot,
             heaviest_fork_hash,
