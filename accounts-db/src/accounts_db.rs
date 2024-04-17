@@ -12758,12 +12758,12 @@ pub mod tests {
 
     // do stores with a 4k size and store pubkey1 first
     define_accounts_db_test!(test_full_clean_refcount_no_first_4k, |accounts| {
-        do_full_clean_refcount(accounts, true, 4 * 1024);
+        do_full_clean_refcount(accounts, false, 4 * 1024);
     });
 
     // do stores with a 4k size and store pubkey1 2nd
     define_accounts_db_test!(test_full_clean_refcount_first_4k, |accounts| {
-        do_full_clean_refcount(accounts, false, 4 * 1024);
+        do_full_clean_refcount(accounts, true, 4 * 1024);
     });
 
     #[test]
