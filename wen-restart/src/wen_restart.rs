@@ -538,8 +538,9 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let total_active_stake_agreed_with_me = *block_stake_map
         .get(&(heaviest_fork_slot, heaviest_fork_hash))
         .unwrap_or(&0);
+    // It doesn't matter if 5% disagrees with us.
     if total_active_stake_agreed_with_me as f64 * 100.0 / total_stake as f64
-        > wait_for_supermajority_threshold_percent as f64
+        > (wait_for_supermajority_threshold_percent as f64 - 5.0)
     {
         info!(
             "Heaviest fork agreed upon by supermajority: slot: {}, bankhash: {}",
@@ -558,6 +559,24 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     } else {
         info!("Not enough stake agreeing with our heaviest fork: slot: {}, bankhash: {}, stake aggreeing with us {} out of {}",
             heaviest_fork_slot, heaviest_fork_hash, total_active_stake_agreed_with_me, total_active_stake);
+        let mut max_slot_hash = (0, Hash::default());
+        let mut max_stake = 0;
+        for (slot, hash) in block_stake_map.keys() {
+            let stake = block_stake_map[&(*slot, *hash)];
+            if stake > max_stake {
+                max_stake = stake;
+                max_slot_hash = (*slot, *hash);
+            }
+            info!(
+                "Slot: {}, Hash: {}, Stake: {}",
+                slot,
+                hash,
+                block_stake_map[&(*slot, *hash)]
+            );
+        }
+        warn!("Max stake slot: {}, hash: {}, stake: {}% does not agree with my choice, please go to discord 
+               to download the snapshot and restart the validator with --wait-for-supermajority.",
+            max_slot_hash.0, max_slot_hash.1, max_stake as f64 * 100.0 / total_active_stake as f64);
         Err(WenRestartError::NotEnoughStakeAgreeingWithUs(
             heaviest_fork_slot,
             heaviest_fork_hash,
