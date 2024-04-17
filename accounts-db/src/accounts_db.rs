@@ -12746,14 +12746,22 @@ pub mod tests {
         assert_eq!(accounts.ref_count_for_pubkey(&pubkey3), 0);
     }
 
+    // Setup 3 scenarios which try to differentiate between pubkey1 being in an
+    // Available slot or a Full slot which would cause a different reset behavior
+    // when pubkey1 is cleaned and therefore cause the ref count to be incorrect
+    // preventing a removal of that key.
+    //
+    // do stores with a 4mb size so only 1 store is created per slot
     define_accounts_db_test!(test_full_clean_refcount_no_first_4m, |accounts| {
         do_full_clean_refcount(accounts, false, 4 * 1024 * 1024);
     });
 
+    // do stores with a 4k size and store pubkey1 first
     define_accounts_db_test!(test_full_clean_refcount_no_first_4k, |accounts| {
-        do_full_clean_refcount(accounts, false, 4 * 1024);
+        do_full_clean_refcount(accounts, true, 4 * 1024);
     });
 
+    // do stores with a 4k size and store pubkey1 2nd
     define_accounts_db_test!(test_full_clean_refcount_first_4k, |accounts| {
         do_full_clean_refcount(accounts, false, 4 * 1024);
     });
