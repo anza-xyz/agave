@@ -61,7 +61,7 @@ pub trait ForkGraph {
 }
 
 /// The owner of a programs accounts, thus the loader of a program
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoadedProgramOwner {
     #[default]
     NativeLoader,
@@ -69,6 +69,37 @@ pub enum LoadedProgramOwner {
     LoaderV2,
     LoaderV3,
     LoaderV4,
+}
+
+impl TryFrom<&Pubkey> for LoadedProgramOwner {
+    type Error = ();
+    fn try_from(loader_key: &Pubkey) -> Result<Self, ()> {
+        if native_loader::check_id(loader_key) {
+            Ok(LoadedProgramOwner::NativeLoader)
+        } else if bpf_loader_deprecated::check_id(loader_key) {
+            Ok(LoadedProgramOwner::LoaderV1)
+        } else if bpf_loader::check_id(loader_key) {
+            Ok(LoadedProgramOwner::LoaderV2)
+        } else if bpf_loader_upgradeable::check_id(loader_key) {
+            Ok(LoadedProgramOwner::LoaderV3)
+        } else if loader_v4::check_id(loader_key) {
+            Ok(LoadedProgramOwner::LoaderV4)
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl From<LoadedProgramOwner> for Pubkey {
+    fn from(loaded_program_owner: LoadedProgramOwner) -> Self {
+        match loaded_program_owner {
+            LoadedProgramOwner::NativeLoader => native_loader::id(),
+            LoadedProgramOwner::LoaderV1 => bpf_loader_deprecated::id(),
+            LoadedProgramOwner::LoaderV2 => bpf_loader::id(),
+            LoadedProgramOwner::LoaderV3 => bpf_loader_upgradeable::id(),
+            LoadedProgramOwner::LoaderV4 => loader_v4::id(),
+        }
+    }
 }
 
 /// Actual payload of [LoadedProgram].
@@ -354,21 +385,9 @@ impl LoadedProgram {
             metrics.jit_compile_us = jit_compile_time.end_as_us();
         }
 
-        let account_owner = if bpf_loader_deprecated::check_id(loader_key) {
-            LoadedProgramOwner::LoaderV1
-        } else if bpf_loader::check_id(loader_key) {
-            LoadedProgramOwner::LoaderV2
-        } else if bpf_loader_upgradeable::check_id(loader_key) {
-            LoadedProgramOwner::LoaderV3
-        } else if loader_v4::check_id(loader_key) {
-            LoadedProgramOwner::LoaderV4
-        } else {
-            panic!();
-        };
-
         Ok(Self {
             deployment_slot,
-            account_owner,
+            account_owner: LoadedProgramOwner::try_from(loader_key).unwrap(),
             account_size,
             effective_slot,
             tx_usage_counter: AtomicU64::new(0),
@@ -391,7 +410,7 @@ impl LoadedProgram {
         }
         Some(Self {
             program: LoadedProgramType::Unloaded(self.program.get_environment()?.clone()),
-            account_owner: self.account_owner.clone(),
+            account_owner: self.account_owner,
             account_size: self.account_size,
             deployment_slot: self.deployment_slot,
             effective_slot: self.effective_slot,
@@ -471,13 +490,7 @@ impl LoadedProgram {
     }
 
     pub fn account_owner(&self) -> Pubkey {
-        match self.account_owner {
-            LoadedProgramOwner::NativeLoader => native_loader::id(),
-            LoadedProgramOwner::LoaderV1 => bpf_loader_deprecated::id(),
-            LoadedProgramOwner::LoaderV2 => bpf_loader::id(),
-            LoadedProgramOwner::LoaderV3 => bpf_loader_upgradeable::id(),
-            LoadedProgramOwner::LoaderV4 => loader_v4::id(),
-        }
+        self.account_owner.into()
     }
 }
 
@@ -706,7 +719,7 @@ impl LoadedProgramsForTxBatch {
                 // the tombstone to reflect that.
                 Arc::new(LoadedProgram::new_tombstone(
                     entry.deployment_slot,
-                    entry.account_owner.clone(),
+                    entry.account_owner,
                     LoadedProgramType::DelayVisibility,
                 ))
             } else {
@@ -979,7 +992,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             // the tombstone to reflect that.
                             Arc::new(LoadedProgram::new_tombstone(
                                 entry.deployment_slot,
-                                entry.account_owner.clone(),
+                                entry.account_owner,
                                 LoadedProgramType::DelayVisibility,
                             ))
                         } else {
@@ -1075,13 +1088,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     .iter()
                     .filter_map(move |program| match program.program {
                         LoadedProgramType::Loaded(_) => {
-                            let include =
-                                if let LoadedProgramOwner::LoaderV4 = program.account_owner {
-                                    include_program_runtime_v2
-                                } else {
-                                    include_program_runtime_v1
-                                };
-                            if include {
+                            if (program.account_owner != LoadedProgramOwner::LoaderV4
+                                && include_program_runtime_v1)
+                                || (program.account_owner == LoadedProgramOwner::LoaderV4
+                                    && include_program_runtime_v2)
+                            {
                                 Some((*id, program.clone()))
                             } else {
                                 None
