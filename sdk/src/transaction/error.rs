@@ -169,6 +169,11 @@ pub enum TransactionError {
     /// The total balance before the transaction does not equal the total balance after the transaction
     #[error("Sum of account balances before and after transaction do not match")]
     UnbalancedTransaction,
+
+    /// The requested compute-unit limit is either lesser than minimally required by the
+    /// transaction, or greater than maximal transaction compute-unit limit
+    #[error("Requested compute-unit limit is invalid")]
+    InvalidComputeUnitLimitRequested,
 }
 
 impl From<SanitizeError> for TransactionError {

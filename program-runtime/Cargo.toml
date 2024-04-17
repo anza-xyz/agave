@@ -21,6 +21,7 @@ num-derive = { workspace = true }
 num-traits = { workspace = true }
 percentage = { workspace = true }
 rand = { workspace = true }
+solana-builtin-cost-info = { workspace = true }
 solana-frozen-abi = { workspace = true }
 solana-frozen-abi-macro = { workspace = true }
 solana-measure = { workspace = true }
