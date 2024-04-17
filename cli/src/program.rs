@@ -2503,6 +2503,7 @@ fn do_process_program_upgrade(
     let program_data_account = rpc_client.get_account(&program_data_address)?;
 
     //CHECK: if passed program size is greater than the current program data account size,
+    //auto extend the program data account .if no-auto-extend-program flag is set then
     //throw an err along with a message including additional bytes required
     let add_program_extend_ix = if program_len > program_data_account.data.len() {
         let metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
