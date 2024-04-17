@@ -733,28 +733,19 @@ pub mod layout {
 
     pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
         let offset = match get_shred_variant(shred).ok()? {
-            ShredVariant::LegacyCode | ShredVariant::LegacyData => None,
+            ShredVariant::LegacyCode | ShredVariant::LegacyData => return None,
             ShredVariant::MerkleCode {
                 proof_size,
-                chained: true,
+                chained,
                 resigned,
-            } => merkle::ShredCode::get_chained_merkle_root_offset(proof_size, resigned).ok(),
+            } => merkle::ShredCode::get_chained_merkle_root_offset(proof_size, chained, resigned),
             ShredVariant::MerkleData {
                 proof_size,
-                chained: true,
+                chained,
                 resigned,
-            } => merkle::ShredData::get_chained_merkle_root_offset(proof_size, resigned).ok(),
-            ShredVariant::MerkleCode {
-                proof_size: _,
-                chained: false,
-                resigned: _,
-            } => None,
-            ShredVariant::MerkleData {
-                proof_size: _,
-                chained: false,
-                resigned: _,
-            } => None,
-        }?;
+            } => merkle::ShredData::get_chained_merkle_root_offset(proof_size, chained, resigned),
+        }
+        .ok()?;
         shred
             .get(offset..offset + SIZE_OF_MERKLE_ROOT)
             .map(Hash::new)
@@ -1151,7 +1142,7 @@ pub fn max_entries_per_n_shred(
 ) -> u64 {
     // Default 32:32 erasure batches yields 64 shreds; log2(64) = 6.
     let merkle_variant = Some((
-        /*proof_size:*/ 6, /*chained:*/ false, /*resigned:*/ false,
+        /*proof_size:*/ 6, /*chained:*/ true, /*resigned:*/ true,
     ));
     let data_buffer_size = ShredData::capacity(merkle_variant).unwrap();
     let shred_data_size = shred_data_size.unwrap_or(data_buffer_size) as u64;

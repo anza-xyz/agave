@@ -99,7 +99,8 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, ProgramCache,
+            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramOwner, LoadedProgramType,
+            ProgramCache,
         },
         timings::{ExecuteTimingType, ExecuteTimings},
     },
@@ -120,7 +121,7 @@ use {
         feature,
         feature_set::{
             self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
+            remove_rounding_in_fee_calculation, reward_full_priority_fee, FeatureSet,
         },
         fee::{FeeDetails, FeeStructure},
         fee_calculator::{FeeCalculator, FeeRateGovernor},
@@ -243,7 +244,7 @@ struct RentMetrics {
 }
 
 pub type BankStatusCache = StatusCache<Result<()>>;
-#[frozen_abi(digest = "EzAXfE2xG3ZqdAj8KMC8CeqoSxjo5hxrEaP7fta8LT9u")]
+#[frozen_abi(digest = "9Pf3NTGr1AEzB4nKaVBY24uNwoQR4aJi8vc96W6kGvNk")]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
@@ -280,6 +281,19 @@ impl CollectorFeeDetails {
         self.priority_fee = self
             .priority_fee
             .saturating_add(fee_details.prioritization_fee());
+    }
+
+    pub(crate) fn total(&self) -> u64 {
+        self.transaction_fee.saturating_add(self.priority_fee)
+    }
+}
+
+impl From<FeeDetails> for CollectorFeeDetails {
+    fn from(fee_details: FeeDetails) -> Self {
+        CollectorFeeDetails {
+            transaction_fee: fee_details.transaction_fee(),
+            priority_fee: fee_details.prioritization_fee(),
+        }
     }
 }
 
@@ -874,15 +888,6 @@ pub struct CommitTransactionCounts {
     pub signature_count: u64,
 }
 
-#[derive(Debug, Default)]
-/// result of calculating the stake rewards at end of epoch
-struct StakeRewardCalculation {
-    /// each individual stake account to reward
-    stake_rewards: StakeRewards,
-    /// total lamports across all `stake_rewards`
-    total_stake_rewards_lamports: u64,
-}
-
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
@@ -1355,13 +1360,15 @@ impl Bank {
             },
         );
 
-        parent
-            .transaction_processor
-            .program_cache
-            .read()
-            .unwrap()
-            .stats
-            .submit(parent.slot());
+        report_loaded_programs_stats(
+            &parent
+                .transaction_processor
+                .program_cache
+                .read()
+                .unwrap()
+                .stats,
+            parent.slot(),
+        );
 
         new.transaction_processor
             .program_cache
@@ -2553,137 +2560,6 @@ impl Bank {
         (points > 0).then_some(PointValue { rewards, points })
     }
 
-    /// Calculates epoch rewards for stake/vote accounts
-    /// Returns vote rewards, stake rewards, and the sum of all stake rewards in lamports
-    fn calculate_stake_vote_rewards(
-        &self,
-        reward_calculate_params: &EpochRewardCalculateParamInfo,
-        rewarded_epoch: Epoch,
-        point_value: PointValue,
-        thread_pool: &ThreadPool,
-        reward_calc_tracer: Option<impl RewardCalcTracer>,
-        metrics: &mut RewardsMetrics,
-    ) -> (VoteRewardsAccounts, StakeRewardCalculation) {
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = reward_calculate_params;
-
-        let solana_vote_program: Pubkey = solana_vote_program::id();
-
-        let get_vote_account = |vote_pubkey: &Pubkey| -> Option<VoteAccount> {
-            if let Some(vote_account) = cached_vote_accounts.get(vote_pubkey) {
-                return Some(vote_account.clone());
-            }
-            // If accounts-db contains a valid vote account, then it should
-            // already have been cached in cached_vote_accounts; so the code
-            // below is only for sanity checking, and can be removed once
-            // the cache is deemed to be reliable.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
-            VoteAccount::try_from(account).ok()
-        };
-
-        let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let vote_account_rewards: VoteRewards = DashMap::new();
-        let total_stake_rewards = AtomicU64::default();
-        let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
-            stake_delegations
-                .par_iter()
-                .filter_map(|(stake_pubkey, stake_account)| {
-                    // curry closure to add the contextual stake_pubkey
-                    let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
-                        // inner
-                        move |inner_event: &_| {
-                            outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
-                        }
-                    });
-
-                    let stake_pubkey = **stake_pubkey;
-                    let stake_account = (*stake_account).to_owned();
-
-                    let delegation = stake_account.delegation();
-                    let (mut stake_account, stake_state) =
-                        <(AccountSharedData, StakeStateV2)>::from(stake_account);
-                    let vote_pubkey = delegation.voter_pubkey;
-                    let vote_account = get_vote_account(&vote_pubkey)?;
-                    if vote_account.owner() != &solana_vote_program {
-                        return None;
-                    }
-                    let vote_state = vote_account.vote_state().cloned().ok()?;
-
-                    let pre_lamport = stake_account.lamports();
-
-                    let redeemed = solana_stake_program::rewards::redeem_rewards(
-                        rewarded_epoch,
-                        stake_state,
-                        &mut stake_account,
-                        &vote_state,
-                        &point_value,
-                        stake_history,
-                        reward_calc_tracer.as_ref(),
-                        new_warmup_cooldown_rate_epoch,
-                    );
-
-                    let post_lamport = stake_account.lamports();
-
-                    if let Ok((stakers_reward, voters_reward)) = redeemed {
-                        debug!(
-                            "calculated reward: {} {} {} {}",
-                            stake_pubkey, pre_lamport, post_lamport, stakers_reward
-                        );
-
-                        // track voter rewards
-                        let mut voters_reward_entry = vote_account_rewards
-                            .entry(vote_pubkey)
-                            .or_insert(VoteReward {
-                                vote_account: vote_account.into(),
-                                commission: vote_state.commission,
-                                vote_rewards: 0,
-                                vote_needs_store: false,
-                            });
-
-                        voters_reward_entry.vote_needs_store = true;
-                        voters_reward_entry.vote_rewards = voters_reward_entry
-                            .vote_rewards
-                            .saturating_add(voters_reward);
-
-                        let post_balance = stake_account.lamports();
-                        total_stake_rewards.fetch_add(stakers_reward, Relaxed);
-                        return Some(StakeReward {
-                            stake_pubkey,
-                            stake_reward_info: RewardInfo {
-                                reward_type: RewardType::Staking,
-                                lamports: i64::try_from(stakers_reward).unwrap(),
-                                post_balance,
-                                commission: Some(vote_state.commission),
-                            },
-                            stake_account,
-                        });
-                    } else {
-                        debug!(
-                            "solana_stake_program::rewards::redeem_rewards() failed for {}: {:?}",
-                            stake_pubkey, redeemed
-                        );
-                    }
-                    None
-                })
-                .collect()
-        }));
-        let (vote_rewards, measure_vote_rewards_us) =
-            measure_us!(Self::calc_vote_accounts_to_store(vote_account_rewards));
-
-        metrics.redeem_rewards_us += measure_stake_rewards_us + measure_vote_rewards_us;
-
-        (
-            vote_rewards,
-            StakeRewardCalculation {
-                stake_rewards,
-                total_stake_rewards_lamports: total_stake_rewards.load(Relaxed),
-            },
-        )
-    }
-
     fn redeem_rewards(
         &self,
         vote_with_stake_delegations_map: DashMap<Pubkey, VoteWithStakeDelegations>,
@@ -3003,7 +2879,11 @@ impl Bank {
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
-            self.distribute_transaction_fees();
+            if self.feature_set.is_active(&reward_full_priority_fee::id()) {
+                self.distribute_transaction_fee_details();
+            } else {
+                self.distribute_transaction_fees();
+            }
             self.distribute_rent_fees();
             self.update_slot_history();
             self.run_incinerator();
@@ -3269,21 +3149,13 @@ impl Bank {
     /// return false if bg hash verification has not completed yet
     /// if hash verification failed, a panic will occur
     pub fn is_startup_verification_complete(&self) -> bool {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .check_complete()
+        self.has_initial_accounts_hash_verification_completed()
     }
 
     /// This can occur because it completed in the background
     /// or if the verification was run in the foreground.
     pub fn set_startup_verification_complete(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .verification_complete()
+        self.set_initial_accounts_hash_verification_completed();
     }
 
     pub fn get_fee_for_message_with_lamports_per_signature(
@@ -4105,32 +3977,20 @@ impl Bank {
             .iter()
             .zip(execution_results)
             .map(|(tx, execution_result)| {
-                let (execution_status, durable_nonce_fee) = match &execution_result {
-                    TransactionExecutionResult::Executed { details, .. } => {
-                        Ok((&details.status, details.durable_nonce_fee.as_ref()))
-                    }
-                    TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
-                }?;
-
-                let (lamports_per_signature, is_nonce) = durable_nonce_fee
-                    .map(|durable_nonce_fee| durable_nonce_fee.lamports_per_signature())
-                    .map(|maybe_lamports_per_signature| (maybe_lamports_per_signature, true))
-                    .unwrap_or_else(|| {
-                        (
-                            hash_queue.get_lamports_per_signature(tx.message().recent_blockhash()),
-                            false,
-                        )
-                    });
-
-                let lamports_per_signature =
-                    lamports_per_signature.ok_or(TransactionError::BlockhashNotFound)?;
+                let message = tx.message();
+                let (execution_status, is_nonce, lamports_per_signature) =
+                    Self::get_details_from_execution_result(
+                        &hash_queue,
+                        execution_result,
+                        message.recent_blockhash(),
+                    )?;
                 let fee = self.get_fee_for_message_with_lamports_per_signature(
-                    tx.message(),
+                    message,
                     lamports_per_signature,
                 );
 
                 self.check_execution_status_and_charge_fee(
-                    tx.message(),
+                    message,
                     execution_status,
                     is_nonce,
                     fee,
@@ -4146,47 +4006,48 @@ impl Bank {
     }
 
     // Note: this function is not yet used; next PR will call it behind a feature gate
-    #[allow(dead_code)]
     fn filter_program_errors_and_collect_fee_details(
         &self,
         txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
+        let hash_queue = self.blockhash_queue.read().unwrap();
         let mut accumulated_fee_details = FeeDetails::default();
 
         let results = txs
             .iter()
             .zip(execution_results)
             .map(|(tx, execution_result)| {
-                let (execution_status, durable_nonce_fee) = match &execution_result {
-                    TransactionExecutionResult::Executed { details, .. } => {
-                        Ok((&details.status, details.durable_nonce_fee.as_ref()))
-                    }
-                    TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
-                }?;
-                let is_nonce = durable_nonce_fee.is_some();
-
                 let message = tx.message();
-                let fee_details = self.fee_structure.calculate_fee_details(
-                    message,
-                    &process_compute_budget_instructions(message.program_instructions_iter())
-                        .unwrap_or_default()
-                        .into(),
-                    self.feature_set
-                        .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-                );
+                let (execution_status, is_nonce, lamports_per_signature) =
+                    Self::get_details_from_execution_result(
+                        &hash_queue,
+                        execution_result,
+                        message.recent_blockhash(),
+                    )?;
 
-                self.check_execution_status_and_charge_fee(
-                    message,
-                    execution_status,
-                    is_nonce,
-                    fee_details.total_fee(
+                if !FeeStructure::to_clear_transaction_fee(lamports_per_signature) {
+                    let fee_details = self.fee_structure.calculate_fee_details(
+                        message,
+                        &process_compute_budget_instructions(message.program_instructions_iter())
+                            .unwrap_or_default()
+                            .into(),
                         self.feature_set
-                            .is_active(&remove_rounding_in_fee_calculation::id()),
-                    ),
-                )?;
+                            .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+                    );
 
-                accumulated_fee_details.accumulate(&fee_details);
+                    self.check_execution_status_and_charge_fee(
+                        message,
+                        execution_status,
+                        is_nonce,
+                        fee_details.total_fee(
+                            self.feature_set
+                                .is_active(&remove_rounding_in_fee_calculation::id()),
+                        ),
+                    )?;
+
+                    accumulated_fee_details.accumulate(&fee_details);
+                }
                 Ok(())
             })
             .collect();
@@ -4196,6 +4057,33 @@ impl Bank {
             .unwrap()
             .accumulate(&accumulated_fee_details);
         results
+    }
+
+    fn get_details_from_execution_result<'a>(
+        hash_queue_readonly: &RwLockReadGuard<'a, BlockhashQueue>,
+        execution_result: &'a TransactionExecutionResult,
+        transaction_blockhash: &Hash,
+    ) -> Result<(&'a transaction::Result<()>, bool, u64)> {
+        let (execution_status, durable_nonce_fee) = match &execution_result {
+            TransactionExecutionResult::Executed { details, .. } => {
+                Ok((&details.status, details.durable_nonce_fee.as_ref()))
+            }
+            TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
+        }?;
+
+        let (lamports_per_signature, is_nonce) = durable_nonce_fee
+            .map(|durable_nonce_fee| durable_nonce_fee.lamports_per_signature())
+            .map(|maybe_lamports_per_signature| (maybe_lamports_per_signature, true))
+            .unwrap_or_else(|| {
+                (
+                    hash_queue_readonly.get_lamports_per_signature(transaction_blockhash),
+                    false,
+                )
+            });
+
+        let lamports_per_signature =
+            lamports_per_signature.ok_or(TransactionError::BlockhashNotFound)?;
+        Ok((execution_status, is_nonce, lamports_per_signature))
     }
 
     fn check_execution_status_and_charge_fee(
@@ -4330,8 +4218,12 @@ impl Bank {
 
         let mut update_transaction_statuses_time = Measure::start("update_transaction_statuses");
         self.update_transaction_statuses(sanitized_txs, &execution_results);
-        let fee_collection_results =
-            self.filter_program_errors_and_collect_fee(sanitized_txs, &execution_results);
+        let fee_collection_results = if self.feature_set.is_active(&reward_full_priority_fee::id())
+        {
+            self.filter_program_errors_and_collect_fee_details(sanitized_txs, &execution_results)
+        } else {
+            self.filter_program_errors_and_collect_fee(sanitized_txs, &execution_results)
+        };
         update_transaction_statuses_time.stop();
         timings.saturating_add_in_place(
             ExecuteTimingType::UpdateTransactionStatuses,
@@ -5175,7 +5067,7 @@ impl Bank {
         pubkey: &'a Pubkey,
         account: &'a T,
     ) where
-        AccountForStorage<'a>: From<&'a T>,
+        AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
     {
         self.store_accounts((self.slot(), &[(pubkey, account)][..]))
     }
@@ -5185,11 +5077,13 @@ impl Bank {
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         (0..accounts.len()).for_each(|i| {
-            self.stakes_cache.check_and_store(
-                accounts.pubkey(i),
-                &accounts.account(i),
-                new_warmup_cooldown_rate_epoch,
-            )
+            accounts.account(i, |account| {
+                self.stakes_cache.check_and_store(
+                    account.pubkey(),
+                    &account,
+                    new_warmup_cooldown_rate_epoch,
+                )
+            })
         });
         self.rc.accounts.store_accounts_cached(accounts);
         m.stop();
@@ -6421,7 +6315,11 @@ impl Bank {
             self,
             program_id,
             name,
-            LoadedProgram::new_tombstone(self.slot, LoadedProgramType::Closed),
+            LoadedProgram::new_tombstone(
+                self.slot,
+                LoadedProgramOwner::NativeLoader,
+                LoadedProgramType::Closed,
+            ),
         );
         debug!("Removed program {}", program_id);
     }

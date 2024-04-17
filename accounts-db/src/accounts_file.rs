@@ -1,9 +1,8 @@
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::meta::{StorableAccountsWithHashes, StoredAccountInfo, StoredAccountMeta},
+        account_storage::meta::{StoredAccountInfo, StoredAccountMeta},
         accounts_db::AccountsFileId,
-        accounts_hash::AccountHash,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
         storable_accounts::StorableAccounts,
         tiered_storage::{
@@ -12,7 +11,6 @@ use {
     },
     solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
     std::{
-        borrow::Borrow,
         io::Read,
         mem,
         path::{Path, PathBuf},
@@ -136,6 +134,27 @@ impl AccountsFile {
         }
     }
 
+    /// calls `callback` with the account located at the specified index offset.
+    pub fn get_stored_account_meta_callback<'a, Ret>(
+        &'a self,
+        offset: usize,
+        callback: impl FnMut(StoredAccountMeta<'a>) -> Ret,
+    ) -> Option<Ret> {
+        match self {
+            Self::AppendVec(av) => av.get_stored_account_meta_callback(offset, callback),
+            // Note: The conversion here is needed as the AccountsDB currently
+            // assumes all offsets are multiple of 8 while TieredStorage uses
+            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+            Self::TieredStorage(ts) => ts
+                .reader()?
+                .get_stored_account_meta_callback(
+                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
+                    callback,
+                )
+                .ok()?,
+        }
+    }
+
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
     pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {
@@ -245,9 +264,9 @@ impl AccountsFile {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<'a, 'b, U: StorableAccounts<'a>, V: Borrow<AccountHash>>(
+    pub fn append_accounts<'a>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, U, V>,
+        accounts: &impl StorableAccounts<'a>,
         skip: usize,
     ) -> Option<Vec<StoredAccountInfo>> {
         match self {
