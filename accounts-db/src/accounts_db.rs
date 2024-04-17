@@ -9701,23 +9701,6 @@ pub mod tests {
         };
     }
 
-    macro_rules! define_accounts_db_test_should_panic {
-        ($name:ident, $panic_message:literal, |$accounts_db:ident| $inner: tt) => {
-            #[test_case(AccountsFileProvider::AppendVec; "append_vec")]
-            #[test_case(AccountsFileProvider::HotStorage; "hot_storage")]
-            #[should_panic(expected = $panic_message)]
-            fn $name(accounts_file_provider: AccountsFileProvider) {
-                fn run_test($accounts_db: AccountsDb) {
-                    $inner
-                }
-
-                let accounts_db =
-                    AccountsDb::new_single_for_tests_with_provider(accounts_file_provider);
-                run_test(accounts_db);
-            }
-        };
-    }
-
     fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
         let slot0 = 0;
 
