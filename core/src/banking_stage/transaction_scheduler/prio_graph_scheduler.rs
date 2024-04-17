@@ -194,7 +194,6 @@ impl PrioGraphScheduler {
                 match maybe_schedule_info {
                     Err(TransactionSchedulingError::Filtered) => {
                         container.remove_by_id(&id.id);
-                        continue;
                     }
                     Err(TransactionSchedulingError::UnschedulableConflicts) => {
                         unschedulable_ids.push(id);
