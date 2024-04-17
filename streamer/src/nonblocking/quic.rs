@@ -347,7 +347,6 @@ fn handle_and_cache_new_connection(
         params.total_stake,
     ) as u64)
     {
-        connection.set_max_concurrent_uni_streams(max_uni_streams);
         let receive_window =
             compute_recieve_window(params.max_stake, params.min_stake, params.peer_type);
 
@@ -377,6 +376,7 @@ fn handle_and_cache_new_connection(
             )
         {
             drop(connection_table_l);
+            connection.set_max_concurrent_uni_streams(max_uni_streams);
             tokio::spawn(handle_connection(
                 connection,
                 remote_addr,
