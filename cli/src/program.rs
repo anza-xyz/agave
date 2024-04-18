@@ -2514,7 +2514,8 @@ fn do_process_program_upgrade(
                     if additional_bytes > u32::MAX as usize {
                         let err_string = format!(
                             r#"Cannot auto-extend Program Data Account space due to size limit
-please extend it manually by using the command: solana program extend {} {},"#,
+please extend it manually by runinng the command solana program extend {} <BYTES> multiple times 
+using chunks of additional bytes required:{}"#,
                             program_id, additional_bytes
                         );
 
