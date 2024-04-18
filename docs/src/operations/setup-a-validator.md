@@ -510,11 +510,12 @@ through the validator log output.
 
 ### Solana Validators
 
-After you have verified that your validator is in gossip, you need to stake some
-SOL to your validator. Once your staked SOL is active, you can then verify that
-your validator has joined the network using the `solana validators` command.
-The command lists all validators in the network, but like before, we can
-`grep` the output for the validator we care about:
+After you have verified that your validator is in gossip, you should stake some
+SOL to your validator. Once the stake has activated (which happens at the start
+of the next epoch), you can verify that your validator is ready to be a voting
+participant of the network with the `solana validators` command. The command
+lists all validators in the network, but like before, we can `grep` the output
+for the validator we care about:
 
 ```
 solana validators | grep <pubkey>
