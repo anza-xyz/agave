@@ -1499,6 +1499,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         )
         .arg(
             Arg::with_name("delay_leader_block_for_pending_fork")
+                .hidden(hidden_unless_forced())
                 .long("delay-leader-block-for-pending-fork")
                 .takes_value(false)
                 .help(
