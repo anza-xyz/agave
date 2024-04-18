@@ -58,13 +58,6 @@ impl<'storage> StoredAccountMeta<'storage> {
         }
     }
 
-    pub fn data(&self) -> &'storage [u8] {
-        match self {
-            Self::AppendVec(av) => av.data(),
-            Self::Hot(hot) => hot.data(),
-        }
-    }
-
     pub fn data_len(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.data_len(),
