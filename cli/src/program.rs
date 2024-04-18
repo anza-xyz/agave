@@ -2502,7 +2502,7 @@ fn do_process_program_upgrade(
     let program_data_address = get_program_data_address(program_id);
     let program_data_account = rpc_client.get_account(&program_data_address);
     let program_len_with_metadata = UpgradeableLoaderState::size_of_programdata(program_len);
-    // Check - auto extend program data account in case of insufficient space .
+    // Check - auto extend program data account in case of insufficient space
     // if no-extend flag is set then
     // throw an err along with a message including additional bytes required
     let add_program_extend_ix = match program_data_account {
