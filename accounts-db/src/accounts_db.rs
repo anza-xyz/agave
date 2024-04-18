@@ -6582,7 +6582,7 @@ impl AccountsDb {
                                             &account_info.storage_location(),
                                         )
                                         .get_loaded_account()
-                                        .and_then(
+                                        .map(
                                             |loaded_account| {
                                                 let mut loaded_hash = loaded_account.loaded_hash();
                                                 let balance = loaded_account.lamports();
@@ -6600,7 +6600,7 @@ impl AccountsDb {
                                                     loaded_hash = computed_hash;
                                                 }
                                                 sum += balance as u128;
-                                                Some(loaded_hash.0)
+                                                loaded_hash.0
                                             },
                                         )
                                     },
