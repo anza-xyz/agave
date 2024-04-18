@@ -2868,7 +2868,9 @@ fn test_filter_program_errors_and_collect_fee() {
         ..
     } = create_genesis_config_with_leader(100_000, &leader, 3);
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
-    let bank = Bank::new_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    // this test is only for when `feature_set::reward_full_priority_fee` inactivated
+    bank.deactivate_feature(&feature_set::reward_full_priority_fee::id());
 
     let key = solana_sdk::pubkey::new_rand();
     let tx1 = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -2919,7 +2921,9 @@ fn test_filter_program_errors_and_collect_compute_unit_fee() {
         ..
     } = create_genesis_config_with_leader(1000000, &leader, 3);
     genesis_config.fee_rate_governor = FeeRateGovernor::new(2, 0);
-    let bank = Bank::new_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    // this test is only for when `feature_set::reward_full_priority_fee` inactivated
+    bank.deactivate_feature(&feature_set::reward_full_priority_fee::id());
 
     let key = solana_sdk::pubkey::new_rand();
     let tx1 = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -7102,7 +7106,7 @@ fn test_bank_load_program() {
     bank.store_account_and_update_capitalization(&key1, &program_account);
     bank.store_account_and_update_capitalization(&programdata_key, &programdata_account);
     let program = bank.load_program(&key1, false, bank.epoch()).unwrap();
-    assert_matches!(program.program, LoadedProgramType::LegacyV1(_));
+    assert_matches!(program.program, LoadedProgramType::Loaded(_));
     assert_eq!(
         program.account_size,
         program_account.data().len() + programdata_account.data().len()
@@ -7348,7 +7352,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         assert_eq!(slot_versions[1].effective_slot, 1);
         assert!(matches!(
             slot_versions[1].program,
-            LoadedProgramType::LegacyV1(_),
+            LoadedProgramType::Loaded(_),
         ));
     }
 

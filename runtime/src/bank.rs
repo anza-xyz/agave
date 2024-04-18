@@ -99,7 +99,8 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType, ProgramCache,
+            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramOwner, LoadedProgramType,
+            ProgramCache,
         },
         timings::{ExecuteTimingType, ExecuteTimings},
     },
@@ -120,7 +121,7 @@ use {
         feature,
         feature_set::{
             self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
+            remove_rounding_in_fee_calculation, reward_full_priority_fee, FeatureSet,
         },
         fee::{FeeDetails, FeeStructure},
         fee_calculator::{FeeCalculator, FeeRateGovernor},
@@ -243,7 +244,7 @@ struct RentMetrics {
 }
 
 pub type BankStatusCache = StatusCache<Result<()>>;
-#[frozen_abi(digest = "EzAXfE2xG3ZqdAj8KMC8CeqoSxjo5hxrEaP7fta8LT9u")]
+#[frozen_abi(digest = "9Pf3NTGr1AEzB4nKaVBY24uNwoQR4aJi8vc96W6kGvNk")]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
@@ -280,6 +281,19 @@ impl CollectorFeeDetails {
         self.priority_fee = self
             .priority_fee
             .saturating_add(fee_details.prioritization_fee());
+    }
+
+    pub(crate) fn total(&self) -> u64 {
+        self.transaction_fee.saturating_add(self.priority_fee)
+    }
+}
+
+impl From<FeeDetails> for CollectorFeeDetails {
+    fn from(fee_details: FeeDetails) -> Self {
+        CollectorFeeDetails {
+            transaction_fee: fee_details.transaction_fee(),
+            priority_fee: fee_details.prioritization_fee(),
+        }
     }
 }
 
@@ -1346,13 +1360,15 @@ impl Bank {
             },
         );
 
-        parent
-            .transaction_processor
-            .program_cache
-            .read()
-            .unwrap()
-            .stats
-            .submit(parent.slot());
+        report_loaded_programs_stats(
+            &parent
+                .transaction_processor
+                .program_cache
+                .read()
+                .unwrap()
+                .stats,
+            parent.slot(),
+        );
 
         new.transaction_processor
             .program_cache
@@ -2863,7 +2879,11 @@ impl Bank {
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
-            self.distribute_transaction_fees();
+            if self.feature_set.is_active(&reward_full_priority_fee::id()) {
+                self.distribute_transaction_fee_details();
+            } else {
+                self.distribute_transaction_fees();
+            }
             self.distribute_rent_fees();
             self.update_slot_history();
             self.run_incinerator();
@@ -3129,21 +3149,13 @@ impl Bank {
     /// return false if bg hash verification has not completed yet
     /// if hash verification failed, a panic will occur
     pub fn is_startup_verification_complete(&self) -> bool {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .check_complete()
+        self.has_initial_accounts_hash_verification_completed()
     }
 
     /// This can occur because it completed in the background
     /// or if the verification was run in the foreground.
     pub fn set_startup_verification_complete(&self) {
-        self.rc
-            .accounts
-            .accounts_db
-            .verify_accounts_hash_in_bg
-            .verification_complete()
+        self.set_initial_accounts_hash_verification_completed();
     }
 
     pub fn get_fee_for_message_with_lamports_per_signature(
@@ -3994,7 +4006,6 @@ impl Bank {
     }
 
     // Note: this function is not yet used; next PR will call it behind a feature gate
-    #[allow(dead_code)]
     fn filter_program_errors_and_collect_fee_details(
         &self,
         txs: &[SanitizedTransaction],
@@ -4207,8 +4218,12 @@ impl Bank {
 
         let mut update_transaction_statuses_time = Measure::start("update_transaction_statuses");
         self.update_transaction_statuses(sanitized_txs, &execution_results);
-        let fee_collection_results =
-            self.filter_program_errors_and_collect_fee(sanitized_txs, &execution_results);
+        let fee_collection_results = if self.feature_set.is_active(&reward_full_priority_fee::id())
+        {
+            self.filter_program_errors_and_collect_fee_details(sanitized_txs, &execution_results)
+        } else {
+            self.filter_program_errors_and_collect_fee(sanitized_txs, &execution_results)
+        };
         update_transaction_statuses_time.stop();
         timings.saturating_add_in_place(
             ExecuteTimingType::UpdateTransactionStatuses,
@@ -6300,7 +6315,11 @@ impl Bank {
             self,
             program_id,
             name,
-            LoadedProgram::new_tombstone(self.slot, LoadedProgramType::Closed),
+            LoadedProgram::new_tombstone(
+                self.slot,
+                LoadedProgramOwner::NativeLoader,
+                LoadedProgramType::Closed,
+            ),
         );
         debug!("Removed program {}", program_id);
     }
