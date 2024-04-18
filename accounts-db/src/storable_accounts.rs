@@ -1,9 +1,6 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
-    crate::{
-        account_storage::meta::StoredAccountMeta, accounts_hash::AccountHash,
-        accounts_index::ZeroLamport,
-    },
+    crate::{account_storage::meta::StoredAccountMeta, accounts_index::ZeroLamport},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::{Epoch, Slot},
@@ -97,13 +94,16 @@ lazy_static! {
 /// All legacy callers do not have a unique slot per account to store.
 pub trait StorableAccounts<'a>: Sync {
     /// account at 'index'
-    fn account<Ret>(&self, index: usize, callback: impl FnMut(AccountForStorage<'a>) -> Ret)
-        -> Ret;
+    fn account<Ret>(
+        &self,
+        index: usize,
+        callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret;
     /// None if account is zero lamports
     fn account_default_if_zero_lamport<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         self.account(index, |account| {
             callback(if account.lamports() != 0 {
@@ -132,19 +132,6 @@ pub trait StorableAccounts<'a>: Sync {
     fn contains_multiple_slots(&self) -> bool {
         false
     }
-
-    /// true iff the impl can provide hash
-    /// Otherwise, hash has to be provided separately to store functions.
-    fn has_hash(&self) -> bool {
-        false
-    }
-
-    /// return hash for account at 'index'
-    /// Should only be called if 'has_hash' = true
-    fn hash(&self, _index: usize) -> &AccountHash {
-        // this should never be called if has_hash returns false
-        unimplemented!();
-    }
 }
 
 /// accounts that are moving from 'old_slot' to 'target_slot'
@@ -166,7 +153,7 @@ where
     fn account<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback((self.accounts[index].0, self.accounts[index].1).into())
     }
@@ -190,7 +177,7 @@ where
     fn account<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback((self.1[index].0, self.1[index].1).into())
     }
@@ -212,7 +199,7 @@ where
     fn account<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback((&self.1[index].0, &self.1[index].1).into())
     }
@@ -232,7 +219,7 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
     fn account<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback(self.1[index].into())
     }
@@ -245,12 +232,6 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
     }
     fn len(&self) -> usize {
         self.1.len()
-    }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.1[index].hash()
     }
 }
 
@@ -321,7 +302,7 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn account<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         let indexes = self.find_internal_index(index);
         callback(self.slots_and_accounts[indexes.0].1[indexes.1].into())
@@ -339,13 +320,6 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn contains_multiple_slots(&self) -> bool {
         self.contains_multiple_slots
     }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        let indexes = self.find_internal_index(index);
-        self.slots_and_accounts[indexes.0].1[indexes.1].hash()
-    }
 }
 
 /// this tuple contains a single different source slot that applies to all accounts
@@ -354,7 +328,7 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) 
     fn account<Ret>(
         &self,
         index: usize,
-        mut callback: impl FnMut(AccountForStorage<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback(self.1[index].into())
     }
@@ -368,12 +342,6 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) 
     fn len(&self) -> usize {
         self.1.len()
     }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.1[index].hash()
-    }
 }
 
 #[cfg(test)]
@@ -382,6 +350,7 @@ pub mod tests {
         super::*,
         crate::{
             account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            accounts_hash::AccountHash,
             append_vec::AppendVecStoredAccountMeta,
         },
         solana_sdk::{
@@ -620,7 +589,6 @@ pub mod tests {
                             })
                             .collect::<Vec<_>>();
                         let storable = StorableAccountsBySlot::new(99, &slots_and_accounts[..]);
-                        assert!(storable.has_hash());
                         assert_eq!(99, storable.target_slot());
                         assert_eq!(entries0 != entries, storable.contains_multiple_slots());
                         (0..entries).for_each(|index| {
@@ -629,7 +597,6 @@ pub mod tests {
                                 assert!(accounts_equal(&account, &raw2[index]));
                                 assert_eq!(account.pubkey(), raw2[index].pubkey());
                             });
-                            assert_eq!(storable.hash(index), raw2[index].hash());
                             assert_eq!(storable.slot(index), expected_slots[index]);
                         })
                     }
