@@ -384,7 +384,7 @@ su - sol
 ## Install The Solana CLI on Remote Machine
 
 Your remote machine will need the Solana cli installed to run the validator
-software with the `sol` user. Refer again to
+software. For simplicity, install the cli with user `sol`. Refer again to
 [Solana's Install Tool](../cli/install.md#use-solanas-install-tool) or
 [build from source](../cli/install.md#build-from-source). It is best for
 operators to build from source rather than using the pre built binaries.
