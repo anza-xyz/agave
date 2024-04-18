@@ -100,7 +100,7 @@ pub enum ProgramCliCommand {
         skip_fee_check: bool,
         compute_unit_price: Option<u64>,
         max_sign_attempts: usize,
-        no_auto_extend_program: bool,
+        no_extend: bool,
     },
     Upgrade {
         fee_payer_signer_index: SignerIndex,
@@ -273,8 +273,8 @@ impl ProgramSubCommands for App<'_, '_> {
                         )
                         .arg(compute_unit_price_arg())
                         .arg(
-                            Arg::with_name("no_auto_extend_program")
-                                .long("no-auto-extend-program")
+                            Arg::with_name("no_extend")
+                                .long("no-extend")
                                 .takes_value(false)
                                 .help("Don't automatically extend the program's data account size"),
                         ),
@@ -669,7 +669,7 @@ pub fn parse_program_subcommand(
             let compute_unit_price = value_of(matches, "compute_unit_price");
             let max_sign_attempts = value_of(matches, "max_sign_attempts").unwrap();
 
-            let no_auto_extend_program = matches.is_present("no_auto_extend_program");
+            let no_extend = matches.is_present("no_extend");
 
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Deploy {
@@ -688,7 +688,7 @@ pub fn parse_program_subcommand(
                     skip_fee_check,
                     compute_unit_price,
                     max_sign_attempts,
-                    no_auto_extend_program,
+                    no_extend,
                 }),
                 signers: signer_info.signers,
             }
@@ -976,7 +976,7 @@ pub fn process_program_subcommand(
             skip_fee_check,
             compute_unit_price,
             max_sign_attempts,
-            no_auto_extend_program,
+            no_extend,
         } => process_program_deploy(
             rpc_client,
             config,
@@ -993,7 +993,7 @@ pub fn process_program_subcommand(
             *skip_fee_check,
             *compute_unit_price,
             *max_sign_attempts,
-            *no_auto_extend_program,
+            *no_extend,
         ),
         ProgramCliCommand::Upgrade {
             fee_payer_signer_index,
@@ -1171,7 +1171,7 @@ fn process_program_deploy(
     skip_fee_check: bool,
     compute_unit_price: Option<u64>,
     max_sign_attempts: usize,
-    no_auto_extend_program: bool,
+    no_extend: bool,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
     let upgrade_authority_signer = config.signers[upgrade_authority_signer_index];
@@ -1356,7 +1356,7 @@ fn process_program_deploy(
             skip_fee_check,
             compute_unit_price,
             max_sign_attempts,
-            no_auto_extend_program,
+            no_extend,
         )
     };
     if result.is_ok() && is_final {
@@ -2496,36 +2496,49 @@ fn do_process_program_upgrade(
     skip_fee_check: bool,
     compute_unit_price: Option<u64>,
     max_sign_attempts: usize,
-    no_auto_extend_program: bool,
+    no_extend: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
     let program_data_address = get_program_data_address(program_id);
-    let program_data_account = rpc_client.get_account(&program_data_address)?;
+    let program_data_account = rpc_client.get_account(&program_data_address);
+    let program_len_with_metadata = UpgradeableLoaderState::size_of_programdata(program_len);
+    // Check - auto extend program data account in case of insufficient space .
+    // if no-extend flag is set then
+    // throw an err along with a message including additional bytes required
+    let add_program_extend_ix = match program_data_account {
+        Ok(program_data_account) => {
+            if program_len_with_metadata > program_data_account.data.len() {
+                let additional_bytes =
+                    program_len_with_metadata.sub(program_data_account.data.len());
+                if !no_extend {
+                    if additional_bytes > u32::MAX as usize {
+                        let err_string = format!(
+                            r#"Cannot auto-extend Program Data Account space due to size limit
+please extend it manually by using the command: solana program extend {} {},"#,
+                            program_id, additional_bytes
+                        );
 
-    //CHECK: auto extend program data account in case of insufficient space .if no-auto-extend-program flag is set then
-    //throw an err along with a message including additional bytes required
-    let add_program_extend_ix = if program_len > program_data_account.data.len() {
-        let metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
-        let additional_bytes = program_len
-            .sub(program_data_account.data.len())
-            .saturating_add(metadata_size);
-        if !no_auto_extend_program {
-            Some(bpf_loader_upgradeable::extend_program(
-                program_id,
-                Some(&fee_payer_signer.pubkey()),
-                additional_bytes as u32,
-            ))
-        } else {
-            let err_string = format!(
-                r#"Program Data Account space is not enough
+                        return Err(err_string.into());
+                    }
+                    Some(bpf_loader_upgradeable::extend_program(
+                        program_id,
+                        Some(&fee_payer_signer.pubkey()),
+                        additional_bytes as u32,
+                    ))
+                } else {
+                    let err_string = format!(
+                        r#"Program Data Account space is not enough
 please extend the program data account with command: solana program extend {} {},
 please disable the --no-extend-program flag to automatically extend the program account size"#,
-                program_id, additional_bytes
-            );
-            return Err(err_string.into());
+                        program_id, additional_bytes
+                    );
+                    return Err(err_string.into());
+                }
+            } else {
+                None
+            }
         }
-    } else {
-        None
+        Err(_) => None,
     };
 
     let (initial_message, write_messages, balance_needed) = if let Some(buffer_signer) =
@@ -2998,7 +3011,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false,
+                    no_extend: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3029,7 +3042,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3062,7 +3075,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3097,7 +3110,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3131,7 +3144,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3168,7 +3181,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -3201,7 +3214,7 @@ mod tests {
                     allow_excessive_balance: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3232,7 +3245,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 1,
-                    no_auto_extend_program: false
+                    no_extend: false
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
@@ -3975,7 +3988,7 @@ mod tests {
                 skip_fee_check: false,
                 compute_unit_price: None,
                 max_sign_attempts: 5,
-                no_auto_extend_program: false,
+                no_extend: false,
             }),
             signers: vec![&default_keypair],
             output_format: OutputFormat::JsonCompact,
