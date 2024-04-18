@@ -423,6 +423,21 @@ impl PohRecorder {
         self.working_bank.is_some()
     }
 
+    pub fn is_reset_allowed(&self, my_pubkey: &Pubkey) -> bool {
+        if let Some(working_bank) = &self.working_bank {
+            if self.is_slot_leader_at_slot(my_pubkey, working_bank.bank.parent_slot()) {
+                // If we got here, there's a bank on a different fork from our
+                // previous leader slot that is considered heavier by fork
+                // choice. But since the working bank might contain votes for
+                // our previous slot, don't reset this bank in hopes that enough
+                // of the cluster has voted on our previous slot that it becomes
+                // a heavier fork.
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn tick_height(&self) -> u64 {
         self.tick_height
     }
@@ -449,15 +464,16 @@ impl PohRecorder {
         })
     }
 
-    fn prev_slot_was_mine(&self, my_pubkey: &Pubkey, current_slot: Slot) -> bool {
-        if let Some(leader_id) = self
-            .leader_schedule_cache
-            .slot_leader_at(current_slot.saturating_sub(1), None)
-        {
+    fn is_slot_leader_at_slot(&self, my_pubkey: &Pubkey, slot: Slot) -> bool {
+        if let Some(leader_id) = self.leader_schedule_cache.slot_leader_at(slot, None) {
             &leader_id == my_pubkey
         } else {
             false
         }
+    }
+
+    fn prev_slot_was_mine(&self, my_pubkey: &Pubkey, current_slot: Slot) -> bool {
+        self.is_slot_leader_at_slot(my_pubkey, current_slot.saturating_sub(1))
     }
 
     fn reached_leader_tick(

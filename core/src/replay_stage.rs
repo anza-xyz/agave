@@ -1017,7 +1017,9 @@ impl ReplayStage {
                 let mut reset_bank_time = Measure::start("reset_bank");
                 // Reset onto a fork
                 if let Some(reset_bank) = reset_bank {
-                    if last_reset != reset_bank.last_blockhash() {
+                    if last_reset != reset_bank.last_blockhash()
+                        && poh_recorder.read().unwrap().is_reset_allowed(&my_pubkey)
+                    {
                         info!(
                             "vote bank: {:?} reset bank: {:?}",
                             vote_bank
