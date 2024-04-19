@@ -259,6 +259,7 @@ impl SchedulerController {
             for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                 if !*filter_result || !hold {
                     self.container.remove_by_id(&id.id);
+                    continue;
                 }
 
                 ids_to_add_back.push(*id); // add back to the queue at end
