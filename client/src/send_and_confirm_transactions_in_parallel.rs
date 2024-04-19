@@ -34,6 +34,11 @@ use {
 const BLOCKHASH_REFRESH_RATE: Duration = Duration::from_secs(5);
 const TPU_RESEND_REFRESH_RATE: Duration = Duration::from_secs(2);
 const SEND_INTERVAL: Duration = Duration::from_millis(10);
+// This is a "reasonable" constant for how long it should
+// take to fan the transactions out, taken from
+// `solana_tpu_client::nonblocking::tpu_client::send_wire_transaction_futures`
+const SEND_TIMEOUT_INTERVAL: Duration = Duration::from_secs(5);
+
 type QuicTpuClient = TpuClient<QuicPool, QuicConnectionManager, QuicConfig>;
 
 #[derive(Clone, Debug)]
@@ -190,9 +195,12 @@ async fn send_transaction_with_rpc_fallback(
     index: usize,
 ) -> Result<()> {
     let send_over_rpc = if let Some(tpu_client) = tpu_client {
-        !tpu_client
-            .send_wire_transaction(serialized_transaction.clone())
-            .await
+        !tokio::time::timeout(
+            SEND_TIMEOUT_INTERVAL,
+            tpu_client.send_wire_transaction(serialized_transaction.clone()),
+        )
+        .await
+        .unwrap_or(false)
     } else {
         true
     };
@@ -350,10 +358,6 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
                     .map(|x| x.serialized_transaction.clone())
                     .collect::<Vec<_>>();
                 let num_txs_to_resend = txs_to_resend_over_tpu.len();
-                // This is a "reasonable" constant for how long it should
-                // take to fan the transactions out, taken from
-                // `solana_tpu_client::nonblocking::tpu_client::send_wire_transaction_futures`
-                const SEND_TIMEOUT_INTERVAL: Duration = Duration::from_secs(5);
                 let message = if tokio::time::timeout(
                     SEND_TIMEOUT_INTERVAL,
                     tpu_client.try_send_wire_transaction_batch(txs_to_resend_over_tpu),
