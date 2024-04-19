@@ -245,6 +245,7 @@ impl SchedulerController {
         // This doubles as a way to clean the queue as well as forwarding transactions.
         const CHUNK_SIZE: usize = 64;
         let mut ids_to_add_back = Vec::new();
+        let mut max_time_reached = false;
         while !self.container.is_empty() {
             let mut filter_array = [true; CHUNK_SIZE];
             let mut ids = Vec::with_capacity(CHUNK_SIZE);
@@ -297,6 +298,7 @@ impl SchedulerController {
             }
 
             if start.elapsed() >= MAX_FORWARDING_DURATION {
+                max_time_reached = true;
                 break;
             }
         }
@@ -306,6 +308,15 @@ impl SchedulerController {
             let packets = batch.take_packets();
             let forward_work = ForwardWork { packets };
             self.forward_work_sender.send(forward_work).unwrap();
+        }
+
+        // If we hit the time limit. Drop everything that was not checked/processed.
+        // If we cannot run these simple checks in time, then we cannot run them during
+        // leader slot.
+        if max_time_reached {
+            while let Some(id) = self.container.pop() {
+                self.container.remove_by_id(&id.id);
+            }
         }
 
         if hold {
