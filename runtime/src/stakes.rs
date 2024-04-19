@@ -229,10 +229,12 @@ impl Stakes<StakeAccount> {
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
-        // im::HashMap doesn't support rayon so we manually build a temporary vector. Note this is
-        // what std HashMap::par_iter() does internally too.
-        let stake_delegations_vec = stakes.stake_delegations.iter().collect::<Vec<_>>();
-        let stake_delegations = stake_delegations_vec
+        let stake_delegations = stakes
+            .stake_delegations
+            .iter()
+            // im::HashMap doesn't support rayon so we manually build a temporary vector. Note this is
+            // what std HashMap::par_iter() does internally too.
+            .collect::<Vec<_>>()
             .into_par_iter()
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
             // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
