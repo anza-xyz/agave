@@ -1,16 +1,17 @@
 use {
     crate::tiered_storage::{
         error::TieredStorageError,
-        file::TieredStorageFile,
+        file::{TieredReadableFile, TieredStorageMagicNumber, TieredWritableFile},
         index::IndexBlockFormat,
         mmap_utils::{get_pod, get_type},
+        owners::OwnersBlockFormat,
         TieredStorageResult,
     },
-    bytemuck::{Pod, Zeroable},
+    bytemuck::Zeroable,
     memmap2::Mmap,
     num_enum::TryFromPrimitiveError,
     solana_sdk::{hash::Hash, pubkey::Pubkey},
-    std::{mem, path::Path},
+    std::{mem, path::Path, ptr},
     thiserror::Error,
 };
 
@@ -24,22 +25,6 @@ static_assertions::const_assert_eq!(mem::size_of::<TieredStorageFooter>(), 160);
 /// The size of the ending part of the footer.  This size should remain unchanged
 /// even when the footer's format changes.
 pub const FOOTER_TAIL_SIZE: usize = 24;
-
-/// The ending 8 bytes of a valid tiered account storage file.
-pub const FOOTER_MAGIC_NUMBER: u64 = 0x502A2AB5; // SOLALABS -> SOLANA LABS
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-pub struct TieredStorageMagicNumber(pub u64);
-
-// Ensure there are no implicit padding bytes
-const _: () = assert!(std::mem::size_of::<TieredStorageMagicNumber>() == 8);
-
-impl Default for TieredStorageMagicNumber {
-    fn default() -> Self {
-        Self(FOOTER_MAGIC_NUMBER)
-    }
-}
 
 #[repr(u16)]
 #[derive(
@@ -76,23 +61,6 @@ pub enum AccountBlockFormat {
     #[default]
     AlignedRaw = 0,
     Lz4 = 1,
-}
-
-#[repr(u16)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Eq,
-    Hash,
-    PartialEq,
-    num_enum::IntoPrimitive,
-    num_enum::TryFromPrimitive,
-)]
-pub enum OwnersBlockFormat {
-    #[default]
-    LocalIndex = 0,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -149,7 +117,7 @@ pub struct TieredStorageFooter {
     /// The size of the footer including the magic number.
     pub footer_size: u64,
     // This field is persisted in the storage but not in this struct.
-    // The number should match FOOTER_MAGIC_NUMBER.
+    // The number should match FILE_MAGIC_NUMBER.
     // pub magic_number: u64,
 }
 
@@ -202,19 +170,21 @@ impl Default for TieredStorageFooter {
 
 impl TieredStorageFooter {
     pub fn new_from_path(path: impl AsRef<Path>) -> TieredStorageResult<Self> {
-        let file = TieredStorageFile::new_readonly(path);
+        let file = TieredReadableFile::new(path)?;
         Self::new_from_footer_block(&file)
     }
 
-    pub fn write_footer_block(&self, file: &TieredStorageFile) -> TieredStorageResult<()> {
-        // SAFETY: The footer does not contain any uninitialized bytes.
-        unsafe { file.write_type(self)? };
-        file.write_pod(&TieredStorageMagicNumber::default())?;
+    pub fn write_footer_block(&self, file: &mut TieredWritableFile) -> TieredStorageResult<usize> {
+        let mut bytes_written = 0;
 
-        Ok(())
+        // SAFETY: The footer does not contain any uninitialized bytes.
+        bytes_written += unsafe { file.write_type(self)? };
+        bytes_written += file.write_pod(&TieredStorageMagicNumber::default())?;
+
+        Ok(bytes_written)
     }
 
-    pub fn new_from_footer_block(file: &TieredStorageFile) -> TieredStorageResult<Self> {
+    pub fn new_from_footer_block(file: &TieredReadableFile) -> TieredStorageResult<Self> {
         file.seek_from_end(-(FOOTER_TAIL_SIZE as i64))?;
 
         let mut footer_version: u64 = 0;
@@ -290,13 +260,13 @@ impl TieredStorageFooter {
     /// prior to use.  This ensures the formats are valid to interpret as (rust) enums.
     fn sanitize(footer: &Self) -> Result<(), SanitizeFooterError> {
         let account_meta_format_u16 =
-            unsafe { &*(&footer.account_meta_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.account_meta_format).cast::<u16>()) };
         let owners_block_format_u16 =
-            unsafe { &*(&footer.owners_block_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.owners_block_format).cast::<u16>()) };
         let index_block_format_u16 =
-            unsafe { &*(&footer.index_block_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.index_block_format).cast::<u16>()) };
         let account_block_format_u16 =
-            unsafe { &*(&footer.account_block_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.account_block_format).cast::<u16>()) };
 
         _ = AccountMetaFormat::try_from(*account_meta_format_u16)
             .map_err(SanitizeFooterError::InvalidAccountMetaFormat)?;
@@ -342,7 +312,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            append_vec::test_utils::get_append_vec_path, tiered_storage::file::TieredStorageFile,
+            append_vec::test_utils::get_append_vec_path, tiered_storage::file::TieredWritableFile,
         },
         memoffset::offset_of,
         solana_sdk::hash::Hash,
@@ -353,8 +323,8 @@ mod tests {
         let path = get_append_vec_path("test_file_footer");
         let expected_footer = TieredStorageFooter {
             account_meta_format: AccountMetaFormat::Hot,
-            owners_block_format: OwnersBlockFormat::LocalIndex,
-            index_block_format: IndexBlockFormat::AddressAndBlockOffsetOnly,
+            owners_block_format: OwnersBlockFormat::AddressesOnly,
+            index_block_format: IndexBlockFormat::AddressesThenOffsets,
             account_block_format: AccountBlockFormat::AlignedRaw,
             account_entry_count: 300,
             account_meta_entry_size: 24,
@@ -372,8 +342,8 @@ mod tests {
 
         // Persist the expected footer.
         {
-            let file = TieredStorageFile::new_writable(&path.path).unwrap();
-            expected_footer.write_footer_block(&file).unwrap();
+            let mut file = TieredWritableFile::new(&path.path).unwrap();
+            expected_footer.write_footer_block(&mut file).unwrap();
         }
 
         // Reopen the same storage, and expect the persisted footer is
@@ -421,7 +391,7 @@ mod tests {
             let mut footer = TieredStorageFooter::default();
             unsafe {
                 std::ptr::write(
-                    &mut footer.account_meta_format as *mut _ as *mut u16,
+                    ptr::from_mut(&mut footer.account_meta_format).cast::<u16>(),
                     0xBAD0,
                 );
             }
@@ -437,7 +407,7 @@ mod tests {
             let mut footer = TieredStorageFooter::default();
             unsafe {
                 std::ptr::write(
-                    &mut footer.owners_block_format as *mut _ as *mut u16,
+                    ptr::from_mut(&mut footer.owners_block_format).cast::<u16>(),
                     0xBAD0,
                 );
             }
@@ -452,7 +422,10 @@ mod tests {
         {
             let mut footer = TieredStorageFooter::default();
             unsafe {
-                std::ptr::write(&mut footer.index_block_format as *mut _ as *mut u16, 0xBAD0);
+                std::ptr::write(
+                    ptr::from_mut(&mut footer.index_block_format).cast::<u16>(),
+                    0xBAD0,
+                );
             }
             let result = TieredStorageFooter::sanitize(&footer);
             assert!(matches!(
@@ -466,7 +439,7 @@ mod tests {
             let mut footer = TieredStorageFooter::default();
             unsafe {
                 std::ptr::write(
-                    &mut footer.account_block_format as *mut _ as *mut u16,
+                    ptr::from_mut(&mut footer.account_block_format).cast::<u16>(),
                     0xBAD0,
                 );
             }

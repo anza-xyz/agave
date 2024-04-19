@@ -17,6 +17,9 @@ on:
       - "cargo-test-bpf"
       - "cargo-build-sbf"
       - "cargo-test-sbf"
+      - "scripts/build-downstream-anchor-projects.sh"
+      - ".github/scripts/purge-ubuntu-runner.sh"
+      - ".github/scripts/downstream-project-spl-install-deps.sh"
       - ".github/workflows/downstream-project-anchor.yml"
   workflow_call:
     inputs:
@@ -24,6 +27,10 @@ on:
         required: false
         type: string
         default: "master"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   SHELL: /bin/bash
@@ -37,7 +44,7 @@ jobs:
       matrix:
         version: ["v0.29.0"]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - shell: bash
         run: |

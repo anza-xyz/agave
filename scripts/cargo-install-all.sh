@@ -17,7 +17,8 @@ if [[ $OSTYPE == darwin* ]]; then
   fi
 fi
 
-cargo="$("${readlink_cmd}" -f "${here}/../cargo")"
+SOLANA_ROOT="$("${readlink_cmd}" -f "${here}/..")"
+cargo="${SOLANA_ROOT}/cargo"
 
 set -e
 
@@ -90,8 +91,8 @@ if [[ $CI_OS_NAME = windows ]]; then
     cargo-test-bpf
     cargo-test-sbf
     solana
-    solana-install
-    solana-install-init
+    agave-install
+    agave-install-init
     solana-keygen
     solana-stake-accounts
     solana-test-validator
@@ -105,12 +106,12 @@ else
     solana-bench-tps
     solana-faucet
     solana-gossip
-    solana-install
+    agave-install
     solana-keygen
-    solana-ledger-tool
+    agave-ledger-tool
     solana-log-analyzer
     solana-net-shaper
-    solana-validator
+    agave-validator
     rbpf-cli
   )
 
@@ -122,11 +123,11 @@ else
       cargo-test-bpf
       cargo-test-sbf
       solana-dos
-      solana-install-init
+      agave-install-init
       solana-stake-accounts
       solana-test-validator
       solana-tokens
-      solana-watchtower
+      agave-watchtower
     )
   fi
 
@@ -150,15 +151,14 @@ mkdir -p "$installDir/bin"
   # Exclude `spl-token` binary for net.sh builds
   if [[ -z "$validatorOnly" ]]; then
     # shellcheck source=scripts/spl-token-cli-version.sh
-    source "$here"/spl-token-cli-version.sh
+    source "$SOLANA_ROOT"/scripts/spl-token-cli-version.sh
 
     # the patch-related configs are needed for rust 1.69+ on Windows; see Cargo.toml
     # shellcheck disable=SC2086 # Don't want to double quote $rust_version
     "$cargo" $maybeRustVersion \
       --config 'patch.crates-io.ntapi.git="https://github.com/solana-labs/ntapi"' \
       --config 'patch.crates-io.ntapi.rev="97ede981a1777883ff86d142b75024b023f04fad"' \
-      $maybeSplTokenCliVersionArg \
-      install --locked spl-token-cli --root "$installDir"
+      install --locked spl-token-cli --root "$installDir" $maybeSplTokenCliVersionArg
   fi
 )
 

@@ -255,9 +255,9 @@ before the PR can be merged.  Here are the steps:
 name = "solana-<PACKAGE_NAME>"
 version = "0.0.1"
 description = "<DESCRIPTION>"
-authors = ["Solana Labs Maintainers <maintainers@solanalabs.com>"]
-repository = "https://github.com/solana-labs/solana"
-homepage = "https://solana.com/"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz"
 documentation = "https://docs.rs/solana-<PACKAGE_NAME>"
 license = "Apache-2.0"
 edition = "2021"
@@ -315,17 +315,17 @@ Inventing new terms is allowed, but should only be done when the term is widely
 used and understood. Avoid introducing new 3-letter terms, which can be
 confused with 3-letter acronyms.
 
-[Terms currently in use](docs/src/terminology.md)
+[Terms currently in use](https://solana.com/docs/terminology)
 
 
 ## Design Proposals
 
-Solana's architecture is described by docs generated from markdown files in the `docs/src/`
-directory and viewable on the official [Solana Documentation](https://docs.solana.com) website.
+This Solana validator client's architecture is described by docs generated from markdown files in the `docs/src/`
+directory and viewable on the official [Solana Labs Validator Client](https://docs.solanalabs.com) documentation website.
 
 Current design proposals may be viewed on the docs site:
 
-1. [Accepted Proposals](https://docs.solana.com/proposals/accepted-design-proposals)
-2. [Implemented Proposals](https://docs.solana.com/implemented-proposals/implemented-proposals)
+1. [Accepted Proposals](https://docs.solanalabs.com/proposals/accepted-design-proposals)
+2. [Implemented Proposals](https://docs.solanalabs.com/implemented-proposals/implemented-proposals)
 
 New design proposals should follow this guide on [how to submit a design proposal](./docs/src/proposals.md#submit-a-design-proposal).

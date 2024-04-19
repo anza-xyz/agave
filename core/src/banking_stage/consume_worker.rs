@@ -5,10 +5,11 @@ use {
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
     },
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
-    solana_accounts_db::transaction_error_metrics::TransactionErrorMetrics,
+    solana_measure::measure_us,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
     solana_sdk::timing::AtomicInterval,
+    solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -36,7 +37,6 @@ pub(crate) struct ConsumeWorker {
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
-#[allow(dead_code)]
 impl ConsumeWorker {
     pub fn new(
         id: u32,
@@ -66,15 +66,33 @@ impl ConsumeWorker {
     }
 
     fn consume_loop(&self, work: ConsumeWork) -> Result<(), ConsumeWorkerError> {
-        let Some(mut bank) = self.get_consume_bank() else {
+        let (maybe_consume_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+        let Some(mut bank) = maybe_consume_bank else {
+            self.metrics
+                .timing_metrics
+                .wait_for_bank_failure_us
+                .fetch_add(get_bank_us, Ordering::Relaxed);
             return self.retry_drain(work);
         };
+        self.metrics
+            .timing_metrics
+            .wait_for_bank_success_us
+            .fetch_add(get_bank_us, Ordering::Relaxed);
 
         for work in try_drain_iter(work, &self.consume_receiver) {
             if bank.is_complete() {
-                if let Some(new_bank) = self.get_consume_bank() {
+                let (maybe_new_bank, get_bank_us) = measure_us!(self.get_consume_bank());
+                if let Some(new_bank) = maybe_new_bank {
+                    self.metrics
+                        .timing_metrics
+                        .wait_for_bank_success_us
+                        .fetch_add(get_bank_us, Ordering::Relaxed);
                     bank = new_bank;
                 } else {
+                    self.metrics
+                        .timing_metrics
+                        .wait_for_bank_failure_us
+                        .fetch_add(get_bank_us, Ordering::Relaxed);
                     return self.retry_drain(work);
                 }
             }
@@ -151,7 +169,7 @@ fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T>
 /// since the consume worker thread is sleeping unless there is work to be
 /// done.
 pub(crate) struct ConsumeWorkerMetrics {
-    id: u32,
+    id: String,
     interval: AtomicInterval,
     has_data: AtomicBool,
 
@@ -167,15 +185,15 @@ impl ConsumeWorkerMetrics {
         if self.interval.should_update(REPORT_INTERVAL_MS)
             && self.has_data.swap(false, Ordering::Relaxed)
         {
-            self.count_metrics.report_and_reset(self.id);
-            self.timing_metrics.report_and_reset(self.id);
-            self.error_metrics.report_and_reset(self.id);
+            self.count_metrics.report_and_reset(&self.id);
+            self.timing_metrics.report_and_reset(&self.id);
+            self.error_metrics.report_and_reset(&self.id);
         }
     }
 
     fn new(id: u32) -> Self {
         Self {
-            id,
+            id: id.to_string(),
             interval: AtomicInterval::default(),
             has_data: AtomicBool::new(false),
             count_metrics: ConsumeWorkerCountMetrics::default(),
@@ -212,6 +230,8 @@ impl ConsumeWorkerMetrics {
             retryable_transaction_indexes,
             execute_and_commit_timings,
             error_counters,
+            min_prioritization_fees,
+            max_prioritization_fees,
             ..
         }: &ExecuteAndCommitTransactionsOutput,
     ) {
@@ -227,7 +247,20 @@ impl ConsumeWorkerMetrics {
         self.count_metrics
             .retryable_transaction_count
             .fetch_add(retryable_transaction_indexes.len(), Ordering::Relaxed);
-
+        let min_prioritization_fees = self
+            .count_metrics
+            .min_prioritization_fees
+            .fetch_min(*min_prioritization_fees, Ordering::Relaxed);
+        let max_prioritization_fees = self
+            .count_metrics
+            .max_prioritization_fees
+            .fetch_max(*max_prioritization_fees, Ordering::Relaxed);
+        self.count_metrics
+            .min_prioritization_fees
+            .swap(min_prioritization_fees, Ordering::Relaxed);
+        self.count_metrics
+            .max_prioritization_fees
+            .swap(max_prioritization_fees, Ordering::Relaxed);
         self.update_on_execute_and_commit_timings(execute_and_commit_timings);
         self.update_on_error_counters(error_counters);
     }
@@ -368,7 +401,6 @@ impl ConsumeWorkerMetrics {
     }
 }
 
-#[derive(Default)]
 struct ConsumeWorkerCountMetrics {
     transactions_attempted_execution_count: AtomicUsize,
     executed_transactions_count: AtomicUsize,
@@ -376,13 +408,30 @@ struct ConsumeWorkerCountMetrics {
     retryable_transaction_count: AtomicUsize,
     retryable_expired_bank_count: AtomicUsize,
     cost_model_throttled_transactions_count: AtomicUsize,
+    min_prioritization_fees: AtomicU64,
+    max_prioritization_fees: AtomicU64,
+}
+
+impl Default for ConsumeWorkerCountMetrics {
+    fn default() -> Self {
+        Self {
+            transactions_attempted_execution_count: AtomicUsize::default(),
+            executed_transactions_count: AtomicUsize::default(),
+            executed_with_successful_result_count: AtomicUsize::default(),
+            retryable_transaction_count: AtomicUsize::default(),
+            retryable_expired_bank_count: AtomicUsize::default(),
+            cost_model_throttled_transactions_count: AtomicUsize::default(),
+            min_prioritization_fees: AtomicU64::new(u64::MAX),
+            max_prioritization_fees: AtomicU64::default(),
+        }
+    }
 }
 
 impl ConsumeWorkerCountMetrics {
-    fn report_and_reset(&self, id: u32) {
+    fn report_and_reset(&self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_counts",
-            ("id", id, i64),
+            "id" => id,
             (
                 "transactions_attempted_execution_count",
                 self.transactions_attempted_execution_count
@@ -416,6 +465,17 @@ impl ConsumeWorkerCountMetrics {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "min_prioritization_fees",
+                self.min_prioritization_fees
+                    .swap(u64::MAX, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "max_prioritization_fees",
+                self.max_prioritization_fees.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -430,13 +490,15 @@ struct ConsumeWorkerTimingMetrics {
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
+    wait_for_bank_success_us: AtomicU64,
+    wait_for_bank_failure_us: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
-    fn report_and_reset(&self, id: u32) {
+    fn report_and_reset(&self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_timing",
-            ("id", id, i64),
+            "id" => id,
             (
                 "cost_model_us",
                 self.cost_model_us.swap(0, Ordering::Relaxed),
@@ -467,6 +529,16 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "find_and_send_votes_us",
                 self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "wait_for_bank_success_us",
+                self.wait_for_bank_success_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "wait_for_bank_failure_us",
+                self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -501,10 +573,10 @@ struct ConsumeWorkerTransactionErrorMetrics {
 }
 
 impl ConsumeWorkerTransactionErrorMetrics {
-    fn report_and_reset(&self, id: u32) {
+    fn report_and_reset(&self, id: &str) {
         datapoint_info!(
             "banking_stage_worker_error_metrics",
-            ("id", id, i64),
+            "id" => id,
             ("total", self.total.swap(0, Ordering::Relaxed), i64),
             (
                 "account_in_use",
@@ -672,7 +744,6 @@ mod tests {
             bank.clone(),
             Some((4, 4)),
             bank.ticks_per_slot(),
-            &Pubkey::new_unique(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
             &PohConfig::default(),

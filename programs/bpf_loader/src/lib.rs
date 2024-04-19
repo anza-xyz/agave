@@ -10,7 +10,8 @@ use {
         ic_logger_msg, ic_msg,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
-            LoadProgramMetrics, LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET,
+            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
         stable_log,
@@ -34,21 +35,16 @@ use {
         clock::Slot,
         entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
         feature_set::{
-            bpf_account_data_direct_mapping, enable_bpf_loader_extend_program_ix,
-            enable_bpf_loader_set_authority_checked_ix, native_programs_consume_cu,
-            remove_bpf_loader_incorrect_program_id,
+            bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
         },
         instruction::{AccountMeta, InstructionError},
-        loader_instruction::LoaderInstruction,
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        native_loader,
+        loader_v4, native_loader,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
         saturating_add_assign,
         system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
-        transaction_context::{
-            BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-        },
+        transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
     std::{
         cell::RefCell,
@@ -56,7 +52,7 @@ use {
         rc::Rc,
         sync::{atomic::Ordering, Arc},
     },
-    syscalls::create_program_runtime_environment_v1,
+    syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
 };
 
 pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
@@ -73,29 +69,27 @@ pub fn load_program_from_bytes(
     deployment_slot: Slot,
     program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
     reloading: bool,
-) -> Result<LoadedProgram, InstructionError> {
+) -> Result<ProgramCacheEntry, InstructionError> {
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
     let loaded_program = if reloading {
         // Safety: this is safe because the program is being reloaded in the cache.
         unsafe {
-            LoadedProgram::reload(
+            ProgramCacheEntry::reload(
                 loader_key,
                 program_runtime_environment,
                 deployment_slot,
                 effective_slot,
-                None,
                 programdata,
                 account_size,
                 load_program_metrics,
             )
         }
     } else {
-        LoadedProgram::new(
+        ProgramCacheEntry::new(
             loader_key,
             program_runtime_environment,
             deployment_slot,
             effective_slot,
-            None,
             programdata,
             account_size,
             load_program_metrics,
@@ -113,11 +107,16 @@ macro_rules! deploy_program {
      $account_size:expr, $slot:expr, $drop:expr, $new_programdata:expr $(,)?) => {{
         let mut load_program_metrics = LoadProgramMetrics::default();
         let mut register_syscalls_time = Measure::start("register_syscalls_time");
-        let deployment_program_runtime_environment = create_program_runtime_environment_v1(
-            &$invoke_context.feature_set,
-            $invoke_context.get_compute_budget(),
-            true, /* deployment */
-            false, /* debugging_features */
+        let deployment_slot: Slot = $slot;
+        let environments = $invoke_context.get_environments_for_slot(
+            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
+        ).map_err(|e| {
+            // This will never fail since the epoch schedule is already configured.
+            ic_msg!($invoke_context, "Failed to get runtime environment: {}", e);
+            InstructionError::ProgramEnvironmentSetupFailure
+        })?;
+        let deployment_program_runtime_environment = morph_into_deployment_environment_v1(
+            environments.program_runtime_v1.clone(),
         ).map_err(|e| {
             ic_msg!($invoke_context, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
@@ -150,7 +149,7 @@ macro_rules! deploy_program {
             $loader_key,
             $account_size,
             $slot,
-            $invoke_context.programs_modified_by_tx.environments.program_runtime_v1.clone(),
+            environments.program_runtime_v1.clone(),
             true,
         )?;
         if let Some(old_entry) = $invoke_context.find_program_in_cache(&$program_id) {
@@ -168,6 +167,29 @@ macro_rules! deploy_program {
         load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
         $invoke_context.programs_modified_by_tx.replenish($program_id, Arc::new(executor));
     }};
+}
+
+/// Directly deploy a program using a provided invoke context.
+/// This function should only be invoked from the runtime, since it does not
+/// provide any account loads or checks.
+pub fn direct_deploy_program(
+    invoke_context: &mut InvokeContext,
+    program_id: &Pubkey,
+    loader_key: &Pubkey,
+    account_size: usize,
+    elf: &[u8],
+    slot: Slot,
+) -> Result<(), InstructionError> {
+    deploy_program!(
+        invoke_context,
+        *program_id,
+        loader_key,
+        account_size,
+        slot,
+        {},
+        elf,
+    );
+    Ok(())
 }
 
 fn write_program_data(
@@ -199,6 +221,7 @@ pub fn check_loader_id(id: &Pubkey) -> bool {
     bpf_loader::check_id(id)
         || bpf_loader_deprecated::check_id(id)
         || bpf_loader_upgradeable::check_id(id)
+        || loader_v4::check_id(id)
 }
 
 /// Only used in macro, do not use directly!
@@ -377,123 +400,25 @@ pub fn process_instruction_inner(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-
-    if !invoke_context
-        .feature_set
-        .is_active(&remove_bpf_loader_incorrect_program_id::id())
-    {
-        fn get_index_in_transaction(
-            instruction_context: &InstructionContext,
-            index_in_instruction: IndexOfAccount,
-        ) -> Result<IndexOfAccount, InstructionError> {
-            if index_in_instruction < instruction_context.get_number_of_program_accounts() {
-                instruction_context
-                    .get_index_of_program_account_in_transaction(index_in_instruction)
-            } else {
-                instruction_context.get_index_of_instruction_account_in_transaction(
-                    index_in_instruction
-                        .saturating_sub(instruction_context.get_number_of_program_accounts()),
-                )
-            }
-        }
-
-        fn try_borrow_account<'a>(
-            transaction_context: &'a TransactionContext,
-            instruction_context: &'a InstructionContext,
-            index_in_instruction: IndexOfAccount,
-        ) -> Result<BorrowedAccount<'a>, InstructionError> {
-            if index_in_instruction < instruction_context.get_number_of_program_accounts() {
-                instruction_context
-                    .try_borrow_program_account(transaction_context, index_in_instruction)
-            } else {
-                instruction_context.try_borrow_instruction_account(
-                    transaction_context,
-                    index_in_instruction
-                        .saturating_sub(instruction_context.get_number_of_program_accounts()),
-                )
-            }
-        }
-
-        let first_instruction_account = {
-            let borrowed_root_account =
-                instruction_context.try_borrow_program_account(transaction_context, 0)?;
-            let owner_id = borrowed_root_account.get_owner();
-            if native_loader::check_id(owner_id) {
-                1
-            } else {
-                0
-            }
-        };
-        let first_account_key = transaction_context.get_key_of_account_at_index(
-            get_index_in_transaction(instruction_context, first_instruction_account)?,
-        )?;
-        let second_account_key = get_index_in_transaction(
-            instruction_context,
-            first_instruction_account.saturating_add(1),
-        )
-        .and_then(|index_in_transaction| {
-            transaction_context.get_key_of_account_at_index(index_in_transaction)
-        });
-        let program_id = instruction_context.get_last_program_key(transaction_context)?;
-        let program_account_index = if first_account_key == program_id {
-            first_instruction_account
-        } else if second_account_key
-            .map(|key| key == program_id)
-            .unwrap_or(false)
-        {
-            first_instruction_account.saturating_add(1)
-        } else {
-            let first_account = try_borrow_account(
-                transaction_context,
-                instruction_context,
-                first_instruction_account,
-            )?;
-            if first_account.is_executable() {
-                ic_logger_msg!(log_collector, "BPF loader is executable");
-                return Err(Box::new(InstructionError::IncorrectProgramId));
-            }
-            first_instruction_account
-        };
-        let program = try_borrow_account(
-            transaction_context,
-            instruction_context,
-            program_account_index,
-        )?;
-        if program.is_executable() && !check_loader_id(program.get_owner()) {
-            ic_logger_msg!(
-                log_collector,
-                "Executable account not owned by the BPF loader"
-            );
-            return Err(Box::new(InstructionError::IncorrectProgramId));
-        }
-    }
-
     let program_account =
         instruction_context.try_borrow_last_program_account(transaction_context)?;
-
-    // Consume compute units if feature `native_programs_consume_cu` is activated
-    let native_programs_consume_cu = invoke_context
-        .feature_set
-        .is_active(&native_programs_consume_cu::id());
 
     // Program Management Instruction
     if native_loader::check_id(program_account.get_owner()) {
         drop(program_account);
         let program_id = instruction_context.get_last_program_key(transaction_context)?;
         return if bpf_loader_upgradeable::check_id(program_id) {
-            if native_programs_consume_cu {
-                invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
-            }
+            invoke_context.consume_checked(UPGRADEABLE_LOADER_COMPUTE_UNITS)?;
             process_loader_upgradeable_instruction(invoke_context)
         } else if bpf_loader::check_id(program_id) {
-            if native_programs_consume_cu {
-                invoke_context.consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
-            }
-            process_loader_instruction(invoke_context)
+            invoke_context.consume_checked(DEFAULT_LOADER_COMPUTE_UNITS)?;
+            ic_logger_msg!(
+                log_collector,
+                "BPF loader management instructions are no longer supported",
+            );
+            Err(InstructionError::UnsupportedProgramId)
         } else if bpf_loader_deprecated::check_id(program_id) {
-            if native_programs_consume_cu {
-                invoke_context.consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
-            }
+            invoke_context.consume_checked(DEPRECATED_LOADER_COMPUTE_UNITS)?;
             ic_logger_msg!(log_collector, "Deprecated loader is no longer supported");
             Err(InstructionError::UnsupportedProgramId)
         } else {
@@ -526,14 +451,13 @@ pub fn process_instruction_inner(
 
     executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     match &executor.program {
-        LoadedProgramType::FailedVerification(_)
-        | LoadedProgramType::Closed
-        | LoadedProgramType::DelayVisibility => {
+        ProgramCacheEntryType::FailedVerification(_)
+        | ProgramCacheEntryType::Closed
+        | ProgramCacheEntryType::DelayVisibility => {
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn std::error::Error>)
         }
-        LoadedProgramType::LegacyV0(executable) => execute(executable, invoke_context),
-        LoadedProgramType::LegacyV1(executable) => execute(executable, invoke_context),
+        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
         _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -1187,9 +1111,10 @@ fn process_loader_upgradeable_instruction(
                             let clock = invoke_context.get_sysvar_cache().get_clock()?;
                             invoke_context.programs_modified_by_tx.replenish(
                                 program_key,
-                                Arc::new(LoadedProgram::new_tombstone(
+                                Arc::new(ProgramCacheEntry::new_tombstone(
                                     clock.slot,
-                                    LoadedProgramType::Closed,
+                                    ProgramCacheEntryOwner::LoaderV3,
+                                    ProgramCacheEntryType::Closed,
                                 )),
                             );
                         }
@@ -1208,13 +1133,6 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
-            if !invoke_context
-                .feature_set
-                .is_active(&enable_bpf_loader_extend_program_ix::ID)
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
             if additional_bytes == 0 {
                 ic_logger_msg!(log_collector, "Additional bytes must be greater than 0");
                 return Err(InstructionError::InvalidInstructionData);
@@ -1404,54 +1322,10 @@ fn common_close_account(
         instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
     let mut recipient_account =
         instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+
     recipient_account.checked_add_lamports(close_account.get_lamports())?;
     close_account.set_lamports(0)?;
     close_account.set_state(&UpgradeableLoaderState::Uninitialized)?;
-    Ok(())
-}
-
-fn process_loader_instruction(invoke_context: &mut InvokeContext) -> Result<(), InstructionError> {
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    let instruction_data = instruction_context.get_instruction_data();
-    let program_id = instruction_context.get_last_program_key(transaction_context)?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-    if program.get_owner() != program_id {
-        ic_msg!(
-            invoke_context,
-            "Executable account not owned by the BPF loader"
-        );
-        return Err(InstructionError::IncorrectProgramId);
-    }
-    let is_program_signer = program.is_signer();
-    match limited_deserialize(instruction_data)? {
-        LoaderInstruction::Write { offset, bytes } => {
-            if !is_program_signer {
-                ic_msg!(invoke_context, "Program account did not sign");
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-            drop(program);
-            write_program_data(offset as usize, &bytes, invoke_context)?;
-        }
-        LoaderInstruction::Finalize => {
-            if !is_program_signer {
-                ic_msg!(invoke_context, "key[0] did not sign the transaction");
-                return Err(InstructionError::MissingRequiredSignature);
-            }
-            deploy_program!(
-                invoke_context,
-                *program.get_key(),
-                program.get_owner(),
-                program.get_data().len(),
-                invoke_context.programs_loaded_for_tx_batch.slot(),
-                {},
-                program.get_data(),
-            );
-            program.set_executable(true)?;
-            ic_msg!(invoke_context, "Finalized account {:?}", program.get_key());
-        }
-    }
-
     Ok(())
 }
 
@@ -1691,6 +1565,7 @@ mod tests {
             },
             account_utils::StateMut,
             clock::Clock,
+            epoch_schedule::EpochSchedule,
             instruction::{AccountMeta, InstructionError},
             pubkey::Pubkey,
             rent::Rent,
@@ -1748,137 +1623,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bpf_loader_write() {
-        let loader_id = bpf_loader::id();
-        let program_id = Pubkey::new_unique();
-        let mut program_account = AccountSharedData::new(1, 0, &loader_id);
-        let instruction_data = bincode::serialize(&LoaderInstruction::Write {
-            offset: 3,
-            bytes: vec![1, 2, 3],
-        })
-        .unwrap();
-
-        // Case: No program account
-        process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            Vec::new(),
-            Vec::new(),
-            Err(InstructionError::NotEnoughAccountKeys),
-        );
-
-        // Case: Not signed
-        process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            vec![(program_id, program_account.clone())],
-            vec![AccountMeta {
-                pubkey: program_id,
-                is_signer: false,
-                is_writable: true,
-            }],
-            Err(InstructionError::MissingRequiredSignature),
-        );
-
-        // Case: Write bytes to an offset
-        program_account.set_data(vec![0; 6]);
-        let accounts = process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            vec![(program_id, program_account.clone())],
-            vec![AccountMeta {
-                pubkey: program_id,
-                is_signer: true,
-                is_writable: true,
-            }],
-            Ok(()),
-        );
-        assert_eq!(&vec![0, 0, 0, 1, 2, 3], accounts.first().unwrap().data());
-
-        // Case: Overflow
-        program_account.set_data(vec![0; 5]);
-        process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            vec![(program_id, program_account)],
-            vec![AccountMeta {
-                pubkey: program_id,
-                is_signer: true,
-                is_writable: true,
-            }],
-            Err(InstructionError::AccountDataTooSmall),
-        );
-    }
-
-    #[test]
-    fn test_bpf_loader_finalize() {
-        let loader_id = bpf_loader::id();
-        let program_id = Pubkey::new_unique();
-        let mut program_account =
-            load_program_account_from_elf(&loader_id, "test_elfs/out/noop_aligned.so");
-        program_account.set_executable(false);
-        let instruction_data = bincode::serialize(&LoaderInstruction::Finalize).unwrap();
-
-        // Case: No program account
-        process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            Vec::new(),
-            Vec::new(),
-            Err(InstructionError::NotEnoughAccountKeys),
-        );
-
-        // Case: Not signed
-        process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            vec![(program_id, program_account.clone())],
-            vec![AccountMeta {
-                pubkey: program_id,
-                is_signer: false,
-                is_writable: true,
-            }],
-            Err(InstructionError::MissingRequiredSignature),
-        );
-
-        // Case: Finalize
-        let accounts = process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            vec![(program_id, program_account.clone())],
-            vec![AccountMeta {
-                pubkey: program_id,
-                is_signer: true,
-                is_writable: true,
-            }],
-            Ok(()),
-        );
-        assert!(accounts.first().unwrap().executable());
-
-        // Case: Finalize bad ELF
-        *program_account.data_as_mut_slice().get_mut(0).unwrap() = 0;
-        process_instruction(
-            &loader_id,
-            &[],
-            &instruction_data,
-            vec![(program_id, program_account)],
-            vec![AccountMeta {
-                pubkey: program_id,
-                is_signer: true,
-                is_writable: true,
-            }],
-            Err(InstructionError::InvalidAccountData),
-        );
-    }
-
-    #[test]
     fn test_bpf_loader_invoke_main() {
         let loader_id = bpf_loader::id();
         let program_id = Pubkey::new_unique();
@@ -1899,7 +1643,7 @@ mod tests {
             &[],
             Vec::new(),
             Vec::new(),
-            Err(InstructionError::NotEnoughAccountKeys),
+            Err(InstructionError::UnsupportedProgramId),
         );
 
         // Case: Only a program account
@@ -4009,18 +3753,22 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_upgrade() {
-        let transaction_accounts = vec![];
+        let transaction_accounts = vec![(
+            sysvar::epoch_schedule::id(),
+            create_account_for_test(&EpochSchedule::default()),
+        )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
-        let program = LoadedProgram {
-            program: LoadedProgramType::Unloaded(env),
+        let program = ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            maybe_expiration_slot: None,
             tx_usage_counter: AtomicU64::new(100),
             ix_usage_counter: AtomicU64::new(100),
+            latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
             .programs_modified_by_tx
@@ -4049,18 +3797,22 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_non_upgrade() {
-        let transaction_accounts = vec![];
+        let transaction_accounts = vec![(
+            sysvar::epoch_schedule::id(),
+            create_account_for_test(&EpochSchedule::default()),
+        )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
-        let program = LoadedProgram {
-            program: LoadedProgramType::Unloaded(env),
+        let program = ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
-            maybe_expiration_slot: None,
             tx_usage_counter: AtomicU64::new(100),
             ix_usage_counter: AtomicU64::new(100),
+            latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
             .programs_modified_by_tx

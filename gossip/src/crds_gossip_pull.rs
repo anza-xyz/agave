@@ -22,13 +22,12 @@ use {
         legacy_contact_info::LegacyContactInfo as ContactInfo,
         ping_pong::PingCache,
     },
-    itertools::Itertools,
     rand::{
         distributions::{Distribution, WeightedIndex},
         Rng,
     },
     rayon::{prelude::*, ThreadPool},
-    solana_bloom::bloom::{AtomicBloom, Bloom},
+    solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_sdk::{
         hash::{hash, Hash},
         native_token::LAMPORTS_PER_SOL,
@@ -37,7 +36,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
         convert::TryInto,
         iter::{repeat, repeat_with},
         net::SocketAddr,
@@ -141,7 +140,7 @@ impl CrdsFilter {
 
 /// A vector of crds filters that together hold a complete set of Hashes.
 struct CrdsFilterSet {
-    filters: Vec<Option<AtomicBloom<Hash>>>,
+    filters: Vec<Option<ConcurrentBloom<Hash>>>,
     mask_bits: u32,
 }
 
@@ -159,7 +158,7 @@ impl CrdsFilterSet {
             let k = rng.gen_range(0..indices.len());
             let k = indices.swap_remove(k);
             let filter = Bloom::random(max_items as usize, FALSE_RATE, max_bits as usize);
-            filters[k] = Some(AtomicBloom::<Hash>::from(filter));
+            filters[k] = Some(ConcurrentBloom::<Hash>::from(filter));
         }
         Self { filters, mask_bits }
     }
@@ -238,7 +237,7 @@ impl CrdsGossipPull {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<HashMap<ContactInfo, Vec<CrdsFilter>>, CrdsGossipError> {
+    ) -> Result<Vec<(ContactInfo, Vec<CrdsFilter>)>, CrdsGossipError> {
         let mut rng = rand::thread_rng();
         // Active and valid gossip nodes with matching shred-version.
         let nodes = crds_gossip::get_gossip_nodes(
@@ -281,8 +280,17 @@ impl CrdsGossipPull {
         let filters = self.build_crds_filters(thread_pool, crds, bloom_size);
         // Associate each pull-request filter with a randomly selected peer.
         let dist = WeightedIndex::new(weights).unwrap();
-        let nodes = repeat_with(|| nodes[dist.sample(&mut rng)].clone());
-        Ok(nodes.zip(filters).into_group_map())
+        let out = filters.into_iter().fold(HashMap::new(), |mut out, filter| {
+            let node = &nodes[dist.sample(&mut rng)];
+            match out.entry(*node.pubkey()) {
+                Entry::Vacant(entry) => {
+                    entry.insert((node.clone(), vec![filter]));
+                }
+                Entry::Occupied(mut entry) => entry.get_mut().1.push(filter),
+            };
+            out
+        });
+        Ok(out.into_values().collect())
     }
 
     /// Process a pull request
@@ -860,7 +868,7 @@ pub(crate) mod tests {
             &mut pings,
             &SocketAddrSpace::Unspecified,
         );
-        let peers: Vec<_> = req.unwrap().into_keys().collect();
+        let peers: Vec<_> = req.unwrap().into_iter().map(|(node, _)| node).collect();
         assert_eq!(peers, vec![new.contact_info().unwrap().clone()]);
 
         let offline = ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), now);
@@ -884,7 +892,7 @@ pub(crate) mod tests {
         );
         // Even though the offline node should have higher weight, we shouldn't request from it
         // until we receive a ping.
-        let peers: Vec<_> = req.unwrap().into_keys().collect();
+        let peers: Vec<_> = req.unwrap().into_iter().map(|(node, _)| node).collect();
         assert_eq!(peers, vec![new.contact_info().unwrap().clone()]);
     }
 
@@ -939,7 +947,7 @@ pub(crate) mod tests {
                     &SocketAddrSpace::Unspecified,
                 )
                 .unwrap();
-            requests.into_keys()
+            requests.into_iter().map(|(node, _)| node)
         })
         .flatten()
         .take(100)
@@ -990,7 +998,7 @@ pub(crate) mod tests {
         );
 
         let dest_crds = RwLock::<Crds>::default();
-        let filters = req.unwrap().into_values().flatten();
+        let filters = req.unwrap().into_iter().flat_map(|(_, filters)| filters);
         let mut filters: Vec<_> = filters.into_iter().map(|f| (caller.clone(), f)).collect();
         let rsp = CrdsGossipPull::generate_pull_responses(
             &thread_pool,
@@ -1090,7 +1098,7 @@ pub(crate) mod tests {
         );
 
         let dest_crds = RwLock::<Crds>::default();
-        let filters = req.unwrap().into_values().flatten();
+        let filters = req.unwrap().into_iter().flat_map(|(_, filters)| filters);
         let filters: Vec<_> = filters.into_iter().map(|f| (caller.clone(), f)).collect();
         let rsp = CrdsGossipPull::generate_pull_responses(
             &thread_pool,
@@ -1180,7 +1188,7 @@ pub(crate) mod tests {
                 &mut pings,
                 &SocketAddrSpace::Unspecified,
             );
-            let filters = req.unwrap().into_values().flatten();
+            let filters = req.unwrap().into_iter().flat_map(|(_, filters)| filters);
             let filters: Vec<_> = filters.into_iter().map(|f| (caller.clone(), f)).collect();
             let rsp = CrdsGossipPull::generate_pull_responses(
                 &thread_pool,

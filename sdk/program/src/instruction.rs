@@ -28,9 +28,8 @@ use {
 /// an error be consistent across software versions.  For example, it is
 /// dangerous to include error strings from 3rd party crates because they could
 /// change at any time and changes to them are difficult to detect.
-#[derive(
-    Serialize, Deserialize, Debug, Error, PartialEq, Eq, Clone, AbiExample, AbiEnumVisitor,
-)]
+#[cfg_attr(not(target_os = "solana"), derive(AbiExample, AbiEnumVisitor))]
+#[derive(Serialize, Deserialize, Debug, Error, PartialEq, Eq, Clone)]
 pub enum InstructionError {
     /// Deprecated! Use CustomError instead!
     /// The program instruction returned an error
@@ -274,7 +273,7 @@ pub enum InstructionError {
 /// clients. Instructions are also used to describe [cross-program
 /// invocations][cpi].
 ///
-/// [cpi]: https://docs.solana.com/developing/programming-model/calling-between-programs
+/// [cpi]: https://solana.com/docs/core/cpi
 ///
 /// During execution, a program will receive a list of account data as one of
 /// its arguments, in the same order as specified during `Instruction`
@@ -347,7 +346,7 @@ impl Instruction {
     /// `program_id` is the address of the program that will execute the instruction.
     /// `accounts` contains a description of all accounts that may be accessed by the program.
     ///
-    /// Borsh serialization is often prefered over bincode as it has a stable
+    /// Borsh serialization is often preferred over bincode as it has a stable
     /// [specification] and an [implementation in JavaScript][jsb], neither of
     /// which are true of bincode.
     ///

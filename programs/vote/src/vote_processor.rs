@@ -9,6 +9,7 @@ use {
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_sdk::{
+        feature_set,
         instruction::InstructionError,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
@@ -192,7 +193,26 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 &invoke_context.feature_set,
             )
         }
-
+        VoteInstruction::TowerSync(tower_sync)
+        | VoteInstruction::TowerSyncSwitch(tower_sync, _) => {
+            if !invoke_context
+                .feature_set
+                .is_active(&feature_set::enable_tower_sync_ix::id())
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+            let sysvar_cache = invoke_context.get_sysvar_cache();
+            let slot_hashes = sysvar_cache.get_slot_hashes()?;
+            let clock = sysvar_cache.get_clock()?;
+            vote_state::process_tower_sync(
+                &mut me,
+                slot_hashes.slot_hashes(),
+                &clock,
+                tower_sync,
+                &signers,
+                &invoke_context.feature_set,
+            )
+        }
         VoteInstruction::Withdraw(lamports) => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let rent_sysvar = invoke_context.get_sysvar_cache().get_rent()?;
@@ -246,7 +266,7 @@ mod tests {
                 vote_switch, withdraw, CreateVoteAccountConfig, VoteInstruction,
             },
             vote_state::{
-                self, Lockout, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
+                self, Lockout, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
                 VoteAuthorizeWithSeedArgs, VoteInit, VoteState, VoteStateUpdate, VoteStateVersions,
             },
         },
@@ -263,6 +283,7 @@ mod tests {
                 self, clock::Clock, epoch_schedule::EpochSchedule, rent::Rent,
                 slot_hashes::SlotHashes,
             },
+            vote::instruction::{tower_sync, tower_sync_switch},
         },
         std::{collections::HashSet, str::FromStr},
     };
@@ -479,11 +500,12 @@ mod tests {
         (vote_pubkey, vote_account_with_epoch_credits)
     }
 
-    /// Returns Vec of serialized VoteInstruction and flag indicating if it is a vote state update
+    /// Returns Vec of serialized VoteInstruction and flag indicating if it is a vote state proposal
     /// variant, along with the original vote
     fn create_serialized_votes() -> (Vote, Vec<(Vec<u8>, bool)>) {
         let vote = Vote::new(vec![1], Hash::default());
         let vote_state_update = VoteStateUpdate::from(vec![(1, 1)]);
+        let tower_sync = TowerSync::from(vec![(1, 1)]);
         (
             vote.clone(),
             vec![
@@ -495,6 +517,10 @@ mod tests {
                 ),
                 (
                     serialize(&VoteInstruction::CompactUpdateVoteState(vote_state_update)).unwrap(),
+                    true,
+                ),
+                (
+                    serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap(),
                     true,
                 ),
             ],
@@ -1731,6 +1757,14 @@ mod tests {
             ),
             Err(InstructionError::InvalidAccountOwner),
         );
+        process_instruction_as_one_arg(
+            &tower_sync(
+                &invalid_vote_state_pubkey(),
+                &Pubkey::default(),
+                TowerSync::default(),
+            ),
+            Err(InstructionError::InvalidAccountOwner),
+        );
     }
 
     #[test]
@@ -1893,12 +1927,24 @@ mod tests {
             ),
             Err(InstructionError::InvalidAccountData),
         );
-
         process_instruction_as_one_arg(
             &compact_update_vote_state_switch(
                 &Pubkey::default(),
                 &Pubkey::default(),
                 VoteStateUpdate::default(),
+                Hash::default(),
+            ),
+            Err(InstructionError::InvalidAccountData),
+        );
+        process_instruction_as_one_arg(
+            &tower_sync(&Pubkey::default(), &Pubkey::default(), TowerSync::default()),
+            Err(InstructionError::InvalidAccountData),
+        );
+        process_instruction_as_one_arg(
+            &tower_sync_switch(
+                &Pubkey::default(),
+                &Pubkey::default(),
+                TowerSync::default(),
                 Hash::default(),
             ),
             Err(InstructionError::InvalidAccountData),

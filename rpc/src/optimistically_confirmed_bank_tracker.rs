@@ -235,7 +235,7 @@ impl OptimisticallyConfirmedBankTracker {
     }
 
     fn notify_new_root_slots(
-        roots: &mut Vec<Slot>,
+        roots: &mut [Slot],
         newest_root_slot: &mut Slot,
         slot_notification_subscribers: &Option<Arc<RwLock<Vec<SlotNotificationSender>>>>,
     ) {
@@ -607,7 +607,8 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(7, &AbsRequestSender::default(), None);
+            .set_root(7, &AbsRequestSender::default(), None)
+            .unwrap();
         OptimisticallyConfirmedBankTracker::process_notification(
             BankNotification::OptimisticallyConfirmed(6),
             &bank_forks,

@@ -19,6 +19,7 @@ use {
             AccountKeys, Message, MessageHeader, VersionedMessage,
         },
         pubkey::Pubkey,
+        reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
         transaction::{
             Result as TransactionResult, Transaction, TransactionError, TransactionVersion,
@@ -230,6 +231,27 @@ pub struct InnerInstruction {
     pub stack_height: Option<u32>,
 }
 
+/// Maps a list of inner instructions from `solana_sdk` into a list of this
+/// crate's representation of inner instructions (with instruction indices).
+pub fn map_inner_instructions(
+    inner_instructions: solana_sdk::inner_instruction::InnerInstructionsList,
+) -> impl Iterator<Item = InnerInstructions> {
+    inner_instructions
+        .into_iter()
+        .enumerate()
+        .map(|(index, instructions)| InnerInstructions {
+            index: index as u8,
+            instructions: instructions
+                .into_iter()
+                .map(|info| InnerInstruction {
+                    stack_height: Some(u32::from(info.stack_height)),
+                    instruction: info.instruction,
+                })
+                .collect(),
+        })
+        .filter(|i| !i.instructions.is_empty())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiInnerInstructions {
@@ -240,7 +262,7 @@ pub struct UiInnerInstructions {
 }
 
 impl UiInnerInstructions {
-    fn parse(inner_instructions: InnerInstructions, account_keys: &AccountKeys) -> Self {
+    pub fn parse(inner_instructions: InnerInstructions, account_keys: &AccountKeys) -> Self {
         Self {
             index: inner_instructions.index,
             instructions: inner_instructions
@@ -959,12 +981,16 @@ impl VersionedTransactionWithStatusMeta {
         show_rewards: bool,
     ) -> Result<EncodedTransactionWithStatusMeta, EncodeError> {
         let version = self.validate_version(max_supported_transaction_version)?;
+        let reserved_account_keys = ReservedAccountKeys::new_all_activated();
 
         let account_keys = match &self.transaction.message {
             VersionedMessage::Legacy(message) => parse_legacy_message_accounts(message),
             VersionedMessage::V0(message) => {
-                let loaded_message =
-                    LoadedMessage::new_borrowed(message, &self.meta.loaded_addresses);
+                let loaded_message = LoadedMessage::new_borrowed(
+                    message,
+                    &self.meta.loaded_addresses,
+                    &reserved_account_keys.active,
+                );
                 parse_v0_message_accounts(&loaded_message)
             }
         };
@@ -1207,8 +1233,13 @@ impl EncodableWithMeta for v0::Message {
         meta: &TransactionStatusMeta,
     ) -> Self::Encoded {
         if encoding == UiTransactionEncoding::JsonParsed {
+            let reserved_account_keys = ReservedAccountKeys::new_all_activated();
             let account_keys = AccountKeys::new(&self.account_keys, Some(&meta.loaded_addresses));
-            let loaded_message = LoadedMessage::new_borrowed(self, &meta.loaded_addresses);
+            let loaded_message = LoadedMessage::new_borrowed(
+                self,
+                &meta.loaded_addresses,
+                &reserved_account_keys.active,
+            );
             UiMessage::Parsed(UiParsedMessage {
                 account_keys: parse_v0_message_accounts(&loaded_message),
                 recent_blockhash: self.recent_blockhash.to_string(),

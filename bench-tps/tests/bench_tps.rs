@@ -7,16 +7,15 @@ use {
         cli::{Config, InstructionPaddingConfig},
         send_batch::generate_durable_nonce_accounts,
     },
-    solana_client::{
-        thin_client::ThinClient,
-        tpu_client::{TpuClient, TpuClientConfig},
-    },
+    solana_connection_cache::connection_cache::NewConnectionConfig,
     solana_core::validator::ValidatorConfig,
     solana_faucet::faucet::run_local_faucet,
     solana_local_cluster::{
+        cluster::Cluster,
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::make_identical_validator_configs,
     },
+    solana_quic_client::{QuicConfig, QuicConnectionManager},
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
@@ -28,6 +27,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidatorGenesis,
+    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{sync::Arc, time::Duration},
 };
 
@@ -78,14 +78,9 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     cluster.transfer(&cluster.funding_keypair, &faucet_pubkey, 100_000_000);
 
-    let client = Arc::new(ThinClient::new(
-        cluster.entry_point_info.rpc().unwrap(),
-        cluster
-            .entry_point_info
-            .tpu(cluster.connection_cache.protocol())
-            .unwrap(),
-        cluster.connection_cache.clone(),
-    ));
+    let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
+        panic!("Could not create TpuClient with Quic Cache {err:?}");
+    }));
 
     let lamports_per_account = 100;
 
@@ -95,6 +90,7 @@ fn test_bench_tps_local_cluster(config: Config) {
         &config.id,
         keypair_count,
         lamports_per_account,
+        false,
         false,
     )
     .unwrap();
@@ -130,8 +126,17 @@ fn test_bench_tps_test_validator(config: Config) {
         CommitmentConfig::processed(),
     ));
     let websocket_url = test_validator.rpc_pubsub_url();
-    let client =
-        Arc::new(TpuClient::new(rpc_client, &websocket_url, TpuClientConfig::default()).unwrap());
+
+    let client = Arc::new(
+        TpuClient::new(
+            "tpu_client_quic_bench_tps",
+            rpc_client,
+            &websocket_url,
+            TpuClientConfig::default(),
+            QuicConnectionManager::new_with_connection_config(QuicConfig::new().unwrap()),
+        )
+        .expect("Should build Quic Tpu Client."),
+    );
 
     let lamports_per_account = 1000;
 
@@ -141,6 +146,7 @@ fn test_bench_tps_test_validator(config: Config) {
         &config.id,
         keypair_count,
         lamports_per_account,
+        false,
         false,
     )
     .unwrap();

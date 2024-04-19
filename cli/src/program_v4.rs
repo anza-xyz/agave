@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     crate::{
         checks::*,
@@ -395,22 +397,18 @@ pub fn parse_program_v4_subcommand(
                         .pubkey()
                 };
 
-            CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Show {
-                    account_pubkey: pubkey_of(matches, "account"),
-                    authority,
-                    all: matches.is_present("all"),
-                }),
-                signers: vec![],
-            }
+            CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Show {
+                account_pubkey: pubkey_of(matches, "account"),
+                authority,
+                all: matches.is_present("all"),
+            }))
         }
-        ("dump", Some(matches)) => CliCommandInfo {
-            command: CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
+        ("dump", Some(matches)) => {
+            CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
                 account_pubkey: pubkey_of(matches, "account"),
                 output_location: matches.value_of("output_location").unwrap().to_string(),
-            }),
-            signers: vec![],
-        },
+            }))
+        }
         _ => unreachable!(),
     };
     Ok(response)
@@ -636,6 +634,7 @@ pub fn process_deploy_program(
 
     let program_id = CliProgramId {
         program_id: program_address.to_string(),
+        signature: None,
     };
     Ok(config.output_format.formatted_string(&program_id))
 }
@@ -690,6 +689,7 @@ fn process_undeploy_program(
 
     let program_id = CliProgramId {
         program_id: program_address.to_string(),
+        signature: None,
     };
     Ok(config.output_format.formatted_string(&program_id))
 }
@@ -716,6 +716,7 @@ fn process_finalize_program(
 
     let program_id = CliProgramId {
         program_id: program_address.to_string(),
+        signature: None,
     };
     Ok(config.output_format.formatted_string(&program_id))
 }
@@ -1663,9 +1664,9 @@ mod tests {
                     authority_signer_index: 2,
                 }),
                 signers: vec![
-                    read_keypair_file(&keypair_file).unwrap().into(),
-                    read_keypair_file(&program_keypair_file).unwrap().into(),
-                    read_keypair_file(&authority_keypair_file).unwrap().into()
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&program_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
                 ],
             }
         );
@@ -1709,8 +1710,8 @@ mod tests {
                     buffer_signer_index: None,
                 }),
                 signers: vec![
-                    read_keypair_file(&keypair_file).unwrap().into(),
-                    read_keypair_file(&authority_keypair_file).unwrap().into()
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
                 ],
             }
         );
@@ -1741,9 +1742,9 @@ mod tests {
                     authority_signer_index: 2,
                 }),
                 signers: vec![
-                    read_keypair_file(&keypair_file).unwrap().into(),
-                    read_keypair_file(&buffer_keypair_file).unwrap().into(),
-                    read_keypair_file(&authority_keypair_file).unwrap().into()
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&buffer_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
                 ],
             }
         );
@@ -1784,8 +1785,8 @@ mod tests {
                     authority_signer_index: 1,
                 }),
                 signers: vec![
-                    read_keypair_file(&keypair_file).unwrap().into(),
-                    read_keypair_file(&authority_keypair_file).unwrap().into()
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
                 ],
             }
         );
@@ -1826,8 +1827,8 @@ mod tests {
                     authority_signer_index: 1,
                 }),
                 signers: vec![
-                    read_keypair_file(&keypair_file).unwrap().into(),
-                    read_keypair_file(&authority_keypair_file).unwrap().into()
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
                 ],
             }
         );

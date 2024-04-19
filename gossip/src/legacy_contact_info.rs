@@ -16,9 +16,7 @@ use {
 };
 
 /// Structure representing a node on the network
-#[derive(
-    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, AbiExample, Deserialize, Serialize,
-)]
+#[derive(Clone, Debug, Eq, PartialEq, AbiExample, Deserialize, Serialize)]
 pub struct LegacyContactInfo {
     id: Pubkey,
     /// gossip address
@@ -229,21 +227,6 @@ impl LegacyContactInfo {
     pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
         addr.port() != 0u16 && Self::is_valid_ip(addr.ip()) && socket_addr_space.check(addr)
     }
-
-    pub(crate) fn valid_client_facing_addr(
-        &self,
-        protocol: Protocol,
-        socket_addr_space: &SocketAddrSpace,
-    ) -> Option<(SocketAddr, SocketAddr)> {
-        Some((
-            self.rpc()
-                .ok()
-                .filter(|addr| socket_addr_space.check(addr))?,
-            self.tpu(protocol)
-                .ok()
-                .filter(|addr| socket_addr_space.check(addr))?,
-        ))
-    }
 }
 
 impl TryFrom<&ContactInfo> for LegacyContactInfo {
@@ -340,24 +323,6 @@ mod tests {
         assert!(ci.tpu.ip().is_unspecified());
         assert!(ci.tpu_vote.ip().is_unspecified());
         assert!(ci.serve_repair.ip().is_unspecified());
-    }
-
-    #[test]
-    fn test_valid_client_facing() {
-        let mut ci = LegacyContactInfo::default();
-        assert_eq!(
-            ci.valid_client_facing_addr(Protocol::QUIC, &SocketAddrSpace::Unspecified),
-            None
-        );
-        ci.tpu = socketaddr!(Ipv4Addr::LOCALHOST, 123);
-        assert_eq!(
-            ci.valid_client_facing_addr(Protocol::QUIC, &SocketAddrSpace::Unspecified),
-            None
-        );
-        ci.rpc = socketaddr!(Ipv4Addr::LOCALHOST, 234);
-        assert!(ci
-            .valid_client_facing_addr(Protocol::QUIC, &SocketAddrSpace::Unspecified)
-            .is_some());
     }
 
     #[test]

@@ -20,7 +20,7 @@ use {
             AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService, DroppedSlotsReceiver,
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
-        bank::{epoch_accounts_hash_utils, Bank, BankTestConfig},
+        bank::{epoch_accounts_hash_utils, Bank},
         bank_forks::BankForks,
         genesis_utils::{self, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
@@ -113,10 +113,8 @@ impl TestEnvironment {
             ..snapshot_config
         };
 
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests_with_config(
-            &genesis_config_info.genesis_config,
-            BankTestConfig::default(),
-        ));
+        let bank_forks =
+            BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config_info.genesis_config));
         bank_forks
             .write()
             .unwrap()
@@ -199,8 +197,6 @@ impl BackgroundServices {
             accounts_package_receiver,
             Some(snapshot_package_sender),
             exit.clone(),
-            cluster_info,
-            None,
             snapshot_config.clone(),
         );
 
@@ -299,13 +295,17 @@ fn test_epoch_accounts_hash_basic(test_environment: TestEnvironment) {
         if bank.slot().checked_rem(SET_ROOT_INTERVAL).unwrap() == 0 {
             trace!("rooting bank {}", bank.slot());
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
-            bank_forks.write().unwrap().set_root(
-                bank.slot(),
-                &test_environment
-                    .background_services
-                    .accounts_background_request_sender,
-                None,
-            );
+            bank_forks
+                .write()
+                .unwrap()
+                .set_root(
+                    bank.slot(),
+                    &test_environment
+                        .background_services
+                        .accounts_background_request_sender,
+                    None,
+                )
+                .unwrap();
         }
 
         // To ensure EAH calculations are correct, calculate the accounts hash here, in-band.
@@ -411,13 +411,17 @@ fn test_snapshots_have_expected_epoch_accounts_hash() {
         // Root every bank.  This is what a normal validator does as well.
         // `set_root()` is also what requests snapshots and EAH calculations.
         bank_forks.read().unwrap().prune_program_cache(bank.slot());
-        bank_forks.write().unwrap().set_root(
-            bank.slot(),
-            &test_environment
-                .background_services
-                .accounts_background_request_sender,
-            None,
-        );
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(
+                bank.slot(),
+                &test_environment
+                    .background_services
+                    .accounts_background_request_sender,
+                None,
+            )
+            .unwrap();
 
         // After submitting an EAH calculation request, wait until it gets handled by ABS so that
         // subsequent snapshot requests are not swallowed.
@@ -535,13 +539,17 @@ fn test_background_services_request_handling_for_epoch_accounts_hash() {
         if bank.block_height() == set_root_slot {
             info!("Calling set_root() on bank {}...", bank.slot());
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
-            bank_forks.write().unwrap().set_root(
-                bank.slot(),
-                &test_environment
-                    .background_services
-                    .accounts_background_request_sender,
-                None,
-            );
+            bank_forks
+                .write()
+                .unwrap()
+                .set_root(
+                    bank.slot(),
+                    &test_environment
+                        .background_services
+                        .accounts_background_request_sender,
+                    None,
+                )
+                .unwrap();
             info!("Calling set_root() on bank {}... DONE", bank.slot());
 
             // wait until eah is valid
@@ -592,13 +600,17 @@ fn test_epoch_accounts_hash_and_warping() {
         epoch_schedule.get_first_slot_in_epoch(bank.epoch() + 1) + eah_stop_offset;
     // have to set root here so that we can flush the write cache
     bank_forks.read().unwrap().prune_program_cache(bank.slot());
-    bank_forks.write().unwrap().set_root(
-        bank.slot(),
-        &test_environment
-            .background_services
-            .accounts_background_request_sender,
-        None,
-    );
+    bank_forks
+        .write()
+        .unwrap()
+        .set_root(
+            bank.slot(),
+            &test_environment
+                .background_services
+                .accounts_background_request_sender,
+            None,
+        )
+        .unwrap();
     // flush the write cache so warping can calculate the accounts hash from storages
     bank.force_flush_accounts_cache();
     let bank = bank_forks
@@ -618,13 +630,17 @@ fn test_epoch_accounts_hash_and_warping() {
         .insert(Bank::new_from_parent(bank, &Pubkey::default(), slot))
         .clone_without_scheduler();
     bank_forks.read().unwrap().prune_program_cache(bank.slot());
-    bank_forks.write().unwrap().set_root(
-        bank.slot(),
-        &test_environment
-            .background_services
-            .accounts_background_request_sender,
-        None,
-    );
+    bank_forks
+        .write()
+        .unwrap()
+        .set_root(
+            bank.slot(),
+            &test_environment
+                .background_services
+                .accounts_background_request_sender,
+            None,
+        )
+        .unwrap();
     info!("Waiting for epoch accounts hash...");
     _ = bank
         .rc
@@ -658,13 +674,17 @@ fn test_epoch_accounts_hash_and_warping() {
         .insert(Bank::new_from_parent(bank, &Pubkey::default(), slot))
         .clone_without_scheduler();
     bank_forks.read().unwrap().prune_program_cache(bank.slot());
-    bank_forks.write().unwrap().set_root(
-        bank.slot(),
-        &test_environment
-            .background_services
-            .accounts_background_request_sender,
-        None,
-    );
+    bank_forks
+        .write()
+        .unwrap()
+        .set_root(
+            bank.slot(),
+            &test_environment
+                .background_services
+                .accounts_background_request_sender,
+            None,
+        )
+        .unwrap();
     info!("Waiting for epoch accounts hash...");
     _ = bank
         .rc

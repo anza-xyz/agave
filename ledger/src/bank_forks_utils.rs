@@ -80,7 +80,6 @@ pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: Option<&SnapshotConfig>,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -93,7 +92,6 @@ pub fn load(
         genesis_config,
         blockstore,
         account_paths,
-        shrink_paths,
         snapshot_config,
         &process_options,
         cache_block_meta_sender,
@@ -121,7 +119,6 @@ pub fn load_bank_forks(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: Option<&SnapshotConfig>,
     process_options: &ProcessOptions,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
@@ -181,7 +178,6 @@ pub fn load_bank_forks(
                 incremental_snapshot_archive_info,
                 genesis_config,
                 account_paths,
-                shrink_paths,
                 snapshot_config,
                 process_options,
                 accounts_update_notifier,
@@ -231,7 +227,6 @@ fn bank_forks_from_snapshot(
     incremental_snapshot_archive_info: Option<IncrementalSnapshotArchiveInfo>,
     genesis_config: &GenesisConfig,
     account_paths: Vec<PathBuf>,
-    shrink_paths: Option<Vec<PathBuf>>,
     snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
@@ -249,25 +244,66 @@ fn bank_forks_from_snapshot(
             .map(SnapshotArchiveInfoGetter::slot)
             .unwrap_or(0),
     );
-    let latest_bank_snapshot =
-        snapshot_utils::get_highest_bank_snapshot_post(&snapshot_config.bank_snapshots_dir);
 
-    let will_startup_from_snapshot_archives = match process_options.use_snapshot_archives_at_startup
-    {
-        UseSnapshotArchivesAtStartup::Always => true,
-        UseSnapshotArchivesAtStartup::Never => false,
-        UseSnapshotArchivesAtStartup::WhenNewest => latest_bank_snapshot
-            .as_ref()
-            .map(|bank_snapshot| latest_snapshot_archive_slot > bank_snapshot.slot)
-            .unwrap_or(true),
+    let fastboot_snapshot = match process_options.use_snapshot_archives_at_startup {
+        UseSnapshotArchivesAtStartup::Always => None,
+        UseSnapshotArchivesAtStartup::Never => {
+            let Some(bank_snapshot) =
+                snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config)
+            else {
+                return Err(BankForksUtilsError::NoBankSnapshotDirectory {
+                    flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
+                    value: UseSnapshotArchivesAtStartup::Never.to_string(),
+                });
+            };
+            // If a newer snapshot archive was downloaded, it is possible that its slot is
+            // higher than the local state we will load.  Did the user intend for this?
+            if bank_snapshot.slot < latest_snapshot_archive_slot {
+                warn!(
+                    "Starting up from local state at slot {}, which is *older* than \
+                    the latest snapshot archive at slot {}. If this is not desired, \
+                    change the --{} CLI option to *not* \"{}\" and restart.",
+                    bank_snapshot.slot,
+                    latest_snapshot_archive_slot,
+                    use_snapshot_archives_at_startup::cli::LONG_ARG,
+                    UseSnapshotArchivesAtStartup::Never.to_string(),
+                );
+            }
+            Some(bank_snapshot)
+        }
+        UseSnapshotArchivesAtStartup::WhenNewest => {
+            snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config)
+                .filter(|bank_snapshot| bank_snapshot.slot >= latest_snapshot_archive_slot)
+        }
     };
 
-    let bank = if will_startup_from_snapshot_archives {
+    let bank = if let Some(fastboot_snapshot) = fastboot_snapshot {
+        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_dir(
+            &account_paths,
+            &fastboot_snapshot,
+            genesis_config,
+            &process_options.runtime_config,
+            process_options.debug_keys.clone(),
+            None,
+            process_options.account_indexes.clone(),
+            process_options.limit_load_slot_count_from_snapshot,
+            process_options.shrink_ratio,
+            process_options.verify_index,
+            process_options.accounts_db_config.clone(),
+            accounts_update_notifier,
+            exit,
+        )
+        .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
+            source: err,
+            path: fastboot_snapshot.snapshot_path(),
+        })?;
+        bank
+    } else {
         // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
         // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
         // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
         // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
-        snapshot_utils::purge_old_bank_snapshots(&snapshot_config.bank_snapshots_dir, 0, None);
+        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
 
         let (bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &account_paths,
@@ -298,56 +334,7 @@ fn bank_forks_from_snapshot(
                 .unwrap_or("none".to_string()),
         })?;
         bank
-    } else {
-        let bank_snapshot =
-            latest_bank_snapshot.ok_or_else(|| BankForksUtilsError::NoBankSnapshotDirectory {
-                flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
-                value: UseSnapshotArchivesAtStartup::Never.to_string(),
-            })?;
-
-        // If a newer snapshot archive was downloaded, it is possible that its slot is
-        // higher than the local bank we will load.  Did the user intend for this?
-        if bank_snapshot.slot < latest_snapshot_archive_slot {
-            assert_eq!(
-                process_options.use_snapshot_archives_at_startup,
-                UseSnapshotArchivesAtStartup::Never,
-            );
-            warn!(
-                "Starting up from local state at slot {}, which is *older* than \
-                the latest snapshot archive at slot {}. If this is not desired, \
-                change the --{} CLI option to *not* \"{}\" and restart.",
-                bank_snapshot.slot,
-                latest_snapshot_archive_slot,
-                use_snapshot_archives_at_startup::cli::LONG_ARG,
-                UseSnapshotArchivesAtStartup::Never.to_string(),
-            );
-        }
-
-        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_dir(
-            &account_paths,
-            &bank_snapshot,
-            genesis_config,
-            &process_options.runtime_config,
-            process_options.debug_keys.clone(),
-            None,
-            process_options.account_indexes.clone(),
-            process_options.limit_load_slot_count_from_snapshot,
-            process_options.shrink_ratio,
-            process_options.verify_index,
-            process_options.accounts_db_config.clone(),
-            accounts_update_notifier,
-            exit,
-        )
-        .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
-            source: err,
-            path: bank_snapshot.snapshot_path(),
-        })?;
-        bank
     };
-
-    if let Some(shrink_paths) = shrink_paths {
-        bank.set_shrink_paths(shrink_paths);
-    }
 
     let full_snapshot_hash = FullSnapshotHash((
         full_snapshot_archive_info.slot(),

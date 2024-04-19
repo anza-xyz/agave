@@ -14,9 +14,9 @@ if [[ "$SOLANA_GPU_MISSING" -eq 1 ]]; then
 fi
 
 if [[ -n $SOLANA_CUDA ]]; then
-  program=$solana_validator_cuda
+  program=$agave_validator_cuda
 else
-  program=$solana_validator
+  program=$agave_validator
 fi
 
 no_restart=0
@@ -86,6 +86,9 @@ while [[ -n $1 ]]; do
       args+=("$1" "$2")
       shift 2
     elif [[ $1 == --expected-bank-hash ]]; then
+      args+=("$1" "$2")
+      shift 2
+    elif [[ $1 == --expected-shred-version ]]; then
       args+=("$1" "$2")
       shift 2
     elif [[ $1 == --accounts ]]; then

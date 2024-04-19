@@ -965,7 +965,7 @@ impl ServeRepair {
                 stats.dropped_requests_outbound_bandwidth += 1;
                 continue;
             }
-            // Bypass ping/pong check for requests comming from QUIC endpoint.
+            // Bypass ping/pong check for requests coming from QUIC endpoint.
             if !matches!(&request, RepairProtocol::Pong(_)) && response_sender.is_none() {
                 let (check, ping_pkt) =
                     Self::check_ping_cache(ping_cache, &request, &from_addr, &identity_keypair);
@@ -1384,7 +1384,9 @@ pub(crate) fn get_repair_protocol(_: ClusterType) -> Protocol {
     Protocol::UDP
 }
 
-fn deserialize_request<T>(request: &RemoteRequest) -> std::result::Result<T, bincode::Error>
+pub(crate) fn deserialize_request<T>(
+    request: &RemoteRequest,
+) -> std::result::Result<T, bincode::Error>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -2161,7 +2163,7 @@ mod tests {
         // TODO: The test previously relied on corrupting shred payload
         // size which we no longer want to expose. Current test no longer
         // covers packet size check in repair_response_packet_from_bytes.
-        shreds.remove(0);
+        shreds.retain(|shred| shred.slot() != 1);
         blockstore
             .insert_shreds(shreds, None, false)
             .expect("Expect successful ledger write");
@@ -2190,7 +2192,7 @@ mod tests {
         let expected = vec![repair_response::repair_response_packet(
             &blockstore,
             2,
-            0,
+            31, // shred_index
             &socketaddr_any!(),
             nonce,
         )

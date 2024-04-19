@@ -21,7 +21,6 @@ bytes = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
-eager = { workspace = true }
 etcd-client = { workspace = true, features = ["tls"] }
 futures = { workspace = true }
 histogram = { workspace = true }
@@ -36,7 +35,6 @@ quinn = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
-rcgen = { workspace = true }
 rolling-file = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
@@ -66,9 +64,11 @@ solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-streamer = { workspace = true }
+solana-svm = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-turbine = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -84,7 +84,6 @@ trees = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 fs_extra = { workspace = true }
-raptorq = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`

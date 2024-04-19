@@ -65,7 +65,6 @@ impl VoteSimulator {
         }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
     pub fn fill_bank_forks(
         &mut self,
         forks: Tree<u64>,
@@ -228,6 +227,7 @@ impl VoteSimulator {
             &mut EpochSlotsFrozenSlots::default(),
             &drop_bank_sender,
         )
+        .unwrap()
     }
 
     pub fn create_and_vote_new_branch(

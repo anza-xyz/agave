@@ -2,16 +2,8 @@
 //!
 //! This module is a simple wrapper of the `Aes128GcmSiv` implementation specialized for SPL
 //! token-2022 where the plaintext is always `u64`.
-#[cfg(not(target_os = "solana"))]
 use {
-    aes_gcm_siv::{
-        aead::{Aead, NewAead},
-        Aes128GcmSiv,
-    },
-    rand::{rngs::OsRng, Rng},
-    thiserror::Error,
-};
-use {
+    crate::errors::AuthenticatedEncryptionError,
     base64::{prelude::BASE64_STANDARD, Engine},
     sha3::{Digest, Sha3_512},
     solana_sdk::{
@@ -30,9 +22,17 @@ use {
     subtle::ConstantTimeEq,
     zeroize::Zeroize,
 };
+#[cfg(not(target_os = "solana"))]
+use {
+    aes_gcm_siv::{
+        aead::{Aead, NewAead},
+        Aes128GcmSiv,
+    },
+    rand::{rngs::OsRng, Rng},
+};
 
 /// Byte length of an authenticated encryption secret key
-const AE_KEY_LEN: usize = 16;
+pub const AE_KEY_LEN: usize = 16;
 
 /// Byte length of an authenticated encryption nonce component
 const NONCE_LEN: usize = 12;
@@ -43,18 +43,6 @@ const CIPHERTEXT_LEN: usize = 24;
 /// Byte length of a complete authenticated encryption ciphertext component that includes the
 /// ciphertext and nonce components
 const AE_CIPHERTEXT_LEN: usize = 36;
-
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
-pub enum AuthenticatedEncryptionError {
-    #[error("key derivation method not supported")]
-    DerivationMethodNotSupported,
-    #[error("seed length too short for derivation")]
-    SeedLengthTooShort,
-    #[error("seed length too long for derivation")]
-    SeedLengthTooLong,
-    #[error("failed to deserialize")]
-    Deserialization,
-}
 
 struct AuthenticatedEncryption;
 impl AuthenticatedEncryption {
@@ -102,7 +90,7 @@ impl AuthenticatedEncryption {
     }
 }
 
-#[derive(Debug, Zeroize)]
+#[derive(Debug, Zeroize, Eq, PartialEq)]
 pub struct AeKey([u8; AE_KEY_LEN]);
 impl AeKey {
     /// Deterministically derives an authenticated encryption key from a Solana signer and a public
@@ -210,6 +198,31 @@ impl SeedDerivable for AeKey {
     }
 }
 
+impl From<[u8; AE_KEY_LEN]> for AeKey {
+    fn from(bytes: [u8; AE_KEY_LEN]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<AeKey> for [u8; AE_KEY_LEN] {
+    fn from(key: AeKey) -> Self {
+        key.0
+    }
+}
+
+impl TryFrom<&[u8]> for AeKey {
+    type Error = AuthenticatedEncryptionError;
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != AE_KEY_LEN {
+            return Err(AuthenticatedEncryptionError::Deserialization);
+        }
+        bytes
+            .try_into()
+            .map(Self)
+            .map_err(|_| AuthenticatedEncryptionError::Deserialization)
+    }
+}
+
 /// For the purpose of encrypting balances for the spl token accounts, the nonce and ciphertext
 /// sizes should always be fixed.
 type Nonce = [u8; NONCE_LEN];
@@ -297,5 +310,27 @@ mod tests {
 
         let too_long_seed = vec![0; 65536];
         assert!(AeKey::from_seed(&too_long_seed).is_err());
+    }
+
+    #[test]
+    fn test_aes_key_from() {
+        let key = AeKey::from_seed(&[0; 32]).unwrap();
+        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&[0; 32]).unwrap().into();
+
+        assert_eq!(key, AeKey::from(key_bytes));
+    }
+
+    #[test]
+    fn test_aes_key_try_from() {
+        let key = AeKey::from_seed(&[0; 32]).unwrap();
+        let key_bytes: [u8; AE_KEY_LEN] = AeKey::from_seed(&[0; 32]).unwrap().into();
+
+        assert_eq!(key, AeKey::try_from(key_bytes.as_slice()).unwrap());
+    }
+
+    #[test]
+    fn test_aes_key_try_from_error() {
+        let too_many_bytes = vec![0_u8; 32];
+        assert!(AeKey::try_from(too_many_bytes.as_slice()).is_err());
     }
 }

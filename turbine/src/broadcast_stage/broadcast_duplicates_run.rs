@@ -37,6 +37,7 @@ pub struct BroadcastDuplicatesConfig {
 pub(super) struct BroadcastDuplicatesRun {
     config: BroadcastDuplicatesConfig,
     current_slot: Slot,
+    chained_merkle_root: Hash,
     next_shred_index: u32,
     next_code_index: u32,
     shred_version: u16,
@@ -57,6 +58,7 @@ impl BroadcastDuplicatesRun {
         ));
         Self {
             config,
+            chained_merkle_root: Hash::default(),
             next_shred_index: u32::MAX,
             next_code_index: 0,
             shred_version,
@@ -76,7 +78,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
     fn run(
         &mut self,
         keypair: &Keypair,
-        _blockstore: &Blockstore,
+        blockstore: &Blockstore,
         receiver: &Receiver<WorkingBankEntry>,
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
@@ -87,6 +89,12 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         let last_tick_height = receive_results.last_tick_height;
 
         if bank.slot() != self.current_slot {
+            self.chained_merkle_root = broadcast_utils::get_chained_merkle_root_from_parent(
+                bank.slot(),
+                bank.parent_slot(),
+                blockstore,
+            )
+            .unwrap();
             self.next_shred_index = 0;
             self.next_code_index = 0;
             self.current_slot = bank.slot();
@@ -173,13 +181,16 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
+            Some(self.chained_merkle_root),
             self.next_shred_index,
             self.next_code_index,
-            false, // merkle_variant
+            true, // merkle_variant
             &self.reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
-
+        if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
+            self.chained_merkle_root = shred.merkle_root().unwrap();
+        }
         self.next_shred_index += data_shreds.len() as u32;
         if let Some(index) = coding_shreds.iter().map(Shred::index).max() {
             self.next_code_index = index + 1;
@@ -190,9 +201,10 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     keypair,
                     &[original_last_entry],
                     true,
+                    Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    false, // merkle_variant
+                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
@@ -203,9 +215,10 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     keypair,
                     &duplicate_extra_last_entries,
                     true,
+                    Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    false, // merkle_variant
+                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
@@ -219,7 +232,11 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     sigs,
                 );
 
-                self.next_shred_index += 1;
+                assert_eq!(
+                    original_last_data_shred.len(),
+                    partition_last_data_shred.len()
+                );
+                self.next_shred_index += u32::try_from(original_last_data_shred.len()).unwrap();
                 (original_last_data_shred, partition_last_data_shred)
             });
 

@@ -24,12 +24,7 @@ pub mod dashboard;
 #[cfg(unix)]
 fn redirect_stderr(filename: &str) {
     use std::os::unix::io::AsRawFd;
-    match OpenOptions::new()
-        .write(true)
-        .create(true)
-        .append(true)
-        .open(filename)
-    {
+    match OpenOptions::new().create(true).append(true).open(filename) {
         Ok(file) => unsafe {
             libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO);
         },
@@ -46,10 +41,9 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
         env::set_var("RUST_BACKTRACE", "1")
     }
 
-    let filter = "solana=info";
     match logfile {
         None => {
-            solana_logger::setup_with_default(filter);
+            solana_logger::setup_with_default_filter();
             None
         }
         Some(logfile) => {
@@ -63,7 +57,7 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
                             exit(1);
                         });
 
-                solana_logger::setup_with_default(filter);
+                solana_logger::setup_with_default_filter();
                 redirect_stderr(&logfile);
                 Some(
                     std::thread::Builder::new()
@@ -83,7 +77,7 @@ pub fn redirect_stderr_to_file(logfile: Option<String>) -> Option<JoinHandle<()>
             #[cfg(not(unix))]
             {
                 println!("logrotate is not supported on this platform");
-                solana_logger::setup_file_with_default(&logfile, filter);
+                solana_logger::setup_file_with_default(&logfile, solana_logger::DEFAULT_FILTER);
                 None
             }
         }

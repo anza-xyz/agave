@@ -8,32 +8,31 @@ use {
         create_vm, load_program_from_bytes, serialization::serialize_parameters,
         syscalls::create_program_runtime_environment_v1,
     },
-    solana_clap_utils::input_parsers::pubkeys_of,
-    solana_ledger::{
-        blockstore_options::{AccessType, BlockstoreRecoveryMode},
-        blockstore_processor::ProcessOptions,
-    },
+    solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
+    solana_ledger::{blockstore_options::AccessType, use_snapshot_archives_at_startup},
     solana_program_runtime::{
         invoke_context::InvokeContext,
-        loaded_programs::{LoadProgramMetrics, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET},
+        loaded_programs::{
+            LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
+        },
         with_mock_invoke_context,
     },
     solana_rbpf::{
         assembler::assemble, elf::Executable, static_analysis::Analysis,
         verifier::RequisiteVerifier,
     },
-    solana_runtime::{bank::Bank, runtime_config::RuntimeConfig},
+    solana_runtime::bank::Bank,
     solana_sdk::{
-        account::AccountSharedData,
+        account::{create_account_shared_data_for_test, AccountSharedData},
         account_utils::StateMut,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         pubkey::Pubkey,
         slot_history::Slot,
+        sysvar,
         transaction_context::{IndexOfAccount, InstructionAccount},
     },
     std::{
-        collections::HashSet,
-        fmt::{Debug, Formatter},
+        fmt::{self, Debug, Formatter},
         fs::File,
         io::{Read, Seek, Write},
         path::{Path, PathBuf},
@@ -74,32 +73,8 @@ fn load_accounts(path: &Path) -> Result<Input> {
 }
 
 fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank> {
-    let debug_keys = pubkeys_of(arg_matches, "debug_key")
-        .map(|pubkeys| Arc::new(pubkeys.into_iter().collect::<HashSet<_>>()));
-    let force_update_to_open = arg_matches.is_present("force_update_to_open");
-    let enforce_ulimit_nofile = !arg_matches.is_present("ignore_ulimit_nofile_error");
-    let process_options = ProcessOptions {
-        new_hard_forks: hardforks_of(arg_matches, "hard_forks"),
-        run_verification: false,
-        on_halt_store_hash_raw_data_for_debug: false,
-        run_final_accounts_hash_calc: false,
-        halt_at_slot: value_t!(arg_matches, "halt_at_slot", Slot).ok(),
-        debug_keys,
-        limit_load_slot_count_from_snapshot: value_t!(
-            arg_matches,
-            "limit_load_slot_count_from_snapshot",
-            usize
-        )
-        .ok(),
-        accounts_db_config: Some(get_accounts_db_config(ledger_path, arg_matches)),
-        verify_index: false,
-        allow_dead_slots: arg_matches.is_present("allow_dead_slots"),
-        accounts_db_test_hash_calculation: false,
-        accounts_db_skip_shrink: arg_matches.is_present("accounts_db_skip_shrink"),
-        runtime_config: RuntimeConfig::default(),
-        ..ProcessOptions::default()
-    };
-    let snapshot_archive_path = value_t!(arg_matches, "snapshot_archive_path", String)
+    let process_options = parse_process_options(ledger_path, arg_matches);
+    let snapshot_archive_path = value_t!(arg_matches, "snapshots", String)
         .ok()
         .map(PathBuf::from);
     let incremental_snapshot_archive_path =
@@ -107,18 +82,9 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
             .ok()
             .map(PathBuf::from);
 
-    let wal_recovery_mode = arg_matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
     let genesis_config = open_genesis_config_by(ledger_path, arg_matches);
     info!("genesis hash: {}", genesis_config.hash());
-    let blockstore = open_blockstore(
-        ledger_path,
-        AccessType::Secondary,
-        wal_recovery_mode,
-        force_update_to_open,
-        enforce_ulimit_nofile,
-    );
+    let blockstore = open_blockstore(ledger_path, arg_matches, AccessType::Secondary);
     let (bank_forks, ..) = load_and_process_ledger_or_exit(
         arg_matches,
         &genesis_config,
@@ -150,6 +116,17 @@ impl ProgramSubCommand for App<'_, '_> {
             .takes_value(true)
             .default_value("10485760")
             .help("maximum total uncompressed size of unpacked genesis archive");
+        let use_snapshot_archives_at_startup =
+            Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
+                .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
+                .takes_value(true)
+                .possible_values(use_snapshot_archives_at_startup::cli::POSSIBLE_VALUES)
+                .default_value(
+                    use_snapshot_archives_at_startup::cli::default_value_for_ledger_tool(),
+                )
+                .help(use_snapshot_archives_at_startup::cli::HELP)
+                .long_help(use_snapshot_archives_at_startup::cli::LONG_HELP);
+
         self.subcommand(
             SubCommand::with_name("program")
         .about("Run to test, debug, and analyze on-chain programs.")
@@ -201,6 +178,7 @@ and the following fields are required
                         .default_value("0"),
                 )
                 .arg(&max_genesis_arg)
+                .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("memory")
                         .help("Heap memory for the program to run on")
@@ -263,8 +241,9 @@ struct Output {
     log: Vec<String>,
 }
 
-impl Debug for Output {
+impl fmt::Display for Output {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Program output:")?;
         writeln!(f, "Result: {}", self.result)?;
         writeln!(f, "Instruction Count: {}", self.instruction_count)?;
         writeln!(f, "Execution time: {} us", self.execution_time.as_micros())?;
@@ -274,6 +253,9 @@ impl Debug for Output {
         Ok(())
     }
 }
+
+impl QuietDisplay for Output {}
+impl VerboseDisplay for Output {}
 
 // Replace with std::lazy::Lazy when stabilized.
 // https://github.com/rust-lang/rust/issues/74465
@@ -364,7 +346,7 @@ fn load_program<'a>(
         );
         match result {
             Ok(loaded_program) => match loaded_program.program {
-                LoadedProgramType::LegacyV1(program) => Ok(program),
+                ProgramCacheEntryType::Loaded(program) => Ok(program),
                 _ => unreachable!(),
             },
             Err(err) => Err(format!("Loading executable failed: {err:?}")),
@@ -531,20 +513,22 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
+    transaction_accounts.push((
+        sysvar::epoch_schedule::id(),
+        create_account_shared_data_for_test(bank.epoch_schedule()),
+    ));
     let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
-    let mut loaded_programs = LoadedProgramsForTxBatch::new(
-        bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET,
-        bank.loaded_programs_cache
-            .read()
-            .unwrap()
-            .environments
-            .clone(),
-    );
+    let mut loaded_programs =
+        bank.new_program_cache_for_tx_batch_for_slot(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
     for key in cached_account_keys {
-        loaded_programs.replenish(key, bank.load_program(&key, false, None));
+        loaded_programs.replenish(
+            key,
+            bank.load_program(&key, false, bank.epoch())
+                .expect("Couldn't find program account"),
+        );
         debug!("Loaded program {}", key);
     }
     invoke_context.programs_loaded_for_tx_batch = &loaded_programs;
@@ -612,16 +596,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .get_recorded_content()
             .to_vec(),
     };
-    match matches.value_of("output_format") {
-        Some("json") => {
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
-        }
-        Some("json-compact") => {
-            println!("{}", serde_json::to_string(&output).unwrap());
-        }
-        _ => {
-            println!("Program output:");
-            println!("{output:?}");
-        }
-    }
+    let output_format = OutputFormat::from_matches(matches, "output_format", false);
+    println!("{}", output_format.formatted_string(&output));
 }

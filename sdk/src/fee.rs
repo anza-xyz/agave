@@ -31,6 +31,41 @@ pub struct FeeStructure {
     pub compute_fee_bins: Vec<FeeBin>,
 }
 
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
+pub struct FeeDetails {
+    transaction_fee: u64,
+    prioritization_fee: u64,
+}
+
+impl FeeDetails {
+    pub fn total_fee(&self, remove_rounding_in_fee_calculation: bool) -> u64 {
+        let total_fee = self.transaction_fee.saturating_add(self.prioritization_fee);
+        if remove_rounding_in_fee_calculation {
+            total_fee
+        } else {
+            // backward compatible behavior
+            (total_fee as f64).round() as u64
+        }
+    }
+
+    pub fn accumulate(&mut self, fee_details: &FeeDetails) {
+        self.transaction_fee = self
+            .transaction_fee
+            .saturating_add(fee_details.transaction_fee);
+        self.prioritization_fee = self
+            .prioritization_fee
+            .saturating_add(fee_details.prioritization_fee)
+    }
+
+    pub fn transaction_fee(&self) -> u64 {
+        self.transaction_fee
+    }
+
+    pub fn prioritization_fee(&self) -> u64 {
+        self.prioritization_fee
+    }
+}
+
 pub const ACCOUNT_DATA_COST_PAGE_SIZE: u64 = 32_u64.saturating_mul(1024);
 
 impl FeeStructure {
@@ -75,6 +110,12 @@ impl FeeStructure {
             .saturating_mul(heap_cost)
     }
 
+    /// Backward compatibility - lamports_per_signature == 0 means to clear
+    /// transaction fee to zero
+    pub fn to_clear_transaction_fee(lamports_per_signature: u64) -> bool {
+        lamports_per_signature == 0
+    }
+
     /// Calculate fee for `SanitizedMessage`
     #[cfg(not(target_os = "solana"))]
     pub fn calculate_fee(
@@ -82,20 +123,29 @@ impl FeeStructure {
         message: &SanitizedMessage,
         lamports_per_signature: u64,
         budget_limits: &FeeBudgetLimits,
-        remove_congestion_multiplier: bool,
         include_loaded_account_data_size_in_fee: bool,
+        remove_rounding_in_fee_calculation: bool,
     ) -> u64 {
-        // Fee based on compute units and signatures
-        let congestion_multiplier = if lamports_per_signature == 0 {
-            0.0 // test only
-        } else if remove_congestion_multiplier {
-            1.0 // multiplier that has no effect
+        if Self::to_clear_transaction_fee(lamports_per_signature) {
+            0
         } else {
-            const BASE_CONGESTION: f64 = 5_000.0;
-            let current_congestion = BASE_CONGESTION.max(lamports_per_signature as f64);
-            BASE_CONGESTION / current_congestion
-        };
+            self.calculate_fee_details(
+                message,
+                budget_limits,
+                include_loaded_account_data_size_in_fee,
+            )
+            .total_fee(remove_rounding_in_fee_calculation)
+        }
+    }
 
+    /// Calculate fee details for `SanitizedMessage`
+    #[cfg(not(target_os = "solana"))]
+    pub fn calculate_fee_details(
+        &self,
+        message: &SanitizedMessage,
+        budget_limits: &FeeBudgetLimits,
+        include_loaded_account_data_size_in_fee: bool,
+    ) -> FeeDetails {
         let signature_fee = message
             .num_signatures()
             .saturating_mul(self.lamports_per_signature);
@@ -127,13 +177,12 @@ impl FeeStructure {
                     .unwrap_or_default()
             });
 
-        ((budget_limits
-            .prioritization_fee
-            .saturating_add(signature_fee)
-            .saturating_add(write_lock_fee)
-            .saturating_add(compute_fee) as f64)
-            * congestion_multiplier)
-            .round() as u64
+        FeeDetails {
+            transaction_fee: signature_fee
+                .saturating_add(write_lock_fee)
+                .saturating_add(compute_fee),
+            prioritization_fee: budget_limits.prioritization_fee,
+        }
     }
 }
 
@@ -147,5 +196,57 @@ impl Default for FeeStructure {
 impl ::solana_frozen_abi::abi_example::AbiExample for FeeStructure {
     fn example() -> Self {
         FeeStructure::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_memory_usage_cost() {
+        let heap_cost = 99;
+        const K: usize = 1024;
+
+        // accounts data size are priced in block of 32K, ...
+
+        // ... requesting less than 32K should still be charged as one block
+        assert_eq!(
+            heap_cost,
+            FeeStructure::calculate_memory_usage_cost(31 * K, heap_cost)
+        );
+
+        // ... requesting exact 32K should be charged as one block
+        assert_eq!(
+            heap_cost,
+            FeeStructure::calculate_memory_usage_cost(32 * K, heap_cost)
+        );
+
+        // ... requesting slightly above 32K should be charged as 2 block
+        assert_eq!(
+            heap_cost * 2,
+            FeeStructure::calculate_memory_usage_cost(33 * K, heap_cost)
+        );
+
+        // ... requesting exact 64K should be charged as 2 block
+        assert_eq!(
+            heap_cost * 2,
+            FeeStructure::calculate_memory_usage_cost(64 * K, heap_cost)
+        );
+    }
+
+    #[test]
+    fn test_total_fee_rounding() {
+        // round large `f64` can lost precision, see feature gate:
+        // "Removing unwanted rounding in fee calculation #34982"
+
+        let large_fee_details = FeeDetails {
+            transaction_fee: u64::MAX - 11,
+            prioritization_fee: 1,
+        };
+        let expected_large_fee = u64::MAX - 10;
+
+        assert_eq!(large_fee_details.total_fee(true), expected_large_fee);
+        assert_ne!(large_fee_details.total_fee(false), expected_large_fee);
     }
 }

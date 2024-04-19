@@ -10,6 +10,8 @@ lazy_static! {
         Arc::new(RwLock::new(env_logger::Logger::from_default_env()));
 }
 
+pub const DEFAULT_FILTER: &str = "solana=info,agave=info";
+
 struct LoggerShim {}
 
 impl log::Log for LoggerShim {
@@ -49,6 +51,11 @@ pub fn setup_with_default(filter: &str) {
     replace_logger(logger);
 }
 
+// Configures logging with the `DEFAULT_FILTER` if RUST_LOG is not set
+pub fn setup_with_default_filter() {
+    setup_with_default(DEFAULT_FILTER);
+}
+
 // Configures logging with the default filter "error" if RUST_LOG is not set
 pub fn setup() {
     setup_with_default("error");
@@ -58,7 +65,6 @@ pub fn setup() {
 pub fn setup_file_with_default(logfile: &str, filter: &str) {
     use std::fs::OpenOptions;
     let file = OpenOptions::new()
-        .write(true)
         .create(true)
         .append(true)
         .open(logfile)

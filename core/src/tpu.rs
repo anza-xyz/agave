@@ -19,7 +19,7 @@ use {
     },
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver},
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
@@ -33,7 +33,7 @@ use {
     solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
-        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+        nonblocking::quic::{DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
         quic::{spawn_server, SpawnServerResult, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         streamer::StakedNodes,
     },
@@ -153,20 +153,17 @@ impl Tpu {
             thread: tpu_quic_t,
             key_updater,
         } = spawn_server(
+            "solQuicTpu",
             "quic_streamer_tpu",
             transactions_quic_sockets,
             keypair,
-            cluster_info
-                .my_contact_info()
-                .tpu(Protocol::QUIC)
-                .expect("Operator must spin up node with valid (QUIC) TPU address")
-                .ip(),
             packet_sender,
             exit.clone(),
             MAX_QUIC_CONNECTIONS_PER_PEER,
             staked_nodes.clone(),
             MAX_STAKED_CONNECTIONS,
             MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             tpu_coalesce,
         )
@@ -177,20 +174,17 @@ impl Tpu {
             thread: tpu_forwards_quic_t,
             key_updater: forwards_key_updater,
         } = spawn_server(
+            "solQuicTpuFwd",
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
             keypair,
-            cluster_info
-                .my_contact_info()
-                .tpu_forwards(Protocol::QUIC)
-                .expect("Operator must spin up node with valid (QUIC) TPU-forwards address")
-                .ip(),
             forwarded_packet_sender,
             exit.clone(),
             MAX_QUIC_CONNECTIONS_PER_PEER,
             staked_nodes.clone(),
             MAX_STAKED_CONNECTIONS.saturating_add(MAX_UNSTAKED_CONNECTIONS),
             0, // Prevent unstaked nodes from forwarding transactions
+            DEFAULT_MAX_STREAMS_PER_MS,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             tpu_coalesce,
         )
@@ -198,14 +192,19 @@ impl Tpu {
 
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(non_vote_sender);
-            SigVerifyStage::new(packet_receiver, verifier, "tpu-verifier")
+            SigVerifyStage::new(packet_receiver, verifier, "solSigVerTpu", "tpu-verifier")
         };
 
         let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
 
         let vote_sigverify_stage = {
             let verifier = TransactionSigVerifier::new_reject_non_vote(tpu_vote_sender);
-            SigVerifyStage::new(vote_packet_receiver, verifier, "tpu-vote-verifier")
+            SigVerifyStage::new(
+                vote_packet_receiver,
+                verifier,
+                "solSigVerTpuVot",
+                "tpu-vote-verifier",
+            )
         };
 
         let (gossip_vote_sender, gossip_vote_receiver) =

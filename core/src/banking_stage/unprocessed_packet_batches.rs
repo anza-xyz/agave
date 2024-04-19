@@ -49,8 +49,8 @@ impl PartialOrd for DeserializedPacket {
 impl Ord for DeserializedPacket {
     fn cmp(&self, other: &Self) -> Ordering {
         self.immutable_section()
-            .priority()
-            .cmp(&other.immutable_section().priority())
+            .compute_unit_price()
+            .cmp(&other.immutable_section().compute_unit_price())
     }
 }
 
@@ -193,6 +193,18 @@ impl UnprocessedPacketBatches {
         self.packet_priority_queue.is_empty()
     }
 
+    pub fn get_min_compute_unit_price(&self) -> Option<u64> {
+        self.packet_priority_queue
+            .peek_min()
+            .map(|x| x.compute_unit_price())
+    }
+
+    pub fn get_max_compute_unit_price(&self) -> Option<u64> {
+        self.packet_priority_queue
+            .peek_max()
+            .map(|x| x.compute_unit_price())
+    }
+
     fn push_internal(&mut self, deserialized_packet: DeserializedPacket) {
         // Push into the priority queue
         self.packet_priority_queue
@@ -298,6 +310,7 @@ mod tests {
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
             message::Message,
+            reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signer},
             system_instruction, system_transaction,
             transaction::{SimpleAddressLoader, Transaction},
@@ -317,12 +330,15 @@ mod tests {
         DeserializedPacket::new(packet).unwrap()
     }
 
-    fn packet_with_priority_details(priority: u64, compute_unit_limit: u64) -> DeserializedPacket {
+    fn packet_with_compute_budget_details(
+        compute_unit_price: u64,
+        compute_unit_limit: u64,
+    ) -> DeserializedPacket {
         let from_account = solana_sdk::pubkey::new_rand();
         let tx = Transaction::new_unsigned(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit as u32),
-                ComputeBudgetInstruction::set_compute_unit_price(priority),
+                ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
                 system_instruction::transfer(&from_account, &solana_sdk::pubkey::new_rand(), 1),
             ],
             Some(&from_account),
@@ -348,10 +364,10 @@ mod tests {
     #[test]
     fn test_unprocessed_packet_batches_insert_minimum_packet_over_capacity() {
         let heavier_packet_weight = 2;
-        let heavier_packet = packet_with_priority_details(heavier_packet_weight, 200_000);
+        let heavier_packet = packet_with_compute_budget_details(heavier_packet_weight, 200_000);
 
         let lesser_packet_weight = heavier_packet_weight - 1;
-        let lesser_packet = packet_with_priority_details(lesser_packet_weight, 200_000);
+        let lesser_packet = packet_with_compute_budget_details(lesser_packet_weight, 200_000);
 
         // Test that the heavier packet is actually heavier
         let mut unprocessed_packet_batches = UnprocessedPacketBatches::with_capacity(2);
@@ -475,6 +491,7 @@ mod tests {
                     &Arc::new(FeatureSet::default()),
                     votes_only,
                     SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
                 )
             });
             assert_eq!(2, txs.count());
@@ -485,6 +502,7 @@ mod tests {
                     &Arc::new(FeatureSet::default()),
                     votes_only,
                     SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
                 )
             });
             assert_eq!(0, txs.count());
@@ -504,6 +522,7 @@ mod tests {
                     &Arc::new(FeatureSet::default()),
                     votes_only,
                     SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
                 )
             });
             assert_eq!(3, txs.count());
@@ -514,6 +533,7 @@ mod tests {
                     &Arc::new(FeatureSet::default()),
                     votes_only,
                     SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
                 )
             });
             assert_eq!(2, txs.count());
@@ -533,6 +553,7 @@ mod tests {
                     &Arc::new(FeatureSet::default()),
                     votes_only,
                     SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
                 )
             });
             assert_eq!(3, txs.count());
@@ -543,6 +564,7 @@ mod tests {
                     &Arc::new(FeatureSet::default()),
                     votes_only,
                     SimpleAddressLoader::Disabled,
+                    &ReservedAccountKeys::empty_key_set(),
                 )
             });
             assert_eq!(3, txs.count());

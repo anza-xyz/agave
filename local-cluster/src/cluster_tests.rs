@@ -5,13 +5,16 @@
 use log::*;
 use {
     rand::{thread_rng, Rng},
-    rayon::prelude::*,
+    rayon::{prelude::*, ThreadPool},
     solana_client::{
         connection_cache::{ConnectionCache, Protocol},
         thin_client::ThinClient,
     },
-    solana_core::consensus::VOTE_THRESHOLD_DEPTH,
-    solana_entry::entry::{Entry, EntrySlice},
+    solana_core::consensus::{
+        tower_storage::{FileTowerStorage, SavedTower, SavedTowerVersions, TowerStorage},
+        VOTE_THRESHOLD_DEPTH,
+    },
+    solana_entry::entry::{self, Entry, EntrySlice},
     solana_gossip::{
         cluster_info::{self, ClusterInfo},
         contact_info::{ContactInfo, LegacyContactInfo},
@@ -41,9 +44,9 @@ use {
     solana_vote_program::vote_transaction,
     std::{
         borrow::Borrow,
-        collections::{HashMap, HashSet},
+        collections::{HashMap, HashSet, VecDeque},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
-        path::Path,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -177,6 +180,8 @@ pub fn send_many_transactions(
 
 pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
     let ledger = Blockstore::open(ledger_path).unwrap();
+    let thread_pool = entry::thread_pool_for_tests();
+
     let zeroth_slot = ledger.get_slot_entries(0, 0).unwrap();
     let last_id = zeroth_slot.last().unwrap().hash;
     let next_slots = ledger.get_slots_since(&[0]).unwrap().remove(&0).unwrap();
@@ -198,7 +203,7 @@ pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
             None
         };
 
-        let last_id = verify_slot_ticks(&ledger, slot, &last_id, should_verify_ticks);
+        let last_id = verify_slot_ticks(&ledger, &thread_pool, slot, &last_id, should_verify_ticks);
         pending_slots.extend(
             next_slots
                 .into_iter()
@@ -330,6 +335,53 @@ pub fn kill_entry_and_spend_and_verify_rest(
                     break;
                 }
             }
+        }
+    }
+}
+
+pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, tower_path: PathBuf) {
+    let tower_storage = FileTowerStorage::new(tower_path);
+    let mut tower = tower_storage.load(&node_keypair.pubkey()).unwrap();
+    for (slot, hash) in votes {
+        tower.record_vote(slot, hash);
+    }
+    let saved_tower = SavedTowerVersions::from(SavedTower::new(&tower, node_keypair).unwrap());
+    tower_storage.store(&saved_tower).unwrap();
+}
+
+pub fn check_min_slot_is_rooted(
+    min_slot: Slot,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    let mut last_print = Instant::now();
+    let loop_start = Instant::now();
+    let loop_timeout = Duration::from_secs(180);
+    for ingress_node in contact_infos.iter() {
+        let (rpc, tpu) = LegacyContactInfo::try_from(ingress_node)
+            .map(|node| get_client_facing_addr(connection_cache.protocol(), node))
+            .unwrap();
+        let client = ThinClient::new(rpc, tpu, connection_cache.clone());
+        loop {
+            let root_slot = client
+                .get_slot_with_commitment(CommitmentConfig::finalized())
+                .unwrap_or(0);
+            if root_slot >= min_slot || last_print.elapsed().as_secs() > 3 {
+                info!(
+                    "{} waiting for node {} to see root >= {}.. observed latest root: {}",
+                    test_name,
+                    ingress_node.pubkey(),
+                    min_slot,
+                    root_slot
+                );
+                last_print = Instant::now();
+                if root_slot >= min_slot {
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
+            assert!(loop_start.elapsed() < loop_timeout);
         }
     }
 }
@@ -489,6 +541,9 @@ pub fn start_gossip_voter(
         + std::marker::Send
         + 'static,
     sleep_ms: u64,
+    num_expected_peers: usize,
+    refresh_ms: u64,
+    max_votes_to_refresh: usize,
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
     let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_gossip_node(
@@ -503,6 +558,15 @@ pub fn start_gossip_voter(
         SocketAddrSpace::Unspecified,
     );
 
+    // Wait for peer discovery
+    while cluster_info.gossip_peers().len() < num_expected_peers {
+        sleep(Duration::from_millis(sleep_ms));
+    }
+
+    let mut latest_voted_slot = 0;
+    let mut refreshable_votes: VecDeque<(Transaction, VoteTransaction)> = VecDeque::new();
+    let mut latest_push_attempt = Instant::now();
+
     let t_voter = {
         let exit = exit.clone();
         let cluster_info = cluster_info.clone();
@@ -514,6 +578,18 @@ pub fn start_gossip_voter(
                 }
 
                 let (labels, votes) = cluster_info.get_votes_with_labels(&mut cursor);
+                if labels.is_empty() {
+                    if latest_push_attempt.elapsed() > Duration::from_millis(refresh_ms) {
+                        for (leader_vote_tx, parsed_vote) in refreshable_votes.iter().rev() {
+                            let vote_slot = parsed_vote.last_voted_slot().unwrap();
+                            info!("gossip voter refreshing vote {}", vote_slot);
+                            process_vote_tx(vote_slot, leader_vote_tx, parsed_vote, &cluster_info);
+                            latest_push_attempt = Instant::now();
+                        }
+                    }
+                    sleep(Duration::from_millis(sleep_ms));
+                    continue;
+                }
                 let mut parsed_vote_iter: Vec<_> = labels
                     .into_iter()
                     .zip(votes)
@@ -527,20 +603,18 @@ pub fn start_gossip_voter(
                 });
 
                 for (parsed_vote, leader_vote_tx) in &parsed_vote_iter {
-                    if let Some(latest_vote_slot) = parsed_vote.last_voted_slot() {
-                        info!("received vote for {}", latest_vote_slot);
-                        process_vote_tx(
-                            latest_vote_slot,
-                            leader_vote_tx,
-                            parsed_vote,
-                            &cluster_info,
-                        )
+                    if let Some(vote_slot) = parsed_vote.last_voted_slot() {
+                        info!("received vote for {}", vote_slot);
+                        if vote_slot > latest_voted_slot {
+                            latest_voted_slot = vote_slot;
+                            refreshable_votes
+                                .push_front((leader_vote_tx.clone(), parsed_vote.clone()));
+                            refreshable_votes.truncate(max_votes_to_refresh);
+                        }
+                        process_vote_tx(vote_slot, leader_vote_tx, parsed_vote, &cluster_info);
+                        latest_push_attempt = Instant::now();
                     }
                     // Give vote some time to propagate
-                    sleep(Duration::from_millis(sleep_ms));
-                }
-
-                if parsed_vote_iter.is_empty() {
                     sleep(Duration::from_millis(sleep_ms));
                 }
             }
@@ -558,21 +632,23 @@ pub fn start_gossip_voter(
 
 fn get_and_verify_slot_entries(
     blockstore: &Blockstore,
+    thread_pool: &ThreadPool,
     slot: Slot,
     last_entry: &Hash,
 ) -> Vec<Entry> {
     let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert!(entries.verify(last_entry));
+    assert!(entries.verify(last_entry, thread_pool));
     entries
 }
 
 fn verify_slot_ticks(
     blockstore: &Blockstore,
+    thread_pool: &ThreadPool,
     slot: Slot,
     last_entry: &Hash,
     expected_num_ticks: Option<usize>,
 ) -> Hash {
-    let entries = get_and_verify_slot_entries(blockstore, slot, last_entry);
+    let entries = get_and_verify_slot_entries(blockstore, thread_pool, slot, last_entry);
     let num_ticks: usize = entries.iter().map(|entry| entry.is_tick() as usize).sum();
     if let Some(expected_num_ticks) = expected_num_ticks {
         assert_eq!(num_ticks, expected_num_ticks);

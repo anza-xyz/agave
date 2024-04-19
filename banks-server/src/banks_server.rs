@@ -2,7 +2,6 @@ use {
     bincode::{deserialize, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     futures::{future, prelude::stream::StreamExt},
-    solana_accounts_db::transaction_results::TransactionExecutionResult,
     solana_banks_interface::{
         Banks, BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation, TransactionConfirmationStatus, TransactionMetadata,
@@ -30,8 +29,8 @@ use {
         send_transaction_service::{SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
     },
+    solana_svm::transaction_results::TransactionExecutionResult,
     std::{
-        convert::TryFrom,
         io,
         net::{Ipv4Addr, SocketAddr},
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -179,6 +178,7 @@ fn simulate_transaction(
         MessageHash::Compute,
         Some(false), // is_simple_vote_tx
         bank,
+        bank.get_reserved_account_keys(),
     ) {
         Err(err) => {
             return BanksTransactionResultWithSimulation {
@@ -194,11 +194,14 @@ fn simulate_transaction(
         post_simulation_accounts: _,
         units_consumed,
         return_data,
-    } = bank.simulate_transaction_unchecked(sanitized_transaction);
+        inner_instructions,
+    } = bank.simulate_transaction_unchecked(&sanitized_transaction, false);
+
     let simulation_details = TransactionSimulationDetails {
         logs,
         units_consumed,
         return_data,
+        inner_instructions,
     };
     BanksTransactionResultWithSimulation {
         result: Some(result),
@@ -330,6 +333,7 @@ impl Banks for BanksServer {
             MessageHash::Compute,
             Some(false), // is_simple_vote_tx
             bank.as_ref(),
+            bank.get_reserved_account_keys(),
         ) {
             Ok(tx) => tx,
             Err(err) => return Some(Err(err)),
@@ -415,7 +419,9 @@ impl Banks for BanksServer {
         commitment: CommitmentLevel,
     ) -> Option<u64> {
         let bank = self.bank(commitment);
-        let sanitized_message = SanitizedMessage::try_from(message).ok()?;
+        let sanitized_message =
+            SanitizedMessage::try_from_legacy_message(message, bank.get_reserved_account_keys())
+                .ok()?;
         bank.get_fee_for_message(&sanitized_message)
     }
 }

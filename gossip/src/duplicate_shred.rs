@@ -56,6 +56,8 @@ pub enum Error {
     BlockstoreInsertFailed(#[from] BlockstoreError),
     #[error("data chunk mismatch")]
     DataChunkMismatch,
+    #[error("unable to send duplicate slot to state machine")]
+    DuplicateSlotSenderFailure,
     #[error("invalid chunk_index: {chunk_index}, num_chunks: {num_chunks}")]
     InvalidChunkIndex { chunk_index: u8, num_chunks: u8 },
     #[error("invalid duplicate shreds")]
@@ -407,6 +409,8 @@ pub(crate) mod tests {
             keypair,
             &entries,
             is_last_in_slot,
+            // chained_merkle_root
+            Some(Hash::new_from_array(rng.gen())),
             next_shred_index,
             next_code_index, // next_code_index
             merkle_variant,
@@ -591,29 +595,13 @@ pub(crate) mod tests {
                 ),
                 new_rand_data_shred(
                     &mut rng,
-                    next_shred_index + 1,
+                    // With Merkle shreds, last erasure batch is padded with
+                    // empty data shreds.
+                    next_shred_index + if merkle_variant { 30 } else { 1 },
                     &shredder,
                     &leader,
                     merkle_variant,
                     false,
-                ),
-            ),
-            (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 1,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
                 ),
             ),
             (
@@ -628,24 +616,6 @@ pub(crate) mod tests {
                 new_rand_data_shred(
                     &mut rng,
                     next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
-            ),
-            (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 100,
                     &shredder,
                     &leader,
                     merkle_variant,
@@ -653,7 +623,7 @@ pub(crate) mod tests {
                 ),
             ),
         ];
-        for (shred1, shred2) in test_cases.into_iter() {
+        for (shred1, shred2) in test_cases.iter().flat_map(|(a, b)| [(a, b), (b, a)]) {
             let chunks: Vec<_> = from_shred(
                 shred1.clone(),
                 Pubkey::new_unique(), // self_pubkey
@@ -666,8 +636,8 @@ pub(crate) mod tests {
             .collect();
             assert!(chunks.len() > 4);
             let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks).unwrap();
-            assert_eq!(shred1, shred3);
-            assert_eq!(shred2, shred4);
+            assert_eq!(shred1, &shred3);
+            assert_eq!(shred2, &shred4);
         }
     }
 

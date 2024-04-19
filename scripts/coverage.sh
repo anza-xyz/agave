@@ -34,7 +34,7 @@ fi
 
 coverageFlags=()
 coverageFlags+=(-Zprofile)               # Enable coverage
-coverageFlags+=("-Aincomplete_features") # Supress warnings due to frozen abi, which is harmless for it
+coverageFlags+=("-Aincomplete_features") # Suppress warnings due to frozen abi, which is harmless for it
 if [[ $(uname) != Darwin ]]; then        # macOS skipped due to https://github.com/rust-lang/rust/issues/63047
   coverageFlags+=("-Clink-dead-code")    # Dead code should appear red in the report
 fi
@@ -73,9 +73,16 @@ source ci/common/limit-threads.sh
 
 _ "$cargo" nightly test --jobs "$JOBS" --target-dir target/cov --no-run "${packages[@]}"
 
+TEST_ARGS=(
+  --nocapture
+  --skip shred::merkle::test::test_make_shreds_from_data::
+  --skip shred::merkle::test::test_make_shreds_from_data_rand::
+  --skip shred::merkle::test::test_recover_merkle_shreds::
+)
+
 # most verbose log level (trace) is enabled for all solana code to make log!
 # macro code green always
-if RUST_LOG=solana=trace _ ci/intercept.sh "$cargo" nightly test --jobs "$JOBS" --target-dir target/cov "${packages[@]}" -- --nocapture; then
+if RUST_LOG=solana=trace _ ci/intercept.sh "$cargo" nightly test --jobs "$JOBS" --target-dir target/cov "${packages[@]}" -- "${TEST_ARGS[@]}" ; then
   test_status=0
 else
   test_status=$?

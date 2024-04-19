@@ -316,6 +316,11 @@ pub(crate) fn submit_gossip_stats(
             i64
         ),
         (
+            "num_redundant_pull_responses",
+            crds_stats.num_redundant_pull_responses,
+            i64
+        ),
+        (
             "push_response_count",
             stats.push_response_count.clear(),
             i64
@@ -429,6 +434,11 @@ pub(crate) fn submit_gossip_stats(
             i64
         ),
         ("push_message_count", stats.push_message_count.clear(), i64),
+        (
+            "num_duplicate_push_messages",
+            crds_stats.num_duplicate_push_messages,
+            i64
+        ),
         (
             "push_fanout_num_entries",
             stats.push_fanout_num_entries.clear(),
@@ -637,6 +647,8 @@ pub(crate) fn submit_gossip_stats(
             crds_stats.pull.counts[12],
             i64
         ),
+        ("RestartHeaviestFork-push", crds_stats.push.counts[13], i64),
+        ("RestartHeaviestFork-pull", crds_stats.pull.counts[13], i64),
         (
             "all-push",
             crds_stats.push.counts.iter().sum::<usize>(),
@@ -684,6 +696,8 @@ pub(crate) fn submit_gossip_stats(
             crds_stats.pull.fails[12],
             i64
         ),
+        ("RestartHeaviestFork-push", crds_stats.push.fails[13], i64),
+        ("RestartHeaviestFork-pull", crds_stats.pull.fails[13], i64),
         ("all-push", crds_stats.push.fails.iter().sum::<usize>(), i64),
         ("all-pull", crds_stats.pull.fails.iter().sum::<usize>(), i64),
     );

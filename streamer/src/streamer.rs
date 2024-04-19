@@ -110,6 +110,7 @@ fn recv_loop(
     coalesce: Duration,
     use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
+    is_staked_service: bool,
 ) -> Result<()> {
     loop {
         let mut packet_batch = if use_pinned_memory {
@@ -147,7 +148,9 @@ fn recv_loop(
                     if len == PACKETS_PER_BATCH {
                         full_packet_batches_count.fetch_add(1, Ordering::Relaxed);
                     }
-
+                    packet_batch
+                        .iter_mut()
+                        .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
                     packet_batch_sender.send(packet_batch)?;
                 }
                 break;
@@ -156,7 +159,9 @@ fn recv_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn receiver(
+    thread_name: String,
     socket: Arc<UdpSocket>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: PacketBatchSender,
@@ -165,11 +170,12 @@ pub fn receiver(
     coalesce: Duration,
     use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
+    is_staked_service: bool,
 ) -> JoinHandle<()> {
     let res = socket.set_read_timeout(Some(Duration::new(1, 0)));
     assert!(res.is_ok(), "streamer::receiver set_read_timeout error");
     Builder::new()
-        .name("solReceiver".to_string())
+        .name(thread_name)
         .spawn(move || {
             let _ = recv_loop(
                 &socket,
@@ -180,6 +186,7 @@ pub fn receiver(
                 coalesce,
                 use_pinned_memory,
                 in_vote_only_mode,
+                is_staked_service,
             );
         })
         .unwrap()
@@ -360,9 +367,9 @@ fn recv_send(
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
+    let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
     let packet_batch = recvr.recv_timeout(timer)?;
-    let recv_start = Instant::now();
     trace!("got packets");
     let mut num_packets = packet_batch.len();
     let mut packet_batches = vec![packet_batch];
@@ -480,6 +487,7 @@ mod test {
         let (s_reader, r_reader) = unbounded();
         let stats = Arc::new(StreamerReceiveStats::new("test"));
         let t_receiver = receiver(
+            "solRcvrTest".to_string(),
             Arc::new(read),
             exit.clone(),
             s_reader,
@@ -488,6 +496,7 @@ mod test {
             Duration::from_millis(1), // coalesce
             true,
             None,
+            false,
         );
         const NUM_PACKETS: usize = 5;
         let t_responder = {

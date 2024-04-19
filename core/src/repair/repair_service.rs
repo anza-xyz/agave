@@ -15,11 +15,16 @@ use {
             outstanding_requests::OutstandingRequests,
             quic_endpoint::LocalRequest,
             repair_weight::RepairWeight,
-            serve_repair::{self, ServeRepair, ShredRepairType, REPAIR_PEERS_CACHE_CAPACITY},
+            serve_repair::{
+                self, RepairProtocol, RepairRequestHeader, ServeRepair, ShredRepairType,
+                REPAIR_PEERS_CACHE_CAPACITY,
+            },
         },
     },
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lru::LruCache,
+    rand::seq::SliceRandom,
+    solana_client::connection_cache::Protocol,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
@@ -53,6 +58,12 @@ use {
 // Time to defer repair requests to allow for turbine propagation
 const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(200);
 const DEFER_REPAIR_THRESHOLD_TICKS: u64 = DEFER_REPAIR_THRESHOLD.as_millis() as u64 / MS_PER_TICK;
+
+// When requesting repair for a specific shred through the admin RPC, we will
+// request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
+// target node is not provided. This number was chosen to provide reasonable
+// chance of sampling duplicate in the event of cluster partition.
+const NUM_PEERS_TO_SAMPLE_FOR_REPAIRS: usize = 10;
 
 pub type AncestorDuplicateSlotsSender = CrossbeamSender<AncestorDuplicateSlotToRepair>;
 pub type AncestorDuplicateSlotsReceiver = CrossbeamReceiver<AncestorDuplicateSlotToRepair>;
@@ -213,6 +224,8 @@ pub struct RepairInfo {
     pub repair_validators: Option<HashSet<Pubkey>>,
     // Validators which should be given priority when serving
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
+    // A given list of slots to repair when in wen_restart
+    pub wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
 }
 
 pub struct RepairSlotRange {
@@ -386,17 +399,24 @@ impl RepairService {
                 );
                 add_votes_elapsed.stop();
 
-                let repairs = repair_weight.get_best_weighted_repairs(
-                    blockstore,
-                    root_bank.epoch_stakes_map(),
-                    root_bank.epoch_schedule(),
-                    MAX_ORPHANS,
-                    MAX_REPAIR_LENGTH,
-                    MAX_UNKNOWN_LAST_INDEX_REPAIRS,
-                    MAX_CLOSEST_COMPLETION_REPAIRS,
-                    &mut repair_timing,
-                    &mut best_repairs_stats,
-                );
+                let repairs = match repair_info.wen_restart_repair_slots.clone() {
+                    Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
+                        blockstore,
+                        MAX_REPAIR_LENGTH,
+                        &slots_to_repair.read().unwrap(),
+                    ),
+                    None => repair_weight.get_best_weighted_repairs(
+                        blockstore,
+                        root_bank.epoch_stakes_map(),
+                        root_bank.epoch_schedule(),
+                        MAX_ORPHANS,
+                        MAX_REPAIR_LENGTH,
+                        MAX_UNKNOWN_LAST_INDEX_REPAIRS,
+                        MAX_CLOSEST_COMPLETION_REPAIRS,
+                        &mut repair_timing,
+                        &mut best_repairs_stats,
+                    ),
+                };
 
                 let mut popular_pruned_forks = repair_weight.get_popular_pruned_forks(
                     root_bank.epoch_stakes_map(),
@@ -607,32 +627,58 @@ impl RepairService {
         }
     }
 
-    /// If this slot is missing shreds generate repairs
-    pub fn generate_repairs_for_slot(
+    pub fn generate_repairs_for_slot_throttled_by_tick(
         blockstore: &Blockstore,
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
     ) -> Vec<ShredRepairType> {
+        Self::generate_repairs_for_slot(blockstore, slot, slot_meta, max_repairs, true)
+    }
+
+    pub fn generate_repairs_for_slot_not_throttled_by_tick(
+        blockstore: &Blockstore,
+        slot: Slot,
+        slot_meta: &SlotMeta,
+        max_repairs: usize,
+    ) -> Vec<ShredRepairType> {
+        Self::generate_repairs_for_slot(blockstore, slot, slot_meta, max_repairs, false)
+    }
+
+    /// If this slot is missing shreds generate repairs
+    fn generate_repairs_for_slot(
+        blockstore: &Blockstore,
+        slot: Slot,
+        slot_meta: &SlotMeta,
+        max_repairs: usize,
+        throttle_requests_by_shred_tick: bool,
+    ) -> Vec<ShredRepairType> {
+        let defer_repair_threshold_ticks = if throttle_requests_by_shred_tick {
+            DEFER_REPAIR_THRESHOLD_TICKS
+        } else {
+            0
+        };
         if max_repairs == 0 || slot_meta.is_full() {
             vec![]
         } else if slot_meta.consumed == slot_meta.received {
-            // check delay time of last shred
-            if let Some(reference_tick) = slot_meta
-                .received
-                .checked_sub(1)
-                .and_then(|index| blockstore.get_data_shred(slot, index).ok()?)
-                .and_then(|shred| shred::layout::get_reference_tick(&shred).ok())
-                .map(u64::from)
-            {
-                // System time is not monotonic
-                let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
-                    * timestamp().saturating_sub(slot_meta.first_shred_timestamp)
-                    / 1_000;
-                if ticks_since_first_insert
-                    < reference_tick.saturating_add(DEFER_REPAIR_THRESHOLD_TICKS)
+            if throttle_requests_by_shred_tick {
+                // check delay time of last shred
+                if let Some(reference_tick) = slot_meta
+                    .received
+                    .checked_sub(1)
+                    .and_then(|index| blockstore.get_data_shred(slot, index).ok()?)
+                    .and_then(|shred| shred::layout::get_reference_tick(&shred).ok())
+                    .map(u64::from)
                 {
-                    return vec![];
+                    // System time is not monotonic
+                    let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
+                        * timestamp().saturating_sub(slot_meta.first_shred_timestamp)
+                        / 1_000;
+                    if ticks_since_first_insert
+                        < reference_tick.saturating_add(defer_repair_threshold_ticks)
+                    {
+                        return vec![];
+                    }
                 }
             }
             vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
@@ -641,7 +687,7 @@ impl RepairService {
                 .find_missing_data_indexes(
                     slot,
                     slot_meta.first_shred_timestamp,
-                    DEFER_REPAIR_THRESHOLD_TICKS,
+                    defer_repair_threshold_ticks,
                     slot_meta.consumed,
                     slot_meta.received,
                     max_repairs,
@@ -663,7 +709,7 @@ impl RepairService {
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
             let slot = pending_slots.pop().unwrap();
             if let Some(slot_meta) = blockstore.meta(slot).unwrap() {
-                let new_repairs = Self::generate_repairs_for_slot(
+                let new_repairs = Self::generate_repairs_for_slot_throttled_by_tick(
                     blockstore,
                     slot,
                     &slot_meta,
@@ -674,6 +720,167 @@ impl RepairService {
                 pending_slots.extend(next_slots);
             } else {
                 break;
+            }
+        }
+    }
+
+    pub(crate) fn generate_repairs_for_wen_restart(
+        blockstore: &Blockstore,
+        max_repairs: usize,
+        slots: &Vec<Slot>,
+    ) -> Vec<ShredRepairType> {
+        let mut repairs: Vec<ShredRepairType> = Vec::new();
+        for slot in slots {
+            if let Some(slot_meta) = blockstore.meta(*slot).unwrap() {
+                // When in wen_restart, turbine is not running, so there is
+                // no need to wait after first shred.
+                let new_repairs = Self::generate_repairs_for_slot_not_throttled_by_tick(
+                    blockstore,
+                    *slot,
+                    &slot_meta,
+                    max_repairs - repairs.len(),
+                );
+                repairs.extend(new_repairs);
+            } else {
+                repairs.push(ShredRepairType::HighestShred(*slot, 0));
+            }
+            if repairs.len() >= max_repairs {
+                break;
+            }
+        }
+        repairs
+    }
+
+    fn get_repair_peers(
+        cluster_info: Arc<ClusterInfo>,
+        cluster_slots: Arc<ClusterSlots>,
+        slot: u64,
+    ) -> Vec<(Pubkey, SocketAddr)> {
+        // Find the repair peers that have this slot frozen.
+        let Some(peers_with_slot) = cluster_slots.lookup(slot) else {
+            warn!("No repair peers have frozen slot: {slot}");
+            return vec![];
+        };
+        let peers_with_slot = peers_with_slot.read().unwrap();
+
+        // Filter out any peers that don't have a valid repair socket.
+        let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
+            .iter()
+            .filter_map(|(pubkey, stake)| {
+                let peer_repair_addr = cluster_info
+                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
+                if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
+                    trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
+                    Some((
+                        *pubkey,
+                        peer_repair_addr,
+                        (*stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sample a subset of the repair peers weighted by stake.
+        let mut rng = rand::thread_rng();
+        let Ok(weighted_sample_repair_peers) = repair_peers.choose_multiple_weighted(
+            &mut rng,
+            NUM_PEERS_TO_SAMPLE_FOR_REPAIRS,
+            |(_, _, stake)| *stake,
+        ) else {
+            return vec![];
+        };
+
+        // Return the pubkey and repair socket address for the sampled peers.
+        weighted_sample_repair_peers
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|(pubkey, addr, _)| (*pubkey, *addr))
+            .collect()
+    }
+
+    pub fn request_repair_for_shred_from_peer(
+        cluster_info: Arc<ClusterInfo>,
+        cluster_slots: Arc<ClusterSlots>,
+        pubkey: Option<Pubkey>,
+        slot: u64,
+        shred_index: u64,
+        repair_socket: &UdpSocket,
+        outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+    ) {
+        let mut repair_peers = vec![];
+
+        // Check validity of passed in peer.
+        if let Some(pubkey) = pubkey {
+            let peer_repair_addr =
+                cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
+            if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
+                trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
+                repair_peers.push((pubkey, peer_repair_addr));
+            }
+        };
+
+        // Select weighted sample of valid peers if no valid peer was passed in.
+        if repair_peers.is_empty() {
+            debug!(
+                "No pubkey was provided or no valid repair socket was found. \
+                Sampling a set of repair peers instead."
+            );
+            repair_peers = Self::get_repair_peers(cluster_info.clone(), cluster_slots, slot);
+        }
+
+        // Send repair request to each peer.
+        for (pubkey, peer_repair_addr) in repair_peers {
+            Self::request_repair_for_shred_from_address(
+                cluster_info.clone(),
+                pubkey,
+                peer_repair_addr,
+                slot,
+                shred_index,
+                repair_socket,
+                outstanding_repair_requests.clone(),
+            );
+        }
+    }
+
+    fn request_repair_for_shred_from_address(
+        cluster_info: Arc<ClusterInfo>,
+        pubkey: Pubkey,
+        address: SocketAddr,
+        slot: u64,
+        shred_index: u64,
+        repair_socket: &UdpSocket,
+        outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
+    ) {
+        // Setup repair request
+        let identity_keypair = cluster_info.keypair();
+        let repair_request = ShredRepairType::Shred(slot, shred_index);
+        let nonce = outstanding_repair_requests
+            .write()
+            .unwrap()
+            .add_request(repair_request, timestamp());
+
+        // Create repair request
+        let header = RepairRequestHeader::new(cluster_info.id(), pubkey, timestamp(), nonce);
+        let request_proto = RepairProtocol::WindowIndex {
+            header,
+            slot,
+            shred_index,
+        };
+        let packet_buf =
+            ServeRepair::repair_proto_to_bytes(&request_proto, &identity_keypair).unwrap();
+
+        // Prepare packet batch to send
+        let reqs = [(packet_buf, address)];
+
+        // Send packet batch
+        match batch_send(repair_socket, &reqs[..]) {
+            Ok(()) => {
+                debug!("successfully sent repair request to {pubkey} / {address}!");
+            }
+            Err(SendPktsError::IoError(err, _num_failed)) => {
+                error!("batch_send failed to send packet - error = {:?}", err);
             }
         }
     }
@@ -700,7 +907,7 @@ impl RepairService {
                     ..SlotMeta::default()
                 });
 
-            let new_repairs = Self::generate_repairs_for_slot(
+            let new_repairs = Self::generate_repairs_for_slot_throttled_by_tick(
                 blockstore,
                 slot,
                 &meta,
@@ -722,7 +929,7 @@ impl RepairService {
                 // If the slot is full, no further need to repair this slot
                 None
             } else {
-                Some(Self::generate_repairs_for_slot(
+                Some(Self::generate_repairs_for_slot_throttled_by_tick(
                     blockstore,
                     slot,
                     &slot_meta,
@@ -859,6 +1066,7 @@ pub(crate) fn sleep_shred_deferment_period() {
 mod test {
     use {
         super::*,
+        crate::repair::quic_endpoint::RemoteRequest,
         solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
         solana_ledger::{
             blockstore::{
@@ -881,6 +1089,59 @@ mod test {
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
         ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
+    }
+
+    #[test]
+    pub fn test_request_repair_for_shred_from_address() {
+        // Setup cluster and repair info
+        let cluster_info = Arc::new(new_test_cluster_info());
+        let pubkey = cluster_info.id();
+        let slot = 100;
+        let shred_index = 50;
+        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let address = reader.local_addr().unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let outstanding_repair_requests = Arc::new(RwLock::new(OutstandingShredRepairs::default()));
+
+        // Send a repair request
+        RepairService::request_repair_for_shred_from_address(
+            cluster_info.clone(),
+            pubkey,
+            address,
+            slot,
+            shred_index,
+            &sender,
+            outstanding_repair_requests,
+        );
+
+        // Receive and translate repair packet
+        let mut packets = vec![solana_sdk::packet::Packet::default(); 1];
+        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let packet = &packets[0];
+        let Some(bytes) = packet.data(..).map(Vec::from) else {
+            panic!("packet data not found");
+        };
+        let remote_request = RemoteRequest {
+            remote_pubkey: None,
+            remote_address: packet.meta().socket_addr(),
+            bytes,
+            response_sender: None,
+        };
+
+        // Deserialize and check the request
+        let deserialized =
+            serve_repair::deserialize_request::<RepairProtocol>(&remote_request).unwrap();
+        match deserialized {
+            RepairProtocol::WindowIndex {
+                slot: deserialized_slot,
+                shred_index: deserialized_shred_index,
+                ..
+            } => {
+                assert_eq!(deserialized_slot, slot);
+                assert_eq!(deserialized_shred_index, shred_index);
+            }
+            _ => panic!("unexpected repair protocol"),
+        }
     }
 
     #[test]
@@ -1065,7 +1326,7 @@ mod test {
         let slots: Vec<u64> = vec![1, 3, 5, 7, 8];
         let num_entries_per_slot = max_ticks_per_n_shreds(1, None) + 1;
 
-        let shreds = make_chaining_slot_entries(&slots, num_entries_per_slot);
+        let shreds = make_chaining_slot_entries(&slots, num_entries_per_slot, 0);
         for (mut slot_shreds, _) in shreds.into_iter() {
             slot_shreds.remove(0);
             blockstore.insert_shreds(slot_shreds, None, false).unwrap();
@@ -1348,5 +1609,64 @@ mod test {
             &None,
         );
         assert_ne!(duplicate_status.repair_pubkey_and_addr, dummy_addr);
+    }
+
+    #[test]
+    fn test_generate_repairs_for_wen_restart() {
+        solana_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let max_repairs = 3;
+
+        let slots: Vec<u64> = vec![2, 3, 5, 7];
+        let num_entries_per_slot = max_ticks_per_n_shreds(3, None) + 1;
+
+        let shreds = make_chaining_slot_entries(&slots, num_entries_per_slot, 0);
+        for (i, (mut slot_shreds, _)) in shreds.into_iter().enumerate() {
+            slot_shreds.remove(i);
+            blockstore.insert_shreds(slot_shreds, None, false).unwrap();
+        }
+
+        let mut slots_to_repair: Vec<Slot> = vec![];
+
+        // When slots_to_repair is empty, ignore all and return empty result.
+        let result = RepairService::generate_repairs_for_wen_restart(
+            &blockstore,
+            max_repairs,
+            &slots_to_repair,
+        );
+        assert!(result.is_empty());
+
+        // When asked to repair slot with missing shreds and some unknown slot, return correct results.
+        slots_to_repair = vec![3, 81];
+        let result = RepairService::generate_repairs_for_wen_restart(
+            &blockstore,
+            max_repairs,
+            &slots_to_repair,
+        );
+        assert_eq!(
+            result,
+            vec![
+                ShredRepairType::Shred(3, 1),
+                ShredRepairType::HighestShred(81, 0),
+            ],
+        );
+
+        // Test that it will not generate more than max_repairs.e().unwrap();
+        slots_to_repair = vec![2, 82, 7, 83, 84];
+        let result = RepairService::generate_repairs_for_wen_restart(
+            &blockstore,
+            max_repairs,
+            &slots_to_repair,
+        );
+        assert_eq!(result.len(), max_repairs);
+        assert_eq!(
+            result,
+            vec![
+                ShredRepairType::Shred(2, 0),
+                ShredRepairType::HighestShred(82, 0),
+                ShredRepairType::Shred(7, 3),
+            ],
+        );
     }
 }

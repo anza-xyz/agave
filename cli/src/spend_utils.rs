@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     crate::{
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
@@ -161,7 +163,7 @@ where
             dummy_message.recent_blockhash = *blockhash;
             get_fee_for_messages(rpc_client, &[&dummy_message])?
         }
-        None => 0, // Offline, cannot calulate fee
+        None => 0, // Offline, cannot calculate fee
     };
 
     match amount {

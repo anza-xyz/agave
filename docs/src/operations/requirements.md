@@ -1,7 +1,8 @@
 ---
-title: Validator Requirements
-sidebar_label: Requirements
+title: Solana Validator Requirements
 sidebar_position: 3
+sidebar_label: Requirements
+pagination_label: Requirements to Operate a Validator
 ---
 
 ## Minimum SOL requirements
@@ -42,7 +43,7 @@ The hardware recommendations below are provided as a guide.  Operators are encou
   - The Samsung 970 and 980 Pro series SSDs are popular with the validator community
 - GPUs
   - Not necessary at this time
-  - Operators in the validator community do no use GPUs currently
+  - Operators in the validator community do not use GPUs currently
 
 ### RPC Node Recommendations
 

@@ -5,7 +5,8 @@ use {
         ic_logger_msg,
         invoke_context::InvokeContext,
         loaded_programs::{
-            LoadProgramMetrics, LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET,
+            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryType,
+            DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
         stable_log,
@@ -21,7 +22,6 @@ use {
     },
     solana_sdk::{
         entrypoint::SUCCESS,
-        feature_set,
         instruction::InstructionError,
         loader_v4::{self, LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
         loader_v4_instruction::LoaderV4Instruction,
@@ -406,20 +406,23 @@ pub fn process_instruction_deploy(
     let deployment_slot = state.slot;
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
 
+    let environments = invoke_context
+        .get_environments_for_slot(effective_slot)
+        .map_err(|err| {
+            // This will never fail since the epoch schedule is already configured.
+            ic_logger_msg!(log_collector, "Failed to get runtime environment {}", err);
+            InstructionError::InvalidArgument
+        })?;
+
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: buffer.get_key().to_string(),
         ..LoadProgramMetrics::default()
     };
-    let executor = LoadedProgram::new(
+    let executor = ProgramCacheEntry::new(
         &loader_v4::id(),
-        invoke_context
-            .programs_modified_by_tx
-            .environments
-            .program_runtime_v2
-            .clone(),
+        environments.program_runtime_v2.clone(),
         deployment_slot,
         effective_slot,
-        None,
         programdata,
         buffer.get_data().len(),
         &mut load_program_metrics,
@@ -465,6 +468,7 @@ pub fn process_instruction_retract(
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+
     let authority_address = instruction_context
         .get_index_of_instruction_account_in_transaction(1)
         .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
@@ -552,12 +556,7 @@ pub fn process_instruction_inner(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
     if loader_v4::check_id(program_id) {
-        if invoke_context
-            .feature_set
-            .is_active(&feature_set::native_programs_consume_cu::id())
-        {
-            invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
-        }
+        invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
         match limited_deserialize(instruction_data)? {
             LoaderV4Instruction::Write { offset, bytes } => {
                 process_instruction_write(invoke_context, offset, bytes)
@@ -604,13 +603,13 @@ pub fn process_instruction_inner(
             .ix_usage_counter
             .fetch_add(1, Ordering::Relaxed);
         match &loaded_program.program {
-            LoadedProgramType::FailedVerification(_)
-            | LoadedProgramType::Closed
-            | LoadedProgramType::DelayVisibility => {
+            ProgramCacheEntryType::FailedVerification(_)
+            | ProgramCacheEntryType::Closed
+            | ProgramCacheEntryType::DelayVisibility => {
                 ic_logger_msg!(log_collector, "Program is not deployed");
                 Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn std::error::Error>)
             }
-            LoadedProgramType::Typed(executable) => execute(invoke_context, executable),
+            ProgramCacheEntryType::Loaded(executable) => execute(invoke_context, executable),
             _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn std::error::Error>),
         }
     }
@@ -655,7 +654,7 @@ mod tests {
                 if let Some(programdata) =
                     account.data().get(LoaderV4State::program_data_offset()..)
                 {
-                    if let Ok(loaded_program) = LoadedProgram::new(
+                    if let Ok(loaded_program) = ProgramCacheEntry::new(
                         &loader_v4::id(),
                         invoke_context
                             .programs_modified_by_tx
@@ -664,7 +663,6 @@ mod tests {
                             .clone(),
                         0,
                         0,
-                        None,
                         programdata,
                         account.data().len(),
                         &mut load_program_metrics,

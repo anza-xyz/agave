@@ -5,7 +5,7 @@ use {
     crate::tiered_storage::{footer::AccountBlockFormat, meta::AccountMetaOptionalFields},
     std::{
         io::{Cursor, Read, Result as IoResult, Write},
-        mem,
+        mem, ptr,
     },
 };
 
@@ -74,7 +74,7 @@ impl ByteBlockWriter {
     /// and bytemuck's Pod and NoUninit for more information.
     pub unsafe fn write_type<T>(&mut self, value: &T) -> IoResult<usize> {
         let size = mem::size_of::<T>();
-        let ptr = value as *const _ as *const u8;
+        let ptr = ptr::from_ref(value).cast();
         // SAFETY: The caller ensures that `value` contains no uninitialized bytes,
         // we ensure the size is safe by querying T directly,
         // and Rust ensures all values are at least byte-aligned.
@@ -85,7 +85,7 @@ impl ByteBlockWriter {
 
     /// Write all the Some fields of the specified AccountMetaOptionalFields.
     ///
-    /// Note that the existance of each optional field is stored separately in
+    /// Note that the existence of each optional field is stored separately in
     /// AccountMetaFlags.
     pub fn write_optional_fields(
         &mut self,
@@ -94,9 +94,6 @@ impl ByteBlockWriter {
         let mut size = 0;
         if let Some(rent_epoch) = opt_fields.rent_epoch {
             size += self.write_pod(&rent_epoch)?;
-        }
-        if let Some(hash) = opt_fields.account_hash {
-            size += self.write_pod(&hash)?;
         }
 
         debug_assert_eq!(size, opt_fields.size());
@@ -161,7 +158,7 @@ pub unsafe fn read_type<T>(byte_block: &[u8], offset: usize) -> Option<&T> {
     if overflow || next > byte_block.len() {
         return None;
     }
-    let ptr = byte_block[offset..].as_ptr() as *const T;
+    let ptr = byte_block[offset..].as_ptr().cast();
     debug_assert!(ptr as usize % std::mem::align_of::<T>() == 0);
     // SAFETY: The caller ensures it is safe to cast bytes to T,
     // we ensure the size is safe by querying T directly,
@@ -191,18 +188,14 @@ impl ByteBlockReader {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::accounts_hash::AccountHash,
-        solana_sdk::{hash::Hash, stake_history::Epoch},
-    };
+    use {super::*, solana_sdk::stake_history::Epoch};
 
     fn read_type_unaligned<T>(buffer: &[u8], offset: usize) -> (T, usize) {
         let size = std::mem::size_of::<T>();
         let (next, overflow) = offset.overflowing_add(size);
         assert!(!overflow && next <= buffer.len());
         let data = &buffer[offset..next];
-        let ptr = data.as_ptr() as *const T;
+        let ptr = data.as_ptr().cast();
 
         (unsafe { std::ptr::read_unaligned(ptr) }, next)
     }
@@ -356,14 +349,9 @@ mod tests {
         // prepare a vector of optional fields that contains all combinations
         // of Some and None.
         for rent_epoch in [None, Some(test_epoch)] {
-            for account_hash in [None, Some(AccountHash(Hash::new_unique()))] {
-                some_count += rent_epoch.iter().count() + account_hash.iter().count();
+            some_count += rent_epoch.iter().count();
 
-                opt_fields_vec.push(AccountMetaOptionalFields {
-                    rent_epoch,
-                    account_hash,
-                });
-            }
+            opt_fields_vec.push(AccountMetaOptionalFields { rent_epoch });
             test_epoch += 1;
         }
 
@@ -394,12 +382,6 @@ mod tests {
                 assert_eq!(*rent_epoch, expected_rent_epoch);
                 verified_count += 1;
                 offset += std::mem::size_of::<Epoch>();
-            }
-            if let Some(expected_hash) = opt_fields.account_hash {
-                let hash = read_pod::<AccountHash>(&decoded_buffer, offset).unwrap();
-                assert_eq!(hash, &expected_hash);
-                verified_count += 1;
-                offset += std::mem::size_of::<AccountHash>();
             }
         }
 

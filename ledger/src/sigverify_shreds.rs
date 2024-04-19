@@ -1,6 +1,6 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred,
+    crate::shred::{self, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
     sha2::{Digest, Sha512},
@@ -18,13 +18,10 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
     },
-    static_assertions::const_assert_eq,
     std::{collections::HashMap, iter::repeat, mem::size_of, ops::Range, sync::Arc},
 };
 
 const SIGN_SHRED_GPU_MIN: usize = 256;
-const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
-const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
 
 #[must_use]
 pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<Slot, Pubkey>) -> bool {
@@ -477,6 +474,7 @@ mod tests {
             transaction::Transaction,
         },
         std::iter::{once, repeat_with},
+        test_case::test_case,
     };
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
@@ -725,7 +723,12 @@ mod tests {
             .collect()
     }
 
-    fn make_shreds<R: Rng>(rng: &mut R, keypairs: &HashMap<Slot, Keypair>) -> Vec<Shred> {
+    fn make_shreds<R: Rng>(
+        rng: &mut R,
+        chained: bool,
+        is_last_in_slot: bool,
+        keypairs: &HashMap<Slot, Keypair>,
+    ) -> Vec<Shred> {
         let reed_solomon_cache = ReedSolomonCache::default();
         let mut shreds: Vec<_> = keypairs
             .iter()
@@ -742,7 +745,9 @@ mod tests {
                 .entries_to_shreds(
                     keypair,
                     &make_entries(rng, num_entries),
-                    rng.gen(),              // is_last_in_slot
+                    is_last_in_slot,
+                    // chained_merkle_root
+                    chained.then(|| Hash::new_from_array(rng.gen())),
                     rng.gen_range(0..2671), // next_shred_index
                     rng.gen_range(0..2781), // next_code_index
                     rng.gen(),              // merkle_variant,
@@ -797,8 +802,11 @@ mod tests {
         packets
     }
 
-    #[test]
-    fn test_verify_shreds_fuzz() {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_verify_shreds_fuzz(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let recycler_cache = RecyclerCache::default();
@@ -806,7 +814,7 @@ mod tests {
             .map(|slot| (slot, Keypair::new()))
             .take(3)
             .collect();
-        let shreds = make_shreds(&mut rng, &keypairs);
+        let shreds = make_shreds(&mut rng, chained, is_last_in_slot, &keypairs);
         let pubkeys: HashMap<Slot, Pubkey> = keypairs
             .iter()
             .map(|(&slot, keypair)| (slot, keypair.pubkey()))
@@ -842,8 +850,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_sign_shreds_gpu() {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_sign_shreds_gpu(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let recycler_cache = RecyclerCache::default();
@@ -852,7 +863,7 @@ mod tests {
                 .map(|slot| (slot, Keypair::new()))
                 .take(3)
                 .collect();
-            make_shreds(&mut rng, &keypairs)
+            make_shreds(&mut rng, chained, is_last_in_slot, &keypairs)
         };
         let keypair = Keypair::new();
         let pubkeys: HashMap<Slot, Pubkey> = {

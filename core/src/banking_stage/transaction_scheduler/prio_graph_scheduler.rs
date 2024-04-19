@@ -20,7 +20,6 @@ use {
         pubkey::Pubkey, saturating_add_assign, slot_history::Slot,
         transaction::SanitizedTransaction,
     },
-    std::collections::HashMap,
 };
 
 pub(crate) struct PrioGraphScheduler {
@@ -46,10 +45,17 @@ impl PrioGraphScheduler {
         }
     }
 
-    /// Schedule transactions from the given `TransactionStateContainer` to be consumed by the
-    /// worker threads. Returns summary of scheduling, or an error.
-    /// `filter` is used to filter out transactions that should be skipped and dropped, and
-    /// should set `false` for transactions that should be dropped, and `true` otherwise.
+    /// Schedule transactions from the given `TransactionStateContainer` to be
+    /// consumed by the worker threads. Returns summary of scheduling, or an
+    /// error.
+    /// `pre_graph_filter` is used to filter out transactions that should be
+    /// skipped and dropped before insertion to the prio-graph. This fn should
+    /// set `false` for transactions that should be dropped, and `true`
+    /// otherwise.
+    /// `pre_lock_filter` is used to filter out transactions after they have
+    /// made it to the top of the prio-graph, and immediately before locks are
+    /// checked and taken. This fn should return `true` for transactions that
+    /// should be scheduled, and `false` otherwise.
     ///
     /// Uses a `PrioGraph` to perform look-ahead during the scheduling of transactions.
     /// This, combined with internal tracking of threads' in-flight transactions, allows
@@ -58,11 +64,11 @@ impl PrioGraphScheduler {
     pub(crate) fn schedule(
         &mut self,
         container: &mut TransactionStateContainer,
-        filter: impl Fn(&[&SanitizedTransaction], &mut [bool]),
+        pre_graph_filter: impl Fn(&[&SanitizedTransaction], &mut [bool]),
+        pre_lock_filter: impl Fn(&SanitizedTransaction) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
         let mut batches = Batches::new(num_threads);
-        let mut chain_id_to_thread_index = HashMap::new();
         // Some transactions may be unschedulable due to multi-thread conflicts.
         // These transactions cannot be scheduled until some conflicting work is completed.
         // However, the scheduler should not allow other transactions that conflict with
@@ -100,7 +106,8 @@ impl PrioGraphScheduler {
                     txs.push(&transaction.transaction);
                 });
 
-                let (_, filter_us) = measure_us!(filter(&txs, &mut filter_array[..chunk_size]));
+                let (_, filter_us) =
+                    measure_us!(pre_graph_filter(&txs, &mut filter_array[..chunk_size]));
                 saturating_add_assign!(total_filter_time_us, filter_us);
 
                 for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
@@ -148,6 +155,10 @@ impl PrioGraphScheduler {
                 };
 
                 let transaction = &transaction_state.transaction_ttl().transaction;
+                if !pre_lock_filter(transaction) {
+                    container.remove_by_id(&id.id);
+                    continue;
+                }
 
                 // Check if this transaction conflicts with any blocked transactions
                 if !blocking_locks.check_locks(transaction.message()) {
@@ -156,10 +167,6 @@ impl PrioGraphScheduler {
                     saturating_add_assign!(num_unschedulable, 1);
                     continue;
                 }
-
-                let maybe_chain_thread = chain_id_to_thread_index
-                    .get(&prio_graph.chain_id(&id))
-                    .copied();
 
                 // Schedule the transaction if it can be.
                 let transaction_locks = transaction.get_account_locks_unchecked();
@@ -170,7 +177,6 @@ impl PrioGraphScheduler {
                     |thread_set| {
                         Self::select_thread(
                             thread_set,
-                            maybe_chain_thread,
                             &batches.transactions,
                             self.in_flight_tracker.num_in_flight_per_thread(),
                         )
@@ -184,13 +190,8 @@ impl PrioGraphScheduler {
 
                 saturating_add_assign!(num_scheduled, 1);
 
-                // Track the chain-id to thread-index mapping.
-                chain_id_to_thread_index.insert(prio_graph.chain_id(&id), thread_id);
-
                 let sanitized_transaction_ttl = transaction_state.transition_to_pending();
-                let cu_limit = transaction_state
-                    .transaction_priority_details()
-                    .compute_unit_limit;
+                let cost = transaction_state.cost();
 
                 let SanitizedTransactionTTL {
                     transaction,
@@ -200,7 +201,7 @@ impl PrioGraphScheduler {
                 batches.transactions[thread_id].push(transaction);
                 batches.ids[thread_id].push(id.id);
                 batches.max_age_slots[thread_id].push(max_age_slot);
-                saturating_add_assign!(batches.total_cus[thread_id], cu_limit);
+                saturating_add_assign!(batches.total_cus[thread_id], cost);
 
                 // If target batch size is reached, send only this batch.
                 if batches.ids[thread_id].len() >= TARGET_NUM_TRANSACTIONS_PER_BATCH {
@@ -387,19 +388,13 @@ impl PrioGraphScheduler {
     /// If the `chain_thread` is available, this thread will be selected, regardless of
     /// load-balancing.
     ///
-    /// Panics if the `thread_set` is empty.
+    /// Panics if the `thread_set` is empty. This should never happen, see comment
+    /// on `ThreadAwareAccountLocks::try_lock_accounts`.
     fn select_thread(
         thread_set: ThreadSet,
-        chain_thread: Option<ThreadId>,
         batches_per_thread: &[Vec<SanitizedTransaction>],
         in_flight_per_thread: &[usize],
     ) -> ThreadId {
-        if let Some(chain_thread) = chain_thread {
-            if thread_set.contains(chain_thread) {
-                return chain_thread;
-            }
-        }
-
         thread_set
             .contained_threads_iter()
             .map(|thread_id| {
@@ -496,7 +491,6 @@ mod tests {
         crate::banking_stage::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_runtime::transaction_priority_details::TransactionPriorityDetails,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, pubkey::Pubkey,
             signature::Keypair, signer::Signer, system_instruction, transaction::Transaction,
@@ -566,23 +560,26 @@ mod tests {
         >,
     ) -> TransactionStateContainer {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
-        for (index, (from_keypair, to_pubkeys, lamports, priority)) in
+        for (index, (from_keypair, to_pubkeys, lamports, compute_unit_price)) in
             tx_infos.into_iter().enumerate()
         {
             let id = TransactionId::new(index as u64);
-            let transaction =
-                prioritized_tranfers(from_keypair.borrow(), to_pubkeys, lamports, priority);
+            let transaction = prioritized_tranfers(
+                from_keypair.borrow(),
+                to_pubkeys,
+                lamports,
+                compute_unit_price,
+            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age_slot: Slot::MAX,
             };
+            const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 id,
                 transaction_ttl,
-                TransactionPriorityDetails {
-                    priority,
-                    compute_unit_limit: 1,
-                },
+                compute_unit_price,
+                TEST_TRANSACTION_COST,
             );
         }
 
@@ -601,8 +598,12 @@ mod tests {
             .unzip()
     }
 
-    fn test_filter(_txs: &[&SanitizedTransaction], results: &mut [bool]) {
+    fn test_pre_graph_filter(_txs: &[&SanitizedTransaction], results: &mut [bool]) {
         results.fill(true);
+    }
+
+    fn test_pre_lock_filter(_tx: &SanitizedTransaction) -> bool {
+        true
     }
 
     #[test]
@@ -612,7 +613,7 @@ mod tests {
 
         drop(work_receivers); // explicitly drop receivers
         assert_matches!(
-            scheduler.schedule(&mut container, test_filter),
+            scheduler.schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter),
             Err(SchedulerError::DisconnectedSendChannel(_))
         );
     }
@@ -625,7 +626,9 @@ mod tests {
             (&Keypair::new(), &[Pubkey::new_unique()], 2, 2),
         ]);
 
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![txids!([1, 0])]);
@@ -640,7 +643,9 @@ mod tests {
             (&Keypair::new(), &[pubkey], 1, 2),
         ]);
 
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
         assert_eq!(
@@ -658,7 +663,9 @@ mod tests {
         );
 
         // expect 4 full batches to be scheduled
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(
             scheduling_summary.num_scheduled,
             4 * TARGET_NUM_TRANSACTIONS_PER_BATCH
@@ -678,45 +685,13 @@ mod tests {
         let mut container =
             create_container((0..4).map(|i| (Keypair::new(), [Pubkey::new_unique()], 1, i)));
 
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, [txids!([3, 1])]);
         assert_eq!(collect_work(&work_receivers[1]).1, [txids!([2, 0])]);
-    }
-
-    #[test]
-    fn test_schedule_look_ahead() {
-        let (mut scheduler, work_receivers, _finished_work_sender) = create_test_frame(2);
-
-        let accounts = (0..6).map(|_| Keypair::new()).collect_vec();
-        let mut container = create_container([
-            (&accounts[0], &[accounts[1].pubkey()], 1, 4),
-            (&accounts[1], &[accounts[2].pubkey()], 1, 3),
-            (&accounts[3], &[accounts[4].pubkey()], 1, 2),
-            (&accounts[4], &[accounts[5].pubkey()], 1, 1),
-            (&accounts[2], &[accounts[5].pubkey()], 1, 0),
-        ]);
-
-        // The look-ahead window allows the prio-graph to have a limited view of
-        // upcoming transactions, so that un-schedulable transactions are less
-        // likely to occur. In this case, we have 5 transactions that have a
-        // prio-graph that can be visualized as:
-        // [0] --> [1] \
-        //               -> [4]
-        //             /
-        // [2] --> [3]
-        // Even though [0] and [2] could be scheduled to different threads, the
-        // fact they eventually join means that the scheduler will schedule them
-        // onto the same thread to avoid causing [4], which conflicts with both
-        // chains, to be un-schedulable.
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
-        assert_eq!(scheduling_summary.num_scheduled, 5);
-        assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(
-            collect_work(&work_receivers[0]).1,
-            [txids!([0, 2]), txids!([1, 3]), txids!([4])]
-        );
     }
 
     #[test]
@@ -751,7 +726,9 @@ mod tests {
         // Because the look-ahead window is shortened to a size of 4, the scheduler does
         // not have knowledge of the joining at transaction [4] until after [0] and [1]
         // have been scheduled.
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable, 2);
         let (thread_0_work, thread_0_ids) = collect_work(&work_receivers[0]);
@@ -762,7 +739,9 @@ mod tests {
         );
 
         // Cannot schedule even on next pass because of lock conflicts
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 0);
         assert_eq!(scheduling_summary.num_unschedulable, 2);
 
@@ -774,13 +753,40 @@ mod tests {
             })
             .unwrap();
         scheduler.receive_completed(&mut container).unwrap();
-        let scheduling_summary = scheduler.schedule(&mut container, test_filter).unwrap();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
 
         assert_eq!(
             collect_work(&work_receivers[1]).1,
             [txids!([4]), txids!([5])]
+        );
+    }
+
+    #[test]
+    fn test_schedule_pre_lock_filter() {
+        let (mut scheduler, work_receivers, _finished_work_sender) = create_test_frame(1);
+        let pubkey = Pubkey::new_unique();
+        let keypair = Keypair::new();
+        let mut container = create_container([
+            (&Keypair::new(), &[pubkey], 1, 1),
+            (&keypair, &[pubkey], 1, 2),
+            (&Keypair::new(), &[pubkey], 1, 3),
+        ]);
+
+        // 2nd transaction should be filtered out and dropped before locking.
+        let pre_lock_filter =
+            |tx: &SanitizedTransaction| tx.message().fee_payer() != &keypair.pubkey();
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, pre_lock_filter)
+            .unwrap();
+        assert_eq!(scheduling_summary.num_scheduled, 2);
+        assert_eq!(scheduling_summary.num_unschedulable, 0);
+        assert_eq!(
+            collect_work(&work_receivers[0]).1,
+            vec![txids!([2]), txids!([0])]
         );
     }
 }

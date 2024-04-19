@@ -19,7 +19,6 @@ use {
         transport::{Result, TransportError},
     },
     std::{
-        convert::TryFrom,
         io,
         sync::{Arc, Mutex},
         thread::{sleep, Builder},
@@ -286,15 +285,15 @@ impl SyncClient for BankClient {
     }
 
     fn get_fee_for_message(&self, message: &Message) -> Result<u64> {
-        SanitizedMessage::try_from(message.clone())
-            .ok()
-            .and_then(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))
-            .ok_or_else(|| {
-                TransportError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Unable calculate fee",
-                ))
-            })
+        SanitizedMessage::try_from_legacy_message(
+            message.clone(),
+            self.bank.get_reserved_account_keys(),
+        )
+        .ok()
+        .and_then(|sanitized_message| self.bank.get_fee_for_message(&sanitized_message))
+        .ok_or_else(|| {
+            TransportError::IoError(io::Error::new(io::ErrorKind::Other, "Unable calculate fee"))
+        })
     }
 }
 

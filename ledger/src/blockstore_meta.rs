@@ -263,6 +263,13 @@ impl SlotMeta {
         Some(self.consumed) == self.last_index.map(|ix| ix + 1)
     }
 
+    /// Returns a boolean indicating whether this meta's parent slot is known.
+    /// This value being true indicates that this meta's slot is the head of a
+    /// detached chain of slots.
+    pub(crate) fn is_orphan(&self) -> bool {
+        self.parent_slot.is_none()
+    }
+
     /// Returns a boolean indicating whether the meta is connected.
     pub fn is_connected(&self) -> bool {
         self.connected_flags.contains(ConnectedFlags::CONNECTED)
@@ -385,6 +392,14 @@ impl ErasureMeta {
         self.first_coding_index..self.first_coding_index + num_coding
     }
 
+    pub(crate) fn next_fec_set_index(&self) -> Option<u32> {
+        let num_data = u64::try_from(self.config.num_data).ok()?;
+        self.set_index
+            .checked_add(num_data)
+            .map(u32::try_from)?
+            .ok()
+    }
+
     pub(crate) fn status(&self, index: &Index) -> ErasureMetaStatus {
         use ErasureMetaStatus::*;
 
@@ -406,7 +421,6 @@ impl ErasureMeta {
     }
 }
 
-#[allow(dead_code)]
 impl MerkleRootMeta {
     pub(crate) fn from_shred(shred: &Shred) -> Self {
         Self {

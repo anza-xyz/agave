@@ -21,8 +21,12 @@ use {
     },
     solana_runtime::bank::Bank,
     solana_sdk::{
-        account::Account, feature_set::apply_cost_tracker_during_replay, signature::Keypair,
-        signer::Signer, stake_history::Epoch, system_program, system_transaction,
+        account::{Account, ReadableAccount},
+        feature_set::apply_cost_tracker_during_replay,
+        signature::Keypair,
+        signer::Signer,
+        stake_history::Epoch,
+        system_program, system_transaction,
         transaction::SanitizedTransaction,
     },
     std::sync::{
@@ -55,7 +59,8 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
                 owner: system_program::id(),
                 executable: false,
                 rent_epoch: Epoch::MAX,
-            },
+            }
+            .to_account_shared_data(),
         );
     });
 
@@ -139,6 +144,16 @@ fn bench_process_and_record_transactions(
     batch_size: usize,
     apply_cost_tracker_during_replay: bool,
 ) {
+    const TRANSACTIONS_PER_ITERATION: usize = 64;
+    assert_eq!(
+        TRANSACTIONS_PER_ITERATION % batch_size,
+        0,
+        "batch_size must be a factor of \
+        `TRANSACTIONS_PER_ITERATION` ({TRANSACTIONS_PER_ITERATION}) \
+        so that bench results are easily comparable"
+    );
+    let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
+
     let BenchFrame {
         bank,
         ledger_path: _ledger_path,
@@ -152,12 +167,17 @@ fn bench_process_and_record_transactions(
     let mut transaction_iter = transactions.chunks(batch_size);
 
     bencher.iter(move || {
-        let summary =
-            consumer.process_and_record_transactions(&bank, transaction_iter.next().unwrap(), 0);
-        assert!(summary
-            .execute_and_commit_transactions_output
-            .commit_transactions_result
-            .is_ok());
+        for _ in 0..batches_per_iteration {
+            let summary = consumer.process_and_record_transactions(
+                &bank,
+                transaction_iter.next().unwrap(),
+                0,
+            );
+            assert!(summary
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_ok());
+        }
     });
 
     exit.store(true, Ordering::Relaxed);

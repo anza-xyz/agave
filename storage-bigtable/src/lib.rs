@@ -10,8 +10,8 @@ use {
         deserialize_utils::default_on_eof,
         message::v0::LoadedAddresses,
         pubkey::Pubkey,
+        reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
-        sysvar::is_sysvar_id,
         timing::AtomicInterval,
         transaction::{TransactionError, VersionedTransaction},
     },
@@ -381,6 +381,7 @@ impl From<LegacyTransactionByAddrInfo> for TransactionByAddrInfo {
 
 pub const DEFAULT_INSTANCE_NAME: &str = "solana-ledger";
 pub const DEFAULT_APP_PROFILE_ID: &str = "default";
+pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64MB
 
 #[derive(Debug)]
 pub enum CredentialType {
@@ -395,6 +396,7 @@ pub struct LedgerStorageConfig {
     pub credential_type: CredentialType,
     pub instance_name: String,
     pub app_profile_id: String,
+    pub max_message_size: usize,
 }
 
 impl Default for LedgerStorageConfig {
@@ -405,6 +407,7 @@ impl Default for LedgerStorageConfig {
             credential_type: CredentialType::Filepath(None),
             instance_name: DEFAULT_INSTANCE_NAME.to_string(),
             app_profile_id: DEFAULT_APP_PROFILE_ID.to_string(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 }
@@ -471,6 +474,7 @@ impl LedgerStorage {
                 app_profile_id,
                 endpoint,
                 timeout,
+                LedgerStorageConfig::default().max_message_size,
             )?,
             stats,
         })
@@ -484,6 +488,7 @@ impl LedgerStorage {
             instance_name,
             app_profile_id,
             credential_type,
+            max_message_size,
         } = config;
         let connection = bigtable::BigTableConnection::new(
             instance_name.as_str(),
@@ -491,6 +496,7 @@ impl LedgerStorage {
             read_only,
             timeout,
             credential_type,
+            max_message_size,
         )
         .await?;
         Ok(Self { stats, connection })
@@ -823,7 +829,7 @@ impl LedgerStorage {
             .unwrap_or(0);
 
         // Return the next tx-by-addr data of amount `limit` plus extra to account for the largest
-        // number that might be flitered out
+        // number that might be filtered out
         let tx_by_addr_data = bigtable
             .get_row_data(
                 "tx-by-addr",
@@ -932,6 +938,7 @@ impl LedgerStorage {
             entries,
         } = confirmed_block;
 
+        let reserved_account_keys = ReservedAccountKeys::new_all_activated();
         let mut tx_cells = Vec::with_capacity(confirmed_block.transactions.len());
         for (index, transaction_with_meta) in confirmed_block.transactions.iter().enumerate() {
             let VersionedTransactionWithStatusMeta { meta, transaction } = transaction_with_meta;
@@ -941,7 +948,11 @@ impl LedgerStorage {
             let memo = extract_and_fmt_memos(transaction_with_meta);
 
             for address in transaction_with_meta.account_keys().iter() {
-                if !is_sysvar_id(address) {
+                // Historical note that previously only a set of sysvar ids were
+                // skipped from being uploaded. Now we skip uploaded for the set
+                // of all reserved account keys which will continue to grow in
+                // the future.
+                if !reserved_account_keys.is_reserved(address) {
                     by_addr
                         .entry(address)
                         .or_default()
@@ -1077,9 +1088,13 @@ impl LedgerStorage {
                     let err = None;
 
                     for address in transaction.message.account_keys.iter() {
-                        if !is_sysvar_id(address) {
-                            addresses.insert(address);
-                        }
+                        // We could skip deleting addresses that are known
+                        // reserved keys but it's hard to be sure whether we
+                        // previously uploaded rows for reserved keys or not. So
+                        // to ensure everything is deleted properly, we attempt
+                        // to delete rows for all addresses even if they might
+                        // not have been uploaded.
+                        addresses.insert(address);
                     }
 
                     expected_tx_infos.insert(
@@ -1094,9 +1109,13 @@ impl LedgerStorage {
                     let err = meta.status.clone().err();
 
                     for address in tx_with_meta.account_keys().iter() {
-                        if !is_sysvar_id(address) {
-                            addresses.insert(address);
-                        }
+                        // We could skip deleting addresses that are known
+                        // reserved keys but it's hard to be sure whether we
+                        // previously uploaded rows for reserved keys or not. So
+                        // to ensure everything is deleted properly, we attempt
+                        // to delete rows for all addresses even if they might
+                        // not have been uploaded.
+                        addresses.insert(address);
                     }
 
                     expected_tx_infos.insert(

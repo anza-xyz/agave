@@ -112,27 +112,26 @@ where
         // first by ourselves when there are odd paths like including `..` or /
         // for our clearer pattern matching reasoning:
         //   https://docs.rs/tar/0.4.26/src/tar/entry.rs.html#371
-        let parts = path.components().map(|p| match p {
-            CurDir => Some("."),
-            Normal(c) => c.to_str(),
-            _ => None, // Prefix (for Windows) and RootDir are forbidden
-        });
+        let parts = path
+            .components()
+            .map(|p| match p {
+                CurDir => Ok("."),
+                Normal(c) => c.to_str().ok_or(()),
+                _ => Err(()), // Prefix (for Windows) and RootDir are forbidden
+            })
+            .collect::<std::result::Result<Vec<_>, _>>();
 
         // Reject old-style BSD directory entries that aren't explicitly tagged as directories
         let legacy_dir_entry =
             entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/");
         let kind = entry.header().entry_type();
         let reject_legacy_dir_entry = legacy_dir_entry && (kind != Directory);
-
-        if parts.clone().any(|p| p.is_none()) || reject_legacy_dir_entry {
+        let (Ok(parts), false) = (parts, reject_legacy_dir_entry) else {
             return Err(UnpackError::Archive(format!(
                 "invalid path found: {path_str:?}"
             )));
-        }
+        };
 
-        let parts: Vec<_> = parts.map(|p| p.unwrap()).collect();
-        let account_filename =
-            (parts.len() == 2 && parts[0] == "accounts").then(|| PathBuf::from(parts[1]));
         let unpack_dir = match entry_checker(parts.as_slice(), kind) {
             UnpackPath::Invalid => {
                 return Err(UnpackError::Archive(format!(
@@ -159,13 +158,24 @@ where
         )?;
         total_count = checked_total_count_increment(total_count, limit_count)?;
 
-        let target = sanitize_path(&entry.path()?, unpack_dir)?; // ? handles file system errors
-        if target.is_none() {
+        let account_filename = match parts.as_slice() {
+            ["accounts", account_filename] => Some(PathBuf::from(account_filename)),
+            _ => None,
+        };
+        let entry_path = if let Some(account) = account_filename {
+            // Special case account files. We're unpacking an account entry inside one of the
+            // account_paths returned by `entry_checker`. We want to unpack into
+            // account_path/<account> instead of account_path/accounts/<account> so we strip the
+            // accounts/ prefix.
+            sanitize_path(&account, unpack_dir)
+        } else {
+            sanitize_path(&path, unpack_dir)
+        }?; // ? handles file system errors
+        let Some(entry_path) = entry_path else {
             continue; // skip it
-        }
-        let target = target.unwrap();
+        };
 
-        let unpack = entry.unpack(target);
+        let unpack = entry.unpack(&entry_path);
         check_unpack_result(unpack.map(|_unpack| true)?, path_str)?;
 
         // Sanitize permissions.
@@ -173,16 +183,7 @@ where
             GNUSparse | Regular => 0o644,
             _ => 0o755,
         };
-        let entry_path_buf = unpack_dir.join(entry.path()?);
-        set_perms(&entry_path_buf, mode)?;
-
-        let entry_path = if let Some(account_filename) = account_filename {
-            let stripped_path = unpack_dir.join(account_filename); // strip away "accounts"
-            fs::rename(&entry_path_buf, &stripped_path)?;
-            stripped_path
-        } else {
-            entry_path_buf
-        };
+        set_perms(&entry_path, mode)?;
 
         // Process entry after setting permissions
         entry_processor(entry_path);
@@ -204,6 +205,9 @@ where
     #[cfg(windows)]
     fn set_perms(dst: &Path, _mode: u32) -> std::io::Result<()> {
         let mut perm = fs::metadata(dst)?.permissions();
+        // This is OK for Windows, but clippy doesn't realize we're doing this
+        // only on Windows.
+        #[allow(clippy::permissions_set_readonly_false)]
         perm.set_readonly(false);
         fs::set_permissions(dst, perm)
     }
@@ -446,28 +450,35 @@ fn is_valid_snapshot_archive_entry(parts: &[&str], kind: tar::EntryType) -> bool
     }
 }
 
+#[derive(Error, Debug)]
+pub enum OpenGenesisConfigError {
+    #[error("unpack error: {0}")]
+    Unpack(#[from] UnpackError),
+    #[error("Genesis load error: {0}")]
+    Load(#[from] std::io::Error),
+}
+
 pub fn open_genesis_config(
     ledger_path: &Path,
     max_genesis_archive_unpacked_size: u64,
-) -> GenesisConfig {
-    GenesisConfig::load(ledger_path).unwrap_or_else(|load_err| {
-        let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-        unpack_genesis_archive(
-            &genesis_package,
-            ledger_path,
-            max_genesis_archive_unpacked_size,
-        )
-        .unwrap_or_else(|unpack_err| {
+) -> std::result::Result<GenesisConfig, OpenGenesisConfigError> {
+    match GenesisConfig::load(ledger_path) {
+        Ok(genesis_config) => Ok(genesis_config),
+        Err(load_err) => {
             warn!(
-                "Failed to open ledger genesis_config at {:?}: {}, {}",
-                ledger_path, load_err, unpack_err,
+                "Failed to load genesis_config at {ledger_path:?}: {load_err}. \
+                Will attempt to unpack genesis archive and then retry loading."
             );
-            std::process::exit(1);
-        });
 
-        // loading must succeed at this moment
-        GenesisConfig::load(ledger_path).unwrap()
-    })
+            let genesis_package = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
+            unpack_genesis_archive(
+                &genesis_package,
+                ledger_path,
+                max_genesis_archive_unpacked_size,
+            )?;
+            GenesisConfig::load(ledger_path).map_err(OpenGenesisConfigError::Load)
+        }
+    }
 }
 
 pub fn unpack_genesis_archive(
@@ -1021,5 +1032,28 @@ mod tests {
             Err(UnpackError::Archive(ref message))
                 if message == "too many files in snapshot: 1000000000000"
         );
+    }
+
+    #[test]
+    fn test_archive_unpack_account_path() {
+        let mut header = Header::new_gnu();
+        header.set_path("accounts/123.456").unwrap();
+        header.set_size(4);
+        header.set_cksum();
+        let data: &[u8] = &[1, 2, 3, 4];
+
+        let mut archive = Builder::new(Vec::new());
+        archive.append(&header, data).unwrap();
+        let result = with_finalize_and_unpack(archive, |ar, tmp| {
+            unpack_snapshot_with_processors(
+                ar,
+                tmp,
+                &[tmp.join("accounts_dest")],
+                None,
+                |_, _| {},
+                |path| assert_eq!(path, tmp.join("accounts_dest/123.456")),
+            )
+        });
+        assert_matches!(result, Ok(()));
     }
 }
