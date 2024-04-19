@@ -28,13 +28,16 @@ use {
     solana_program_runtime::compute_budget_processor::process_compute_budget_instructions,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
-        clock::MAX_PROCESSING_AGE, fee::FeeBudgetLimits, saturating_add_assign,
+        self,
+        clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
+        fee::FeeBudgetLimits,
+        saturating_add_assign,
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         sync::{Arc, RwLock},
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
 
@@ -153,7 +156,12 @@ impl SchedulerController {
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
                     &mut self.container,
                     |txs, results| {
-                        Self::pre_graph_filter(txs, results, &bank_start.working_bank)
+                        Self::pre_graph_filter(
+                            txs,
+                            results,
+                            &bank_start.working_bank,
+                            MAX_PROCESSING_AGE,
+                        )
                     },
                     |_| true // no pre-lock filter for now
                 )?);
@@ -199,15 +207,16 @@ impl SchedulerController {
         Ok(())
     }
 
-    fn pre_graph_filter(transactions: &[&SanitizedTransaction], results: &mut [bool], bank: &Bank) {
+    fn pre_graph_filter(
+        transactions: &[&SanitizedTransaction],
+        results: &mut [bool],
+        bank: &Bank,
+        max_age: usize,
+    ) {
         let lock_results = vec![Ok(()); transactions.len()];
         let mut error_counters = TransactionErrorMetrics::default();
-        let check_results = bank.check_transactions(
-            transactions,
-            &lock_results,
-            MAX_PROCESSING_AGE,
-            &mut error_counters,
-        );
+        let check_results =
+            bank.check_transactions(transactions, &lock_results, max_age, &mut error_counters);
 
         let fee_check_results: Vec<_> = check_results
             .into_iter()
@@ -225,6 +234,8 @@ impl SchedulerController {
 
     /// Forward packets to the next leader.
     fn forward_packets(&mut self, hold: bool) {
+        const MAX_FORWARDING_DURATION: Duration = Duration::from_millis(100);
+        let start = Instant::now();
         let bank = self.bank_forks.read().unwrap().working_bank();
         let feature_set = &bank.feature_set;
         let mut forwardable_packets =
@@ -254,7 +265,13 @@ impl SchedulerController {
 
             // use same filter we use for processing transactions:
             // age, already processed, fee-check.
-            Self::pre_graph_filter(&txs, &mut filter_array, &bank);
+            Self::pre_graph_filter(
+                &txs,
+                &mut filter_array,
+                &bank,
+                MAX_PROCESSING_AGE
+                    .saturating_sub(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET as usize),
+            );
 
             for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                 if !*filter_result || !hold {
@@ -277,6 +294,10 @@ impl SchedulerController {
                 {
                     state.mark_forwarded();
                 }
+            }
+
+            if start.elapsed() >= MAX_FORWARDING_DURATION {
+                break;
             }
         }
 
