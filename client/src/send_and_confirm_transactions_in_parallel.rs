@@ -145,8 +145,11 @@ fn create_transaction_confirmation_task(
                                 })
                             {
                                 num_confirmed_transactions.fetch_add(1, Ordering::Relaxed);
-                                if let Some(error) = status.err {
-                                    errors_map.insert(data.index, error);
+                                match status.err {
+                                    Some(TransactionError::AlreadyProcessed) | None => {}
+                                    Some(error) => {
+                                        errors_map.insert(data.index, error);
+                                    }
                                 }
                             };
                         }
