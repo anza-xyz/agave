@@ -5,7 +5,7 @@ use {
     },
     bincode::serialize,
     dashmap::DashMap,
-    futures_util::future::{join_all, FutureExt},
+    futures_util::future::join_all,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::spinner::{self, SendTransactionProgress},
     solana_rpc_client_api::{
@@ -32,7 +32,6 @@ use {
 };
 
 const BLOCKHASH_REFRESH_RATE: Duration = Duration::from_secs(5);
-const TPU_RESEND_REFRESH_RATE: Duration = Duration::from_secs(2);
 const SEND_INTERVAL: Duration = Duration::from_millis(10);
 // This is a "reasonable" constant for how long it should
 // take to fan the transactions out, taken from
@@ -506,33 +505,21 @@ pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
         // clear the map so that we can start resending
         unconfirmed_transasction_map.clear();
 
-        let futures = [
-            sign_all_messages_and_send(
-                &progress_bar,
-                &rpc_client,
-                &tpu_client,
-                messages_with_index,
-                signers,
-                &context,
-            )
-            .boxed_local(),
-            async {
-                // Give the signing and sending a head start before trying to
-                // confirm and resend
-                tokio::time::sleep(TPU_RESEND_REFRESH_RATE).await;
-                confirm_transactions_till_block_height_and_resend_unexpired_transaction_over_tpu(
-                    &progress_bar,
-                    &tpu_client,
-                    &context,
-                )
-                .await;
-                // Infallible, but required to have the same return type as
-                // `sign_all_messages_and_send`
-                Ok(())
-            }
-            .boxed_local(),
-        ];
-        join_all(futures).await.into_iter().collect::<Result<_>>()?;
+        sign_all_messages_and_send(
+            &progress_bar,
+            &rpc_client,
+            &tpu_client,
+            messages_with_index,
+            signers,
+            &context,
+        )
+        .await?;
+        confirm_transactions_till_block_height_and_resend_unexpired_transaction_over_tpu(
+            &progress_bar,
+            &tpu_client,
+            &context,
+        )
+        .await;
 
         if unconfirmed_transasction_map.is_empty() {
             break;
