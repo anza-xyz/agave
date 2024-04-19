@@ -97,6 +97,16 @@ impl TransactionState {
         }
     }
 
+    /// Mark the packet as forwarded.
+    /// This is used to prevent the packet from being forwarded multiple times.
+    pub(crate) fn mark_forwarded(&mut self) {
+        match self {
+            Self::Unprocessed { forwarded, .. } => *forwarded = true,
+            Self::Pending { forwarded, .. } => *forwarded = true,
+            Self::Transitioning => unreachable!(),
+        }
+    }
+
     /// Return the packet of the transaction.
     pub(crate) fn packet(&self) -> &Arc<ImmutableDeserializedPacket> {
         match self {

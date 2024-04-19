@@ -229,24 +229,53 @@ impl SchedulerController {
         let feature_set = &bank.feature_set;
         let mut forwardable_packets =
             ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
-        let mut already_forwarded_ids = Vec::new();
-        while let Some(id) = self.container.pop() {
-            let Some(state) = self.container.get_transaction_state(&id.id) else {
-                continue;
-            };
 
-            if state.forwarded() {
-                already_forwarded_ids.push(id);
-                continue;
+        // Pop from the container in chunks, filter using bank checks, then attempt to forward.
+        // This doubles as a way to clean the queue as well as forwarding transactions.
+        const CHUNK_SIZE: usize = 64;
+        let mut ids_to_add_back = Vec::new();
+        while !self.container.is_empty() {
+            let mut filter_array = [true; CHUNK_SIZE];
+            let mut ids = Vec::with_capacity(CHUNK_SIZE);
+            let mut txs = Vec::with_capacity(CHUNK_SIZE);
+
+            for _ in 0..CHUNK_SIZE {
+                if let Some(id) = self.container.pop() {
+                    ids.push(id);
+                } else {
+                    break;
+                }
             }
+            let chunk_size = ids.len();
+            ids.iter().for_each(|id| {
+                let transaction = self.container.get_transaction_ttl(&id.id).unwrap();
+                txs.push(&transaction.transaction);
+            });
 
-            if forwardable_packets.try_add_packet(
-                &state.transaction_ttl().transaction,
-                state.packet().clone(),
-                feature_set,
-            ) {
-                already_forwarded_ids.push(id);
-                break;
+            // use same filter we use for processing transactions:
+            // age, already processed, fee-check.
+            Self::pre_graph_filter(&txs, &mut filter_array, &bank);
+
+            for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
+                if !*filter_result || !hold {
+                    self.container.remove_by_id(&id.id);
+                }
+
+                ids_to_add_back.push(*id); // add back to the queue at end
+                let state = self.container.get_mut_transaction_state(&id.id).unwrap();
+                let sanitized_transaction = &state.transaction_ttl().transaction;
+                let immutable_packet = state.packet().clone();
+
+                // If not already forwarded and can be forwarded, add to forwardable packets.
+                if !state.forwarded()
+                    && forwardable_packets.try_add_packet(
+                        sanitized_transaction,
+                        immutable_packet,
+                        feature_set,
+                    )
+                {
+                    state.mark_forwarded();
+                }
             }
         }
 
@@ -258,11 +287,11 @@ impl SchedulerController {
         }
 
         if hold {
-            for priority_id in already_forwarded_ids {
+            for priority_id in ids_to_add_back {
                 self.container.push_id_into_queue(priority_id);
             }
         } else {
-            for priority_id in already_forwarded_ids {
+            for priority_id in ids_to_add_back {
                 self.container.remove_by_id(&priority_id.id);
             }
         }
