@@ -28,7 +28,7 @@ use {
         },
         time::Duration,
     },
-    tokio::{sync::RwLock, task::JoinHandle, time::Instant},
+    tokio::{sync::RwLock, task::JoinHandle},
 };
 
 const BLOCKHASH_REFRESH_RATE: Duration = Duration::from_secs(5);
@@ -349,7 +349,6 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
             let block_height = current_block_height.load(Ordering::Relaxed);
 
             if let Some(tpu_client) = tpu_client {
-                let instant = Instant::now();
                 // retry sending transaction only over TPU port
                 // any transactions sent over RPC will be automatically rebroadcast by the RPC server
                 let txs_to_resend_over_tpu = unconfirmed_transaction_map
@@ -357,29 +356,14 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
                     .filter(|x| block_height < x.last_valid_block_height)
                     .map(|x| x.serialized_transaction.clone())
                     .collect::<Vec<_>>();
-                let num_txs_to_resend = txs_to_resend_over_tpu.len();
-                let message = if tokio::time::timeout(
-                    SEND_TIMEOUT_INTERVAL,
-                    tpu_client.try_send_wire_transaction_batch(txs_to_resend_over_tpu),
+                send_staggered_transactions(
+                    progress_bar,
+                    tpu_client,
+                    txs_to_resend_over_tpu,
+                    max_valid_block_height,
+                    context,
                 )
-                .await
-                .is_err()
-                {
-                    format!("Timed out resending {num_txs_to_resend} transactions...")
-                } else {
-                    format!("Resent {num_txs_to_resend} transactions...")
-                };
-
-                if let Some(progress_bar) = progress_bar {
-                    let progress =
-                        progress_from_context_and_block_height(context, max_valid_block_height);
-                    progress.set_message_for_confirmed_transactions(progress_bar, &message);
-                }
-
-                let elapsed = instant.elapsed();
-                if elapsed < TPU_RESEND_REFRESH_RATE {
-                    tokio::time::sleep(TPU_RESEND_REFRESH_RATE - elapsed).await;
-                }
+                .await;
             } else {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
@@ -393,6 +377,41 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
             }
         }
     }
+}
+
+async fn send_staggered_transactions(
+    progress_bar: &Option<indicatif::ProgressBar>,
+    tpu_client: &QuicTpuClient,
+    wire_transactions: Vec<Vec<u8>>,
+    last_valid_block_height: u64,
+    context: &SendingContext,
+) {
+    let current_transaction_count = wire_transactions.len();
+    let futures = wire_transactions
+        .into_iter()
+        .enumerate()
+        .map(|(counter, transaction)| async move {
+            tokio::time::sleep(SEND_INTERVAL.saturating_mul(counter as u32)).await;
+            if let Some(progress_bar) = progress_bar {
+                let progress =
+                    progress_from_context_and_block_height(context, last_valid_block_height);
+                progress.set_message_for_confirmed_transactions(
+                    progress_bar,
+                    &format!(
+                        "Resending {}/{} transactions",
+                        counter + 1,
+                        current_transaction_count,
+                    ),
+                );
+            }
+            tokio::time::timeout(
+                SEND_TIMEOUT_INTERVAL,
+                tpu_client.send_wire_transaction(transaction),
+            )
+            .await
+        })
+        .collect::<Vec<_>>();
+    join_all(futures).await;
 }
 
 /// Sends and confirms transactions concurrently
