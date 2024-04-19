@@ -267,7 +267,7 @@ impl SchedulerController {
                 let immutable_packet = state.packet().clone();
 
                 // If not already forwarded and can be forwarded, add to forwardable packets.
-                if !state.forwarded()
+                if state.should_forward()
                     && forwardable_packets.try_add_packet(
                         sanitized_transaction,
                         immutable_packet,

@@ -37,14 +37,14 @@ pub(crate) enum TransactionState {
         packet: Arc<ImmutableDeserializedPacket>,
         priority: u64,
         cost: u64,
-        forwarded: bool,
+        should_forward: bool,
     },
     /// The transaction is currently scheduled or being processed.
     Pending {
         packet: Arc<ImmutableDeserializedPacket>,
         priority: u64,
         cost: u64,
-        forwarded: bool,
+        should_forward: bool,
     },
     /// Only used during transition.
     Transitioning,
@@ -58,13 +58,14 @@ impl TransactionState {
         priority: u64,
         cost: u64,
     ) -> Self {
-        let forwarded = packet.original_packet().meta().forwarded();
+        let should_forward = !packet.original_packet().meta().forwarded()
+            && packet.original_packet().meta().is_from_staked_node();
         Self::Unprocessed {
             transaction_ttl,
             packet,
             priority,
             cost,
-            forwarded,
+            should_forward,
         }
     }
 
@@ -88,11 +89,17 @@ impl TransactionState {
         }
     }
 
-    /// Return whether packet is already forwarded or not.
-    pub(crate) fn forwarded(&self) -> bool {
+    /// Return whether packet should be attempted to be forwarded.
+    pub(crate) fn should_forward(&self) -> bool {
         match self {
-            Self::Unprocessed { forwarded, .. } => *forwarded,
-            Self::Pending { forwarded, .. } => *forwarded,
+            Self::Unprocessed {
+                should_forward: forwarded,
+                ..
+            } => *forwarded,
+            Self::Pending {
+                should_forward: forwarded,
+                ..
+            } => *forwarded,
             Self::Transitioning => unreachable!(),
         }
     }
@@ -101,8 +108,8 @@ impl TransactionState {
     /// This is used to prevent the packet from being forwarded multiple times.
     pub(crate) fn mark_forwarded(&mut self) {
         match self {
-            Self::Unprocessed { forwarded, .. } => *forwarded = true,
-            Self::Pending { forwarded, .. } => *forwarded = true,
+            Self::Unprocessed { should_forward, .. } => *should_forward = false,
+            Self::Pending { should_forward, .. } => *should_forward = false,
             Self::Transitioning => unreachable!(),
         }
     }
@@ -130,13 +137,13 @@ impl TransactionState {
                 packet,
                 priority,
                 cost,
-                forwarded,
+                should_forward: forwarded,
             } => {
                 *self = TransactionState::Pending {
                     packet,
                     priority,
                     cost,
-                    forwarded,
+                    should_forward: forwarded,
                 };
                 transaction_ttl
             }
@@ -160,14 +167,14 @@ impl TransactionState {
                 packet,
                 priority,
                 cost,
-                forwarded,
+                should_forward: forwarded,
             } => {
                 *self = Self::Unprocessed {
                     transaction_ttl,
                     packet,
                     priority,
                     cost,
-                    forwarded,
+                    should_forward: forwarded,
                 }
             }
             Self::Transitioning => unreachable!(),
