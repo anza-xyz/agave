@@ -275,7 +275,7 @@ impl SchedulerController {
             );
 
             for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
-                if !*filter_result || !hold {
+                if !*filter_result {
                     self.container.remove_by_id(&id.id);
                     continue;
                 }
