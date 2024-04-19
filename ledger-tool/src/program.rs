@@ -8,7 +8,7 @@ use {
         create_vm, load_program_from_bytes, serialization::serialize_parameters,
         syscalls::create_program_runtime_environment_v1,
     },
-    solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
+    solana_cli_output::{impl_format_for_mode_trivial, OutputFormat},
     solana_ledger::{blockstore_options::AccessType, use_snapshot_archives_at_startup},
     solana_program_runtime::{
         invoke_context::InvokeContext,
@@ -242,6 +242,8 @@ struct Output {
     log: Vec<String>,
 }
 
+impl_format_for_mode_trivial!(Output);
+
 impl fmt::Display for Output {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Program output:")?;
@@ -254,9 +256,6 @@ impl fmt::Display for Output {
         Ok(())
     }
 }
-
-impl QuietDisplay for Output {}
-impl VerboseDisplay for Output {}
 
 // Replace with std::lazy::Lazy when stabilized.
 // https://github.com/rust-lang/rust/issues/74465

@@ -6,8 +6,8 @@ use {
     solana_account_decoder::{UiAccount, UiAccountData, UiAccountEncoding},
     solana_accounts_db::accounts_index::ScanConfig,
     solana_cli_output::{
-        display::writeln_transaction, CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay,
-        VerboseDisplay,
+        display::writeln_transaction, impl_format_for_mode_trivial, CliAccount,
+        CliAccountNewConfig, OutputFormat,
     },
     solana_entry::entry::Entry,
     solana_ledger::blockstore::Blockstore,
@@ -52,8 +52,7 @@ pub struct SlotBounds<'a> {
     pub roots: SlotInfo,
 }
 
-impl VerboseDisplay for SlotBounds<'_> {}
-impl QuietDisplay for SlotBounds<'_> {}
+impl_format_for_mode_trivial!(SlotBounds<'_>);
 
 impl Display for SlotBounds<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -113,8 +112,7 @@ pub struct CliEntries {
     pub slot: Slot,
 }
 
-impl QuietDisplay for CliEntries {}
-impl VerboseDisplay for CliEntries {}
+impl_format_for_mode_trivial!(CliEntries);
 
 impl fmt::Display for CliEntries {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -176,8 +174,7 @@ pub struct CliBlockWithEntries {
     pub slot: Slot,
 }
 
-impl QuietDisplay for CliBlockWithEntries {}
-impl VerboseDisplay for CliBlockWithEntries {}
+impl_format_for_mode_trivial!(CliBlockWithEntries);
 
 impl fmt::Display for CliBlockWithEntries {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

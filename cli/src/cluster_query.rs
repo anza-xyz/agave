@@ -22,7 +22,7 @@ use {
             build_balance_message, format_labeled_address, new_spinner_progress_bar,
             writeln_name_value,
         },
-        *,
+        impl_format_for_mode_trivial, *,
     },
     solana_pubsub_client::pubsub_client::PubsubClient,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -2265,8 +2265,7 @@ impl fmt::Display for CliRentCalculation {
     }
 }
 
-impl QuietDisplay for CliRentCalculation {}
-impl VerboseDisplay for CliRentCalculation {}
+impl_format_for_mode_trivial!(CliRentCalculation);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RentLengthValue {
