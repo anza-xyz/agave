@@ -878,7 +878,6 @@ impl borsh0_10::BorshSchema for Delegation {
         <Pubkey as borsh0_10::BorshSchema>::add_definitions_recursively(definitions);
         <u64 as borsh0_10::BorshSchema>::add_definitions_recursively(definitions);
         <Epoch as borsh0_10::BorshSchema>::add_definitions_recursively(definitions);
-        <Epoch as borsh0_10::BorshSchema>::add_definitions_recursively(definitions);
         <f64 as borsh0_10::BorshSchema>::add_definitions_recursively(definitions);
     }
 }
