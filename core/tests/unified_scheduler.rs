@@ -76,7 +76,6 @@ fn test_scheduler_waited_by_drop_bank_service() {
         None,
         None,
         None,
-        None,
         ignored_prioritization_fee_cache,
     );
     let pool = pool_raw.clone();

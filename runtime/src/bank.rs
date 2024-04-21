@@ -4666,7 +4666,6 @@ impl Bank {
                 enable_return_data_recording: true,
             },
             &mut ExecuteTimings::default(),
-            Some(1000 * 1000),
         );
 
         commit_results.remove(0)
@@ -4702,7 +4701,6 @@ impl Bank {
             false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
-            None,
         )
         .0
         .into_iter()

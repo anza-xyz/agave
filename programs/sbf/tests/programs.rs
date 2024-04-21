@@ -119,7 +119,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
                 enable_return_data_recording: false,
             },
             &mut ExecuteTimings::default(),
-            None,
         )
         .0;
     commit_results.pop().unwrap()
@@ -147,7 +146,6 @@ fn execute_transactions(
         true,
         ExecutionRecordingConfig::new_single_setting(true),
         &mut timings,
-        None,
     );
     let tx_post_token_balances = collect_token_balances(&bank, &batch, &mut mint_decimals);
 

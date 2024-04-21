@@ -335,7 +335,6 @@ impl BankingStage {
         gossip_vote_receiver: BankingPacketReceiver,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
@@ -351,7 +350,6 @@ impl BankingStage {
             Self::num_threads(),
             transaction_status_sender,
             replay_vote_sender,
-            log_messages_bytes_limit,
             connection_cache,
             bank_forks,
             prioritization_fee_cache,
@@ -370,7 +368,6 @@ impl BankingStage {
         num_threads: u32,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
@@ -387,7 +384,6 @@ impl BankingStage {
                     num_threads,
                     transaction_status_sender,
                     replay_vote_sender,
-                    log_messages_bytes_limit,
                     connection_cache,
                     bank_forks,
                     prioritization_fee_cache,
@@ -402,7 +398,6 @@ impl BankingStage {
                 num_threads,
                 transaction_status_sender,
                 replay_vote_sender,
-                log_messages_bytes_limit,
                 connection_cache,
                 bank_forks,
                 prioritization_fee_cache,
@@ -421,7 +416,6 @@ impl BankingStage {
         num_threads: u32,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
@@ -486,7 +480,6 @@ impl BankingStage {
                     decision_maker.clone(),
                     committer.clone(),
                     transaction_recorder.clone(),
-                    log_messages_bytes_limit,
                     forwarder,
                     unprocessed_transaction_storage,
                 )
@@ -505,7 +498,6 @@ impl BankingStage {
         num_threads: u32,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
@@ -542,7 +534,6 @@ impl BankingStage {
                 decision_maker.clone(),
                 committer.clone(),
                 transaction_recorder.clone(),
-                log_messages_bytes_limit,
                 Forwarder::new(
                     poh_recorder.clone(),
                     bank_forks.clone(),
@@ -574,7 +565,6 @@ impl BankingStage {
                     committer.clone(),
                     poh_recorder.read().unwrap().new_recorder(),
                     QosService::new(id),
-                    log_messages_bytes_limit,
                 ),
                 finished_work_sender.clone(),
                 poh_recorder.read().unwrap().new_leader_bank_notifier(),
@@ -636,17 +626,11 @@ impl BankingStage {
         decision_maker: DecisionMaker,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
-        log_messages_bytes_limit: Option<usize>,
         mut forwarder: Forwarder,
         unprocessed_transaction_storage: UnprocessedTransactionStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver, bank_forks);
-        let consumer = Consumer::new(
-            committer,
-            transaction_recorder,
-            QosService::new(id),
-            log_messages_bytes_limit,
-        );
+        let consumer = Consumer::new(committer, transaction_recorder, QosService::new(id));
 
         Builder::new()
             .name(format!("solBanknStgTx{id:02}"))
@@ -881,7 +865,6 @@ mod tests {
                 gossip_vote_receiver,
                 None,
                 replay_vote_sender,
-                None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
@@ -937,7 +920,6 @@ mod tests {
                 gossip_vote_receiver,
                 None,
                 replay_vote_sender,
-                None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
@@ -1017,7 +999,6 @@ mod tests {
                 gossip_vote_receiver,
                 None,
                 replay_vote_sender,
-                None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
@@ -1188,7 +1169,6 @@ mod tests {
                     3,
                     None,
                     replay_vote_sender,
-                    None,
                     Arc::new(ConnectionCache::new("connection_cache_test")),
                     bank_forks,
                     &Arc::new(PrioritizationFeeCache::new(0u64)),
@@ -1379,7 +1359,6 @@ mod tests {
                 gossip_vote_receiver,
                 None,
                 replay_vote_sender,
-                None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
