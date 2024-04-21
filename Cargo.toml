@@ -545,9 +545,9 @@ rev = "6105d7a5591aefa646a95d12b5e8d3f55a9214ef"
 #
 # https://github.com/dalek-cryptography/curve25519-dalek/compare/3.2.1...solana-labs:curve25519-dalek:3.2.1-unpin-zeroize
 #
-# [patch.crates-io.curve25519-dalek]
-# git = "https://github.com/solana-labs/curve25519-dalek.git"
-# rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464"
+[patch.crates-io.curve25519-dalek]
+git = "https://github.com/solana-labs/curve25519-dalek.git"
+rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464"
 
 # Solana RPC nodes experience stalls when running with `tokio` containing this
 # commit:
