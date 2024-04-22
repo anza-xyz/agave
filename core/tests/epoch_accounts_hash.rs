@@ -320,14 +320,12 @@ fn test_epoch_accounts_hash_basic(test_environment: TestEnvironment) {
                     bank.slot(),
                     &CalcAccountsHashConfig {
                         use_bg_thread_pool: false,
-                        check_hash: false,
                         ancestors: Some(&bank.ancestors),
                         epoch_schedule: bank.epoch_schedule(),
                         rent_collector: bank.rent_collector(),
                         store_detailed_debug_info_on_failure: false,
                     },
-                )
-                .unwrap();
+                );
             expected_epoch_accounts_hash = Some(EpochAccountsHash::from(accounts_hash));
             debug!(
                 "slot {}, expected epoch accounts hash: {:?}",

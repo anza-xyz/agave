@@ -80,7 +80,7 @@ use {
         accounts_hash::{
             AccountHash, AccountsHash, CalcAccountsHashConfig, HashStats, IncrementalAccountsHash,
         },
-        accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult, ZeroLamport},
+        accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
         accounts_partition::{self, Partition, PartitionIndex},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
@@ -88,7 +88,7 @@ use {
         epoch_accounts_hash::EpochAccountsHash,
         sorted_storages::SortedStorages,
         stake_rewards::StakeReward,
-        storable_accounts::{AccountForStorage, StorableAccounts},
+        storable_accounts::StorableAccounts,
     },
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_cost_model::cost_tracker::CostTracker,
@@ -99,8 +99,8 @@ use {
         compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramOwner, LoadedProgramType,
-            ProgramCache,
+            ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheMatchCriteria,
         },
         timings::{ExecuteTimingType, ExecuteTimings},
     },
@@ -202,9 +202,7 @@ use {
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
-    solana_program_runtime::{
-        loaded_programs::LoadedProgramsForTxBatch, sysvar_cache::SysvarCache,
-    },
+    solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
 };
 
 /// params to `verify_accounts_hash`
@@ -1589,10 +1587,11 @@ impl Bank {
         // from Stakes<Delegation> by reading the full account state from
         // accounts-db. Note that it is crucial that these accounts are loaded
         // at the right slot and match precisely with serialized Delegations.
+        //
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
-        let stakes = Stakes::new(&fields.stakes, |pubkey| {
+        let (stakes, stakes_time) = measure!(Stakes::new(&fields.stakes, |pubkey| {
             let (account, _slot) = bank_rc
                 .accounts
                 .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
@@ -1601,7 +1600,8 @@ impl Bank {
         .expect(
             "Stakes cache is inconsistent with accounts-db. This can indicate \
             a corrupted snapshot or bugs in cached accounts or accounts-db.",
-        );
+        ));
+        info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
@@ -5062,13 +5062,7 @@ impl Bank {
 
     /// fn store the single `account` with `pubkey`.
     /// Uses `store_accounts`, which works on a vector of accounts.
-    pub fn store_account<'a, T: ReadableAccount + Sync + ZeroLamport + 'a>(
-        &self,
-        pubkey: &'a Pubkey,
-        account: &'a T,
-    ) where
-        AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
-    {
+    pub fn store_account(&self, pubkey: &Pubkey, account: &AccountSharedData) {
         self.store_accounts((self.slot(), &[(pubkey, account)][..]))
     }
 
@@ -5212,7 +5206,7 @@ impl Bank {
                         self,
                         builtin.program_id,
                         builtin.name,
-                        LoadedProgram::new_builtin(0, builtin.name.len(), builtin.entrypoint),
+                        ProgramCacheEntry::new_builtin(0, builtin.name.len(), builtin.entrypoint),
                     );
                 }
             }
@@ -5998,7 +5992,6 @@ impl Bank {
     pub fn update_incremental_accounts_hash(&self, base_slot: Slot) -> IncrementalAccountsHash {
         let config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
-            check_hash: false,
             ancestors: None, // does not matter, will not be used
             epoch_schedule: &self.epoch_schedule,
             rent_collector: &self.rent_collector,
@@ -6015,7 +6008,6 @@ impl Bank {
                 self.slot(),
                 HashStats::default(),
             )
-            .unwrap() // unwrap here will never fail since check_hash = false
             .0
     }
 
@@ -6302,7 +6294,7 @@ impl Bank {
             self,
             program_id,
             "mockup",
-            LoadedProgram::new_builtin(self.slot, 0, builtin_function),
+            ProgramCacheEntry::new_builtin(self.slot, 0, builtin_function),
         );
     }
 
@@ -6315,10 +6307,10 @@ impl Bank {
             self,
             program_id,
             name,
-            LoadedProgram::new_tombstone(
+            ProgramCacheEntry::new_tombstone(
                 self.slot,
-                LoadedProgramOwner::NativeLoader,
-                LoadedProgramType::Closed,
+                ProgramCacheEntryOwner::NativeLoader,
+                ProgramCacheEntryType::Closed,
             ),
         );
         debug!("Removed program {}", program_id);
@@ -6579,7 +6571,7 @@ impl Bank {
                         self,
                         builtin.program_id,
                         builtin.name,
-                        LoadedProgram::new_builtin(
+                        ProgramCacheEntry::new_builtin(
                             self.feature_set.activated_slot(&feature_id).unwrap_or(0),
                             builtin.name.len(),
                             builtin.entrypoint,
@@ -6754,7 +6746,7 @@ impl Bank {
         pubkey: &Pubkey,
         reload: bool,
         effective_epoch: Epoch,
-    ) -> Option<Arc<LoadedProgram>> {
+    ) -> Option<Arc<ProgramCacheEntry>> {
         self.transaction_processor
             .load_program_with_pubkey(self, pubkey, reload, effective_epoch)
     }
@@ -6793,15 +6785,15 @@ impl TransactionProcessingCallback for Bank {
         self.feature_set.clone()
     }
 
-    fn get_program_match_criteria(&self, program: &Pubkey) -> LoadedProgramMatchCriteria {
+    fn get_program_match_criteria(&self, program: &Pubkey) -> ProgramCacheMatchCriteria {
         if self.check_program_modification_slot {
             self.transaction_processor
                 .program_modification_slot(self, program)
-                .map_or(LoadedProgramMatchCriteria::Tombstone, |slot| {
-                    LoadedProgramMatchCriteria::DeployedOnOrAfterSlot(slot)
+                .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
+                    ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
                 })
         } else {
-            LoadedProgramMatchCriteria::NoCriteria
+            ProgramCacheMatchCriteria::NoCriteria
         }
     }
 
@@ -7039,8 +7031,8 @@ impl Bank {
         self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false, false)
     }
 
-    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> LoadedProgramsForTxBatch {
-        LoadedProgramsForTxBatch::new_from_cache(
+    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
+        ProgramCacheForTxBatch::new_from_cache(
             slot,
             self.epoch_schedule.get_epoch(slot),
             &self.transaction_processor.program_cache.read().unwrap(),

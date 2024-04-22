@@ -7,9 +7,12 @@
 use {
     crate::{
         account_storage::meta::{
-            AccountMeta, StoredAccountInfo, StoredAccountMeta, StoredMeta, StoredMetaWriteVersion,
+            AccountMeta, StoredAccountMeta, StoredMeta, StoredMetaWriteVersion,
         },
-        accounts_file::{AccountsFileError, MatchAccountOwnerError, Result, ALIGN_BOUNDARY_OFFSET},
+        accounts_file::{
+            AccountsFileError, MatchAccountOwnerError, Result, StoredAccountsInfo,
+            ALIGN_BOUNDARY_OFFSET,
+        },
         accounts_hash::AccountHash,
         storable_accounts::StorableAccounts,
         u64_align,
@@ -683,6 +686,19 @@ impl AppendVec {
         }
     }
 
+    /// Iterate over all accounts and call `callback` with each account.
+    #[allow(clippy::blocks_in_conditions)]
+    pub(crate) fn scan_accounts(&self, mut callback: impl for<'a> FnMut(StoredAccountMeta<'a>)) {
+        let mut offset = 0;
+        while self
+            .get_stored_account_meta_callback(offset, |account| {
+                offset += account.stored_size();
+                callback(account)
+            })
+            .is_some()
+        {}
+    }
+
     /// for each offset in `sorted_offsets`, get the size of the account. No other information is needed for the account.
     pub(crate) fn get_account_sizes(&self, sorted_offsets: &[usize]) -> Vec<usize> {
         let mut result = Vec::with_capacity(sorted_offsets.len());
@@ -748,14 +764,14 @@ impl AppendVec {
         &self,
         accounts: &impl StorableAccounts<'a>,
         skip: usize,
-    ) -> Option<Vec<StoredAccountInfo>> {
+    ) -> Option<StoredAccountsInfo> {
         let _lock = self.append_lock.lock().unwrap();
         let default_hash: Hash = Hash::default(); // [0_u8; 32];
         let mut offset = self.len();
         let len = accounts.len();
         // Here we have `len - skip` number of accounts.  The +1 extra capacity
-        // is for storing the aligned offset of the last entry to that is used
-        // to compute the StoredAccountInfo of the last entry.
+        // is for storing the aligned offset of the last-plus-one entry,
+        // which is used to compute the size of the last stored account.
         let offsets_len = len - skip + 1;
         let mut offsets = Vec::with_capacity(offsets_len);
         let mut stop = false;
@@ -787,31 +803,25 @@ impl AppendVec {
                     (hash_ptr, mem::size_of::<AccountHash>()),
                     (data_ptr, data_len),
                 ];
-                if let Some(res) = self.append_ptrs_locked(&mut offset, &ptrs) {
-                    offsets.push(res)
+                if let Some(start_offset) = self.append_ptrs_locked(&mut offset, &ptrs) {
+                    offsets.push(start_offset)
                 } else {
                     stop = true;
                 }
             });
         }
 
-        if offsets.is_empty() {
-            None
-        } else {
-            let mut rv = Vec::with_capacity(offsets.len());
-
-            // The last entry in this offset needs to be the u64 aligned offset, because that's
+        (!offsets.is_empty()).then(|| {
+            // The last entry in the offsets needs to be the u64 aligned `offset`, because that's
             // where the *next* entry will begin to be stored.
+            // This is used to compute the size of the last stored account; make sure to remove
+            // it afterwards!
             offsets.push(u64_align!(offset));
-            for offsets in offsets.windows(2) {
-                rv.push(StoredAccountInfo {
-                    offset: offsets[0],
-                    size: offsets[1] - offsets[0],
-                });
-            }
+            let size = offsets.windows(2).map(|offset| offset[1] - offset[0]).sum();
+            offsets.pop();
 
-            Some(rv)
-        }
+            StoredAccountsInfo { offsets, size }
+        })
     }
 
     /// Returns a slice suitable for use when archiving append vecs
@@ -846,7 +856,7 @@ pub mod tests {
             let storable_accounts = (slot_ignored, slice);
 
             self.append_accounts(&storable_accounts, 0)
-                .map(|res| res[0].offset)
+                .map(|res| res.offsets[0])
         }
     }
 
@@ -1263,7 +1273,7 @@ pub mod tests {
             // Reload accounts and observe crafted_data_len
             let accounts = av.accounts(0);
             let account = accounts.first().unwrap();
-            assert_eq!(account.data_len(), crafted_data_len);
+            assert_eq!(account.data_len() as u64, crafted_data_len);
 
             av.flush().unwrap();
             av.len()

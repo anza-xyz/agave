@@ -42,7 +42,10 @@ fn bench_write_accounts_file(c: &mut Criterion) {
         })
         .take(accounts_count)
         .collect();
-        let accounts_refs: Vec<_> = accounts.iter().collect();
+        let accounts_refs: Vec<_> = accounts
+            .iter()
+            .map(|(pubkey, account)| (pubkey, account))
+            .collect();
         let storable_accounts = (Slot::MAX, accounts_refs.as_slice());
 
         group.bench_function(BenchmarkId::new("append_vec", accounts_count), |b| {
@@ -54,7 +57,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                 },
                 |append_vec| {
                     let res = append_vec.append_accounts(&storable_accounts, 0).unwrap();
-                    let accounts_written_count = res.len();
+                    let accounts_written_count = res.offsets.len();
                     assert_eq!(accounts_written_count, accounts_count);
                 },
                 BatchSize::SmallInput,
@@ -72,7 +75,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
                 },
                 |hot_storage| {
                     let res = hot_storage.write_accounts(&storable_accounts, 0).unwrap();
-                    let accounts_written_count = res.len();
+                    let accounts_written_count = res.offsets.len();
                     assert_eq!(accounts_written_count, accounts_count);
                 },
                 BatchSize::SmallInput,

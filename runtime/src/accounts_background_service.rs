@@ -347,8 +347,6 @@ impl SnapshotRequestHandler {
         flush_accounts_cache_time.stop();
 
         let accounts_hash_for_testing = previous_accounts_hash.map(|previous_accounts_hash| {
-            let check_hash = false;
-
             let (this_accounts_hash, capitalization) = snapshot_root_bank
                 .accounts()
                 .accounts_db
@@ -357,14 +355,12 @@ impl SnapshotRequestHandler {
                     snapshot_root_bank.slot(),
                     &CalcAccountsHashConfig {
                         use_bg_thread_pool: true,
-                        check_hash,
                         ancestors: None,
                         epoch_schedule: snapshot_root_bank.epoch_schedule(),
                         rent_collector: snapshot_root_bank.rent_collector(),
                         store_detailed_debug_info_on_failure: false,
                     },
-                )
-                .unwrap();
+                );
             assert_eq!(previous_accounts_hash, this_accounts_hash);
             assert_eq!(capitalization, snapshot_root_bank.capitalization());
             this_accounts_hash

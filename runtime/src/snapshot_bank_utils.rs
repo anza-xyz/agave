@@ -2327,7 +2327,6 @@ mod tests {
             .calculate_incremental_accounts_hash(
                 &CalcAccountsHashConfig {
                     use_bg_thread_pool: false,
-                    check_hash: false,
                     ancestors: None,
                     epoch_schedule: deserialized_bank.epoch_schedule(),
                     rent_collector: deserialized_bank.rent_collector(),
@@ -2335,8 +2334,7 @@ mod tests {
                 },
                 &SortedStorages::new(&other_incremental_snapshot_storages),
                 HashStats::default(),
-            )
-            .unwrap();
+            );
         assert_eq!(other_incremental_accounts_hash, incremental_accounts_hash);
     }
 

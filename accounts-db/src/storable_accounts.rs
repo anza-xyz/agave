@@ -1,9 +1,6 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
-    crate::{
-        account_storage::meta::StoredAccountMeta, accounts_hash::AccountHash,
-        accounts_index::ZeroLamport,
-    },
+    crate::{account_storage::meta::StoredAccountMeta, accounts_index::ZeroLamport},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::{Epoch, Slot},
@@ -135,19 +132,6 @@ pub trait StorableAccounts<'a>: Sync {
     fn contains_multiple_slots(&self) -> bool {
         false
     }
-
-    /// true iff the impl can provide hash
-    /// Otherwise, hash has to be provided separately to store functions.
-    fn has_hash(&self) -> bool {
-        false
-    }
-
-    /// return hash for account at 'index'
-    /// Should only be called if 'has_hash' = true
-    fn hash(&self, _index: usize) -> &AccountHash {
-        // this should never be called if has_hash returns false
-        unimplemented!();
-    }
 }
 
 /// accounts that are moving from 'old_slot' to 'target_slot'
@@ -185,11 +169,7 @@ where
     }
 }
 
-impl<'a: 'b, 'b, T: ReadableAccount + Sync + 'a> StorableAccounts<'a>
-    for (Slot, &'b [(&'a Pubkey, &'a T)])
-where
-    AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
-{
+impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSharedData)]) {
     fn account<Ret>(
         &self,
         index: usize,
@@ -208,29 +188,6 @@ where
         self.1.len()
     }
 }
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [&'a (Pubkey, T)])
-where
-    AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
-{
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback((&self.1[index].0, &self.1[index].1).into())
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot when per-account slot is not included in the source data
-        self.target_slot()
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-}
-
 impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
     fn account<Ret>(
         &self,
@@ -249,14 +206,7 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
     fn len(&self) -> usize {
         self.1.len()
     }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.1[index].hash()
-    }
 }
-
 /// holds slices of accounts being moved FROM a common source slot to 'target_slot'
 pub struct StorableAccountsBySlot<'a> {
     target_slot: Slot,
@@ -342,13 +292,6 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn contains_multiple_slots(&self) -> bool {
         self.contains_multiple_slots
     }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        let indexes = self.find_internal_index(index);
-        self.slots_and_accounts[indexes.0].1[indexes.1].hash()
-    }
 }
 
 /// this tuple contains a single different source slot that applies to all accounts
@@ -371,12 +314,6 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) 
     fn len(&self) -> usize {
         self.1.len()
     }
-    fn has_hash(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.1[index].hash()
-    }
 }
 
 #[cfg(test)]
@@ -385,6 +322,7 @@ pub mod tests {
         super::*,
         crate::{
             account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            accounts_hash::AccountHash,
             append_vec::AppendVecStoredAccountMeta,
         },
         solana_sdk::{
@@ -392,6 +330,30 @@ pub mod tests {
             hash::Hash,
         },
     };
+
+    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [&'a (Pubkey, T)])
+    where
+        AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
+    {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback((&self.1[index].0, &self.1[index].1).into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // per-index slot is not unique per slot when per-account slot is not included in the source data
+            self.target_slot()
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
 
     fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
@@ -427,7 +389,7 @@ pub mod tests {
             rent_epoch,
         };
         let data = Vec::default();
-        let offset = 99;
+        let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
         let stored_size = 101;
         let hash = AccountHash(Hash::new_unique());
         let stored_account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
@@ -482,7 +444,7 @@ pub mod tests {
                         ));
                     }
                     for entry in 0..entries {
-                        let offset = 99;
+                        let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
                         let stored_size = 101;
                         let raw = &raw[entry as usize];
                         raw2.push(StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
@@ -548,9 +510,6 @@ pub mod tests {
 
     #[test]
     fn test_storable_accounts_by_slot() {
-        solana_logger::setup();
-        // slots 0..4
-        // each one containing a subset of the overall # of entries (0..4)
         for entries in 0..6 {
             let data = Vec::default();
             let hashes = (0..entries)
@@ -584,7 +543,7 @@ pub mod tests {
                 ));
             }
             for entry in 0..entries {
-                let offset = 99;
+                let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
                 let stored_size = 101;
                 raw2.push(StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
                     meta: &raw[entry as usize].2,
@@ -623,7 +582,6 @@ pub mod tests {
                             })
                             .collect::<Vec<_>>();
                         let storable = StorableAccountsBySlot::new(99, &slots_and_accounts[..]);
-                        assert!(storable.has_hash());
                         assert_eq!(99, storable.target_slot());
                         assert_eq!(entries0 != entries, storable.contains_multiple_slots());
                         (0..entries).for_each(|index| {
@@ -632,7 +590,6 @@ pub mod tests {
                                 assert!(accounts_equal(&account, &raw2[index]));
                                 assert_eq!(account.pubkey(), raw2[index].pubkey());
                             });
-                            assert_eq!(storable.hash(index), raw2[index].hash());
                             assert_eq!(storable.slot(index), expected_slots[index]);
                         })
                     }

@@ -1125,7 +1125,7 @@ pub mod tests {
                         bytes: accounts
                             .stored_accounts
                             .iter()
-                            .map(|account| aligned_stored_size(account.data().len()))
+                            .map(|account| aligned_stored_size(account.data_len()))
                             .sum(),
                         slot,
                     })
@@ -1163,14 +1163,7 @@ pub mod tests {
 
                 let account_template = storages
                     .first()
-                    .map(|storage| {
-                        storage
-                            .accounts
-                            .account_iter()
-                            .next()
-                            .unwrap()
-                            .to_account_shared_data()
-                    })
+                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut lamports = 1000;
@@ -1267,14 +1260,7 @@ pub mod tests {
 
                 let account_template = storages
                     .first()
-                    .map(|storage| {
-                        storage
-                            .accounts
-                            .account_iter()
-                            .next()
-                            .unwrap()
-                            .to_account_shared_data()
-                    })
+                    .and_then(|storage| storage.accounts.get_account_shared_data(0))
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;
@@ -1317,7 +1303,7 @@ pub mod tests {
                         bytes: accounts
                             .stored_accounts
                             .iter()
-                            .map(|account| aligned_stored_size(account.data().len()))
+                            .map(|account| aligned_stored_size(account.data_len()))
                             .sum(),
                         slot,
                     })
@@ -1364,7 +1350,7 @@ pub mod tests {
                             .iter()
                             .map(|(_slot, accounts)| accounts
                                 .iter()
-                                .map(|account| aligned_stored_size(account.data().len()) as u64)
+                                .map(|account| aligned_stored_size(account.data_len()) as u64)
                                 .sum::<u64>())
                             .sum::<u64>()
                     );
@@ -1665,8 +1651,9 @@ pub mod tests {
                 .stored_accounts
                 .first()
                 .unwrap();
+            let account_shared_data_with_2_refs = account_with_2_refs.to_account_shared_data();
             let pk_with_2_refs = account_with_2_refs.pubkey();
-            let mut account_with_1_ref = account_with_2_refs.to_account_shared_data();
+            let mut account_with_1_ref = account_shared_data_with_2_refs.clone();
             account_with_1_ref.checked_add_lamports(1).unwrap();
             append_single_account_with_default_hash(
                 &storage,
@@ -1683,7 +1670,7 @@ pub mod tests {
             append_single_account_with_default_hash(
                 &ignored_storage,
                 pk_with_2_refs,
-                &account_with_2_refs.to_account_shared_data(),
+                &account_shared_data_with_2_refs,
                 true,
                 Some(&db.accounts_index),
             );
@@ -1731,6 +1718,11 @@ pub mod tests {
                 .alive_accounts
                 .one_ref
                 .accounts;
+            let one_ref_accounts_account_shared_data = one_ref_accounts
+                .iter()
+                .map(|account| account.to_account_shared_data())
+                .collect::<Vec<_>>();
+
             assert_eq!(
                 one_ref_accounts
                     .iter()
@@ -1739,7 +1731,7 @@ pub mod tests {
                 vec![&pk_with_1_ref]
             );
             assert_eq!(
-                one_ref_accounts
+                one_ref_accounts_account_shared_data
                     .iter()
                     .map(|meta| meta.to_account_shared_data())
                     .collect::<Vec<_>>(),
@@ -1815,7 +1807,7 @@ pub mod tests {
                     .first()
                     .unwrap()
                     .to_account_shared_data(),
-                account_with_2_refs.to_account_shared_data()
+                account_shared_data_with_2_refs
             );
         }
     }
@@ -1843,8 +1835,9 @@ pub mod tests {
                 .stored_accounts
                 .first()
                 .unwrap();
+            let account_shared_data_with_2_refs = account_with_2_refs.to_account_shared_data();
             let pk_with_2_refs = account_with_2_refs.pubkey();
-            let mut account_with_1_ref = account_with_2_refs.to_account_shared_data();
+            let mut account_with_1_ref = account_shared_data_with_2_refs.clone();
             _ = account_with_1_ref.checked_add_lamports(1);
             append_single_account_with_default_hash(
                 &storage,
@@ -1906,6 +1899,10 @@ pub mod tests {
                 .alive_accounts
                 .one_ref
                 .accounts;
+            let one_ref_accounts_account_shared_data = one_ref_accounts
+                .iter()
+                .map(|account| account.to_account_shared_data())
+                .collect::<Vec<_>>();
             assert_eq!(
                 one_ref_accounts
                     .iter()
@@ -1914,7 +1911,7 @@ pub mod tests {
                 vec![&pk_with_1_ref]
             );
             assert_eq!(
-                one_ref_accounts
+                one_ref_accounts_account_shared_data
                     .iter()
                     .map(|meta| meta.to_account_shared_data())
                     .collect::<Vec<_>>(),
@@ -1958,7 +1955,7 @@ pub mod tests {
                     .first()
                     .unwrap()
                     .to_account_shared_data(),
-                account_with_2_refs.to_account_shared_data()
+                account_shared_data_with_2_refs
             );
         }
     }
@@ -3163,77 +3160,80 @@ pub mod tests {
         let data_size = None;
         let (_db, storages, _slots, _infos) = get_sample_storages(num_slots, data_size);
 
-        let account = storages[0].accounts.get_stored_account_meta(0).unwrap().0;
-        let slot = 1;
-        let capacity = 0;
-        for i in 0..4usize {
-            let mut alive_accounts =
-                ShrinkCollectAliveSeparatedByRefs::with_capacity(capacity, slot);
-            let lamports = 1;
+        storages[0]
+            .accounts
+            .get_stored_account_meta_callback(0, |account| {
+                let slot = 1;
+                let capacity = 0;
+                for i in 0..4usize {
+                    let mut alive_accounts =
+                        ShrinkCollectAliveSeparatedByRefs::with_capacity(capacity, slot);
+                    let lamports = 1;
 
-            match i {
-                0 => {
-                    // empty slot list (ignored anyway) because ref_count = 1
-                    let slot_list = vec![];
-                    alive_accounts.add(1, &account, &slot_list);
-                    assert!(!alive_accounts.one_ref.accounts.is_empty());
-                    assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                    assert!(alive_accounts
-                        .many_refs_this_is_newest_alive
-                        .accounts
-                        .is_empty());
+                    match i {
+                        0 => {
+                            // empty slot list (ignored anyway) because ref_count = 1
+                            let slot_list = vec![];
+                            alive_accounts.add(1, &account, &slot_list);
+                            assert!(!alive_accounts.one_ref.accounts.is_empty());
+                            assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
+                            assert!(alive_accounts
+                                .many_refs_this_is_newest_alive
+                                .accounts
+                                .is_empty());
+                        }
+                        1 => {
+                            // non-empty slot list (but ignored) because slot_list = 1
+                            let slot_list =
+                                vec![(slot, AccountInfo::new(StorageLocation::Cached, lamports))];
+                            alive_accounts.add(2, &account, &slot_list);
+                            assert!(alive_accounts.one_ref.accounts.is_empty());
+                            assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
+                            assert!(!alive_accounts
+                                .many_refs_this_is_newest_alive
+                                .accounts
+                                .is_empty());
+                        }
+                        2 => {
+                            // multiple slot list, ref_count=2, this is NOT newest alive, so many_refs_old_alive
+                            let slot_list = vec![
+                                (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
+                                (
+                                    slot + 1,
+                                    AccountInfo::new(StorageLocation::Cached, lamports),
+                                ),
+                            ];
+                            alive_accounts.add(2, &account, &slot_list);
+                            assert!(alive_accounts.one_ref.accounts.is_empty());
+                            assert!(!alive_accounts.many_refs_old_alive.accounts.is_empty());
+                            assert!(alive_accounts
+                                .many_refs_this_is_newest_alive
+                                .accounts
+                                .is_empty());
+                        }
+                        3 => {
+                            // multiple slot list, ref_count=2, this is newest
+                            let slot_list = vec![
+                                (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
+                                (
+                                    slot - 1,
+                                    AccountInfo::new(StorageLocation::Cached, lamports),
+                                ),
+                            ];
+                            alive_accounts.add(2, &account, &slot_list);
+                            assert!(alive_accounts.one_ref.accounts.is_empty());
+                            assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
+                            assert!(!alive_accounts
+                                .many_refs_this_is_newest_alive
+                                .accounts
+                                .is_empty());
+                        }
+                        _ => {
+                            panic!("unexpected");
+                        }
+                    }
                 }
-                1 => {
-                    // non-empty slot list (but ignored) because slot_list = 1
-                    let slot_list =
-                        vec![(slot, AccountInfo::new(StorageLocation::Cached, lamports))];
-                    alive_accounts.add(2, &account, &slot_list);
-                    assert!(alive_accounts.one_ref.accounts.is_empty());
-                    assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                    assert!(!alive_accounts
-                        .many_refs_this_is_newest_alive
-                        .accounts
-                        .is_empty());
-                }
-                2 => {
-                    // multiple slot list, ref_count=2, this is NOT newest alive, so many_refs_old_alive
-                    let slot_list = vec![
-                        (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
-                        (
-                            slot + 1,
-                            AccountInfo::new(StorageLocation::Cached, lamports),
-                        ),
-                    ];
-                    alive_accounts.add(2, &account, &slot_list);
-                    assert!(alive_accounts.one_ref.accounts.is_empty());
-                    assert!(!alive_accounts.many_refs_old_alive.accounts.is_empty());
-                    assert!(alive_accounts
-                        .many_refs_this_is_newest_alive
-                        .accounts
-                        .is_empty());
-                }
-                3 => {
-                    // multiple slot list, ref_count=2, this is newest
-                    let slot_list = vec![
-                        (slot, AccountInfo::new(StorageLocation::Cached, lamports)),
-                        (
-                            slot - 1,
-                            AccountInfo::new(StorageLocation::Cached, lamports),
-                        ),
-                    ];
-                    alive_accounts.add(2, &account, &slot_list);
-                    assert!(alive_accounts.one_ref.accounts.is_empty());
-                    assert!(alive_accounts.many_refs_old_alive.accounts.is_empty());
-                    assert!(!alive_accounts
-                        .many_refs_this_is_newest_alive
-                        .accounts
-                        .is_empty());
-                }
-                _ => {
-                    panic!("unexpected");
-                }
-            }
-        }
+            });
     }
 
     #[test]
