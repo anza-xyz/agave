@@ -7753,7 +7753,7 @@ impl AccountsDb {
         alive_bytes + PAGE_SIZE > total_bytes
     }
 
-    fn is_shrinking_productive(slot: Slot, store: &Arc<AccountStorageEntry>) -> bool {
+    fn is_shrinking_productive(slot: Slot, store: &AccountStorageEntry) -> bool {
         let alive_count = store.count();
         let stored_count = store.approx_stored_count();
         let alive_bytes = store.alive_bytes() as u64;
