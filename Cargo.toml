@@ -33,7 +33,6 @@ members = [
     "download-utils",
     "entry",
     "faucet",
-#    "fuzzer",
     "frozen-abi",
     "frozen-abi/macro",
     "genesis",

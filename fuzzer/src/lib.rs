@@ -6,7 +6,7 @@ use {
     solana_program_runtime::{
         compute_budget::ComputeBudget,
         invoke_context::InvokeContext,
-        loaded_programs::{LoadedProgram, LoadedProgramsForTxBatch},
+        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
         sysvar_cache::SysvarCache,
         timings::ExecuteTimings,
     },
@@ -283,10 +283,10 @@ pub fn execute_instr_proto(input: proto::InstrContext) -> Option<proto::InstrEff
     instr_effects.map(Into::into)
 }
 
-fn load_builtins(cache: &mut LoadedProgramsForTxBatch) {
+fn load_builtins(cache: &mut ProgramCacheForTxBatch) {
     cache.replenish(
         solana_address_lookup_table_program::id(),
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0u64,
             0usize,
             solana_address_lookup_table_program::processor::Entrypoint::vm,
@@ -294,7 +294,7 @@ fn load_builtins(cache: &mut LoadedProgramsForTxBatch) {
     );
     cache.replenish(
         solana_config_program::id(),
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0u64,
             0usize,
             solana_config_program::config_processor::Entrypoint::vm,
@@ -302,7 +302,7 @@ fn load_builtins(cache: &mut LoadedProgramsForTxBatch) {
     );
     cache.replenish(
         solana_stake_program::id(),
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0u64,
             0usize,
             solana_stake_program::stake_instruction::Entrypoint::vm,
@@ -310,7 +310,7 @@ fn load_builtins(cache: &mut LoadedProgramsForTxBatch) {
     );
     cache.replenish(
         solana_system_program::id(),
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0u64,
             0usize,
             solana_system_program::system_processor::Entrypoint::vm,
@@ -318,7 +318,7 @@ fn load_builtins(cache: &mut LoadedProgramsForTxBatch) {
     );
     cache.replenish(
         solana_vote_program::id(),
-        Arc::new(LoadedProgram::new_builtin(
+        Arc::new(ProgramCacheEntry::new_builtin(
             0u64,
             0usize,
             solana_vote_program::vote_processor::Entrypoint::vm,
@@ -400,10 +400,10 @@ fn execute_instr(input: InstrContext) -> Option<InstrEffects> {
     );
 
     // sigh ... What is this mess?
-    let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::default();
+    let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
     load_builtins(&mut programs_loaded_for_tx_batch);
 
-    let mut programs_modified_by_tx = LoadedProgramsForTxBatch::default();
+    let mut programs_modified_by_tx = ProgramCacheForTxBatch::default();
 
     #[allow(deprecated)]
     let (blockhash, lamports_per_signature) = sysvar_cache
