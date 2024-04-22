@@ -3,7 +3,10 @@ use std::{io::Result, process::Command};
 fn main() -> Result<()> {
     let proto_base_path = std::path::PathBuf::from("proto");
 
-    let protos = &[proto_base_path.join("invoke.proto")];
+    let protos = &[
+        proto_base_path.join("invoke.proto"),
+        proto_base_path.join("vm.proto"),
+    ];
 
     protos
         .iter()

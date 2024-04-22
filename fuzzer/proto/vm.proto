@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+// Copied verbatim from https://github.com/firedancer-io/solfuzz/blob/main/src/proto/vm.proto
+
+// org.solana.sealevel.v1 is the target interface
+// TODO: introduce different packages for mutator inputs
+package org.solana.sealevel.v1;
+
+import "invoke.proto";
+
+// Describes an input data region. Agave's memory mapping sets up a series of
+// memory mapped regions, which combine to make the input data region.
+message InputDataRegion {
+  // Offset from the start of the input data segment (0x400000000)
+  uint64 offset = 1;
+  // Content of the memory region
+  bytes content = 2;
+  // If the memory region is writable or not
+  bool is_writable = 3;
+}
+
+// TODO: investigate make this an overlay not a context, and let each target set up the
+// vm context from the instruction context.
+
+// Information sufficient to allow the fuzzer to generate a fd_vm_t context for
+// execution inside the VM (excluding the instruction context).
+//
+// TODO: this currently only includes fields necessary for executing syscalls,
+// executing sBPF code will require the rest of the fields in fd_vm_t to be set.
+message VmContext {
+  // Maximum heap size in bytes
+  uint64 heap_max = 1;
+
+  // Program read-only data
+  bytes rodata = 2;
+  // Offset of the text section from the start of the program rodata segment
+  // (0x100000000)
+  uint64 rodata_text_section_offset = 3;
+  // Length of the text section in the program rodata region, in bytes.
+  uint64 rodata_text_section_length = 4;
+
+  // The input data regions
+  repeated InputDataRegion input_data_regions = 5;
+
+  // Registers
+  uint64 r0 = 6;
+  uint64 r1 = 7;
+  uint64 r2 = 8;
+  uint64 r3 = 9;
+  uint64 r4 = 10;
+  uint64 r5 = 11;
+  uint64 r6 = 12;
+  uint64 r7 = 13;
+  uint64 r8 = 14;
+  uint64 r9 = 15;
+  uint64 r10 = 16;
+  uint64 r11 = 17;
+
+  // TODO: extend this to support the rest of the vm fields, needed for
+  // full coverage of the vm interpreter code.
+}
+
+// TODO: use structured types for syscall implementation to improve fuzz coverage
+// We should seperate out the engine protos from the target protos to make implementation
+// of the targets easier.
+
+// TODO: for CPI syscalls, consider generating effects in protobufs vs full cpi
+// execution
+
+// A single invocation of a syscall
+message SyscallInvocation {
+  // The sBPF function name of the syscall
+  bytes function_name = 1;
+}
+
+// Execution context for a VM Syscall execution.
+message SyscallContext {
+  VmContext vm_ctx = 1;
+  // TODO: InflightInstruction - contain temporary fields that live for the duration of an instructions execution, and is needed if we have overhanging context from a previous instruction
+  InstrContext instr_ctx = 2;
+  SyscallInvocation syscall_invocation = 3;
+}
+
+// The effects of executing a SyscallContext.
+message SyscallEffects {
+  // EBPF error code, if the invocation was unsuccessful
+  int64 error = 1;
+
+  // Registers
+  uint64 r0 = 2; // Result of a successful execution
+
+  // CU's remaining
+  uint64 cu_avail = 3;
+
+  // Memory regions
+  bytes heap = 4;
+  bytes stack = 5;
+  bytes inputdata = 6;
+
+  // Current number of stack frames pushed
+  uint64 frame_count = 7;
+
+  // Syscall log
+  bytes log = 8;
+}

@@ -5,6 +5,7 @@ on Linux operating systems.
 
 Currently supported APIS:
  - sol_compat_instr_execute_v1
+ - sol_compat_vm_syscall_execute_v1
 
 To build, use the `--release` flag for performance, the `--lib` flag to build a shared library and specify the
 target using the `--target` flag. The resulting file is a shared object in
