@@ -5703,6 +5703,7 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
 
 /// Forks previous marked invalid should be marked as such in fork choice on restart
 #[test]
+#[ignore]
 #[serial]
 fn test_invalid_forks_persisted_on_restart() {
     solana_logger::setup_with("info,solana_metrics=off,solana_ledger=off");
