@@ -125,9 +125,8 @@ pub struct ErasureMeta {
     set_index: u64,
     /// First coding index in the FEC set
     first_coding_index: u64,
-    /// Size of shards in this erasure set
-    #[serde(rename = "size")]
-    __unused_size: usize,
+    /// Index of the first received coding shred in the FEC set
+    first_received_coding_index: usize,
     /// Erasure configuration for this erasure set
     config: ErasureConfig,
 }
@@ -348,11 +347,12 @@ impl ErasureMeta {
                     num_coding: usize::from(shred.num_coding_shreds().ok()?),
                 };
                 let first_coding_index = u64::from(shred.first_coding_index()?);
+                let first_received_coding_index = usize::try_from(shred.index()).ok()?;
                 let erasure_meta = ErasureMeta {
                     set_index: u64::from(shred.fec_set_index()),
                     config,
                     first_coding_index,
-                    __unused_size: 0,
+                    first_received_coding_index,
                 };
                 Some(erasure_meta)
             }
@@ -365,7 +365,7 @@ impl ErasureMeta {
         let Some(mut other) = Self::from_coding_shred(shred) else {
             return false;
         };
-        other.__unused_size = self.__unused_size;
+        other.first_received_coding_index = self.first_received_coding_index;
         self == &other
     }
 
@@ -390,6 +390,11 @@ impl ErasureMeta {
     pub(crate) fn coding_shreds_indices(&self) -> Range<u64> {
         let num_coding = self.config.num_coding as u64;
         self.first_coding_index..self.first_coding_index + num_coding
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn first_received_coding_shred_index(&self) -> Option<u32> {
+        u32::try_from(self.first_received_coding_index).ok()
     }
 
     pub(crate) fn next_fec_set_index(&self) -> Option<u32> {
@@ -568,7 +573,7 @@ mod test {
             set_index,
             first_coding_index: set_index,
             config: erasure_config,
-            __unused_size: 0,
+            first_received_coding_index: 0,
         };
         let mut rng = thread_rng();
         let mut index = Index::new(0);
