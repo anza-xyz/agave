@@ -244,6 +244,7 @@ impl SchedulerController {
         // Pop from the container in chunks, filter using bank checks, then attempt to forward.
         // This doubles as a way to clean the queue as well as forwarding transactions.
         const CHUNK_SIZE: usize = 64;
+        let mut num_forwarded: usize = 0;
         let mut ids_to_add_back = Vec::new();
         let mut max_time_reached = false;
         while !self.container.is_empty() {
@@ -293,6 +294,7 @@ impl SchedulerController {
                         feature_set,
                     )
                 {
+                    saturating_add_assign!(num_forwarded, 1);
                     state.mark_forwarded();
                 }
             }
@@ -328,6 +330,10 @@ impl SchedulerController {
                 self.container.remove_by_id(&priority_id.id);
             }
         }
+
+        self.count_metrics.update(|count_metrics| {
+            saturating_add_assign!(count_metrics.num_forwarded, num_forwarded);
+        });
     }
 
     /// Clears the transaction state container.
