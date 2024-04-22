@@ -10677,7 +10677,7 @@ pub mod tests {
     }
 
     fn append_sample_data_to_storage(
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         pubkey: &Pubkey,
         mark_alive: bool,
         account_data_size: Option<u64>,
