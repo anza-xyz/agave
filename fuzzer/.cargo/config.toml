@@ -1,4 +1,4 @@
-[build]
+[target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-g",
     "-Cpasses=sancov-module",
@@ -10,7 +10,6 @@ rustflags = [
     "-Cforce-frame-pointers=yes",
     "-Ctarget-feature=-crt-static",
 ]
-
 
 [target.aarch64-apple-darwin]
 rustflags = [
@@ -24,5 +23,15 @@ rustflags = [
     "-Ctarget-feature=-crt-static",
 ]
 
-[target.x86_64-pc-windows-msvc]
-rustflags = []
+[target.aarch64-unknown-linux-gnu]
+rustflags = [
+    "-g",
+    "-Cpasses=sancov-module",
+    "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters",
+    "-Cllvm-args=-sanitizer-coverage-level=4",
+    "-Cllvm-args=-sanitizer-coverage-pc-table",
+    "-Cllvm-args=-sanitizer-coverage-trace-compares",
+    "-Clink-dead-code",
+    "-Cforce-frame-pointers=yes",
+    "-Ctarget-feature=-crt-static",
+]
