@@ -10,7 +10,7 @@ fn sanity_test() {
         #[cfg(target_arch = "aarch64")]
         let name = "aarch64-unknown-linux-gnu";
 
-        let folder = "target/" + name + "/release/libsolfuzz_agave.so";
+        let folder = "target/".to_owned() + name + "/release/libagave_fuzzer.so";
         let output = Command::new("target/self_test")
             .arg(folder)
             .output()

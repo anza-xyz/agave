@@ -123,7 +123,7 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/tests/example-programs", "fuzzer"]
+exclude = ["fuzzer", "programs/sbf", "svm/tests/example-programs"]
 
 resolver = "2"
 
