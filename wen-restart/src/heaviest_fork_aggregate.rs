@@ -85,6 +85,25 @@ impl HeaviestForkAggregate {
         Ok(self.aggregate(converted_record))
     }
 
+    fn should_replace(
+        current_heaviest_fork: &RestartHeaviestFork,
+        new_heaviest_fork: &RestartHeaviestFork,
+    ) -> bool {
+        if current_heaviest_fork == new_heaviest_fork {
+            return false;
+        }
+        if current_heaviest_fork.wallclock > new_heaviest_fork.wallclock {
+            return false;
+        }
+        if current_heaviest_fork.last_slot == new_heaviest_fork.last_slot
+            && current_heaviest_fork.last_slot_hash == new_heaviest_fork.last_slot_hash
+            && current_heaviest_fork.observed_stake == new_heaviest_fork.observed_stake
+        {
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn aggregate(
         &mut self,
         received_heaviest_fork: RestartHeaviestFork,
@@ -117,9 +136,7 @@ impl HeaviestForkAggregate {
             .heaviest_forks
             .insert(*from, received_heaviest_fork.clone())
         {
-            if old_heaviest_fork == received_heaviest_fork {
-                return None;
-            } else {
+            if Self::should_replace(&old_heaviest_fork, &received_heaviest_fork) {
                 let entry = self
                     .block_stake_map
                     .get_mut(&(
@@ -132,6 +149,8 @@ impl HeaviestForkAggregate {
                     from, old_heaviest_fork, received_heaviest_fork
                 );
                 *entry = entry.saturating_sub(sender_stake);
+            } else {
+                return None;
             }
         }
         let entry = self
@@ -237,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate() {
+    fn test_aggregate_from_gossip() {
         let mut test_state = test_aggregate_init();
         let initial_num_active_validators = 3;
         for validator_voting_keypair in test_state

@@ -54,6 +54,10 @@ const REPAIR_THRESHOLD: f64 = 0.42;
 // made regarding how much non-conforming/offline validators the
 // algorithm can tolerate.
 const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
+// We allow at most 5% of the stake to disagree with us.
+const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
+// We update HeaviestFork every 30 minutes or when we can exit.
+const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -510,7 +514,9 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 / total_stake as f64
                 > wait_for_supermajority_threshold_percent as f64;
             // Only send out updates every 30 minutes or when we can exit.
-            if progress_last_sent.elapsed().as_secs() >= 1800 || can_exit {
+            if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
+                || can_exit
+            {
                 cluster_info.push_restart_heaviest_fork(
                     heaviest_fork_slot,
                     heaviest_fork_hash,
@@ -539,9 +545,9 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         .get(&(heaviest_fork_slot, heaviest_fork_hash))
         .unwrap_or(&0);
     // It doesn't matter if 5% disagrees with us.
-    if total_active_stake_agreed_with_me as f64 * 100.0 / total_stake as f64
-        > (wait_for_supermajority_threshold_percent as f64 - 5.0)
-    {
+    let success_threshold =
+        wait_for_supermajority_threshold_percent as f64 - HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT;
+    if total_active_stake_agreed_with_me as f64 * 100.0 / total_stake as f64 > success_threshold {
         info!(
             "Heaviest fork agreed upon by supermajority: slot: {}, bankhash: {}",
             heaviest_fork_slot, heaviest_fork_hash
@@ -580,14 +586,24 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 block_stake_map[&(*slot, *hash)]
             );
         }
-        warn!(
-            "Max stake slot: {}, hash: {}, stake: {}% does not agree with my
-            choice, please go to discord to download the snapshot and restart
-            the validator with --wait-for-supermajority.",
-            max_slot_hash.0,
-            max_slot_hash.1,
-            max_stake as f64 * 100.0 / total_active_stake as f64
-        );
+        if max_stake as f64 * 100.0 / total_active_stake as f64 > success_threshold {
+            warn!(
+                "Max stake slot: {}, hash: {}, stake: {}% does not agree with my
+                choice, please go to discord to download the snapshot and restart
+                the validator with --wait-for-supermajority.",
+                max_slot_hash.0,
+                max_slot_hash.1,
+                max_stake as f64 * 100.0 / total_active_stake as f64
+            );
+        } else {
+            warn!(
+                "Cluster consensus slot: {}, hash: {}, stake: {}% does not agree,
+                please go to discord for next steps.",
+                max_slot_hash.0,
+                max_slot_hash.1,
+                max_stake as f64 * 100.0 / total_active_stake as f64
+            );
+        }
         Err(WenRestartError::NotEnoughStakeAgreeingWithUs(
             heaviest_fork_slot,
             heaviest_fork_hash,
