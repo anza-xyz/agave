@@ -8554,7 +8554,7 @@ impl AccountsDb {
 
     fn generate_index_for_slot(
         &self,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         slot: Slot,
         store_id: AccountsFileId,
         rent_collector: &RentCollector,
