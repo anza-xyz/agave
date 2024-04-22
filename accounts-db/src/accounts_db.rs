@@ -7776,7 +7776,7 @@ impl AccountsDb {
 
     fn is_candidate_for_shrink(
         &self,
-        store: &Arc<AccountStorageEntry>,
+        store: &AccountStorageEntry,
         allow_shrink_ancient: bool,
     ) -> bool {
         // appended ancient append vecs should not be shrunk by the normal shrink codepath.
