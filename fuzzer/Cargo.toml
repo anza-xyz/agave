@@ -32,5 +32,7 @@ thiserror = "1.0.58"
 [build-dependencies]
 prost-build = "0.11.9"
 
-[workspace]
+[features]
+dummy-for-ci-check = []
 
+[workspace]
