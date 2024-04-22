@@ -6658,7 +6658,7 @@ impl AccountsDb {
     }
 
     /// iterate over a single storage, calling scanner on each item
-    fn scan_single_account_storage<S>(storage: &Arc<AccountStorageEntry>, scanner: &mut S)
+    fn scan_single_account_storage<S>(storage: &AccountStorageEntry, scanner: &mut S)
     where
         S: AppendVecScan,
     {
