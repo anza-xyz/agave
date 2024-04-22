@@ -454,8 +454,10 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     );
     if let Some(aggregate_record) = &progress.heaviest_fork_aggregate {
         for (key_string, message) in &aggregate_record.received {
-            if let Err(e) = heaviest_fork_aggregate.aggregate_from_record(key_string, message) {
-                error!("Failed to aggregate from record: {:?}", e);
+            match heaviest_fork_aggregate.aggregate_from_record(key_string, message) {
+                Err(e) => error!("Failed to aggregate from record: {:?}", e),
+                Ok(None) => info!("Record {:?} ignored", message),
+                Ok(_) => (),
             }
         }
     } else {
@@ -490,8 +492,10 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         }
         let start = timestamp();
         for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor) {
+            info!("Received new heaviest fork: {:?}", new_heaviest_fork);
             let from = new_heaviest_fork.from.to_string();
             if let Some(record) = heaviest_fork_aggregate.aggregate(new_heaviest_fork) {
+                info!("Successfully aggregated new heaviest fork: {:?}", record);
                 progress
                     .heaviest_fork_aggregate
                     .as_mut()

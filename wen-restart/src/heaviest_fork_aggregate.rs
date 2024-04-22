@@ -74,7 +74,7 @@ impl HeaviestForkAggregate {
     ) -> Result<Option<HeaviestForkRecord>> {
         let from = Pubkey::from_str(key_string)?;
         let bankhash = Hash::from_str(&record.bankhash)?;
-        let converted_record = RestartHeaviestFork {
+        let restart_heaviest_fork = RestartHeaviestFork {
             from,
             wallclock: record.wallclock,
             last_slot: record.slot,
@@ -82,7 +82,7 @@ impl HeaviestForkAggregate {
             observed_stake: record.total_active_stake,
             shred_version: record.shred_version as u16,
         };
-        Ok(self.aggregate(converted_record))
+        Ok(self.aggregate(restart_heaviest_fork))
     }
 
     fn should_replace(
