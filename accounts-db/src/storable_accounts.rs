@@ -134,46 +134,7 @@ pub trait StorableAccounts<'a>: Sync {
     }
 }
 
-/// accounts that are moving from 'old_slot' to 'target_slot'
-/// since all accounts are from the same old slot, we don't need to create a slice with per-account slot
-/// but, we need slot(_) to return 'old_slot' for all accounts
-/// Created a struct instead of a tuple to make the code easier to read.
-pub struct StorableAccountsMovingSlots<'a, T: ReadableAccount + Sync> {
-    pub accounts: &'a [(&'a Pubkey, &'a T)],
-    /// accounts will be written to this slot
-    pub target_slot: Slot,
-    /// slot where accounts are currently stored
-    pub old_slot: Slot,
-}
-
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for StorableAccountsMovingSlots<'a, T>
-where
-    AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
-{
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback((self.accounts[index].0, self.accounts[index].1).into())
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot, but it is different than 'target_slot'
-        self.old_slot
-    }
-    fn target_slot(&self) -> Slot {
-        self.target_slot
-    }
-    fn len(&self) -> usize {
-        self.accounts.len()
-    }
-}
-
-impl<'a: 'b, 'b, T: ReadableAccount + Sync + 'a> StorableAccounts<'a>
-    for (Slot, &'b [(&'a Pubkey, &'a T)])
-where
-    AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
-{
+impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSharedData)]) {
     fn account<Ret>(
         &self,
         index: usize,
@@ -184,48 +145,6 @@ where
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
         self.target_slot()
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-}
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [&'a (Pubkey, T)])
-where
-    AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
-{
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback((&self.1[index].0, &self.1[index].1).into())
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot when per-account slot is not included in the source data
-        self.target_slot()
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-}
-
-impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback(self.1[index].into())
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot when per-account slot is not included in the source data
-        self.0
     }
     fn target_slot(&self) -> Slot {
         self.0
@@ -322,28 +241,6 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     }
 }
 
-/// this tuple contains a single different source slot that applies to all accounts
-/// accounts are StoredAccountMeta
-impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) {
-    fn account<Ret>(
-        &self,
-        index: usize,
-        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-    ) -> Ret {
-        callback(self.1[index].into())
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // same other slot for all accounts
-        self.2
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
     use {
@@ -358,6 +255,74 @@ pub mod tests {
             hash::Hash,
         },
     };
+
+    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback(self.1[index].into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // per-index slot is not unique per slot when per-account slot is not included in the source data
+            self.0
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
+
+    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [&'a (Pubkey, T)])
+    where
+        AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
+    {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback((&self.1[index].0, &self.1[index].1).into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // per-index slot is not unique per slot when per-account slot is not included in the source data
+            self.target_slot()
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
+
+    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    /// this tuple contains a single different source slot that applies to all accounts
+    /// accounts are StoredAccountMeta
+    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback(self.1[index].into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // same other slot for all accounts
+            self.2
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
 
     fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
@@ -478,16 +443,10 @@ pub mod tests {
                     let source_slot = starting_slot % max_slots;
                     let test3 = (target_slot, &three[..], source_slot);
                     let old_slot = starting_slot;
-                    let test_moving_slots = StorableAccountsMovingSlots {
-                        accounts: &two[..],
-                        target_slot,
-                        old_slot,
-                    };
                     let for_slice = [(old_slot, &three[..])];
                     let test_moving_slots2 = StorableAccountsBySlot::new(target_slot, &for_slice);
                     compare(&test2, &test3);
                     compare(&test2, &test4);
-                    compare(&test2, &test_moving_slots);
                     compare(&test2, &test_moving_slots2);
                     for (i, raw) in raw.iter().enumerate() {
                         test3.account(i, |account| {
@@ -497,7 +456,6 @@ pub mod tests {
                         assert_eq!(raw.2, test3.slot(i));
                         assert_eq!(target_slot, test4.slot(i));
                         assert_eq!(target_slot, test2.slot(i));
-                        assert_eq!(old_slot, test_moving_slots.slot(i));
                         assert_eq!(old_slot, test_moving_slots2.slot(i));
                     }
                     assert_eq!(target_slot, test3.target_slot());
@@ -505,7 +463,6 @@ pub mod tests {
                     assert_eq!(target_slot, test_moving_slots2.target_slot());
                     assert!(!test2.contains_multiple_slots());
                     assert!(!test4.contains_multiple_slots());
-                    assert!(!test_moving_slots.contains_multiple_slots());
                     assert_eq!(test3.contains_multiple_slots(), entries > 1);
                 }
             }
