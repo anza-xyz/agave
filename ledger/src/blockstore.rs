@@ -1127,15 +1127,12 @@ impl Blockstore {
                         .expect("First received coding index must exist for all erasure metas"),
                     ShredType::Code,
                 );
-                let shred = Shred::new_from_serialized_shred(
-                    self.get_shred_from_just_inserted_or_db(&just_inserted_shreds, shred_id)
-                        .expect("Shred indicated by erasure meta must exist")
-                        .into_owned(),
-                )
-                .expect("Shred indicated by erasure meta must be deserializable");
+                let shred = just_inserted_shreds
+                    .get(&shred_id)
+                    .expect("Erasure meta was just created, initial shred must exist");
 
                 self.check_forward_chained_merkle_root_consistency(
-                    &shred,
+                    shred,
                     erasure_meta,
                     &just_inserted_shreds,
                     &mut merkle_root_metas,
@@ -1158,15 +1155,12 @@ impl Blockstore {
                     merkle_root_meta.first_received_shred_index(),
                     merkle_root_meta.first_received_shred_type(),
                 );
-                let shred = Shred::new_from_serialized_shred(
-                    self.get_shred_from_just_inserted_or_db(&just_inserted_shreds, shred_id)
-                        .expect("Shred indicated by merkle root meta must exist")
-                        .into_owned(),
-                )
-                .expect("Shred indicated by merkle root meta must be deserializable");
+                let shred = just_inserted_shreds
+                    .get(&shred_id)
+                    .expect("Merkle root meta was just created, initial shred must exist");
 
                 self.check_backwards_chained_merkle_root_consistency(
-                    &shred,
+                    shred,
                     &just_inserted_shreds,
                     &erasure_metas,
                     &merkle_root_metas,
@@ -1826,10 +1820,9 @@ impl Blockstore {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot},
                 shred {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however
-                next fec set shred {next_erasure_set:?} type {:?} chains to merkle root {chained_merkle_root:?}.
+                next fec set shred {next_erasure_set:?} type {next_shred_type:?} chains to merkle root {chained_merkle_root:?}.
                 Reporting as duplicate",
                 shred.shred_type(),
-                next_shred_type,
             );
 
             if !self.has_duplicate_shreds_in_slot(shred.slot()) {
@@ -1918,11 +1911,10 @@ impl Blockstore {
             warn!(
                     "Received conflicting chained merkle roots for slot: {slot},
                     shred {:?} type {:?} chains to merkle root {chained_merkle_root:?}, however
-                    previous fec set shred {prev_erasure_set:?} type {:?} has merkle root {merkle_root:?}.
+                    previous fec set shred {prev_erasure_set:?} type {prev_shred_type:?} has merkle root {merkle_root:?}.
                     Reporting as duplicate",
                     shred.erasure_set(),
                     shred.shred_type(),
-                    prev_shred_type,
                 );
 
             if !self.has_duplicate_shreds_in_slot(shred.slot()) {
