@@ -215,8 +215,8 @@ mod tests {
         solana_sdk::{hash::Hash, signature::Signer, timing::timestamp},
     };
 
-    const TOTAL_VALIDATOR_COUNT: u16 = 10;
-    const MY_INDEX: usize = 9;
+    const TOTAL_VALIDATOR_COUNT: u16 = 20;
+    const MY_INDEX: usize = 19;
     const SHRED_VERSION: u16 = 52;
 
     struct TestAggregateInitResult {
@@ -242,7 +242,7 @@ mod tests {
         let heaviest_hash = Hash::new_unique();
         TestAggregateInitResult {
             heaviest_fork_aggregate: HeaviestForkAggregate::new(
-                80,
+                75,
                 SHRED_VERSION,
                 root_bank.epoch_stakes(root_bank.epoch()).unwrap(),
                 heaviest_slot,
@@ -373,7 +373,7 @@ mod tests {
         );
 
         // If everyone is seeing only 70%, the total active stake seeing supermajority is 0.
-        for validator_voting_keypair in test_state.validator_voting_keypairs.iter().take(6) {
+        for validator_voting_keypair in test_state.validator_voting_keypairs.iter().take(13) {
             let pubkey = validator_voting_keypair.node_keypair.pubkey();
             let now = timestamp();
             assert_eq!(
@@ -384,19 +384,22 @@ mod tests {
                         wallclock: now,
                         last_slot: test_state.heaviest_slot,
                         last_slot_hash: test_state.heaviest_hash,
-                        observed_stake: 700,
+                        observed_stake: 1400,
                         shred_version: SHRED_VERSION,
                     },),
                 Some(HeaviestForkRecord {
                     slot: test_state.heaviest_slot,
                     bankhash: test_state.heaviest_hash.to_string(),
-                    total_active_stake: 700,
+                    total_active_stake: 1400,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: now,
                 }),
             );
         }
-        assert_eq!(test_state.heaviest_fork_aggregate.total_active_stake(), 700);
+        assert_eq!(
+            test_state.heaviest_fork_aggregate.total_active_stake(),
+            1400
+        );
         assert_eq!(
             test_state
                 .heaviest_fork_aggregate
@@ -404,9 +407,9 @@ mod tests {
             0
         );
 
-        // test that when 80% of the stake is seeing supermajority,
-        // the active percent seeing supermajority is 80%.
-        for validator_voting_keypair in test_state.validator_voting_keypairs.iter().take(7) {
+        // test that when 75% of the stake is seeing supermajority,
+        // the active percent seeing supermajority is 75%.
+        for validator_voting_keypair in test_state.validator_voting_keypairs.iter().take(14) {
             let pubkey = validator_voting_keypair.node_keypair.pubkey();
             let now = timestamp();
             assert_eq!(
@@ -417,27 +420,30 @@ mod tests {
                         wallclock: now,
                         last_slot: test_state.heaviest_slot,
                         last_slot_hash: test_state.heaviest_hash,
-                        observed_stake: 800,
+                        observed_stake: 1500,
                         shred_version: SHRED_VERSION,
                     },),
                 Some(HeaviestForkRecord {
                     slot: test_state.heaviest_slot,
                     bankhash: test_state.heaviest_hash.to_string(),
-                    total_active_stake: 800,
+                    total_active_stake: 1500,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: now,
                 }),
             );
         }
 
-        assert_eq!(test_state.heaviest_fork_aggregate.total_active_stake(), 800);
-        // I myself is seeing supermajority as well, with the 7 validators
-        // reporting 80%, the total active stake seeing supermajority is 800.
+        assert_eq!(
+            test_state.heaviest_fork_aggregate.total_active_stake(),
+            1500
+        );
+        // I myself is seeing supermajority as well, with the 14 validators
+        // reporting 70%, the total active stake seeing supermajority is 1500 (75%).
         assert_eq!(
             test_state
                 .heaviest_fork_aggregate
                 .total_active_stake_seen_supermajority(),
-            800
+            1500
         );
     }
 
