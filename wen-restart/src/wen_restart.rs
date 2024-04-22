@@ -437,8 +437,15 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let my_heaviest_fork = progress.my_heaviest_fork.clone().unwrap();
     let heaviest_fork_slot = my_heaviest_fork.slot;
     let heaviest_fork_hash = Hash::from_str(&my_heaviest_fork.bankhash)?;
+    let adjusted_threshold_percent = wait_for_supermajority_threshold_percent
+        .saturating_sub(-HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT.round() as u64);
+    // The threshold for supermajority should definitely be higher than 67%.
+    assert!(
+        adjusted_threshold_percent > 67,
+        "Majority threshold too low"
+    );
     let mut heaviest_fork_aggregate = HeaviestForkAggregate::new(
-        wait_for_supermajority_threshold_percent,
+        adjusted_threshold_percent,
         cluster_info.my_shred_version(),
         epoch_stakes,
         heaviest_fork_slot,
@@ -473,6 +480,10 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let mut progress_last_sent = Instant::now();
     let mut cursor = solana_gossip::crds::Cursor::default();
     let mut progress_changed = false;
+    let majority_stake_required = (total_stake as f64 / 100.0
+        * (wait_for_supermajority_threshold_percent as f64
+            - HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT))
+        .round() as u64;
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
@@ -510,9 +521,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 heaviest_fork_aggregate.total_active_stake(),
                 total_stake
             );
-            let can_exit = total_active_stake_seen_supermajority as f64 * 100.0
-                / total_stake as f64
-                > wait_for_supermajority_threshold_percent as f64;
+            let can_exit = total_active_stake_seen_supermajority > majority_stake_required;
             // Only send out updates every 30 minutes or when we can exit.
             if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
                 || can_exit
