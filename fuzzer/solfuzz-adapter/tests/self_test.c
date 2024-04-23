@@ -15,6 +15,6 @@ int main(int argc, char **argv) {
     assert(dlsym(handle, "sol_compat_get_features_v1"));
     assert(dlsym(handle, "sol_compat_instr_execute_v1"));
     dlclose(handle);
-    fputs("OK\n", stderr);
+    fputs("Test Passed!\n", stderr);
     return 0;
 }

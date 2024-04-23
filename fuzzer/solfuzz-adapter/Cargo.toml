@@ -1,5 +1,5 @@
 [package]
-name = "agave-fuzzer"
+name = "solfuzz-adapter"
 version = "2.0.0"
 description = "Fuzzer for the Agave validator"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
@@ -14,16 +14,16 @@ clap = { version = "4.5.2", features = ["derive"] }
 lazy_static = "1.4.0"
 prost = "0.11.9"
 prost-types = "0.11.9"
-solana-address-lookup-table-program = { path = "../programs/address-lookup-table", version = "=2.0.0" }
-solana-bpf-loader-program = { path = "../programs/bpf_loader", version = "=2.0.0" }
-solana-compute-budget-program = { path = "../programs/compute-budget", version = "=2.0.0" }
-solana-config-program = { path = "../programs/config", version = "=2.0.0" }
-solana-loader-v4-program = { path = "../programs/loader-v4", version = "=2.0.0" }
-solana-program-runtime = { path = "../program-runtime", version = "=2.0.0" }
-solana-sdk = { path = "../sdk", version = "=2.0.0" }
-solana-stake-program = { path = "../programs/stake", version = "=2.0.0" }
-solana-system-program = { path = "../programs/system", version = "=2.0.0" }
-solana-vote-program = { path = "../programs/vote", version = "=2.0.0" }
+solana-address-lookup-table-program = { path = "../../programs/address-lookup-table", version = "=2.0.0" }
+solana-bpf-loader-program = { path = "../../programs/bpf_loader", version = "=2.0.0" }
+solana-compute-budget-program = { path = "../../programs/compute-budget", version = "=2.0.0" }
+solana-config-program = { path = "../../programs/config", version = "=2.0.0" }
+solana-loader-v4-program = { path = "../../programs/loader-v4", version = "=2.0.0" }
+solana-program-runtime = { path = "../../program-runtime", version = "=2.0.0" }
+solana-sdk = { path = "../../sdk", version = "=2.0.0" }
+solana-stake-program = { path = "../../programs/stake", version = "=2.0.0" }
+solana-system-program = { path = "../../programs/system", version = "=2.0.0" }
+solana-vote-program = { path = "../../programs/vote", version = "=2.0.0" }
 thiserror = "1.0.58"
 
 [lib]
@@ -76,6 +76,6 @@ prost-build = "0.11.9"
 #
 # There is a similar override in `../../Cargo.toml`.  Please keep both comments
 # and the overrides in sync.
-solana-program = { path = "../sdk/program" }
+solana-program = { path = "../../sdk/program" }
 
 [workspace]
