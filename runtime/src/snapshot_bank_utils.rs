@@ -1,6 +1,7 @@
 use {
     crate::{
         bank::{builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankSlotDelta},
+        epoch_stakes::EpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{
             bank_from_streams, bank_to_stream, fields_from_streams,
@@ -20,7 +21,7 @@ use {
             verify_and_unarchive_snapshots, verify_unpacked_snapshots_dir_and_version,
             AddBankSnapshotError, ArchiveFormat, BankSnapshotInfo, BankSnapshotKind, SnapshotError,
             SnapshotRootPaths, SnapshotVersion, StorageAndNextAccountsFileId,
-            UnpackedSnapshotsDirAndVersion, VerifySlotDeltasError,
+            UnpackedSnapshotsDirAndVersion, VerifyEpochStakesError, VerifySlotDeltasError,
         },
         status_cache,
     },
@@ -38,7 +39,7 @@ use {
     },
     solana_measure::{measure, measure::Measure},
     solana_sdk::{
-        clock::Slot,
+        clock::{Epoch, Slot},
         feature_set,
         genesis_config::GenesisConfig,
         hash::Hash,
@@ -46,7 +47,7 @@ use {
         slot_history::{Check, SlotHistory},
     },
     std::{
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fs,
         io::{BufWriter, Write},
         num::NonZeroUsize,
@@ -758,6 +759,8 @@ fn rebuild_bank_from_unarchived_snapshots(
         )
     })?;
 
+    verify_epoch_stakes(&bank)?;
+
     // The status cache is rebuilt from the latest snapshot.  So, if there's an incremental
     // snapshot, use that.  Otherwise use the full snapshot.
     let status_cache_path = incremental_snapshot_unpacked_snapshots_dir_and_version
@@ -830,6 +833,8 @@ fn rebuild_bank_from_snapshot(
             exit,
         )?)
     })?;
+
+    verify_epoch_stakes(&bank)?;
 
     let status_cache_path = bank_snapshot
         .snapshot_dir
@@ -939,6 +944,45 @@ fn verify_slot_deltas_with_history(
         .find(|slot| !slots_from_slot_deltas.contains(slot));
     if let Some(slot) = slot_missing_from_deltas {
         return Err(VerifySlotDeltasError::SlotNotFoundInDeltas(slot));
+    }
+
+    Ok(())
+}
+
+/// Verifies the bank's epoch stakes are valid after rebuilding from a snapshot
+fn verify_epoch_stakes(bank: &Bank) -> std::result::Result<(), VerifyEpochStakesError> {
+    _verify_epoch_stakes(
+        bank.epoch_stakes_map(),
+        bank.get_leader_schedule_epoch(bank.slot()),
+    )
+}
+
+/// Verifies the bank's epoch stakes are valid after rebuilding from a snapshot
+///
+/// This version of the function exists to facilitate testing.
+/// Normal callers should use `verify_epoch_stakes()`.
+fn _verify_epoch_stakes(
+    epoch_stakes_map: &HashMap<Epoch, EpochStakes>,
+    leader_schedule_epoch: Epoch,
+) -> std::result::Result<(), VerifyEpochStakesError> {
+    // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.
+    // Since epoch stakes are computed for the leader schedule epoch (`epoch + 1`), the snapshot's
+    // epoch stakes therefor can have entries for epochs at or below the leader schedule epoch.
+    if let Some(invalid_epoch) = epoch_stakes_map
+        .keys()
+        .find(|epoch| **epoch > leader_schedule_epoch)
+    {
+        return Err(VerifyEpochStakesError::EpochGreaterThanMax(
+            *invalid_epoch,
+            leader_schedule_epoch,
+        ));
+    }
+
+    // Ensure epoch stakes contains stakes for the leader schedule epoch
+    if !epoch_stakes_map.contains_key(&leader_schedule_epoch) {
+        return Err(VerifyEpochStakesError::LeaderScheduleEpochStakesNotFound(
+            leader_schedule_epoch,
+        ));
     }
 
     Ok(())
@@ -1262,6 +1306,7 @@ mod tests {
     use {
         super::*,
         crate::{
+            bank::tests::create_simple_test_bank,
             bank_forks::BankForks,
             genesis_utils,
             snapshot_config::SnapshotConfig,
@@ -2645,6 +2690,50 @@ mod tests {
             result,
             Err(VerifySlotDeltasError::SlotNotFoundInDeltas(333)),
         );
+    }
+
+    #[test]
+    fn test_verify_epoch_stakes_good() {
+        let bank = create_simple_test_bank(100 * LAMPORTS_PER_SOL);
+        assert_eq!(verify_epoch_stakes(&bank), Ok(()));
+    }
+
+    #[test]
+    fn test_verify_epoch_stakes_bad() {
+        let bank = create_simple_test_bank(100 * LAMPORTS_PER_SOL);
+        let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot());
+
+        // insert an invalid epoch into the epoch stakes
+        {
+            let mut epoch_stakes_map = bank.epoch_stakes_map().clone();
+            let invalid_epoch = leader_schedule_epoch + 1;
+            epoch_stakes_map.insert(
+                invalid_epoch,
+                bank.epoch_stakes(bank.epoch()).cloned().unwrap(),
+            );
+
+            assert_eq!(
+                _verify_epoch_stakes(&epoch_stakes_map, leader_schedule_epoch),
+                Err(VerifyEpochStakesError::EpochGreaterThanMax(
+                    invalid_epoch,
+                    leader_schedule_epoch,
+                ))
+            );
+        }
+
+        // remove the stakes for the leader schedule epoch
+        {
+            let mut epoch_stakes_map = bank.epoch_stakes_map().clone();
+            let removed_stakes = epoch_stakes_map.remove(&leader_schedule_epoch);
+            assert!(removed_stakes.is_some());
+
+            assert_eq!(
+                _verify_epoch_stakes(&epoch_stakes_map, leader_schedule_epoch),
+                Err(VerifyEpochStakesError::LeaderScheduleEpochStakesNotFound(
+                    leader_schedule_epoch,
+                ))
+            );
+        }
     }
 
     #[test]
