@@ -2499,54 +2499,12 @@ fn do_process_program_upgrade(
     no_extend: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
-    let program_data_address = get_program_data_address(program_id);
-    let program_data_account = rpc_client.get_account(&program_data_address);
-    let program_len_with_metadata = UpgradeableLoaderState::size_of_programdata(program_len);
-    // Check - auto extend program data account in case of insufficient space
-    // if no-extend flag is set then
-    // throw an err along with a message including additional bytes required
-    let add_program_extend_ix = match program_data_account {
-        Ok(program_data_account) => {
-            if program_len_with_metadata > program_data_account.data.len() {
-                let additional_bytes =
-                    program_len_with_metadata.sub(program_data_account.data.len());
-                if !no_extend {
-                    if additional_bytes > u32::MAX as usize {
-                        let err_string = format!(
-                            r#"Cannot auto-extend Program Data Account space due to size limit
-please extend it manually by runinng the command solana program extend {} <BYTES> multiple times 
-using chunks of additional bytes required:{}"#,
-                            program_id, additional_bytes
-                        );
-
-                        return Err(err_string.into());
-                    }
-                    Some(bpf_loader_upgradeable::extend_program(
-                        program_id,
-                        Some(&fee_payer_signer.pubkey()),
-                        additional_bytes as u32,
-                    ))
-                } else {
-                    let err_string = format!(
-                        r#"Program Data Account space is not enough
-please extend the program data account with command: solana program extend {} {},
-please disable the --no-extend-program flag to automatically extend the program account size"#,
-                        program_id, additional_bytes
-                    );
-                    return Err(err_string.into());
-                }
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    };
 
     let (initial_message, write_messages, balance_needed) = if let Some(buffer_signer) =
         buffer_signer
     {
         // Check Buffer account to see if partial initialization has occurred
-        let (initial_instructions, balance_needed, buffer_program_data) =
+        let (mut initial_instructions, balance_needed, buffer_program_data) =
             if let Some(mut account) = buffer_account {
                 let (ixs, balance_needed) = complete_partial_program_init(
                     &fee_payer_signer.pubkey(),
@@ -2574,9 +2532,33 @@ please disable the --no-extend-program flag to automatically extend the program 
                 )
             };
 
-        // Add extend program instruction if ProgramData account needs to be extended
-        if let Some(add_program_extend_ix) = add_program_extend_ix {
-            initial_instructions.push(add_program_extend_ix);
+        if !no_extend {
+            // Attempt to look up the existing program's size, and automatically
+            // add an extend instruction if the program data account is too small.
+            let program_data_address = get_program_data_address(program_id);
+            if let Some(program_data_account) = rpc_client
+                .get_account_with_commitment(&program_data_address, config.commitment)?
+                .value
+            {
+                let program_len = UpgradeableLoaderState::size_of_programdata(program_len);
+                let account_data_len = program_data_account.data.len();
+                if program_len > account_data_len {
+                    let additional_bytes = program_len.sub(account_data_len);
+                    let additional_bytes: u32 = additional_bytes.try_into().map_err(|_| {
+                        format!(
+                            "Cannot auto-extend Program Data Account space due to size limit \
+                        please extend it manually with command `solana program extend {} \
+                        <BYTES>`. Additional bytes required: {}",
+                            program_id, additional_bytes
+                        )
+                    })?;
+                    initial_instructions.push(bpf_loader_upgradeable::extend_program(
+                        program_id,
+                        Some(&fee_payer_signer.pubkey()),
+                        additional_bytes,
+                    ));
+                }
+            }
         }
 
         let initial_message = if !initial_instructions.is_empty() {
