@@ -1,6 +1,7 @@
 mod encryption;
 mod with_fee;
 mod without_fee;
+mod without_fee_split;
 
 #[cfg(not(target_os = "solana"))]
 use {
@@ -18,6 +19,7 @@ pub use {
     encryption::{FeeEncryption, TransferAmountCiphertext},
     with_fee::TransferWithFeePubkeys,
     without_fee::TransferPubkeys,
+    without_fee_split::transfer_split_proof_data,
 };
 pub use {
     with_fee::{TransferWithFeeData, TransferWithFeeProofContext},

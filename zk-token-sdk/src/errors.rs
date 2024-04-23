@@ -53,6 +53,8 @@ pub enum ProofGenerationError {
     RangeProof(#[from] RangeProofGenerationError),
     #[error("unexpected proof length")]
     ProofLength,
+    #[error("decryption failed")]
+    Decryption,
 }
 
 #[cfg(not(target_os = "solana"))]
