@@ -1117,28 +1117,29 @@ impl Blockstore {
                 continue;
             }
             let (slot, _) = erasure_set.store_key();
-            // First coding shred from this erasure batch, check the forward merkle root chaining
-            if !self.has_duplicate_shreds_in_slot(slot) {
-                let erasure_meta = working_erasure_meta.as_ref();
-                let shred_id = ShredId::new(
-                    slot,
-                    erasure_meta
-                        .first_received_coding_shred_index()
-                        .expect("First received coding index must exist for all erasure metas"),
-                    ShredType::Code,
-                );
-                let shred = just_inserted_shreds
-                    .get(&shred_id)
-                    .expect("Erasure meta was just created, initial shred must exist");
-
-                self.check_forward_chained_merkle_root_consistency(
-                    shred,
-                    erasure_meta,
-                    &just_inserted_shreds,
-                    &mut merkle_root_metas,
-                    &mut duplicate_shreds,
-                );
+            if self.has_duplicate_shreds_in_slot(slot) {
+                continue;
             }
+            // First coding shred from this erasure batch, check the forward merkle root chaining
+            let erasure_meta = working_erasure_meta.as_ref();
+            let shred_id = ShredId::new(
+                slot,
+                erasure_meta
+                    .first_received_coding_shred_index()
+                    .expect("First received coding index must exist for all erasure metas"),
+                ShredType::Code,
+            );
+            let shred = just_inserted_shreds
+                .get(&shred_id)
+                .expect("Erasure meta was just created, initial shred must exist");
+
+            self.check_forward_chained_merkle_root_consistency(
+                shred,
+                erasure_meta,
+                &just_inserted_shreds,
+                &mut merkle_root_metas,
+                &mut duplicate_shreds,
+            );
         }
 
         for (erasure_set, working_merkle_root_meta) in merkle_root_metas.iter() {
@@ -1147,26 +1148,27 @@ impl Blockstore {
                 continue;
             }
             let (slot, _) = erasure_set.store_key();
-            // First shred from this erasure batch, check the backwards merkle root chaining
-            if !self.has_duplicate_shreds_in_slot(slot) {
-                let merkle_root_meta = working_merkle_root_meta.as_ref();
-                let shred_id = ShredId::new(
-                    slot,
-                    merkle_root_meta.first_received_shred_index(),
-                    merkle_root_meta.first_received_shred_type(),
-                );
-                let shred = just_inserted_shreds
-                    .get(&shred_id)
-                    .expect("Merkle root meta was just created, initial shred must exist");
-
-                self.check_backwards_chained_merkle_root_consistency(
-                    shred,
-                    &just_inserted_shreds,
-                    &erasure_metas,
-                    &merkle_root_metas,
-                    &mut duplicate_shreds,
-                );
+            if self.has_duplicate_shreds_in_slot(slot) {
+                continue;
             }
+            // First shred from this erasure batch, check the backwards merkle root chaining
+            let merkle_root_meta = working_merkle_root_meta.as_ref();
+            let shred_id = ShredId::new(
+                slot,
+                merkle_root_meta.first_received_shred_index(),
+                merkle_root_meta.first_received_shred_type(),
+            );
+            let shred = just_inserted_shreds
+                .get(&shred_id)
+                .expect("Merkle root meta was just created, initial shred must exist");
+
+            self.check_backwards_chained_merkle_root_consistency(
+                shred,
+                &just_inserted_shreds,
+                &erasure_metas,
+                &merkle_root_metas,
+                &mut duplicate_shreds,
+            );
         }
 
         for (erasure_set, working_erasure_meta) in erasure_metas {
@@ -1792,23 +1794,24 @@ impl Blockstore {
             return false;
         };
         let next_erasure_set = ErasureSetId::new(slot, next_fec_set_index);
-        let (next_shred_index, next_shred_type) = if let Some(merkle_root_meta_entry) =
-            merkle_root_metas.get(&next_erasure_set)
-        {
-            (
-                merkle_root_meta_entry.as_ref().first_received_shred_index(),
-                merkle_root_meta_entry.as_ref().first_received_shred_type(),
-            )
-        } else if let Some(merkle_root_meta) = self.merkle_root_meta(next_erasure_set).unwrap() {
-            (
-                merkle_root_meta.first_received_shred_index(),
-                merkle_root_meta.first_received_shred_type(),
-            )
-        } else {
+        let Some(next_merkle_root_meta) = merkle_root_metas
+            .get(&next_erasure_set)
+            .map(WorkingEntry::as_ref)
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                self.merkle_root_meta(next_erasure_set)
+                    .unwrap()
+                    .map(Cow::Owned)
+            })
+        else {
             // No shred from the next fec set has been received
             return true;
         };
-        let next_shred_id = ShredId::new(slot, next_shred_index, next_shred_type);
+        let next_shred_id = ShredId::new(
+            slot,
+            next_merkle_root_meta.first_received_shred_index(),
+            next_merkle_root_meta.first_received_shred_type(),
+        );
         let next_shred =
             Self::get_shred_from_just_inserted_or_db(self, just_inserted_shreds, next_shred_id)
                 .expect("Shred indicated by merkle root meta must exist")
@@ -1820,9 +1823,10 @@ impl Blockstore {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot},
                 shred {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however
-                next fec set shred {next_erasure_set:?} type {next_shred_type:?} chains to merkle root {chained_merkle_root:?}.
+                next fec set shred {next_erasure_set:?} type {:?} chains to merkle root {chained_merkle_root:?}.
                 Reporting as duplicate",
                 shred.shred_type(),
+                next_merkle_root_meta.first_received_shred_type(),
             );
 
             if !self.has_duplicate_shreds_in_slot(shred.slot()) {
@@ -1879,27 +1883,21 @@ impl Blockstore {
             return true;
         };
 
-        let (prev_shred_index, prev_shred_type) =
-            if let Some(prev_merkle_root_meta_entry) = merkle_root_metas.get(&prev_erasure_set) {
-                (
-                    prev_merkle_root_meta_entry
-                        .as_ref()
-                        .first_received_shred_index(),
-                    prev_merkle_root_meta_entry
-                        .as_ref()
-                        .first_received_shred_type(),
-                )
-            } else {
-                let merkle_root_meta = self
-                    .merkle_root_meta(prev_erasure_set)
+        let prev_merkle_root_meta = merkle_root_metas
+            .get(&prev_erasure_set)
+            .map(WorkingEntry::as_ref)
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                self.merkle_root_meta(prev_erasure_set)
                     .unwrap()
-                    .expect("merkle root meta must exist for erasure meta");
-                (
-                    merkle_root_meta.first_received_shred_index(),
-                    merkle_root_meta.first_received_shred_type(),
-                )
-            };
-        let prev_shred_id = ShredId::new(slot, prev_shred_index, prev_shred_type);
+                    .map(Cow::Owned)
+            })
+            .expect("merkle root meta must exist for erasure meta");
+        let prev_shred_id = ShredId::new(
+            slot,
+            prev_merkle_root_meta.first_received_shred_index(),
+            prev_merkle_root_meta.first_received_shred_type(),
+        );
         let prev_shred =
             Self::get_shred_from_just_inserted_or_db(self, just_inserted_shreds, prev_shred_id)
                 .expect("Shred indicated by merkle root meta must exist")
@@ -1911,10 +1909,11 @@ impl Blockstore {
             warn!(
                     "Received conflicting chained merkle roots for slot: {slot},
                     shred {:?} type {:?} chains to merkle root {chained_merkle_root:?}, however
-                    previous fec set shred {prev_erasure_set:?} type {prev_shred_type:?} has merkle root {merkle_root:?}.
+                    previous fec set shred {prev_erasure_set:?} type {:?} has merkle root {merkle_root:?}.
                     Reporting as duplicate",
                     shred.erasure_set(),
                     shred.shred_type(),
+                    prev_merkle_root_meta.first_received_shred_type(),
                 );
 
             if !self.has_duplicate_shreds_in_slot(shred.slot()) {
