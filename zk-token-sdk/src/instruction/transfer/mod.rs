@@ -1,5 +1,6 @@
 mod encryption;
 mod with_fee;
+mod with_fee_split;
 mod without_fee;
 
 #[cfg(not(target_os = "solana"))]

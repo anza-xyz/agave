@@ -55,9 +55,9 @@ const TRANSFER_AMOUNT_HI_BITS: usize = 32;
 #[cfg(not(target_os = "solana"))]
 const TRANSFER_DELTA_BITS: usize = 16;
 #[cfg(not(target_os = "solana"))]
-const FEE_AMOUNT_LO_BITS: usize = 16;
+pub(crate) const FEE_AMOUNT_LO_BITS: usize = 16;
 #[cfg(not(target_os = "solana"))]
-const FEE_AMOUNT_HI_BITS: usize = 32;
+pub(crate) const FEE_AMOUNT_HI_BITS: usize = 32;
 
 #[cfg(not(target_os = "solana"))]
 lazy_static::lazy_static! {
@@ -773,7 +773,10 @@ impl TransferWithFeeProof {
 }
 
 #[cfg(not(target_os = "solana"))]
-fn calculate_fee(transfer_amount: u64, fee_rate_basis_points: u16) -> Option<(u64, u64)> {
+pub(crate) fn calculate_fee(
+    transfer_amount: u64,
+    fee_rate_basis_points: u16,
+) -> Option<(u64, u64)> {
     let numerator = (transfer_amount as u128).checked_mul(fee_rate_basis_points as u128)?;
 
     // Warning: Division may involve CPU opcodes that have variable execution times. This
@@ -793,7 +796,7 @@ fn calculate_fee(transfer_amount: u64, fee_rate_basis_points: u16) -> Option<(u6
 }
 
 #[cfg(not(target_os = "solana"))]
-fn compute_delta_commitment_and_opening(
+pub(crate) fn compute_delta_commitment_and_opening(
     (combined_commitment, combined_opening): (&PedersenCommitment, &PedersenOpening),
     (combined_fee_commitment, combined_fee_opening): (&PedersenCommitment, &PedersenOpening),
     fee_rate_basis_points: u16,
