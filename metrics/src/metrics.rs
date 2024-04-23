@@ -280,7 +280,10 @@ impl MetricsAgent {
             counters,
         );
 
-        if !combined_points.is_empty() {
+        // `combined_points`` always contain a `metric` point for how many real
+        // datapoints are submitted at the end. Therefore, to skip empty point
+        // submission, `combined_points.len()` must be larger than 1.
+        if combined_points.len() > 1 {
             writer.write(combined_points);
         }
 
