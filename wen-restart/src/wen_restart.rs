@@ -482,10 +482,8 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let mut progress_last_sent = Instant::now();
     let mut cursor = solana_gossip::crds::Cursor::default();
     let mut progress_changed = false;
-    let majority_stake_required = (total_stake as f64 / 100.0
-        * (wait_for_supermajority_threshold_percent as f64
-            - HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT))
-        .round() as u64;
+    let majority_stake_required =
+        (total_stake as f64 / 100.0 * adjusted_threshold_percent as f64).round() as u64;
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
