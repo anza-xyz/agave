@@ -2726,14 +2726,9 @@ fn send_deploy_messages(
     write_signer: Option<&dyn Signer>,
     final_signers: Option<&[&dyn Signer]>,
     max_sign_attempts: usize,
-<<<<<<< HEAD
+    use_rpc: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(message) = initial_message {
-=======
-    use_rpc: bool,
-) -> Result<Option<Signature>, Box<dyn std::error::Error>> {
-    if let Some(mut message) = initial_message {
->>>>>>> 6d740b3675 (cli: Add `--use-rpc` flag to program deploy and write-buffer (#928))
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
 
