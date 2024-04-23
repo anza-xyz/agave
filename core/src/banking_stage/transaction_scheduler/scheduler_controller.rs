@@ -17,12 +17,12 @@ use {
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         forward_packet_batches_by_accounts::ForwardPacketBatchesByAccounts,
+        forwarder::Forwarder,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer,
-        scheduler_messages::{FinishedForwardWork, ForwardWork},
-        TOTAL_BUFFERED_PACKETS,
+        ForwardOption, TOTAL_BUFFERED_PACKETS,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::RecvTimeoutError,
     solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
     solana_program_runtime::compute_budget_processor::process_compute_budget_instructions,
@@ -65,10 +65,8 @@ pub(crate) struct SchedulerController {
     timing_metrics: SchedulerTimingMetrics,
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-    /// Channel to send forward workers batches of packets to forward.
-    forward_work_sender: Sender<ForwardWork>,
-    /// Channel to receive finished forwarded work (to re-insert IDs into the queue).
-    finished_forward_work_receiver: Receiver<FinishedForwardWork>,
+    /// State for forwarding packets to the leader.
+    forwarder: Forwarder,
 }
 
 impl SchedulerController {
@@ -78,8 +76,7 @@ impl SchedulerController {
         bank_forks: Arc<RwLock<BankForks>>,
         scheduler: PrioGraphScheduler,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-        forward_work_sender: Sender<ForwardWork>,
-        finished_forward_work_receiver: Receiver<FinishedForwardWork>,
+        forwarder: Forwarder,
     ) -> Self {
         Self {
             decision_maker,
@@ -92,8 +89,7 @@ impl SchedulerController {
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
-            forward_work_sender,
-            finished_forward_work_receiver,
+            forwarder,
         }
     }
 
@@ -305,11 +301,12 @@ impl SchedulerController {
             }
         }
 
-        // Push into worker queue.
-        for batch in forwardable_packets.take_iter_batches() {
-            let packets = batch.take_packets();
-            let forward_work = ForwardWork { packets };
-            self.forward_work_sender.send(forward_work).unwrap();
+        // Forward each batch of transactions
+        for batch in forwardable_packets.iter_batches() {
+            let _ = self.forwarder.forward_packets(
+                &ForwardOption::ForwardTransaction,
+                batch.get_forwardable_packets(),
+            );
         }
 
         // If we hit the time limit. Drop everything that was not checked/processed.
@@ -421,9 +418,6 @@ impl SchedulerController {
                 receive_completed_time_us
             );
         });
-
-        // Receive completed forward work. Don't need to do anything with it.
-        while let Ok(_finished_forward_work) = self.finished_forward_work_receiver.try_recv() {}
 
         Ok(())
     }
@@ -644,13 +638,14 @@ mod tests {
             banking_stage::{
                 consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
                 scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
-                tests::create_slow_genesis_config,
+                tests::{create_slow_genesis_config, new_test_cluster_info},
             },
             banking_trace::BankingPacketBatch,
             sigverify::SigverifyTracerPacketStats,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
+        solana_client::connection_cache::ConnectionCache,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
@@ -684,8 +679,6 @@ mod tests {
 
         consume_work_receivers: Vec<Receiver<ConsumeWork>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork>,
-        _forward_work_receiver: Receiver<ForwardWork>,
-        _finished_forward_work_sender: Sender<FinishedForwardWork>,
     }
 
     fn create_test_frame(num_threads: usize) -> (TestFrame, SchedulerController) {
@@ -719,8 +712,17 @@ mod tests {
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
         let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
-        let (forward_work_sender, forward_work_receiver) = unbounded();
-        let (finished_forward_work_sender, finished_forward_work_receiver) = unbounded();
+
+        let validator_keypair = Arc::new(Keypair::new());
+        let (_local_node, cluster_info) = new_test_cluster_info(Some(validator_keypair));
+        let cluster_info = Arc::new(cluster_info);
+        let forwarder = Forwarder::new(
+            poh_recorder.clone(),
+            bank_forks.clone(),
+            cluster_info,
+            Arc::new(ConnectionCache::new("connection_cache_test")),
+            Arc::default(),
+        );
 
         let test_frame = TestFrame {
             bank,
@@ -732,8 +734,6 @@ mod tests {
             banking_packet_sender,
             consume_work_receivers,
             finished_consume_work_sender,
-            _forward_work_receiver: forward_work_receiver,
-            _finished_forward_work_sender: finished_forward_work_sender,
         };
 
         let scheduler_controller = SchedulerController::new(
@@ -742,8 +742,7 @@ mod tests {
             bank_forks,
             PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver),
             vec![], // no actual workers with metrics to report, this can be empty
-            forward_work_sender,
-            finished_forward_work_receiver,
+            forwarder,
         );
 
         (test_frame, scheduler_controller)
