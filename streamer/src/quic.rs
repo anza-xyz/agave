@@ -436,7 +436,7 @@ pub fn spawn_server(
     coalesce: Duration,
 ) -> Result<(Endpoint, thread::JoinHandle<()>), QuicServerError> {
     let runtime = rt();
-    let result = {
+    let (endpoint, _stats, task) = {
         let _guard = runtime.enter();
         crate::nonblocking::quic::spawn_server(
             name,
@@ -456,12 +456,12 @@ pub fn spawn_server(
     let handle = thread::Builder::new()
         .name("solQuicServer".into())
         .spawn(move || {
-            if let Err(e) = runtime.block_on(result.thread) {
+            if let Err(e) = runtime.block_on(task) {
                 warn!("error from runtime.block_on: {:?}", e);
             }
         })
         .unwrap();
-    Ok((result.endpoint, handle))
+    Ok((endpoint, handle))
 }
 
 #[cfg(test)]
