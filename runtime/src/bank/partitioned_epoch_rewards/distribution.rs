@@ -6,7 +6,7 @@ use {
         bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
         stake_account::StakeAccount,
     },
-    log::debug,
+    log::error,
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
     solana_sdk::{
@@ -200,7 +200,7 @@ impl Bank {
                     updated_stake_rewards.push(stake_reward);
                 }
                 Err(err) => {
-                    debug!(
+                    error!(
                         "bank::distribution::store_stake_accounts_in_partition() failed for {}: {:?}",
                         stake_pubkey, err
                     );
