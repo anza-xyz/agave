@@ -12,6 +12,7 @@ use {
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        clock::Slot,
         feature_set::{
             self, include_loaded_accounts_data_size_in_fee_calculation,
             remove_rounding_in_fee_calculation,
@@ -31,7 +32,7 @@ use {
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroUsize,
+    std::{collections::HashMap, num::NonZeroUsize},
 };
 
 // for the load instructions
@@ -115,6 +116,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     fee_structure: &FeeStructure,
     account_overrides: Option<&AccountOverrides>,
     loaded_programs: &ProgramCacheForTxBatch,
+    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
 ) -> Vec<TransactionLoadResult> {
     let feature_set = callbacks.get_feature_set();
     txs.iter()
@@ -145,6 +147,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                     error_counters,
                     account_overrides,
                     loaded_programs,
+                    accounts_map,
                 ) {
                     Ok(loaded_transaction) => loaded_transaction,
                     Err(e) => return (Err(e), None),
@@ -181,8 +184,18 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     error_counters: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     loaded_programs: &ProgramCacheForTxBatch,
+    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
 ) -> Result<LoadedTransaction> {
     let feature_set = callbacks.get_feature_set();
+
+    let load_account = |pubkey, should_cache| {
+        let (account, _slot) = if let Some(found) = accounts_map.get(pubkey) {
+            found.clone()
+        } else {
+            callbacks.load_account_with(pubkey, |_| should_cache)?
+        };
+        Some(account)
+    };
 
     // There is no way to predict what program will execute without an error
     // If a fee can pay for execution then the program will be scheduled
@@ -224,16 +237,13 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     .then_some(())
                     .and_then(|_| loaded_programs.find(key))
                 {
-                    callbacks
-                        .get_account_shared_data(key)
-                        .ok_or(TransactionError::AccountNotFound)?;
+                    load_account(key, false).ok_or(TransactionError::AccountNotFound)?;
                     // Optimization to skip loading of accounts which are only used as
                     // programs in top-level instructions and not passed as instruction accounts.
                     let program_account = account_shared_data_from_program(&program);
                     (program.account_size, program_account, 0)
                 } else {
-                    callbacks
-                        .get_account_shared_data(key)
+                    load_account(key, !message.is_writable(i))
                         .map(|mut account| {
                             if message.is_writable(i) {
                                 if !feature_set
@@ -467,6 +477,7 @@ mod tests {
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable,
+            clock::Slot,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
             feature_set::FeatureSet,
@@ -504,6 +515,15 @@ mod tests {
     impl TransactionProcessingCallback for TestCallbacks {
         fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {
             None
+        }
+
+        fn load_account_with(
+            &self,
+            pubkey: &Pubkey,
+            _callback: impl for<'a> Fn(&'a AccountSharedData) -> bool,
+        ) -> Option<(AccountSharedData, Slot)> {
+            let account = self.accounts_map.get(pubkey).cloned()?;
+            Some((account, 100))
         }
 
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
@@ -551,6 +571,7 @@ mod tests {
             fee_structure,
             None,
             &ProgramCacheForTxBatch::default(),
+            &HashMap::default(),
         )
     }
 
@@ -1039,6 +1060,7 @@ mod tests {
             &FeeStructure::default(),
             account_overrides,
             &ProgramCacheForTxBatch::default(),
+            &HashMap::default(),
         )
     }
 
@@ -1443,6 +1465,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
 
         assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
@@ -1486,6 +1509,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1551,6 +1575,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
 
         assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
@@ -1593,6 +1618,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
 
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -1635,6 +1661,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
 
         assert_eq!(
@@ -1684,6 +1711,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1751,6 +1779,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1807,6 +1836,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1868,6 +1898,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1955,6 +1986,7 @@ mod tests {
             &mut error_counter,
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -2026,6 +2058,7 @@ mod tests {
             &FeeStructure::default(),
             None,
             &ProgramCacheForTxBatch::default(),
+            &HashMap::default(),
         );
 
         let compute_budget = ComputeBudget::new(u64::from(
@@ -2109,6 +2142,7 @@ mod tests {
             &FeeStructure::default(),
             None,
             &loaded_programs,
+            &HashMap::default(),
         );
 
         let mut account_data = AccountSharedData::default();
@@ -2182,6 +2216,7 @@ mod tests {
             &fee_structure,
             None,
             &ProgramCacheForTxBatch::default(),
+            &HashMap::default(),
         );
 
         assert_eq!(
@@ -2200,6 +2235,7 @@ mod tests {
             &fee_structure,
             None,
             &ProgramCacheForTxBatch::default(),
+            &HashMap::default(),
         );
 
         assert_eq!(result, vec![(Err(TransactionError::AccountNotFound), None)]);
@@ -2218,6 +2254,7 @@ mod tests {
             &fee_structure,
             None,
             &ProgramCacheForTxBatch::default(),
+            &HashMap::default(),
         );
 
         assert_eq!(
