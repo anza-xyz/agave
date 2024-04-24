@@ -982,7 +982,8 @@ pub fn is_ancient(storage: &AccountsFile) -> bool {
     match storage {
         AccountsFile::AppendVec(_) => storage.capacity() >= get_ancient_append_vec_capacity(),
         AccountsFile::TieredStorage(_) => {
-            unimplemented!("is_ancient() is not supported for hot storage!")
+            // HotStorage doesn't support reserved size. Return true for now so that every slot is a candidate for 'ancient'?
+            true
         }
     }
 }

@@ -333,7 +333,7 @@ pub enum StoreReclaims {
 /// 5. goto 3
 /// If a caller uses it before initializing it, it will be a runtime unwrap() error, similar to an assert.
 /// That condition is an illegal use pattern and is justifiably an assertable condition.
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct CurrentAncientAccountsFile {
     slot_and_accounts_file: Option<(Slot, Arc<AccountStorageEntry>)>,
 }
@@ -3955,6 +3955,7 @@ impl AccountsDb {
             shrink_can_be_active,
         );
         let dead_storages_len = dead_storages.len();
+        println!("dead: {:?}", dead_storages);
 
         if !shrink_collect.all_are_zero_lamports {
             self.add_uncleaned_pubkeys_after_shrink(
@@ -4398,6 +4399,7 @@ impl AccountsDb {
             .slots_considered
             .fetch_add(1, Ordering::Relaxed);
 
+        // if self.accounts_file_provider == AccountsFileProvider::AppendVec && is_ancient(accounts) {
         if is_ancient(accounts) {
             self.shrink_ancient_stats
                 .ancient_scanned
@@ -4528,6 +4530,9 @@ impl AccountsDb {
         let (mut shrink_in_progress, create_and_insert_store_elapsed_us) = measure_us!(
             current_ancient.create_if_necessary(slot, self, shrink_collect.alive_total_bytes)
         );
+
+        println!("current_ancient: {:?}", current_ancient);
+
         stats_sub.create_and_insert_store_elapsed_us =
             Saturating(create_and_insert_store_elapsed_us);
         let available_bytes = current_ancient.accounts_file().accounts.remaining_bytes();
@@ -4561,6 +4566,8 @@ impl AccountsDb {
 
         // handle accounts from 'slot' which did not fit into the current ancient append vec
         if to_store.has_overflow() {
+            panic!("haha");
+
             // We need a new ancient append vec at this slot.
             // Assert: it cannot be the case that we already had an ancient append vec at this slot and
             // yet that ancient append vec does not have room for the accounts stored at this slot currently
@@ -16894,20 +16901,28 @@ pub mod tests {
     define_accounts_db_test!(test_shrink_ancient, |db| {
         let num_normal_slots = 1;
         // build an ancient append vec at slot 'ancient_slot'
+        // AccountsStorage : { 1 (ancient), 2 (normal) }
         let ancient_slot = get_one_ancient_append_vec_and_others(&db, true, num_normal_slots);
+
+        println!("==== slot{}", ancient_slot);
+        println!("{:?}", db.storage);
 
         let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
         let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
+        println!("{:?}", initial_accounts);
         compare_all_accounts(
             &initial_accounts,
             &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
         );
 
         // combine normal append vec(s) into existing ancient append vec
+        // AccountsStorage: { 1 (ancient) }
         db.combine_ancient_slots(
             (ancient_slot..=max_slot_inclusive).collect(),
             CAN_RANDOMLY_SHRINK_FALSE,
         );
+
+        println!("1.1 {:?}", db.storage);
 
         compare_all_accounts(
             &initial_accounts,
@@ -16915,8 +16930,12 @@ pub mod tests {
         );
 
         // create a 2nd ancient append vec at 'next_slot'
+        // AccountsStorage: { 1 (ancient), 3 (normal)}
         let next_slot = max_slot_inclusive + 1;
         create_storages_and_update_index(&db, None, next_slot, num_normal_slots, true, None);
+
+        println!("==== slot{}", next_slot);
+        println!("{:?}", db.storage);
         let max_slot_inclusive = next_slot + (num_normal_slots as Slot);
 
         let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
@@ -16925,10 +16944,13 @@ pub mod tests {
             &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
         );
 
+        // AccountsStorage: { 1 (ancient), 3 (ancient) }
         db.combine_ancient_slots(
             (next_slot..=max_slot_inclusive).collect(),
             CAN_RANDOMLY_SHRINK_FALSE,
         );
+
+        println!("3.1 {:?}", db.storage);
 
         compare_all_accounts(
             &initial_accounts,
@@ -16941,6 +16963,8 @@ pub mod tests {
             db.get_storage_for_slot(ancient_slot).unwrap(),
         );
         let mut dropped_roots = Vec::default();
+
+        // AccountsStorage: { 1 (ancient) }
         db.combine_one_store_into_ancient(
             next_slot,
             &db.get_storage_for_slot(next_slot).unwrap(),
@@ -16948,6 +16972,11 @@ pub mod tests {
             &mut AncientSlotPubkeys::default(),
             &mut dropped_roots,
         );
+
+        println!("3.2 {:?}", db.storage);
+
+        println!("dropped_roots {:?}", dropped_roots);
+
         assert!(db.storage.is_empty_entry(next_slot));
         // this removes the storages entry completely from the hashmap for 'next_slot'.
         // Otherwise, we have a zero length vec in that hashmap

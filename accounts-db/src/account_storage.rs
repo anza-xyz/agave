@@ -102,6 +102,9 @@ impl AccountStorage {
             self.no_shrink_in_progress(),
             "self.no_shrink_in_progress(): {slot}"
         );
+
+        println!("{:?}", self.map);
+
         self.map.get(&slot).is_none()
     }
 
