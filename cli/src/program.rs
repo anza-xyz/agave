@@ -71,7 +71,6 @@ use {
         fs::File,
         io::{Read, Write},
         mem::size_of,
-        ops::Sub,
         path::PathBuf,
         rc::Rc,
         str::FromStr,
@@ -2553,7 +2552,7 @@ fn do_process_program_upgrade(
                 let program_len = UpgradeableLoaderState::size_of_programdata(program_len);
                 let account_data_len = program_data_account.data.len();
                 if program_len > account_data_len {
-                    let additional_bytes = program_len.sub(account_data_len);
+                    let additional_bytes = program_len.saturating_sub(account_data_len);
                     let additional_bytes: u32 = additional_bytes.try_into().map_err(|_| {
                         format!(
                             "Cannot auto-extend Program Data Account space due to size limit \
