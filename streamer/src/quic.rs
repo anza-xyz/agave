@@ -55,11 +55,8 @@ impl rustls::server::ClientCertVerifier for SkipClientVerification {
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
-<<<<<<< HEAD
     gossip_host: IpAddr,
-=======
     max_concurrent_connections: usize,
->>>>>>> 9d953cb83a (Limit max concurrent connections (#851))
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_self_signed_tls_certificate(identity_keypair, gossip_host)?;
     let cert_chain_pem_parts = vec![Pem {
@@ -114,22 +111,6 @@ pub enum QuicServerError {
     TlsError(#[from] rustls::Error),
 }
 
-<<<<<<< HEAD
-=======
-pub struct EndpointKeyUpdater {
-    endpoint: Endpoint,
-    max_concurrent_connections: usize,
-}
-
-impl NotifyKeyUpdate for EndpointKeyUpdater {
-    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key, self.max_concurrent_connections)?;
-        self.endpoint.set_server_config(Some(config));
-        Ok(())
-    }
-}
-
->>>>>>> 9d953cb83a (Limit max concurrent connections (#851))
 #[derive(Default)]
 pub struct StreamStats {
     pub(crate) total_connections: AtomicUsize,
@@ -453,15 +434,9 @@ pub fn spawn_server(
     max_unstaked_connections: usize,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
-<<<<<<< HEAD
 ) -> Result<(Endpoint, thread::JoinHandle<()>), QuicServerError> {
     let runtime = rt();
-    let (endpoint, _stats, task) = {
-=======
-) -> Result<SpawnServerResult, QuicServerError> {
-    let runtime = rt(format!("{thread_name}Rt"));
     let result = {
->>>>>>> 9d953cb83a (Limit max concurrent connections (#851))
         let _guard = runtime.enter();
         crate::nonblocking::quic::spawn_server(
             name,
@@ -486,19 +461,7 @@ pub fn spawn_server(
             }
         })
         .unwrap();
-<<<<<<< HEAD
-    Ok((endpoint, handle))
-=======
-    let updater = EndpointKeyUpdater {
-        endpoint: result.endpoint.clone(),
-        max_concurrent_connections: result.max_concurrent_connections,
-    };
-    Ok(SpawnServerResult {
-        endpoint: result.endpoint,
-        thread: handle,
-        key_updater: Arc::new(updater),
-    })
->>>>>>> 9d953cb83a (Limit max concurrent connections (#851))
+    Ok((result.endpoint, handle))
 }
 
 #[cfg(test)]

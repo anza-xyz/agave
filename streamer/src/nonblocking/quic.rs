@@ -122,13 +122,9 @@ pub fn spawn_server(
     coalesce: Duration,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
     info!("Start {name} quic server on {sock:?}");
-<<<<<<< HEAD
-    let (config, _cert) = configure_server(keypair, gossip_host)?;
-=======
     let concurrent_connections = max_staked_connections + max_unstaked_connections;
     let max_concurrent_connections = concurrent_connections + concurrent_connections / 4;
-    let (config, _cert) = configure_server(keypair, max_concurrent_connections)?;
->>>>>>> 9d953cb83a (Limit max concurrent connections (#851))
+    let (config, _cert) = configure_server(keypair, gossip_host, max_concurrent_connections)?;
 
     let endpoint = Endpoint::new(
         EndpointConfig::default(),
