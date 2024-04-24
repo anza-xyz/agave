@@ -126,7 +126,6 @@ pub fn spawn_server(
         Arc::new(TokioRuntime),
     )
     .map_err(QuicServerError::EndpointFailed)?;
-
     let stats = Arc::<StreamStats>::default();
     let handle = tokio::spawn(run_server(
         name,
