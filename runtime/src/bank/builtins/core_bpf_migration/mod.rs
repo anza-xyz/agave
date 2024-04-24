@@ -242,7 +242,7 @@ impl Bank {
         let source = SourceBuffer::new_checked(self, &config.source_buffer_address)?;
 
         // Attempt serialization first before modifying the bank.
-        let new_target_program_account = self.new_target_program_account(&target)?;
+        let mut new_target_program_account = self.new_target_program_account(&target)?;
         let new_target_program_data_account =
             self.new_target_program_data_account(&source, config.upgrade_authority_address)?;
 
@@ -267,6 +267,12 @@ impl Bank {
             &target.program_address,
             new_target_program_data_account.data(),
         )?;
+
+        // After successfully deployed the `Builtin` program, we need to mark
+        // the builtin program account as executable. This is required for
+        // transaction account loading, when "fake program account" optimization
+        // is disabled.
+        new_target_program_account.set_executable(true);
 
         // Calculate the lamports to burn.
         // The target program account will be replaced, so burn its lamports.
