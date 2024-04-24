@@ -971,6 +971,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
+    pub fn contains_key(&self, key: &Pubkey) -> bool {
+        self.entries.contains_key(key)
+    }
+
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
