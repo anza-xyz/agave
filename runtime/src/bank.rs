@@ -3161,7 +3161,7 @@ impl Bank {
         // length is made variable by epoch
         blockhash_queue
             .get_hash_age(blockhash)
-            .map(|age| self.slot + blockhash_queue.get_max_age() as u64 - age)
+            .map(|age| self.slot + MAX_PROCESSING_AGE as u64 - age)
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
@@ -3170,7 +3170,7 @@ impl Bank {
         // length is made variable by epoch
         blockhash_queue
             .get_hash_age(blockhash)
-            .map(|age| self.block_height + blockhash_queue.get_max_age() as u64 - age)
+            .map(|age| self.block_height + MAX_PROCESSING_AGE as u64 - age)
     }
 
     pub fn confirmed_last_blockhash(&self) -> Hash {
