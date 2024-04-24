@@ -3036,7 +3036,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3070,7 +3070,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![
@@ -3106,7 +3106,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3141,7 +3141,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![
@@ -3179,7 +3179,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![
@@ -3213,7 +3213,7 @@ mod tests {
                     allow_excessive_balance: false,
                     compute_unit_price: None,
                     max_sign_attempts: 5,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3245,7 +3245,7 @@ mod tests {
                     skip_fee_check: false,
                     compute_unit_price: None,
                     max_sign_attempts: 1,
-                    no_extend: false
+                    no_extend: false,
                     use_rpc: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
