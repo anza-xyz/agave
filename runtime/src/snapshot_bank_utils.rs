@@ -51,6 +51,7 @@ use {
         fs,
         io::{BufWriter, Write},
         num::NonZeroUsize,
+        ops::RangeInclusive,
         path::{Path, PathBuf},
         sync::{atomic::AtomicBool, Arc},
     },
@@ -951,10 +952,13 @@ fn verify_slot_deltas_with_history(
 
 /// Verifies the bank's epoch stakes are valid after rebuilding from a snapshot
 fn verify_epoch_stakes(bank: &Bank) -> std::result::Result<(), VerifyEpochStakesError> {
-    _verify_epoch_stakes(
-        bank.epoch_stakes_map(),
-        bank.get_leader_schedule_epoch(bank.slot()),
-    )
+    // Stakes are required for epochs from the current epoch up-to-and-including the
+    // leader schedule epoch.  In practice this will only be two epochs: the current and the next.
+    // Using a range mirrors how Bank::new_with_paths() seeds the initial epoch stakes.
+    let current_epoch = bank.epoch();
+    let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot());
+    let required_epochs = current_epoch..=leader_schedule_epoch;
+    _verify_epoch_stakes(bank.epoch_stakes_map(), required_epochs)
 }
 
 /// Verifies the bank's epoch stakes are valid after rebuilding from a snapshot
@@ -963,25 +967,28 @@ fn verify_epoch_stakes(bank: &Bank) -> std::result::Result<(), VerifyEpochStakes
 /// Normal callers should use `verify_epoch_stakes()`.
 fn _verify_epoch_stakes(
     epoch_stakes_map: &HashMap<Epoch, EpochStakes>,
-    leader_schedule_epoch: Epoch,
+    required_epochs: RangeInclusive<Epoch>,
 ) -> std::result::Result<(), VerifyEpochStakesError> {
     // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.
-    // Since epoch stakes are computed for the leader schedule epoch (`epoch + 1`), the snapshot's
-    // epoch stakes therefor can have entries for epochs at or below the leader schedule epoch.
-    if let Some(invalid_epoch) = epoch_stakes_map
-        .keys()
-        .find(|epoch| **epoch > leader_schedule_epoch)
-    {
+    // Since epoch stakes are computed for the leader schedule epoch (usually `epoch + 1`),
+    // the snapshot's epoch stakes therefor can have entries for epochs at-or-below the
+    // leader schedule epoch.
+    let max_epoch = *required_epochs.end();
+    if let Some(invalid_epoch) = epoch_stakes_map.keys().find(|epoch| **epoch > max_epoch) {
         return Err(VerifyEpochStakesError::EpochGreaterThanMax(
             *invalid_epoch,
-            leader_schedule_epoch,
+            max_epoch,
         ));
     }
 
-    // Ensure epoch stakes contains stakes for the leader schedule epoch
-    if !epoch_stakes_map.contains_key(&leader_schedule_epoch) {
-        return Err(VerifyEpochStakesError::LeaderScheduleEpochStakesNotFound(
-            leader_schedule_epoch,
+    // Ensure epoch stakes contains stakes for all the required epochs
+    if let Some(missing_epoch) = required_epochs
+        .clone()
+        .find(|epoch| !epoch_stakes_map.contains_key(epoch))
+    {
+        return Err(VerifyEpochStakesError::StakesNotFound(
+            missing_epoch,
+            required_epochs,
         ));
     }
 
@@ -2701,38 +2708,43 @@ mod tests {
     #[test]
     fn test_verify_epoch_stakes_bad() {
         let bank = create_simple_test_bank(100 * LAMPORTS_PER_SOL);
+        let current_epoch = bank.epoch();
         let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot());
+        let required_epochs = current_epoch..=leader_schedule_epoch;
 
         // insert an invalid epoch into the epoch stakes
         {
             let mut epoch_stakes_map = bank.epoch_stakes_map().clone();
-            let invalid_epoch = leader_schedule_epoch + 1;
+            let invalid_epoch = *required_epochs.end() + 1;
             epoch_stakes_map.insert(
                 invalid_epoch,
                 bank.epoch_stakes(bank.epoch()).cloned().unwrap(),
             );
 
             assert_eq!(
-                _verify_epoch_stakes(&epoch_stakes_map, leader_schedule_epoch),
+                _verify_epoch_stakes(&epoch_stakes_map, required_epochs.clone()),
                 Err(VerifyEpochStakesError::EpochGreaterThanMax(
                     invalid_epoch,
-                    leader_schedule_epoch,
-                ))
+                    *required_epochs.end(),
+                )),
             );
         }
 
-        // remove the stakes for the leader schedule epoch
+        // remove required stakes
         {
-            let mut epoch_stakes_map = bank.epoch_stakes_map().clone();
-            let removed_stakes = epoch_stakes_map.remove(&leader_schedule_epoch);
-            assert!(removed_stakes.is_some());
+            for removed_epoch in required_epochs.clone() {
+                let mut epoch_stakes_map = bank.epoch_stakes_map().clone();
+                let removed_stakes = epoch_stakes_map.remove(&removed_epoch);
+                assert!(removed_stakes.is_some());
 
-            assert_eq!(
-                _verify_epoch_stakes(&epoch_stakes_map, leader_schedule_epoch),
-                Err(VerifyEpochStakesError::LeaderScheduleEpochStakesNotFound(
-                    leader_schedule_epoch,
-                ))
-            );
+                assert_eq!(
+                    _verify_epoch_stakes(&epoch_stakes_map, required_epochs.clone()),
+                    Err(VerifyEpochStakesError::StakesNotFound(
+                        removed_epoch,
+                        required_epochs.clone(),
+                    )),
+                );
+            }
         }
     }
 

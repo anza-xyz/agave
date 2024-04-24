@@ -37,6 +37,7 @@ use {
         fmt, fs,
         io::{BufReader, BufWriter, Error as IoError, Read, Result as IoResult, Seek, Write},
         num::NonZeroUsize,
+        ops::RangeInclusive,
         path::{Path, PathBuf},
         process::ExitStatus,
         str::FromStr,
@@ -421,8 +422,8 @@ pub enum VerifyEpochStakesError {
     #[error("epoch {0} is greater than the max {1}")]
     EpochGreaterThanMax(Epoch, Epoch),
 
-    #[error("stakes not found for leader schedule epoch {0}")]
-    LeaderScheduleEpochStakesNotFound(Epoch),
+    #[error("stakes not found for epoch {0} (required epochs: {1:?})")]
+    StakesNotFound(Epoch, RangeInclusive<Epoch>),
 }
 
 /// Errors that can happen in `add_bank_snapshot()`
