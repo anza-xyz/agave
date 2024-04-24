@@ -24,7 +24,7 @@ use {
     },
 };
 
-pub(crate) struct Forwarder {
+pub struct Forwarder {
     poh_recorder: Arc<RwLock<PohRecorder>>,
     bank_forks: Arc<RwLock<BankForks>>,
     socket: UdpSocket,
@@ -34,7 +34,7 @@ pub(crate) struct Forwarder {
 }
 
 impl Forwarder {
-    pub(crate) fn new(
+    pub fn new(
         poh_recorder: Arc<RwLock<PohRecorder>>,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
@@ -51,7 +51,7 @@ impl Forwarder {
         }
     }
 
-    pub(crate) fn handle_forwarding(
+    pub fn handle_forwarding(
         &self,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         hold: bool,
@@ -92,6 +92,8 @@ impl Forwarder {
             filter_forwarding_result.total_dropped_packets,
             Ordering::Relaxed,
         );
+
+        forward_packet_batches_by_accounts.print_me();
 
         forward_packet_batches_by_accounts
             .iter_batches()
@@ -144,7 +146,7 @@ impl Forwarder {
     /// Forwards all valid, unprocessed packets in the iterator, up to a rate limit.
     /// Returns whether forwarding succeeded, the number of attempted forwarded packets
     /// if any, the time spent forwarding in us, and the leader pubkey if any.
-    pub(crate) fn forward_packets<'a>(
+    pub fn forward_packets<'a>(
         &self,
         forward_option: &ForwardOption,
         forwardable_packets: impl Iterator<Item = &'a Packet>,
