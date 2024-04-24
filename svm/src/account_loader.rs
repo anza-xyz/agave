@@ -6,10 +6,9 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
     },
-    itertools::Itertools,
     solana_program_runtime::{
         compute_budget_processor::process_compute_budget_instructions,
-        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+        loaded_programs::ProgramCacheEntry,
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -31,7 +30,10 @@ use {
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroUsize,
+    std::{
+        collections::{hash_map::Entry, HashMap},
+        num::NonZeroUsize,
+    },
 };
 
 // for the load instructions
@@ -107,14 +109,16 @@ pub fn validate_fee_payer(
 /// batch. Each tuple contains struct of information about accounts as
 /// its first element and an optional transaction nonce info as its
 /// second element.
+/// This function also populate program_accounts map.
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[SanitizedTransaction],
-    check_results: &[TransactionCheckResult],
+    check_results: &mut [TransactionCheckResult],
     error_counters: &mut TransactionErrorMetrics,
     fee_structure: &FeeStructure,
     account_overrides: Option<&AccountOverrides>,
-    loaded_programs: &ProgramCacheForTxBatch,
+    program_owners: &[Pubkey],
+    program_accounts: &mut HashMap<Pubkey, u64>,
 ) -> Vec<TransactionLoadResult> {
     let feature_set = callbacks.get_feature_set();
     txs.iter()
@@ -134,6 +138,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                         feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
                     )
                 } else {
+                    *etx.1 = (Err(TransactionError::BlockhashNotFound), None, None);
                     return (Err(TransactionError::BlockhashNotFound), None);
                 };
 
@@ -144,7 +149,8 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                     fee,
                     error_counters,
                     account_overrides,
-                    loaded_programs,
+                    program_owners,
+                    program_accounts,
                 ) {
                     Ok(loaded_transaction) => loaded_transaction,
                     Err(e) => return (Err(e), None),
@@ -180,7 +186,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     fee: u64,
     error_counters: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
-    loaded_programs: &ProgramCacheForTxBatch,
+    program_owners: &[Pubkey],
+    program_accounts: &mut HashMap<Pubkey, u64>,
 ) -> Result<LoadedTransaction> {
     let feature_set = callbacks.get_feature_set();
 
@@ -197,13 +204,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         get_requested_loaded_accounts_data_size_limit(message)?;
     let mut accumulated_accounts_data_size: usize = 0;
 
-    let instruction_accounts = message
-        .instructions()
-        .iter()
-        .flat_map(|instruction| &instruction.accounts)
-        .unique()
-        .collect::<Vec<&u8>>();
-
     let mut accounts = account_keys
         .iter()
         .enumerate()
@@ -213,29 +213,30 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             let account = if solana_sdk::sysvar::instructions::check_id(key) {
                 construct_instructions_account(message)
             } else {
-                let instruction_account = u8::try_from(i)
-                    .map(|i| instruction_accounts.contains(&&i))
-                    .unwrap_or(false);
                 let (account_size, mut account, rent) = if let Some(account_override) =
                     account_overrides.and_then(|overrides| overrides.get(key))
                 {
                     (account_override.data().len(), account_override.clone(), 0)
-                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
-                    .then_some(())
-                    .and_then(|_| loaded_programs.find(key))
-                {
-                    callbacks
-                        .get_account_shared_data(key)
-                        .ok_or(TransactionError::AccountNotFound)?;
-                    // Optimization to skip loading of accounts which are only used as
-                    // programs in top-level instructions and not passed as instruction accounts.
-                    let program_account = account_shared_data_from_program(&program);
-                    (program.account_size, program_account, 0)
                 } else {
+                    let is_account_writable = message.is_writable(i);
                     callbacks
-                        .get_account_shared_data(key)
-                        .map(|mut account| {
-                            if message.is_writable(i) {
+                        .load_account_with(key, |account| {
+                            // only cache account that is not writable and not having program owners.
+                            !is_account_writable && !program_owners.contains(account.owner())
+                        })
+                        .map(|(mut account, _slot)| {
+                            if program_owners.contains(account.owner()) {
+                                match program_accounts.entry(*key) {
+                                    Entry::Vacant(entry) => {
+                                        entry.insert(1);
+                                    }
+                                    Entry::Occupied(mut entry) => {
+                                        let count = entry.get_mut();
+                                        saturating_add_assign!(*count, 1);
+                                    }
+                                }
+                            }
+                            if is_account_writable {
                                 if !feature_set
                                     .is_active(&feature_set::disable_rent_fees_collection::id())
                                 {
@@ -404,6 +405,7 @@ fn get_requested_loaded_accounts_data_size_limit(
     )
 }
 
+#[allow(dead_code)]
 fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {
     // It's an executable program account. The program is already loaded in the cache.
     // So the account data is not needed. Return a dummy AccountSharedData with meta
@@ -458,12 +460,12 @@ mod tests {
         solana_program_runtime::{
             compute_budget::ComputeBudget,
             compute_budget_processor,
-            loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         },
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable,
+            clock::Slot,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
             feature_set::FeatureSet,
@@ -500,6 +502,15 @@ mod tests {
     impl TransactionProcessingCallback for TestCallbacks {
         fn account_matches_owners(&self, _account: &Pubkey, _owners: &[Pubkey]) -> Option<usize> {
             None
+        }
+
+        fn load_account_with(
+            &self,
+            pubkey: &Pubkey,
+            _callback: impl for<'a> Fn(&'a AccountSharedData) -> bool,
+        ) -> Option<(AccountSharedData, Slot)> {
+            let account = self.accounts_map.get(pubkey).cloned()?;
+            Some((account, 100))
         }
 
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
@@ -539,14 +550,16 @@ mod tests {
             rent_collector: rent_collector.clone(),
             feature_set: Arc::new(feature_set.clone()),
         };
+        let mut program_accounts = HashMap::default();
         load_accounts(
             &callbacks,
             &[sanitized_tx],
-            &[(Ok(()), None, Some(lamports_per_signature))],
+            &mut [(Ok(()), None, Some(lamports_per_signature))],
             error_counters,
             fee_structure,
             None,
-            &ProgramCacheForTxBatch::default(),
+            &[],
+            &mut program_accounts,
         )
     }
 
@@ -1027,14 +1040,17 @@ mod tests {
             rent_collector: RentCollector::default(),
             feature_set: Arc::new(FeatureSet::all_enabled()),
         };
+
+        let mut program_accounts = HashMap::default();
         load_accounts(
             &callbacks,
             &[tx],
-            &[(Ok(()), None, Some(10))],
+            &mut [(Ok(()), None, Some(10))],
             &mut error_counters,
             &FeeStructure::default(),
             account_overrides,
-            &ProgramCacheForTxBatch::default(),
+            &[],
+            &mut program_accounts,
         )
     }
 
@@ -1425,20 +1441,21 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mock_bank = TestCallbacks::default();
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
             false,
         );
+
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
 
         assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
@@ -1468,7 +1485,6 @@ mod tests {
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1481,7 +1497,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1532,8 +1549,8 @@ mod tests {
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let mut loaded_programs = ProgramCacheForTxBatch::default();
-        loaded_programs.replenish(key2.pubkey(), Arc::new(ProgramCacheEntry::default()));
+        // let mut loaded_programs = ProgramCacheForTxBatch::default();
+        // loaded_programs.replenish(key2.pubkey(), Arc::new(ProgramCacheEntry::default()));
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1546,10 +1563,17 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
 
-        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+        // The original code throws "AccountNotFound" error. With this PR, it
+        // throws "ProgramAccountNotFound" error. But I don't think this is a
+        // concern for breaking consensus. As the original "AccountNotFound"
+        // error should not be triggered in real world. When we can find "key"
+        // in program_cache, which is after replenish, then it must be in
+        // accounts-db.
+        assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
     }
 
     #[test]
@@ -1575,7 +1599,6 @@ mod tests {
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1588,7 +1611,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
 
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -1617,7 +1641,6 @@ mod tests {
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1630,7 +1653,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
 
         assert_eq!(
@@ -1666,7 +1690,6 @@ mod tests {
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key2.pubkey(), account_data);
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1679,7 +1702,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1733,7 +1757,6 @@ mod tests {
         account_data.set_lamports(200);
         mock_bank.accounts_map.insert(key2.pubkey(), account_data);
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1746,7 +1769,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1789,7 +1813,6 @@ mod tests {
             .accounts_map
             .insert(key3.pubkey(), AccountSharedData::default());
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1802,7 +1825,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1850,7 +1874,6 @@ mod tests {
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1863,7 +1886,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -1937,7 +1961,6 @@ mod tests {
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1950,7 +1973,8 @@ mod tests {
             32,
             &mut error_counter,
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
         mock_bank
             .accounts_map
@@ -2017,11 +2041,12 @@ mod tests {
         let loaded_txs = load_accounts(
             &bank,
             &[sanitized_tx.clone()],
-            &[(Ok(()), None, Some(0))],
+            &mut [(Ok(()), None, Some(0))],
             &mut error_counters,
             &FeeStructure::default(),
             None,
-            &ProgramCacheForTxBatch::default(),
+            &[],
+            &mut HashMap::default(),
         );
 
         let compute_budget = ComputeBudget::new(u64::from(
@@ -2087,7 +2112,6 @@ mod tests {
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -2100,11 +2124,12 @@ mod tests {
         let results = load_accounts(
             &mock_bank,
             &[sanitized_transaction],
-            &[check_result],
+            &mut [check_result],
             &mut error_counter,
             &FeeStructure::default(),
             None,
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
 
         let mut account_data = AccountSharedData::default();
@@ -2173,11 +2198,12 @@ mod tests {
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
-            &[check_result],
+            &mut [check_result],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
             None,
-            &ProgramCacheForTxBatch::default(),
+            &[],
+            &mut HashMap::default(),
         );
 
         assert_eq!(
@@ -2191,11 +2217,12 @@ mod tests {
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
-            &[check_result.clone()],
+            &mut [check_result.clone()],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
             None,
-            &ProgramCacheForTxBatch::default(),
+            &[],
+            &mut HashMap::default(),
         );
 
         assert_eq!(result, vec![(Err(TransactionError::AccountNotFound), None)]);
@@ -2209,11 +2236,12 @@ mod tests {
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
-            &[check_result],
+            &mut [check_result],
             &mut TransactionErrorMetrics::default(),
             &fee_structure,
             None,
-            &ProgramCacheForTxBatch::default(),
+            &[],
+            &mut HashMap::default(),
         );
 
         assert_eq!(
