@@ -192,6 +192,10 @@ fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
     account_data.set_data(bincode::serialize(&state).unwrap());
     account_data.set_lamports(25);
     account_data.set_owner(bpf_loader_upgradeable::id());
+    // We are no longer faking executable accounts. Executable accounts will be
+    // loaded from accounts-db, which would require executable flag to be
+    // marked.
+    account_data.set_executable(true);
     mock_bank
         .account_shared_data
         .borrow_mut()

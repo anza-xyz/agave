@@ -69,8 +69,8 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {
-    let program_account = callbacks.get_account_shared_data(pubkey)?;
-
+    // load program account by `pubkey` and don't insert the program account into read cache.
+    let (program_account, _slot) = callbacks.load_account_with(pubkey, |_| false)?;
     if loader_v4::check_id(program_account.owner()) {
         return Some(
             solana_loader_v4_program::get_state(program_account.data())
@@ -93,11 +93,19 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
         return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
     }
 
+    assert!(
+        bpf_loader_upgradeable::check_id(program_account.owner()),
+        "unexpected program account owner {}",
+        program_account.owner(),
+    );
+
     if let Ok(UpgradeableLoaderState::Program {
         programdata_address,
     }) = program_account.state()
     {
-        if let Some(programdata_account) = callbacks.get_account_shared_data(&programdata_address) {
+        if let Some((programdata_account, _slot)) =
+            callbacks.load_account_with(&programdata_address, |_| false)
+        {
             if let Ok(UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: _,
@@ -298,6 +306,15 @@ mod tests {
             } else {
                 None
             }
+        }
+
+        fn load_account_with(
+            &self,
+            pubkey: &Pubkey,
+            _callback: impl FnMut(&AccountSharedData) -> bool,
+        ) -> Option<(AccountSharedData, Slot)> {
+            let account = self.account_shared_data.borrow().get(pubkey).cloned()?;
+            Some((account, 100))
         }
 
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
