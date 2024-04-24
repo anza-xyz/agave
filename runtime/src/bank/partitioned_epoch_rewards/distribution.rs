@@ -28,7 +28,7 @@ enum DistributionError {
     ArithmeticOverflow,
 
     #[error("stake account set_state failed")]
-    UnabletToSetState,
+    UnableToSetState,
 }
 
 struct DistributionStorageResults {
@@ -162,7 +162,7 @@ impl Bank {
                 partitioned_stake_reward.stake,
                 flags,
             ))
-            .map_err(|_| DistributionError::UnabletToSetState)?;
+            .map_err(|_| DistributionError::UnableToSetState)?;
         let mut stake_reward_info = partitioned_stake_reward.stake_reward_info;
         stake_reward_info.post_balance = account.lamports();
         Ok(StakeReward {
