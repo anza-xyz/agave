@@ -49,7 +49,6 @@ impl PartitionedStakeReward {
     }
 }
 
-#[allow(dead_code)]
 type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
 
 #[derive(AbiExample, Debug, Clone, PartialEq, Serialize, Deserialize)]
