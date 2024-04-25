@@ -925,7 +925,6 @@ mod tests {
             contact_info::ContactInfo,
             crds::GossipRoute,
             crds_value::{CrdsData, CrdsValue},
-            legacy_contact_info::LegacyContactInfo,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         solana_ledger::{
@@ -959,7 +958,7 @@ mod tests {
 
     fn push_restart_last_voted_fork_slots(
         cluster_info: Arc<ClusterInfo>,
-        node: &LegacyContactInfo,
+        node: &ContactInfo,
         last_voted_fork_slots: &[Slot],
         last_vote_hash: &Hash,
         node_keypair: &Keypair,
@@ -974,7 +973,7 @@ mod tests {
         )
         .unwrap();
         let entries = vec![
-            CrdsValue::new_signed(CrdsData::LegacyContactInfo(node.clone()), node_keypair),
+            CrdsValue::new_signed(CrdsData::ContactInfo(node.clone()), node_keypair),
             CrdsValue::new_signed(CrdsData::RestartLastVotedForkSlots(slots), node_keypair),
         ];
         {
@@ -989,7 +988,7 @@ mod tests {
 
     fn push_restart_heaviest_fork(
         cluster_info: Arc<ClusterInfo>,
-        node: &LegacyContactInfo,
+        node: &ContactInfo,
         heaviest_fork_slot: Slot,
         heaviest_fork_hash: &Hash,
         observed_stake: u64,
@@ -1236,7 +1235,7 @@ mod tests {
         last_voted_fork_slots_from_others.append(&mut expected_slots_to_repair.clone());
         for keypairs in test_state.validator_voting_keypairs.iter().skip(5) {
             let node_pubkey = keypairs.node_keypair.pubkey();
-            let node = LegacyContactInfo::new_rand(&mut rng, Some(node_pubkey));
+            let node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
             let last_vote_hash = Hash::new_unique();
             let now = timestamp();
             push_restart_last_voted_fork_slots(
@@ -1286,7 +1285,7 @@ mod tests {
         // HeaviestFork only requires 75% vs 80% required for LastVotedForkSlots. We have 5% stake, so we need 70%.
         for keypairs in test_state.validator_voting_keypairs.iter().skip(6) {
             let node_pubkey = keypairs.node_keypair.pubkey();
-            let node = LegacyContactInfo::new_rand(&mut rng, Some(node_pubkey));
+            let node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
             let now = timestamp();
             push_restart_heaviest_fork(
                 test_state.cluster_info.clone(),
@@ -1617,7 +1616,7 @@ mod tests {
                 })
                 .unwrap();
             let node_pubkey = keypairs.node_keypair.pubkey();
-            let node = LegacyContactInfo::new_rand(&mut rng, Some(node_pubkey));
+            let node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
             let last_vote_hash = Hash::new_unique();
             let now = timestamp();
             push_restart_last_voted_fork_slots(
@@ -2035,7 +2034,7 @@ mod tests {
         let different_bankhash = Hash::new_unique();
         for keypair in test_state.validator_voting_keypairs.iter().skip(6) {
             let node_pubkey = keypair.node_keypair.pubkey();
-            let node = LegacyContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
+            let node = ContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
             let now = timestamp();
             push_restart_heaviest_fork(
                 test_state.cluster_info.clone(),
@@ -2071,7 +2070,7 @@ mod tests {
         // If we have enough stake agreeing with us, we should be able to aggregate the heaviest fork.
         for keypair in test_state.validator_voting_keypairs.iter().skip(6) {
             let node_pubkey = keypair.node_keypair.pubkey();
-            let node = LegacyContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
+            let node = ContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
             let now = timestamp();
             push_restart_heaviest_fork(
                 test_state.cluster_info.clone(),

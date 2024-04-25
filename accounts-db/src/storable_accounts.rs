@@ -2,7 +2,7 @@
 use {
     crate::{
         account_storage::meta::StoredAccountMeta,
-        accounts_db::{AccountFromStorage, AccountsDb},
+        accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
         accounts_index::ZeroLamport,
     },
     solana_sdk::{
@@ -10,6 +10,7 @@ use {
         clock::{Epoch, Slot},
         pubkey::Pubkey,
     },
+    std::sync::{Arc, RwLock},
 };
 
 /// hold a ref to an account to store. The account could be represented in memory a few different ways
@@ -89,6 +90,12 @@ impl<'a> ReadableAccount for AccountForStorage<'a> {
 
 lazy_static! {
     static ref DEFAULT_ACCOUNT_SHARED_DATA: AccountSharedData = AccountSharedData::default();
+}
+
+#[derive(Default, Debug)]
+pub struct StorableAccountsCacher {
+    slot: Slot,
+    storage: Option<Arc<AccountStorageEntry>>,
 }
 
 /// abstract access to pubkey, account, slot, target_slot of either:
@@ -174,6 +181,8 @@ pub struct StorableAccountsBySlot<'a> {
     /// total len of all accounts, across all slots_and_accounts
     len: usize,
     db: &'a AccountsDb,
+    /// remember the last storage we looked up for a given slot
+    cached_storage: RwLock<StorableAccountsCacher>,
 }
 
 impl<'a> StorableAccountsBySlot<'a> {
@@ -202,6 +211,7 @@ impl<'a> StorableAccountsBySlot<'a> {
             contains_multiple_slots,
             len: cumulative_len,
             db,
+            cached_storage: RwLock::default(),
         }
     }
     /// given an overall index for all accounts in self:
@@ -224,41 +234,44 @@ impl<'a> StorableAccountsBySlot<'a> {
     }
 }
 
-/// Shared code to get a storage from (db, slot) then look up the account using offset, then calling `callback`
-/// The account will only be valid during the lifetime of the callback.
-fn callback_that_loads_account<Ret>(
-    db: &AccountsDb,
-    slot: Slot,
-    offset: usize,
-    mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-) -> Ret {
-    // note we do not use file id here. We just want the normal unshrunk storage for this slot.
-    let storage = db
-        .storage
-        .get_slot_storage_entry_shrinking_in_progress_ok(slot)
-        .expect("source slot has to have a storage to be able to store accounts");
-    storage
-        .accounts
-        .get_stored_account_meta_callback(offset, |account: StoredAccountMeta| {
-            callback((&account).into())
-        })
-        .expect("account has to exist to be able to store it")
-}
-
 impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     fn account<Ret>(
         &self,
         index: usize,
-        callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         let indexes = self.find_internal_index(index);
+        let slot = self.slots_and_accounts[indexes.0].0;
         let data = self.slots_and_accounts[indexes.0].1[indexes.1];
-        callback_that_loads_account(
-            self.db,
-            self.slot(index),
-            data.index_info.offset(),
-            callback,
-        )
+        let offset = data.index_info.offset();
+        let mut call_callback = |storage: &AccountStorageEntry| {
+            storage
+                .accounts
+                .get_stored_account_meta_callback(offset, |account: StoredAccountMeta| {
+                    callback((&account).into())
+                })
+                .expect("account has to exist to be able to store it")
+        };
+        {
+            let reader = self.cached_storage.read().unwrap();
+            if reader.slot == slot {
+                if let Some(storage) = reader.storage.as_ref() {
+                    return call_callback(storage);
+                }
+            }
+        }
+        // cache doesn't contain a storage for this slot, so lookup storage in db.
+        // note we do not use file id here. We just want the normal unshrunk storage for this slot.
+        let storage = self
+            .db
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+            .expect("source slot has to have a storage to be able to store accounts");
+        let ret = call_callback(&storage);
+        let mut writer = self.cached_storage.write().unwrap();
+        writer.slot = slot;
+        writer.storage = Some(storage);
+        ret
     }
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
@@ -364,30 +377,6 @@ pub mod tests {
         }
     }
 
-    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
-    /// this tuple contains a single different source slot that applies to all accounts
-    /// accounts are AccountFromStorage
-    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a AccountFromStorage], Slot, &AccountsDb) {
-        fn account<Ret>(
-            &self,
-            index: usize,
-            callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-        ) -> Ret {
-            let data = self.1[index];
-            callback_that_loads_account(self.3, self.2, data.index_info.offset(), callback)
-        }
-        fn slot(&self, _index: usize) -> Slot {
-            // same other slot for all accounts
-            self.2
-        }
-        fn target_slot(&self) -> Slot {
-            self.0
-        }
-        fn len(&self) -> usize {
-            self.1.len()
-        }
-    }
-
     fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
         assert_eq!(a.len(), b.len());
@@ -437,12 +426,9 @@ pub mod tests {
 
         let account_from_storage = AccountFromStorage::new(&stored_account);
 
-        let test3 = (
-            slot,
-            &vec![&account_from_storage, &account_from_storage][..],
-            slot,
-            &db,
-        );
+        let accounts = [&account_from_storage, &account_from_storage];
+        let accounts2 = [(slot, &accounts[..])];
+        let test3 = StorableAccountsBySlot::new(slot, &accounts2[..], &db);
         assert!(!test3.contains_multiple_slots());
     }
 
@@ -549,12 +535,8 @@ pub mod tests {
                     let three_accounts_from_storage =
                         three_accounts_from_storage_byval.iter().collect::<Vec<_>>();
 
-                    let test3 = (
-                        target_slot,
-                        &three_accounts_from_storage[..],
-                        source_slot,
-                        &db,
-                    );
+                    let accounts_with_slots = vec![(source_slot, &three_accounts_from_storage[..])];
+                    let test3 = StorableAccountsBySlot::new(target_slot, &accounts_with_slots, &db);
                     let old_slot = starting_slot;
                     let for_slice = [(old_slot, &three_accounts_from_storage[..])];
                     let test_moving_slots2 =

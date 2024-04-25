@@ -14,6 +14,7 @@ use {
             ALIGN_BOUNDARY_OFFSET,
         },
         accounts_hash::AccountHash,
+        accounts_index::ZeroLamport,
         storable_accounts::StorableAccounts,
         u64_align,
     },
@@ -21,7 +22,6 @@ use {
     memmap2::MmapMut,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        clock::Slot,
         hash::Hash,
         pubkey::Pubkey,
         stake_history::Epoch,
@@ -78,33 +78,6 @@ pub enum AppendVecError {
 
     #[error("offset ({0}) is larger than file size ({1})")]
     OffsetOutOfBounds(usize, usize),
-}
-
-pub struct AppendVecAccountsIter<'append_vec> {
-    append_vec: &'append_vec AppendVec,
-    offset: usize,
-}
-
-impl<'append_vec> AppendVecAccountsIter<'append_vec> {
-    pub fn new(append_vec: &'append_vec AppendVec) -> Self {
-        Self {
-            append_vec,
-            offset: 0,
-        }
-    }
-}
-
-impl<'append_vec> Iterator for AppendVecAccountsIter<'append_vec> {
-    type Item = StoredAccountMeta<'append_vec>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some((account, next_offset)) = self.append_vec.get_stored_account_meta(self.offset) {
-            self.offset = next_offset;
-            Some(account)
-        } else {
-            None
-        }
-    }
 }
 
 /// References to account data stored elsewhere. Getting an `Account` requires cloning
@@ -379,10 +352,6 @@ impl AppendVec {
         self.file_size
     }
 
-    pub fn file_name(slot: Slot, id: impl std::fmt::Display) -> String {
-        format!("{slot}.{id}")
-    }
-
     pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
         let path = path.into();
         let new = Self::new_from_file_unchecked(path, current_len)?;
@@ -543,10 +512,10 @@ impl AppendVec {
     }
 
     /// calls `callback` with the account located at the specified index offset.
-    pub fn get_stored_account_meta_callback<'a, Ret>(
-        &'a self,
+    pub fn get_stored_account_meta_callback<Ret>(
+        &self,
         offset: usize,
-        mut callback: impl FnMut(StoredAccountMeta<'a>) -> Ret,
+        mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
     ) -> Option<Ret> {
         self.get_stored_account_meta(offset)
             .map(|(account, _offset)| callback(account))
@@ -664,6 +633,10 @@ impl AppendVec {
                 // eof
                 break;
             };
+            if account_meta.lamports == 0 && stored_meta.pubkey == Pubkey::default() {
+                // we passed the last useful account
+                return;
+            }
             let next = Self::next_account_offset(offset, stored_meta);
             if next.offset_to_end_of_data > self.len() {
                 // data doesn't fit, so don't include this account
@@ -688,14 +661,20 @@ impl AppendVec {
 
     /// Iterate over all accounts and call `callback` with each account.
     #[allow(clippy::blocks_in_conditions)]
-    pub(crate) fn scan_accounts(&self, mut callback: impl for<'a> FnMut(StoredAccountMeta<'a>)) {
+    pub fn scan_accounts(&self, mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>)) {
         let mut offset = 0;
         while self
             .get_stored_account_meta_callback(offset, |account| {
                 offset += account.stored_size();
-                callback(account)
+                if account.is_zero_lamport() && account.pubkey() == &Pubkey::default() {
+                    // we passed the last useful account
+                    return false;
+                }
+
+                callback(account);
+                true
             })
-            .is_some()
+            .unwrap_or_default()
         {}
     }
 
@@ -736,11 +715,6 @@ impl AppendVec {
             callback(&stored_meta.pubkey);
             offset = next.next_account_offset;
         }
-    }
-
-    /// Return iterator for account metadata
-    pub fn account_iter(&self) -> AppendVecAccountsIter {
-        AppendVecAccountsIter::new(self)
     }
 
     /// Return a vector of account metadata for each account, starting from `offset`.
@@ -839,6 +813,7 @@ pub mod tests {
         rand::{thread_rng, Rng},
         solana_sdk::{
             account::{Account, AccountSharedData, WritableAccount},
+            clock::Slot,
             timing::duration_as_ms,
         },
         std::{mem::ManuallyDrop, time::Instant},

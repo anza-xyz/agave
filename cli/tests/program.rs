@@ -19,6 +19,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
+        account::ReadableAccount,
         account_utils::StateMut,
         borsh1::try_from_slice_unchecked,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
@@ -99,6 +100,8 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -147,6 +150,8 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
     let account1 = rpc_client
@@ -204,6 +209,8 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     let err = process_command(&config).unwrap_err();
     assert_eq!(
@@ -229,6 +236,8 @@ fn test_cli_program_deploy_non_upgradeable() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap_err();
 }
@@ -292,6 +301,8 @@ fn test_cli_program_deploy_no_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -321,6 +332,8 @@ fn test_cli_program_deploy_no_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap_err();
 }
@@ -385,6 +398,8 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -436,6 +451,8 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -481,6 +498,8 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).unwrap();
@@ -558,6 +577,8 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
     let program_account = rpc_client.get_account(&program_pubkey).unwrap();
@@ -639,6 +660,8 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap_err();
 
@@ -658,6 +681,8 @@ fn test_cli_program_deploy_with_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -702,6 +727,154 @@ fn test_cli_program_deploy_with_authority() {
         .as_str()
         .unwrap();
     assert_eq!("none", authority_pubkey_str);
+}
+
+#[test]
+fn test_cli_program_upgrade_auto_extend() {
+    solana_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mut noop_large_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_large_path.push("tests");
+    noop_large_path.push("fixtures");
+    noop_large_path.push("noop_large");
+    noop_large_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mint_pubkey = mint_keypair.pubkey();
+    let faucet_addr = run_local_faucet(mint_keypair, None);
+    let test_validator =
+        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+
+    let rpc_client =
+        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+
+    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+
+    let mut file = File::open(noop_large_path.to_str().unwrap()).unwrap();
+    let mut program_data_large = Vec::new();
+    file.read_to_end(&mut program_data_large).unwrap();
+
+    // Use the larger program to calculate rent.
+    let max_len = program_data_large.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .unwrap();
+    let upgrade_authority = Keypair::new();
+
+    let mut config = CliConfig::recent_for_tests();
+    let keypair = Keypair::new();
+    config.json_rpc_url = test_validator.rpc_url();
+    config.signers = vec![&keypair];
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+    };
+    process_command(&config).unwrap();
+
+    // Deploy the first, smaller program.
+    let program_keypair = Keypair::new();
+    config.signers = vec![&keypair, &upgrade_authority, &program_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(2),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        allow_excessive_balance: false,
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
+    });
+    config.output_format = OutputFormat::JsonCompact;
+    process_command(&config).unwrap();
+
+    // Attempt to upgrade the program with a larger program, but with the
+    // --no-extend flag.
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_large_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        allow_excessive_balance: false,
+        upgrade_authority_signer_index: 1,
+        is_final: true,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        no_extend: true, // --no-extend (true)
+        use_rpc: false,
+    });
+    process_command(&config).unwrap_err();
+
+    // Attempt to upgrade the program with a larger program, this time without
+    // the --no-extend flag. This should automatically extend the program data.
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_large_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        allow_excessive_balance: false,
+        upgrade_authority_signer_index: 1,
+        is_final: true,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        no_extend: false, // --no-extend (false)
+        use_rpc: false,
+    });
+    let response = process_command(&config);
+    let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
+    let program_pubkey_str = json
+        .as_object()
+        .unwrap()
+        .get("programId")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    let program_pubkey = Pubkey::from_str(program_pubkey_str).unwrap();
+    let (programdata_pubkey, _) =
+        Pubkey::find_program_address(&[program_pubkey.as_ref()], &bpf_loader_upgradeable::id());
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).unwrap();
+    if let UpgradeableLoaderState::ProgramData {
+        slot: _,
+        upgrade_authority_address,
+    } = programdata_account.state().unwrap()
+    {
+        assert_eq!(upgrade_authority_address, None);
+    } else {
+        panic!("not a ProgramData account");
+    }
+    assert_eq!(
+        programdata_account.data().len(),
+        UpgradeableLoaderState::size_of_programdata(program_data_large.len()),
+    );
 }
 
 #[test]
@@ -764,6 +937,8 @@ fn test_cli_program_close_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -876,6 +1051,8 @@ fn test_cli_program_extend_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -925,6 +1102,8 @@ fn test_cli_program_extend_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap_err();
 
@@ -959,6 +1138,8 @@ fn test_cli_program_extend_program() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
 }
@@ -1025,6 +1206,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -1063,6 +1245,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1128,6 +1311,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1169,6 +1353,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     let response = process_command(&config);
     let json: Value = serde_json::from_str(&response.unwrap()).unwrap();
@@ -1246,6 +1431,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -1290,6 +1476,7 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
     config.signers = vec![&keypair, &buffer_keypair];
@@ -1307,6 +1494,8 @@ fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let error = process_command(&config).unwrap_err();
@@ -1381,6 +1570,7 @@ fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
     let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
@@ -1435,6 +1625,8 @@ fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap_err();
@@ -1482,6 +1674,8 @@ fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -1540,6 +1734,7 @@ fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
     let buffer_account = rpc_client.get_account(&buffer_keypair.pubkey()).unwrap();
@@ -1566,6 +1761,8 @@ fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap_err();
 
@@ -1585,6 +1782,8 @@ fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
 }
@@ -1670,6 +1869,8 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     process_command(&config).unwrap();
@@ -1839,6 +2040,7 @@ fn test_cli_program_show() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
 
@@ -1902,6 +2104,8 @@ fn test_cli_program_show() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc: false,
     });
     config.output_format = OutputFormat::JsonCompact;
     let min_slot = rpc_client.get_slot().unwrap();
@@ -2032,6 +2236,7 @@ fn test_cli_program_dump() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     process_command(&config).unwrap();
 
@@ -2077,6 +2282,7 @@ fn create_buffer_with_offline_authority<'a>(
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
+        use_rpc: false,
     });
     process_command(config).unwrap();
     let buffer_account = rpc_client.get_account(&buffer_signer.pubkey()).unwrap();
@@ -2104,7 +2310,10 @@ fn create_buffer_with_offline_authority<'a>(
 }
 
 #[allow(clippy::assertions_on_constants)]
-fn cli_program_deploy_with_args(compute_unit_price: Option<u64>) {
+#[test_case(None, false; "default")]
+#[test_case(Some(10), false; "with_compute_unit_price")]
+#[test_case(None, true; "use_rpc")]
+fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
     noop_path.push("fixtures");
@@ -2173,6 +2382,8 @@ fn cli_program_deploy_with_args(compute_unit_price: Option<u64>) {
         skip_fee_check: false,
         compute_unit_price,
         max_sign_attempts: 5,
+        no_extend: false,
+        use_rpc,
     });
     config.output_format = OutputFormat::JsonCompact;
     let response = process_command(&config);
@@ -2273,10 +2484,4 @@ fn cli_program_deploy_with_args(compute_unit_price: Option<u64>) {
             &system_program::id()
         );
     }
-}
-
-#[test]
-fn test_cli_program_deploy_with_compute_unit_price() {
-    cli_program_deploy_with_args(Some(1000));
-    cli_program_deploy_with_args(None);
 }
