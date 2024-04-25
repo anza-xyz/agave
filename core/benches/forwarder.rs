@@ -36,6 +36,9 @@ struct BenchSetup {
     poh_service: PohService,
     forwarder: Forwarder,
     unprocessed_packet_batches: UnprocessedTransactionStorage,
+    tracker: LeaderSlotMetricsTracker,
+    stats: BankingStageStats,
+    tracer_stats: TracerPacketStats,
 }
 
 fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
@@ -113,6 +116,9 @@ fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
         poh_service,
         forwarder,
         unprocessed_packet_batches,
+        tracker: LeaderSlotMetricsTracker::new(0),
+        stats: BankingStageStats::default(),
+        tracer_stats: TracerPacketStats::new(0),
     }
 }
 
@@ -124,12 +130,13 @@ fn bench_forwarder_handle_forwading_contentious_transaction(bencher: &mut Benche
         poh_service,
         forwarder,
         mut unprocessed_packet_batches,
+        mut tracker,
+        stats,
+        mut tracer_stats,
     } = setup(num_packets, true);
 
-    let hold = true; // to reuse packets
-    let mut tracker = LeaderSlotMetricsTracker::new(0);
-    let stats = BankingStageStats::default();
-    let mut tracer_stats = TracerPacketStats::new(0);
+    // hold packets so they can be reused for benching
+    let hold = true;
     bencher.iter(|| {
         forwarder.handle_forwarding(
             &mut unprocessed_packet_batches,
@@ -160,12 +167,13 @@ fn bench_forwarder_handle_forwading_parallel_transactions(bencher: &mut Bencher)
         poh_service,
         forwarder,
         mut unprocessed_packet_batches,
+        mut tracker,
+        stats,
+        mut tracer_stats,
     } = setup(num_packets, false);
 
-    let hold = true; // to reuse packets
-    let mut tracker = LeaderSlotMetricsTracker::new(0);
-    let stats = BankingStageStats::default();
-    let mut tracer_stats = TracerPacketStats::new(0);
+    // hold packets so they can be reused for benching
+    let hold = true;
     bencher.iter(|| {
         forwarder.handle_forwarding(
             &mut unprocessed_packet_batches,
