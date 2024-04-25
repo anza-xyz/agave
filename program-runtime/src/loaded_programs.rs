@@ -2446,6 +2446,20 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_nonexistent() {
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let fork_graph = TestForkGraphSpecific::default();
+        let fork_graph = Arc::new(RwLock::new(fork_graph));
+        cache.set_fork_graph(fork_graph);
+
+        let program1 = Pubkey::new_unique();
+        let mut missing = vec![(program1, (ProgramCacheMatchCriteria::NoCriteria, 1))];
+        let mut extracted = ProgramCacheForTxBatch::new(0, cache.environments.clone(), None, 0);
+        cache.extract(&mut missing, &mut extracted, true);
+        assert!(match_missing(&missing, &program1, true));
+    }
+
+    #[test]
     fn test_unloaded() {
         let mut cache = new_mock_cache::<TestForkGraph>();
         for program_cache_entry_type in [
