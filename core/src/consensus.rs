@@ -787,14 +787,79 @@ impl Tower {
         false
     }
 
-    fn is_candidate_slot_descendant_of_last_vote(
+    /// Checks if a vote for `candidate_slot` is usable in a switching proof
+    /// to a fork with a common ancestor `common_ancestor` from `last_voted_slot`
+    ///
+    /// Returns None if `candidate_slot` is not present in `ancestors`
+    fn is_valid_switching_proof_vote(
         candidate_slot: Slot,
         last_voted_slot: Slot,
+        common_ancestor: Slot,
+        ancestors: &HashMap<Slot, HashSet<Slot>>,
+    ) -> Option<bool> {
+        trace!("Checking if {candidate_slot} is a valid switching proof vote from {last_voted_slot} with ancestor {common_ancestor}");
+        // Ignore if the `candidate_slot` is a descendant of the `last_voted_slot`, since we do not
+        // want to count votes on the same fork.
+        if Self::is_descendant_slot(candidate_slot, last_voted_slot, ancestors)? {
+            return Some(false);
+        }
+
+        // Only consider forks that split at `common_ancestor` or earlier. This is to prevent
+        // situations like this from being included in the switching proof:
+        //
+        //         /-- `last_voted_slot`
+        //     /--Y
+        //    X    \-- `candidate_slot`
+        //     \-- `switch_slot`
+        //
+        // The `common_ancestor` of `last_voted_slot` and `switch_slot` is `X`. Votes for the `candidate_slot`
+        // should not count towards the switch proof since `candidate_slot` is "on the same fork" as `last_voted_slot`
+        // in relation to `switch_slot`.
+        // However these candidate slots should be allowed:
+        //
+        //             /-- Y -- `last_voted_slot`
+        //    V - W - X
+        //        \    \-- Z -- `switch_slot` -- `candidate_slot`
+        //         \    \-- `candidate_slot`
+        //          \-- `candidate_slot`
+        //
+        // As the `candidate_slot`s forked off from `X` or earlier.
+        //
+        // To differentiate, we check the common ancestor of `last_voted_slot` and `candidate_slot`.
+        // If the common ancestor is <= `common_ancestor` (X in the diagram), we know that it can be counted.
+        Self::greatest_common_ancestor(ancestors, candidate_slot, last_voted_slot)
+            .map(|ancestor| ancestor <= common_ancestor)
+    }
+
+    /// Checks if `maybe_descendant` is a descendant of `slot`.
+    ///
+    /// Returns None if `maybe_descendant` is not present in `ancestors`
+    fn is_descendant_slot(
+        maybe_descendant: Slot,
+        slot: Slot,
         ancestors: &HashMap<Slot, HashSet<u64>>,
     ) -> Option<bool> {
         ancestors
-            .get(&candidate_slot)
-            .map(|candidate_slot_ancestors| candidate_slot_ancestors.contains(&last_voted_slot))
+            .get(&maybe_descendant)
+            .map(|candidate_slot_ancestors| candidate_slot_ancestors.contains(&slot))
+    }
+
+    /// Returns `Some(gca)` where `gca` is the greatest (by slot number)
+    /// common ancestor of both `slot_a` and `slot_b`.
+    ///
+    /// Returns `None` if:
+    /// * `slot_a` is not in `ancestors`
+    /// * `slot_b` is not in `ancestors`
+    /// * There is no common ancestor of slot_a and slot_b in `ancestors`
+    fn greatest_common_ancestor(
+        ancestors: &HashMap<Slot, HashSet<Slot>>,
+        slot_a: Slot,
+        slot_b: Slot,
+    ) -> Option<Slot> {
+        (ancestors.get(&slot_a)?)
+            .intersection(ancestors.get(&slot_b)?)
+            .max()
+            .copied()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -951,6 +1016,12 @@ impl Tower {
         // By this point, we know the `switch_slot` is on a different fork
         // (is neither an ancestor nor descendant of `last_vote`), so a
         // switching proof is necessary
+        let Some(common_ancestor) =
+            Self::greatest_common_ancestor(ancestors, switch_slot, last_voted_slot)
+        else {
+            warn!("There is no common ancestor between last vote {last_voted_slot} and switch slot {switch_slot}, unable to construct a switching proof");
+            return SwitchForkDecision::FailedSwitchThreshold(0, total_stake);
+        };
         let switch_proof = Hash::default();
         let mut locked_out_stake = 0;
         let mut locked_out_vote_accounts = HashSet::new();
@@ -982,17 +1053,16 @@ impl Tower {
                     })
                 }
                 || *candidate_slot == last_voted_slot
+                || *candidate_slot <= root
                 || {
-                    // Ignore if the `candidate_slot` is a descendant of the `last_voted_slot`, since we do not
-                    // want to count votes on the same fork.
-                    Self::is_candidate_slot_descendant_of_last_vote(
+                    !Self::is_valid_switching_proof_vote(
                         *candidate_slot,
                         last_voted_slot,
+                        common_ancestor,
                         ancestors,
                     )
                     .expect("exists in descendants map, so must exist in ancestors map")
                 }
-                || *candidate_slot <= root
             {
                 continue;
             }
@@ -1078,12 +1148,13 @@ impl Tower {
                 // of strays. Hence we err on the side of caution here and ignore this vote. This
                 // is ok because validators voting on different unrooted forks should eventually vote
                 // on some descendant of the root, at which time they can be included in switching proofs.
-                !Self::is_candidate_slot_descendant_of_last_vote(
+                Self::is_valid_switching_proof_vote(
                     *candidate_latest_frozen_vote,
                     last_voted_slot,
+                    common_ancestor,
                     ancestors,
                 )
-                .unwrap_or(true)
+                .unwrap_or(false)
             } {
                 let stake = epoch_vote_accounts
                     .get(vote_account_pubkey)
@@ -2877,6 +2948,10 @@ pub mod test {
         );
 
         // Create the tree of banks
+        //
+        //          /- 10    /- 45 - 46 - 47 - 48 - 49 - 50
+        // 0 - 1 - 2 - 43 - 44
+        //                   \- 110 - 111
         let forks = tr(0)
             / (tr(1)
                 / (tr(2)
@@ -2932,7 +3007,7 @@ pub mod test {
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
                 &vote_simulator.heaviest_subtree_fork_choice,
             ),
-            SwitchForkDecision::FailedSwitchThreshold(0, 20000)
+            SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
 
         vote_simulator.simulate_lockout_interval(111, (10, 49), &other_vote_account);
@@ -3008,7 +3083,7 @@ pub mod test {
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
                 &vote_simulator.heaviest_subtree_fork_choice,
             ),
-            SwitchForkDecision::FailedSwitchThreshold(0, 20000)
+            SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
 
         // Add lockout_interval which should be excluded
@@ -3024,7 +3099,7 @@ pub mod test {
                 &vote_simulator.latest_validator_votes_for_frozen_banks,
                 &vote_simulator.heaviest_subtree_fork_choice,
             ),
-            SwitchForkDecision::FailedSwitchThreshold(0, 20000)
+            SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
         );
 
         // Add lockout_interval which should not be excluded
@@ -3632,5 +3707,147 @@ pub mod test {
     fn test_default_tower_has_no_stray_last_vote() {
         let tower = Tower::default();
         assert!(!tower.is_stray_last_vote());
+    }
+
+    #[test]
+    fn test_switch_threshold_common_ancestor() {
+        let mut vote_simulator = VoteSimulator::new(2);
+        let other_vote_account = vote_simulator.vote_pubkeys[1];
+        let bank0 = vote_simulator.bank_forks.read().unwrap().get(0).unwrap();
+        let total_stake = bank0.total_epoch_stake();
+        assert_eq!(
+            total_stake,
+            vote_simulator.validator_keypairs.len() as u64 * 10_000
+        );
+
+        // Create the tree of banks
+        //                                       /- 50
+        //          /- 51    /- 45 - 46 - 47 - 48 - 49
+        // 0 - 1 - 2 - 43 - 44
+        //                   \- 110 - 111 - 112
+        //                    \- 113
+        let forks = tr(0)
+            / (tr(1)
+                / (tr(2)
+                    / tr(51)
+                    / (tr(43)
+                        / (tr(44)
+                            / (tr(45) / (tr(46) / (tr(47) / (tr(48) / tr(49) / tr(50)))))
+                            / tr(113)
+                            / (tr(110) / tr(111) / tr(112))))));
+        let switch_slot = 111;
+
+        // Fill the BankForks according to the above fork structure
+        vote_simulator.fill_bank_forks(forks, &HashMap::new(), true);
+        for (_, fork_progress) in vote_simulator.progress.iter_mut() {
+            fork_progress.fork_stats.computed = true;
+        }
+
+        let ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
+        let descendants = vote_simulator.bank_forks.read().unwrap().descendants();
+        let mut tower = Tower::default();
+
+        tower.record_vote(43, Hash::default());
+        tower.record_vote(44, Hash::default());
+        tower.record_vote(45, Hash::default());
+        tower.record_vote(46, Hash::default());
+        tower.record_vote(47, Hash::default());
+        tower.record_vote(48, Hash::default());
+        tower.record_vote(49, Hash::default());
+
+        // Candidate slot 50 should *not* work
+        vote_simulator.simulate_lockout_interval(50, (10, 49), &other_vote_account);
+        assert_eq!(
+            tower.check_switch_threshold(
+                switch_slot,
+                &ancestors,
+                &descendants,
+                &vote_simulator.progress,
+                total_stake,
+                bank0.epoch_vote_accounts(0).unwrap(),
+                &vote_simulator.latest_validator_votes_for_frozen_banks,
+                &vote_simulator.heaviest_subtree_fork_choice,
+            ),
+            SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
+        );
+        vote_simulator.clear_lockout_intervals(50);
+
+        // 51, 112, and 113 are all valid
+        for candidate_slot in [51, 112, 113] {
+            vote_simulator.simulate_lockout_interval(candidate_slot, (10, 49), &other_vote_account);
+            assert_eq!(
+                tower.check_switch_threshold(
+                    switch_slot,
+                    &ancestors,
+                    &descendants,
+                    &vote_simulator.progress,
+                    total_stake,
+                    bank0.epoch_vote_accounts(0).unwrap(),
+                    &vote_simulator.latest_validator_votes_for_frozen_banks,
+                    &vote_simulator.heaviest_subtree_fork_choice,
+                ),
+                SwitchForkDecision::SwitchProof(Hash::default())
+            );
+            vote_simulator.clear_lockout_intervals(candidate_slot);
+        }
+
+        // Same checks for gossip votes
+        let insert_gossip_vote = |vote_simulator: &mut VoteSimulator, slot| {
+            vote_simulator
+                .latest_validator_votes_for_frozen_banks
+                .check_add_vote(
+                    other_vote_account,
+                    slot,
+                    Some(
+                        vote_simulator
+                            .bank_forks
+                            .read()
+                            .unwrap()
+                            .get(slot)
+                            .unwrap()
+                            .hash(),
+                    ),
+                    false,
+                );
+        };
+
+        // Candidate slot 50 should *not* work
+        insert_gossip_vote(&mut vote_simulator, 50);
+        assert_eq!(
+            tower.check_switch_threshold(
+                switch_slot,
+                &ancestors,
+                &descendants,
+                &vote_simulator.progress,
+                total_stake,
+                bank0.epoch_vote_accounts(0).unwrap(),
+                &vote_simulator.latest_validator_votes_for_frozen_banks,
+                &vote_simulator.heaviest_subtree_fork_choice,
+            ),
+            SwitchForkDecision::FailedSwitchThreshold(0, 20_000)
+        );
+        vote_simulator.latest_validator_votes_for_frozen_banks =
+            LatestValidatorVotesForFrozenBanks::default();
+
+        // 51, 110, 112, and 113 are all valid
+        // Note: We can use 110 here since gossip votes aren't limited to leaf banks
+        for candidate_slot in [51, 110, 112, 113] {
+            insert_gossip_vote(&mut vote_simulator, candidate_slot);
+            assert_eq!(
+                tower.check_switch_threshold(
+                    switch_slot,
+                    &ancestors,
+                    &descendants,
+                    &vote_simulator.progress,
+                    total_stake,
+                    bank0.epoch_vote_accounts(0).unwrap(),
+                    &vote_simulator.latest_validator_votes_for_frozen_banks,
+                    &vote_simulator.heaviest_subtree_fork_choice,
+                ),
+                SwitchForkDecision::SwitchProof(Hash::default())
+            );
+            vote_simulator.latest_validator_votes_for_frozen_banks =
+                LatestValidatorVotesForFrozenBanks::default();
+        }
     }
 }
