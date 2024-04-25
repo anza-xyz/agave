@@ -2081,15 +2081,16 @@ mod tests {
     ) -> Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> {
         let locked_fork_graph = cache.fork_graph.as_ref().unwrap().read().unwrap();
         keys.iter()
-            .map(|key| {
-                let slot_versions = &cache.entries.get(key).unwrap().slot_versions;
-                let _visible_entry = slot_versions.iter().rev().find(|entry| {
-                    matches!(
-                        locked_fork_graph.relationship(entry.deployment_slot, loading_slot,),
-                        BlockRelation::Equal | BlockRelation::Ancestor,
-                    )
+            .filter_map(|key| {
+                let visible_entry = cache.entries.get(key).and_then(|second_level| {
+                    second_level.slot_versions.iter().rev().find(|entry| {
+                        matches!(
+                            locked_fork_graph.relationship(entry.deployment_slot, loading_slot),
+                            BlockRelation::Equal | BlockRelation::Ancestor,
+                        )
+                    })
                 });
-                (*key, (ProgramCacheMatchCriteria::NoCriteria, 1))
+                visible_entry.map(|_| (*key, (ProgramCacheMatchCriteria::NoCriteria, 1)))
             })
             .collect()
     }
@@ -2111,7 +2112,6 @@ mod tests {
     fn match_missing(
         missing: &[(Pubkey, (ProgramCacheMatchCriteria, u64))],
         program: &Pubkey,
-        _reload: bool,
     ) -> bool {
         missing.iter().any(|(key, _)| key == program)
     }
@@ -2191,8 +2191,8 @@ mod tests {
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_slot(&extracted, &program4, 0, 22));
 
-        assert!(match_missing(&missing, &program2, false));
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program2), false);
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 15
         let mut missing =
@@ -2211,7 +2211,7 @@ mod tests {
         assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
         assert_eq!(tombstone.deployment_slot, 15);
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Testing the same fork above, but current slot is now 18 (equal to effective slot of program4).
         let mut missing =
@@ -2225,7 +2225,7 @@ mod tests {
         // The effective slot of program4 deployed in slot 15 is 18. So it should be usable in slot 18.
         assert!(match_slot(&extracted, &program4, 15, 18));
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Testing the same fork above, but current slot is now 23 (future slot than effective slot of program4).
         let mut missing =
@@ -2239,7 +2239,7 @@ mod tests {
         // The effective slot of program4 deployed in slot 15 is 19. So it should be usable in slot 23.
         assert!(match_slot(&extracted, &program4, 15, 23));
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 11
         let mut missing =
@@ -2256,7 +2256,7 @@ mod tests {
         assert_eq!(tombstone.deployment_slot, 11);
         assert!(match_slot(&extracted, &program4, 5, 11));
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         cache.prune(5, 0);
 
@@ -2286,7 +2286,7 @@ mod tests {
         assert!(match_slot(&extracted, &program2, 11, 21));
         assert!(match_slot(&extracted, &program4, 15, 21));
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing =
@@ -2327,7 +2327,7 @@ mod tests {
         assert!(match_slot(&extracted, &program4, 15, 23));
 
         // program3 was deployed on slot 25, which has been pruned
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
     }
 
     #[test]
@@ -2376,7 +2376,7 @@ mod tests {
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Test the same fork, but request the program modified at a later slot than what's in the cache.
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
@@ -2387,8 +2387,8 @@ mod tests {
 
         assert!(match_slot(&extracted, &program2, 11, 12));
 
-        assert!(match_missing(&missing, &program1, false));
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program1), true);
+        assert_eq!(match_missing(&missing, &program3), false);
     }
 
     #[test]
@@ -2450,7 +2450,7 @@ mod tests {
         assert!(match_slot(&extracted, &program1, 0, 19));
         assert!(match_slot(&extracted, &program2, 11, 19));
 
-        assert!(match_missing(&missing, &program3, false));
+        assert_eq!(match_missing(&missing, &program3), false);
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing = get_entries_to_load(&cache, 27, &[program1, program2, program3]);
@@ -2460,7 +2460,7 @@ mod tests {
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
 
-        assert!(match_missing(&missing, &program3, true));
+        assert_eq!(match_missing(&missing, &program3), true);
 
         // Testing fork 0 - 10 - 20 - 22 with current slot at 22
         let mut missing = get_entries_to_load(&cache, 22, &[program1, program2, program3]);
@@ -2469,8 +2469,8 @@ mod tests {
 
         assert!(match_slot(&extracted, &program1, 20, 22));
 
-        assert!(match_missing(&missing, &program2, false));
-        assert!(match_missing(&missing, &program3, true));
+        assert_eq!(match_missing(&missing, &program2), false);
+        assert_eq!(match_missing(&missing, &program3), true);
     }
 
     #[test]
@@ -2600,7 +2600,7 @@ mod tests {
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 5, 6));
-        assert!(match_missing(&missing, &program2, false));
+        assert_eq!(match_missing(&missing, &program2), false);
 
         // Pruning slot 5 will remove program1 entry deployed at slot 5.
         // On fork chaining from slot 5, the entry deployed at slot 0 will become visible.
@@ -2618,7 +2618,7 @@ mod tests {
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 6));
-        assert!(match_missing(&missing, &program2, false));
+        assert_eq!(match_missing(&missing, &program2), false);
 
         // Pruning slot 10 will remove program2 entry deployed at slot 10.
         // As there is no other entry for program2, extract() will return it as missing.
@@ -2629,7 +2629,7 @@ mod tests {
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 20));
-        assert!(match_missing(&missing, &program2, false));
+        assert_eq!(match_missing(&missing, &program2), false);
     }
 
     #[test]
