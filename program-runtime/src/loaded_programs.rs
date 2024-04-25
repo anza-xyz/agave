@@ -2074,6 +2074,26 @@ mod tests {
         }
     }
 
+    fn get_entries_to_load(
+        cache: &ProgramCache<TestForkGraphSpecific>,
+        loading_slot: Slot,
+        keys: &[Pubkey],
+    ) -> Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> {
+        let locked_fork_graph = cache.fork_graph.as_ref().unwrap().read().unwrap();
+        keys.iter()
+            .map(|key| {
+                let slot_versions = &cache.entries.get(key).unwrap().slot_versions;
+                let _visible_entry = slot_versions.iter().rev().find(|entry| {
+                    matches!(
+                        locked_fork_graph.relationship(entry.deployment_slot, loading_slot,),
+                        BlockRelation::Equal | BlockRelation::Ancestor,
+                    )
+                });
+                (*key, (ProgramCacheMatchCriteria::NoCriteria, 1))
+            })
+            .collect()
+    }
+
     fn match_slot(
         extracted: &ProgramCacheForTxBatch,
         program: &Pubkey,
@@ -2163,12 +2183,8 @@ mod tests {
         //                     23
 
         // Testing fork 0 - 10 - 12 - 22 with current slot at 22
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 2)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 3)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 4)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 22, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2178,13 +2194,9 @@ mod tests {
         assert!(match_missing(&missing, &program2, false));
         assert!(match_missing(&missing, &program3, false));
 
-        // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 16
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 15
+        let mut missing =
+            get_entries_to_load(&cache, 15, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(15, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2202,12 +2214,8 @@ mod tests {
         assert!(match_missing(&missing, &program3, false));
 
         // Testing the same fork above, but current slot is now 18 (equal to effective slot of program4).
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 18, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(18, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2220,12 +2228,8 @@ mod tests {
         assert!(match_missing(&missing, &program3, false));
 
         // Testing the same fork above, but current slot is now 23 (future slot than effective slot of program4).
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2238,12 +2242,8 @@ mod tests {
         assert!(match_missing(&missing, &program3, false));
 
         // Testing fork 0 - 5 - 11 - 15 - 16 with current slot at 11
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 11, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(11, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2276,12 +2276,8 @@ mod tests {
         //                  23
 
         // Testing fork 11 - 15 - 16- 19 - 22 with root at 5 and current slot at 22
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 21, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(21, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2293,12 +2289,8 @@ mod tests {
         assert!(match_missing(&missing, &program3, false));
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 27, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2325,12 +2317,8 @@ mod tests {
         //                  23
 
         // Testing fork 16, 19, 23, with root at 15, current slot at 23
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program4, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing =
+            get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2381,11 +2369,7 @@ mod tests {
         cache.assign_program(program3, new_test_entry(25, 26));
 
         // Testing fork 0 - 5 - 11 - 15 - 16 - 19 - 21 - 23 with current slot at 19
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2395,17 +2379,9 @@ mod tests {
         assert!(match_missing(&missing, &program3, false));
 
         // Test the same fork, but request the program modified at a later slot than what's in the cache.
-        let mut missing = vec![
-            (
-                program1,
-                (ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5), 1),
-            ),
-            (
-                program2,
-                (ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5), 1),
-            ),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
+        missing.get_mut(0).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(1).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2467,11 +2443,7 @@ mod tests {
         );
 
         // Testing fork 0 - 5 - 11 - 15 - 16 - 19 - 21 - 23 with current slot at 19
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 19, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(19, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2481,11 +2453,7 @@ mod tests {
         assert!(match_missing(&missing, &program3, false));
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 27, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2495,11 +2463,7 @@ mod tests {
         assert!(match_missing(&missing, &program3, true));
 
         // Testing fork 0 - 10 - 20 - 22 with current slot at 22
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program3, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 22, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2583,7 +2547,7 @@ mod tests {
 
         cache.prune(10, 0);
 
-        let mut missing = vec![(program1, (ProgramCacheMatchCriteria::NoCriteria, 1))];
+        let mut missing = get_entries_to_load(&cache, 20, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2624,20 +2588,14 @@ mod tests {
         let program2 = Pubkey::new_unique();
         cache.assign_program(program2, new_test_entry(10, 11));
 
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2648,20 +2606,14 @@ mod tests {
         // On fork chaining from slot 5, the entry deployed at slot 0 will become visible.
         cache.prune_by_deployment_slot(5);
 
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
@@ -2672,10 +2624,7 @@ mod tests {
         // As there is no other entry for program2, extract() will return it as missing.
         cache.prune_by_deployment_slot(10);
 
-        let mut missing = vec![
-            (program1, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-            (program2, (ProgramCacheMatchCriteria::NoCriteria, 1)),
-        ];
+        let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
