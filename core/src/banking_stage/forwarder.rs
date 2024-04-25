@@ -93,8 +93,6 @@ impl Forwarder {
             Ordering::Relaxed,
         );
 
-        forward_packet_batches_by_accounts.print_me();
-
         forward_packet_batches_by_accounts
             .iter_batches()
             .filter(|&batch| !batch.is_empty())

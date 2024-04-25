@@ -130,22 +130,6 @@ impl ForwardPacketBatchesByAccounts {
     pub fn iter_batches(&self) -> impl Iterator<Item = &ForwardBatch> {
         self.forward_batches.iter()
     }
-
-    pub fn print_me(&self) {
-        let mut batches_count = 0;
-        for batch in self.forward_batches.iter() {
-            if !batch.is_empty() {
-                batches_count += 1;
-                println!(
-                    "batch #{}, forwardable packets count {}, hashmap size {}, ",
-                    batches_count,
-                    batch.len(),
-                    batch.cost_tracker.number_of_accounts()
-                );
-            }
-        }
-        println!("batches count {}", batches_count);
-    }
 }
 
 #[cfg(test)]
