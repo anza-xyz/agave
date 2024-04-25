@@ -4215,7 +4215,7 @@ mod tests {
         ] {
             // Set the source's starting balance to something large to ensure its post-split
             // balance meets all the requirements
-            let source_balance = u64::MAX;
+            let source_balance = 5_000_000;
             let source_meta = Meta {
                 rent_exempt_reserve,
                 ..Meta::auto(&source_address)
@@ -4362,7 +4362,7 @@ mod tests {
         ] {
             // Set the source's starting balance to something large to ensure its post-split
             // balance meets all the requirements
-            let source_balance = u64::MAX;
+            let source_balance = 10_000_000_000;
             let source_meta = Meta {
                 rent_exempt_reserve,
                 ..Meta::auto(&source_address)
@@ -6914,7 +6914,7 @@ mod tests {
         let rent_account = create_account_shared_data_for_test(&rent);
 
         let good_stake_address = Pubkey::new_unique();
-        let good_stake_account = AccountSharedData::new(u64::MAX, StakeStateV2::size_of(), &id());
+        let good_stake_account = AccountSharedData::new(50_000_000, StakeStateV2::size_of(), &id());
         let good_instruction = instruction::initialize(
             &good_stake_address,
             &Authorized::auto(&good_stake_address),
