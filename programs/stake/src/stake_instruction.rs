@@ -6910,11 +6910,11 @@ mod tests {
     #[test_case(feature_set_all_enabled(); "all_enabled")]
     fn test_stake_process_instruction_error_ordering(feature_set: Arc<FeatureSet>) {
         let rent = Rent::default();
+        let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let rent_address = rent::id();
         let rent_account = create_account_shared_data_for_test(&rent);
 
         let good_stake_address = Pubkey::new_unique();
-        let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let good_stake_account =
             AccountSharedData::new(rent_exempt_reserve, StakeStateV2::size_of(), &id());
         let good_instruction = instruction::initialize(
