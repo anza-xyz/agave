@@ -149,13 +149,20 @@ impl Bank {
             .clone();
 
         let (mut account, stake_state): (AccountSharedData, StakeStateV2) = stake_account.into();
-        let StakeStateV2::Stake(meta, _stake, flags) = stake_state else {
+        let StakeStateV2::Stake(meta, stake, flags) = stake_state else {
             // StakesCache only stores accounts where StakeStateV2::delegation().is_some()
             unreachable!()
         };
         account
             .checked_add_lamports(partitioned_stake_reward.stake_reward_info.lamports as u64)
             .map_err(|_| DistributionError::ArithmeticOverflow)?;
+        assert_eq!(
+            stake
+                .delegation
+                .stake
+                .saturating_add(partitioned_stake_reward.stake_reward_info.lamports as u64),
+            partitioned_stake_reward.stake.delegation.stake,
+        );
         account
             .set_state(&StakeStateV2::Stake(
                 meta,
@@ -302,23 +309,20 @@ mod tests {
         let rent = Rent::free();
         let validator_pubkey = Pubkey::new_unique();
         let validator_vote_pubkey = Pubkey::new_unique();
-        let starting_lamports = 20;
 
-        let validator_vote_account = vote_state::create_account(
-            &validator_vote_pubkey,
-            &validator_pubkey,
-            10,
-            starting_lamports,
-        );
+        let validator_vote_account =
+            vote_state::create_account(&validator_vote_pubkey, &validator_pubkey, 10, 20);
 
         for stake_reward in rewards.iter() {
             // store account in Bank, since distribution now checks for account existence
+            let lamports = stake_reward.stake_account.lamports()
+                - stake_reward.stake_reward_info.lamports as u64;
             let validator_stake_account = stake_state::create_account(
                 &stake_reward.stake_pubkey,
                 &validator_vote_pubkey,
                 &validator_vote_account,
                 &rent,
-                starting_lamports,
+                lamports,
             );
             bank.store_account(&stake_reward.stake_pubkey, &validator_stake_account);
         }
@@ -346,15 +350,14 @@ mod tests {
 
         // Set up a partition of rewards to distribute
         let expected_num = 100;
-        let mut stake_rewards = (0..expected_num)
+        let stake_rewards = (0..expected_num)
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
+        let rewards_to_distribute = stake_rewards
+            .iter()
+            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
+            .sum::<i64>() as u64;
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
-        let mut rewards_to_distribute = 0;
-        for stake_reward in &mut stake_rewards {
-            stake_reward.credit(100);
-            rewards_to_distribute += 100;
-        }
         let all_rewards = vec![stake_rewards];
 
         // Distribute rewards
@@ -391,15 +394,12 @@ mod tests {
         let mut stake_rewards = (0..expected_num)
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
+        populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
 
-        bank.store_accounts((bank.slot(), &stake_rewards[..]));
-
-        // Simulate rewards
-        let mut expected_rewards = 0;
-        for stake_reward in &mut stake_rewards {
-            stake_reward.credit(1);
-            expected_rewards += 1;
-        }
+        let expected_rewards = stake_rewards
+            .iter()
+            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
+            .sum::<i64>() as u64;
 
         // Push extra StakeReward to simulate non-existent account
         stake_rewards.push(StakeReward::new_random());
@@ -503,9 +503,10 @@ mod tests {
             },
             credits_observed: 42,
         };
+        let reward_amount = 100;
         let stake_reward_info = RewardInfo {
             reward_type: RewardType::Staking,
-            lamports: 100,
+            lamports: reward_amount,
             post_balance: 0,
             commission: None,
         };
@@ -529,7 +530,7 @@ mod tests {
 
         let overflowing_account = Pubkey::new_unique();
         let mut stake_account = AccountSharedData::new(
-            u64::MAX - 99,
+            u64::MAX - reward_amount as u64 + 1,
             StakeStateV2::size_of(),
             &solana_sdk::stake::program::id(),
         );
@@ -556,15 +557,17 @@ mod tests {
         drop(stakes_cache);
 
         let successful_account = Pubkey::new_unique();
+        let starting_stake = new_stake.delegation.stake - reward_amount as u64;
+        let starting_lamports = rent_exempt_reserve + starting_stake;
         let mut stake_account = AccountSharedData::new(
-            rent_exempt_reserve,
+            starting_lamports,
             StakeStateV2::size_of(),
             &solana_sdk::stake::program::id(),
         );
         let other_stake = Stake {
             delegation: Delegation {
                 voter_pubkey,
-                stake: 11_111,
+                stake: starting_stake,
                 ..Delegation::default()
             },
             credits_observed: 11,
@@ -584,7 +587,7 @@ mod tests {
         };
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
-        let expected_lamports = rent_exempt_reserve + stake_reward_info.lamports as u64;
+        let expected_lamports = starting_lamports + stake_reward_info.lamports as u64;
         let mut expected_stake_account = AccountSharedData::new(
             expected_lamports,
             StakeStateV2::size_of(),
