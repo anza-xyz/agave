@@ -118,7 +118,7 @@ impl Bank {
             total_stake_accounts_count: all_stake_rewards.len(),
             partition_index,
             store_stake_accounts_us,
-            store_stake_accounts_count: this_partition_stake_rewards.len(),
+            store_stake_accounts_count: updated_stake_rewards.len(),
             distributed_rewards: lamports_distributed,
             burned_rewards: lamports_burned,
         };
