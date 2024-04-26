@@ -6437,9 +6437,11 @@ dependencies = [
  "rcgen",
  "rustls",
  "smallvec",
+ "solana-measure",
  "solana-metrics",
  "solana-perf",
  "solana-sdk",
+ "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
  "x509-parser",
@@ -6520,6 +6522,20 @@ dependencies = [
  "solana-sdk",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "solana-transaction-metrics-tracker"
+version = "1.18.12"
+dependencies = [
+ "Inflector",
+ "base64 0.21.7",
+ "bincode",
+ "lazy_static",
+ "log",
+ "rand 0.8.5",
+ "solana-perf",
+ "solana-sdk",
 ]
 
 [[package]]

@@ -7394,9 +7394,11 @@ dependencies = [
  "rustls",
  "smallvec",
  "solana-logger",
+ "solana-measure",
  "solana-metrics",
  "solana-perf",
  "solana-sdk",
+ "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
  "x509-parser",
@@ -7540,6 +7542,20 @@ dependencies = [
  "solana-streamer",
  "solana-transaction-status",
  "solana-version",
+]
+
+[[package]]
+name = "solana-transaction-metrics-tracker"
+version = "1.18.12"
+dependencies = [
+ "Inflector",
+ "base64 0.21.7",
+ "bincode",
+ "lazy_static",
+ "log",
+ "rand 0.8.5",
+ "solana-perf",
+ "solana-sdk",
 ]
 
 [[package]]
