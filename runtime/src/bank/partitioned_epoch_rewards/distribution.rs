@@ -194,7 +194,7 @@ impl Bank {
     ) -> DistributionResults {
         let mut lamports_distributed = 0;
         let mut lamports_burned = 0;
-        let mut updated_stake_rewards = vec![];
+        let mut updated_stake_rewards = Vec::with_capacity(stake_rewards.len());
         let stakes_cache = self.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         for partitioned_stake_reward in stake_rewards.into_iter() {
