@@ -135,7 +135,7 @@ impl Tvu {
         wait_to_vote_slot: Option<Slot>,
         accounts_background_request_sender: AbsRequestSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: &Arc<ConnectionCache>,
+        connection_cache: Option<&Arc<ConnectionCache>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -276,18 +276,6 @@ impl Tvu {
             tower_storage,
         );
 
-<<<<<<< HEAD
-        let warm_quic_cache_service = if connection_cache.use_quic() {
-            Some(WarmQuicCacheService::new(
-                connection_cache.clone(),
-                cluster_info.clone(),
-                poh_recorder.clone(),
-                exit.clone(),
-            ))
-        } else {
-            None
-        };
-=======
         let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
             if connection_cache.use_quic() {
                 Some(WarmQuicCacheService::new(
@@ -301,7 +289,6 @@ impl Tvu {
             }
         });
 
->>>>>>> d87e23d8d9 (simplify warm_quic_cache_service instantiation (#1063))
         let (cost_update_sender, cost_update_receiver) = unbounded();
         let cost_update_service = CostUpdateService::new(blockstore.clone(), cost_update_receiver);
 
@@ -514,7 +501,7 @@ pub mod tests {
             None,
             AbsRequestSender::default(),
             None,
-            &Arc::new(ConnectionCache::new("connection_cache_test")),
+            Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,
