@@ -276,6 +276,7 @@ impl Tvu {
             tower_storage,
         );
 
+<<<<<<< HEAD
         let warm_quic_cache_service = if connection_cache.use_quic() {
             Some(WarmQuicCacheService::new(
                 connection_cache.clone(),
@@ -286,6 +287,21 @@ impl Tvu {
         } else {
             None
         };
+=======
+        let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
+            if connection_cache.use_quic() {
+                Some(WarmQuicCacheService::new(
+                    connection_cache.clone(),
+                    cluster_info.clone(),
+                    poh_recorder.clone(),
+                    exit.clone(),
+                ))
+            } else {
+                None
+            }
+        });
+
+>>>>>>> d87e23d8d9 (simplify warm_quic_cache_service instantiation (#1063))
         let (cost_update_sender, cost_update_receiver) = unbounded();
         let cost_update_service = CostUpdateService::new(blockstore.clone(), cost_update_receiver);
 
