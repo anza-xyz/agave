@@ -770,8 +770,8 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 mod tests {
     use {
         super::*,
-        crate::compute_budget_processor,
         serde::{Deserialize, Serialize},
+        solana_compute_budget::compute_budget_processor,
         solana_sdk::{account::WritableAccount, instruction::Instruction, rent::Rent},
     };
 

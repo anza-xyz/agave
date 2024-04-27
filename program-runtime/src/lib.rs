@@ -10,7 +10,6 @@ extern crate solana_metrics;
 
 pub use solana_rbpf;
 pub mod compute_budget;
-pub mod compute_budget_processor;
 pub mod invoke_context;
 pub mod loaded_programs;
 pub mod log_collector;

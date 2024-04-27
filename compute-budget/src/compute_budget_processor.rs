@@ -1,5 +1,5 @@
 use {
-    solana_compute_budget::prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
+    crate::prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
         compute_budget::{self, ComputeBudgetInstruction},

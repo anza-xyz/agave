@@ -5779,6 +5779,7 @@ dependencies = [
  "solana-cli-config",
  "solana-cli-output",
  "solana-client",
+ "solana-compute-budget",
  "solana-config-program",
  "solana-faucet",
  "solana-loader-v4-program",
@@ -5911,6 +5912,9 @@ dependencies = [
 [[package]]
 name = "solana-compute-budget"
 version = "2.0.0"
+dependencies = [
+ "solana-sdk",
+]
 
 [[package]]
 name = "solana-compute-budget-program"
@@ -5995,6 +5999,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-bloom",
  "solana-client",
+ "solana-compute-budget",
  "solana-core",
  "solana-cost-model",
  "solana-entry",
@@ -6050,6 +6055,7 @@ dependencies = [
  "rustc_version 0.4.0",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
+ "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-frozen-abi",
@@ -6057,7 +6063,6 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-logger",
  "solana-metrics",
- "solana-program-runtime",
  "solana-sdk",
  "solana-stake-program",
  "solana-system-program",
@@ -7093,8 +7098,8 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "rustc_version 0.4.0",
+ "solana-compute-budget",
  "solana-program",
- "solana-program-runtime",
  "solana-sdk",
  "thiserror",
 ]
@@ -7753,7 +7758,7 @@ version = "2.0.0"
 dependencies = [
  "bytemuck",
  "curve25519-dalek",
- "solana-program-runtime",
+ "solana-compute-budget",
  "solana-program-test",
  "solana-sdk",
  "solana-zk-token-sdk",
