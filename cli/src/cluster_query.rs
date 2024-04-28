@@ -26,6 +26,7 @@ use {
         },
         *,
     },
+    solana_client::rpc_response::RpcVoteAccountInfo,
     solana_pubsub_client::pubsub_client::PubsubClient,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
@@ -58,11 +59,7 @@ use {
         slot_history,
         stake::{self, state::StakeStateV2},
         system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
-        sysvar::{
-            self,
-            slot_history::SlotHistory,
-            stake_history::{self},
-        },
+        sysvar::{self, slot_history::SlotHistory, stake_history},
         transaction::Transaction,
     },
     solana_transaction_status::{
@@ -1817,18 +1814,18 @@ pub fn process_show_stakes(
 ) -> ProcessResult {
     use crate::stake::build_stake_state;
 
-    let vote_account_progress_bar = new_spinner_progress_bar();
-    vote_account_progress_bar.set_message("Searching for matching vote accounts...");
-
     // fetching corresponding vote pubkey from identity pubkey
     let vote_account_pubkeys = match vote_account_pubkeys {
         Some(pubkeys) => {
+            let vote_account_progress_bar = new_spinner_progress_bar();
+            vote_account_progress_bar.set_message("Searching for matching vote accounts...");
+
             let vote_accounts = rpc_client.get_vote_accounts()?;
 
             let pubkeys: HashSet<String> =
                 pubkeys.iter().map(|pubkey| pubkey.to_string()).collect();
 
-            let vote_account_pubkeys: HashSet<String> = vote_accounts
+            let filtered_vote_accounts: Vec<RpcVoteAccountInfo> = vote_accounts
                 .current
                 .iter()
                 .chain(vote_accounts.delinquent.iter())
@@ -1836,20 +1833,39 @@ pub fn process_show_stakes(
                     pubkeys.contains(&vote_acc.node_pubkey)
                         || pubkeys.contains(&vote_acc.vote_pubkey)
                 })
-                .map(|vote_acc| vote_acc.vote_pubkey.to_string())
+                .cloned()
                 .collect();
 
-            if vote_account_pubkeys.len() != pubkeys.len() {
-                return Err(CliError::RpcRequestError(
-                    "Failed to retrieve matching vote account for pubkey(s).".to_string(),
-                )
+            let all_pubkeys: HashSet<String> = filtered_vote_accounts
+                .iter()
+                .flat_map(|vote_acc| {
+                    vec![
+                        vote_acc.node_pubkey.to_string(),
+                        vote_acc.vote_pubkey.to_string(),
+                    ]
+                })
+                .collect();
+
+            let unmatched_pubkeys: HashSet<String> =
+                pubkeys.difference(&all_pubkeys).cloned().collect();
+
+            if !unmatched_pubkeys.is_empty() {
+                return Err(CliError::RpcRequestError(format!(
+                    "Failed to retrieve matching vote account for {:?}.",
+                    unmatched_pubkeys
+                ))
                 .into());
             }
-            vote_account_pubkeys
+            vote_account_progress_bar.finish_and_clear();
+
+            let filtered_vote_pubkeys = filtered_vote_accounts
+                .iter()
+                .map(|vote_acc| vote_acc.vote_pubkey.to_string())
+                .collect();
+            filtered_vote_pubkeys
         }
         None => HashSet::new(),
     };
-    vote_account_progress_bar.finish_and_clear();
 
     let mut program_accounts_config = RpcProgramAccountsConfig {
         account_config: RpcAccountInfoConfig {
@@ -1944,7 +1960,7 @@ pub fn process_show_stakes(
         }
     }
     if stake_accounts.is_empty() {
-        Ok("No stake account found for provided vote account(s).".into())
+        Ok("No stake account found".into())
     } else {
         Ok(config
             .output_format
