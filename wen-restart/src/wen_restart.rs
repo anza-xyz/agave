@@ -1057,10 +1057,6 @@ mod tests {
         assert_matches::assert_matches,
         crossbeam_channel::unbounded,
         solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        solana_core::{
-            accounts_hash_verifier::AccountsHashVerifier,
-            snapshot_packager_service::SnapshotPackagerService,
-        },
         solana_entry::entry::create_ticks,
         solana_gossip::{
             cluster_info::ClusterInfo,
@@ -1080,14 +1076,12 @@ mod tests {
             vote::state::{TowerSync, Vote},
         },
         solana_runtime::{
-            accounts_background_service::{
-                AbsRequestHandlers, AccountsBackgroundService, PrunedBanksRequestHandler,
-                SnapshotRequestHandler,
-            },
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
+            snapshot_hash::SnapshotHash,
+            snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -1379,55 +1373,38 @@ mod tests {
             .set_snapshot_config(Some(snapshot_config.clone()));
 
         let exit = Arc::new(AtomicBool::new(false));
+        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
 
-        // Set up snapshot service.
-        let (snapshot_package_sender, snapshot_package_receiver) = unbounded();
-        let _ = SnapshotPackagerService::new(
-            snapshot_package_sender.clone(),
-            snapshot_package_receiver,
-            None,
-            exit.clone(),
-            test_state.cluster_info.clone(),
-            snapshot_config.clone(),
-            false,
-        );
-        let (accounts_package_sender, accounts_package_receiver) = unbounded();
-        let _ = AccountsHashVerifier::new(
-            accounts_package_sender.clone(),
-            accounts_package_receiver,
-            Some(snapshot_package_sender),
-            exit.clone(),
-            snapshot_config.clone(),
-        );
-
+        // We need to set up fake snapshot service here, can't use the real one because of circular dependency.
+        // We will just write a fake file to simulate snapshot generation.
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
         let accounts_background_request_sender =
             AbsRequestSender::new(snapshot_request_sender.clone());
-        let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config: snapshot_config.clone(),
-            snapshot_request_sender,
-            snapshot_request_receiver,
-            accounts_package_sender,
-        };
-        let pruned_banks_receiver =
-            AccountsBackgroundService::setup_bank_drop_callback(test_state.bank_forks.clone());
-        let pruned_banks_request_handler = PrunedBanksRequestHandler {
-            pruned_banks_receiver,
-        };
-        let _ = AccountsBackgroundService::new(
-            test_state.bank_forks.clone(),
-            exit.clone(),
-            AbsRequestHandlers {
-                snapshot_request_handler,
-                pruned_banks_request_handler,
-            },
-            false,
-            Some(0),
-        );
+        let exit_clone = exit.clone();
+        let snapshot_dir = snapshot_config.incremental_snapshot_archives_dir.clone();
+        let archive_format = snapshot_config.archive_format;
+        let old_root_slot = old_root_bank.slot();
+        let fake_snapshot_service_handle = Builder::new()
+            .name("fake-snapshot-service".to_string())
+            .spawn(move || loop {
+                if exit_clone.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Ok(request) = snapshot_request_receiver.try_recv() {
+                    let snapshot_bank = request.snapshot_root_bank;
+                    let _ = File::create(build_incremental_snapshot_archive_path(
+                        snapshot_dir.clone(),
+                        old_root_slot,
+                        snapshot_bank.slot(),
+                        &SnapshotHash(snapshot_bank.hash()),
+                        archive_format,
+                    ));
+                }
+                sleep(Duration::from_millis(WAIT_FOR_SNAPSHOT_LOOP_SLEEP_IN_MS));
+            })
+            .unwrap();
 
-        // Generate full snapshot for bank 0.
-        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
-        // Trigger full snapshot generation on old root bank.
+        // Trigger full snapshot generation on the old root bank.
         let _ = bank_to_full_snapshot_archive(
             snapshot_config.bank_snapshots_dir.clone(),
             &old_root_bank,
@@ -1539,6 +1516,8 @@ mod tests {
         }
 
         let _ = wen_restart_thread_handle.join();
+        exit.store(true, Ordering::Relaxed);
+        let _ = fake_snapshot_service_handle.join();
         info!("Thread joined");
         let progress = read_wen_restart_records(&test_state.wen_restart_proto_path).unwrap();
         let progress_start_time = progress
