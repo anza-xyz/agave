@@ -81,6 +81,8 @@ mod tests {
             10,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            4,
+            5,
         )
         .unwrap();
 
@@ -161,6 +163,8 @@ mod tests {
             10,
             Duration::from_secs(1), // wait_for_chunk_timeout
             DEFAULT_TPU_COALESCE,
+            4,
+            5,
         )
         .unwrap();
 
@@ -219,6 +223,8 @@ mod tests {
             10,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            4,
+            5,
         )
         .unwrap();
 
@@ -243,6 +249,8 @@ mod tests {
             10,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            4,
+            5,
         )
         .unwrap();
 

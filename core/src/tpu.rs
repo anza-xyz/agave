@@ -33,7 +33,7 @@ use {
     solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
     solana_streamer::{
-        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+        nonblocking::quic,
         quic::{spawn_server, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         streamer::StakedNodes,
     },
@@ -148,6 +148,11 @@ impl Tpu {
 
         let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
 
+        let tpu_max_unstaked_streams_per_100ms = quic::MAX_UNSTAKED_STREAMS_PERCENT
+            .saturating_mul(quic::MAX_STREAMS_PER_100MS)
+            .saturating_div(100)
+            .saturating_div(MAX_UNSTAKED_CONNECTIONS as u64);
+        let tpu_min_staked_streams_per_100ms = tpu_max_unstaked_streams_per_100ms.saturating_add(1);
         let (_, tpu_quic_t) = spawn_server(
             "quic_streamer_tpu",
             transactions_quic_sockets,
@@ -163,11 +168,15 @@ impl Tpu {
             staked_nodes.clone(),
             MAX_STAKED_CONNECTIONS,
             MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+            quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             tpu_coalesce,
+            tpu_min_staked_streams_per_100ms,
+            tpu_max_unstaked_streams_per_100ms,
         )
         .unwrap();
 
+        let tpufwd_max_unstaked_streams_per_100ms = 0;
+        let tpufwd_min_staked_streams_per_100ms = 1;
         let (_, tpu_forwards_quic_t) = spawn_server(
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
@@ -183,8 +192,10 @@ impl Tpu {
             staked_nodes.clone(),
             MAX_STAKED_CONNECTIONS.saturating_add(MAX_UNSTAKED_CONNECTIONS),
             0, // Prevent unstaked nodes from forwarding transactions
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+            quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             tpu_coalesce,
+            tpufwd_min_staked_streams_per_100ms,
+            tpufwd_max_unstaked_streams_per_100ms,
         )
         .unwrap();
 

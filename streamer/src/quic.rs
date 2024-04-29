@@ -434,6 +434,8 @@ pub fn spawn_server(
     max_unstaked_connections: usize,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
+    min_staked_streams_per_100ms: u64,
+    max_unstaked_streams_per_100ms: u64,
 ) -> Result<(Endpoint, thread::JoinHandle<()>), QuicServerError> {
     let runtime = rt();
     let (endpoint, _stats, task) = {
@@ -451,6 +453,8 @@ pub fn spawn_server(
             max_unstaked_connections,
             wait_for_chunk_timeout,
             coalesce,
+            min_staked_streams_per_100ms,
+            max_unstaked_streams_per_100ms,
         )
     }?;
     let handle = thread::Builder::new()
@@ -500,6 +504,8 @@ mod test {
             MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            tpu_min_staked_streams_per_100ms(),
+            tpu_max_unstaked_streams_per_100ms(),
         )
         .unwrap();
         (t, exit, receiver, server_address)
@@ -556,6 +562,8 @@ mod test {
             MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            tpu_min_staked_streams_per_100ms(),
+            tpu_max_unstaked_streams_per_100ms(),
         )
         .unwrap();
 
@@ -599,6 +607,8 @@ mod test {
             0, // Do not allow any connection from unstaked clients/nodes
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            tpu_min_staked_streams_per_100ms(),
+            tpu_max_unstaked_streams_per_100ms(),
         )
         .unwrap();
 

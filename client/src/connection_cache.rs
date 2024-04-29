@@ -258,6 +258,8 @@ mod tests {
             10,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
+            4,
+            5,
         )
         .unwrap();
 
