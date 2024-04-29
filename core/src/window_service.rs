@@ -169,6 +169,11 @@ fn run_check_duplicate(
             shred_slot,
             &root_bank,
         );
+        let chained_merkle_conflict_duplicate_proofs = cluster_nodes::check_feature_activation(
+            &feature_set::chained_merkle_conflict_duplicate_proofs::id(),
+            shred_slot,
+            &root_bank,
+        );
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
             | PossibleDuplicateShred::ErasureConflict(shred, conflict) => {
@@ -180,6 +185,24 @@ fn run_check_duplicate(
             }
             PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => {
                 if merkle_conflict_duplicate_proofs {
+                    // Although this proof can be immediately stored on detection, we wait until
+                    // here in order to check the feature flag, as storage in blockstore can
+                    // preclude the detection of other duplicate proofs in this slot
+                    if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
+                        return Ok(());
+                    }
+                    blockstore.store_duplicate_slot(
+                        shred_slot,
+                        conflict.clone(),
+                        shred.clone().into_payload(),
+                    )?;
+                    (shred, conflict)
+                } else {
+                    return Ok(());
+                }
+            }
+            PossibleDuplicateShred::ChainedMerkleRootConflict(shred, conflict) => {
+                if chained_merkle_conflict_duplicate_proofs {
                     // Although this proof can be immediately stored on detection, we wait until
                     // here in order to check the feature flag, as storage in blockstore can
                     // preclude the detection of other duplicate proofs in this slot
@@ -569,6 +592,7 @@ mod test {
     use {
         super::*,
         crate::repair::serve_repair::ShredRepairType,
+        rand::Rng,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
         solana_ledger::{
@@ -597,7 +621,8 @@ mod test {
             keypair,
             entries,
             true, // is_last_in_slot
-            None, // chained_merkle_root
+            // chained_merkle_root
+            Some(Hash::new_from_array(rand::thread_rng().gen())),
             0,    // next_shred_index
             0,    // next_code_index
             true, // merkle_variant

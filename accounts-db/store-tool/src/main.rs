@@ -45,21 +45,22 @@ fn main() {
     info!("store: len: {} capacity: {}", store.len(), store.capacity());
     let mut num_accounts: usize = 0;
     let mut stored_accounts_len: usize = 0;
-    for account in store.account_iter() {
-        if is_account_zeroed(&account) {
-            break;
+    let mut quit = false;
+    store.scan_accounts(|account| {
+        if is_account_zeroed(&account) || quit {
+            quit = true;
+            return;
         }
         info!(
-            "  account: {:?} version: {} lamports: {} data: {} hash: {:?}",
+            "  account: {:?} lamports: {} data: {} hash: {:?}",
             account.pubkey(),
-            account.write_version(),
             account.lamports(),
             account.data_len(),
             account.hash()
         );
         num_accounts = num_accounts.saturating_add(1);
         stored_accounts_len = stored_accounts_len.saturating_add(account.stored_size());
-    }
+    });
     info!(
         "num_accounts: {} stored_accounts_len: {}",
         num_accounts, stored_accounts_len
@@ -69,7 +70,6 @@ fn main() {
 fn is_account_zeroed(account: &StoredAccountMeta) -> bool {
     account.hash() == &AccountHash(Hash::default())
         && account.data_len() == 0
-        && account.write_version() == 0
         && account.pubkey() == &Pubkey::default()
         && account.to_account_shared_data() == AccountSharedData::default()
 }

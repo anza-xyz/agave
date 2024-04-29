@@ -2,6 +2,7 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient, ValidatorInfo},
         cluster_tests,
+        integration_tests::DEFAULT_NODE_STAKE,
         validator_configs::*,
     },
     itertools::izip,
@@ -16,7 +17,7 @@ use {
     },
     solana_gossip::{
         cluster_info::Node,
-        contact_info::{ContactInfo, LegacyContactInfo, Protocol},
+        contact_info::{ContactInfo, Protocol},
         gossip_service::discover_cluster,
     },
     solana_ledger::{create_new_tmp_ledger, shred::Shred},
@@ -47,7 +48,7 @@ use {
         transaction::Transaction,
     },
     solana_stake_program::stake_state,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
         DEFAULT_TPU_USE_QUIC,
@@ -60,7 +61,7 @@ use {
         collections::HashMap,
         io::{Error, ErrorKind, Result},
         iter,
-        net::UdpSocket,
+        net::{IpAddr, Ipv4Addr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
     },
@@ -188,6 +189,46 @@ impl LocalCluster {
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
+
+        let connection_cache = match config.tpu_use_quic {
+            true => {
+                let client_keypair = Keypair::new();
+                let stake = DEFAULT_NODE_STAKE;
+
+                for validator_config in config.validator_configs.iter_mut() {
+                    let mut overrides = HashMap::new();
+                    overrides.insert(client_keypair.pubkey(), stake);
+                    validator_config.staked_nodes_overrides = Arc::new(RwLock::new(overrides));
+                }
+
+                assert!(
+                    config.tpu_use_quic,
+                    "no support for staked override forwarding without quic"
+                );
+
+                let total_stake = config.node_stakes.iter().sum::<u64>();
+                let stakes = HashMap::from([
+                    (client_keypair.pubkey(), stake),
+                    (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
+                ]);
+                let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
+                    Arc::new(stakes),
+                    HashMap::<Pubkey, u64>::default(), // overrides
+                )));
+
+                Arc::new(ConnectionCache::new_with_client_options(
+                    "connection_cache_local_cluster_quic_staked",
+                    config.tpu_connection_pool_size,
+                    None,
+                    Some((&client_keypair, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
+                    Some((&staked_nodes, &client_keypair.pubkey())),
+                ))
+            }
+            false => Arc::new(ConnectionCache::with_udp(
+                "connection_cache_local_cluster_udp",
+                config.tpu_connection_pool_size,
+            )),
+        };
 
         let mut validator_keys = {
             if let Some(ref keys) = config.validator_keys {
@@ -321,16 +362,7 @@ impl LocalCluster {
             entry_point_info: leader_contact_info,
             validators,
             genesis_config,
-            connection_cache: match config.tpu_use_quic {
-                true => Arc::new(ConnectionCache::new_quic(
-                    "connection_cache_local_cluster_quic",
-                    config.tpu_connection_pool_size,
-                )),
-                false => Arc::new(ConnectionCache::with_udp(
-                    "connection_cache_local_cluster_udp",
-                    config.tpu_connection_pool_size,
-                )),
-            },
+            connection_cache,
         };
 
         let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
@@ -449,11 +481,10 @@ impl LocalCluster {
         mut voting_keypair: Option<Arc<Keypair>>,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
-        let (rpc, tpu) = LegacyContactInfo::try_from(&self.entry_point_info)
-            .map(|node| {
-                cluster_tests::get_client_facing_addr(self.connection_cache.protocol(), node)
-            })
-            .unwrap();
+        let (rpc, tpu) = cluster_tests::get_client_facing_addr(
+            self.connection_cache.protocol(),
+            &self.entry_point_info,
+        );
         let client = ThinClient::new(rpc, tpu, self.connection_cache.clone());
 
         // Must have enough tokens to fund vote account and set delegate
@@ -503,7 +534,7 @@ impl LocalCluster {
             &ledger_path,
             &voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![voting_keypair.clone()])),
-            vec![LegacyContactInfo::try_from(&self.entry_point_info).unwrap()],
+            vec![self.entry_point_info.clone()],
             &config,
             true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
@@ -546,11 +577,10 @@ impl LocalCluster {
     }
 
     pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) -> u64 {
-        let (rpc, tpu) = LegacyContactInfo::try_from(&self.entry_point_info)
-            .map(|node| {
-                cluster_tests::get_client_facing_addr(self.connection_cache.protocol(), node)
-            })
-            .unwrap();
+        let (rpc, tpu) = cluster_tests::get_client_facing_addr(
+            self.connection_cache.protocol(),
+            &self.entry_point_info,
+        );
         let client = ThinClient::new(rpc, tpu, self.connection_cache.clone());
         Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports)
     }
@@ -637,11 +667,7 @@ impl LocalCluster {
         info!("{} making sure no new roots on any nodes", test_name);
         cluster_tests::check_no_new_roots(
             num_slots_to_wait,
-            &alive_node_contact_infos
-                .into_iter()
-                .map(LegacyContactInfo::try_from)
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .unwrap(),
+            &alive_node_contact_infos,
             &self.connection_cache,
             test_name,
         );
@@ -871,11 +897,10 @@ impl Cluster for LocalCluster {
 
     fn get_validator_client(&self, pubkey: &Pubkey) -> Option<ThinClient> {
         self.validators.get(pubkey).map(|f| {
-            let (rpc, tpu) = LegacyContactInfo::try_from(&f.info.contact_info)
-                .map(|node| {
-                    cluster_tests::get_client_facing_addr(self.connection_cache.protocol(), node)
-                })
-                .unwrap();
+            let (rpc, tpu) = cluster_tests::get_client_facing_addr(
+                self.connection_cache.protocol(),
+                &f.info.contact_info,
+            );
             ThinClient::new(rpc, tpu, self.connection_cache.clone())
         })
     }
@@ -979,10 +1004,7 @@ impl Cluster for LocalCluster {
             &validator_info.ledger_path,
             &validator_info.voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![validator_info.voting_keypair.clone()])),
-            entry_point_infos
-                .into_iter()
-                .map(|entry_point_info| LegacyContactInfo::try_from(&entry_point_info).unwrap())
-                .collect(),
+            entry_point_infos,
             &safe_clone_config(&cluster_validator_info.config),
             true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver

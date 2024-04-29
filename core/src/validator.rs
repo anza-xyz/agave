@@ -47,9 +47,9 @@ use {
             ClusterInfo, Node, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         },
+        contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         gossip_service::GossipService,
-        legacy_contact_info::LegacyContactInfo as ContactInfo,
     },
     solana_ledger::{
         bank_forks_utils,
@@ -272,6 +272,7 @@ pub struct ValidatorConfig {
     pub ip_echo_server_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub delay_leader_block_for_pending_fork: bool,
 }
 
 impl Default for ValidatorConfig {
@@ -342,6 +343,7 @@ impl Default for ValidatorConfig {
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            delay_leader_block_for_pending_fork: false,
         }
     }
 }
@@ -351,7 +353,7 @@ impl ValidatorConfig {
         Self {
             enforce_ulimit_nofile: false,
             rpc_config: JsonRpcConfig::default_for_test(),
-            block_production_method: BlockProductionMethod::ThreadLocalMultiIterator,
+            block_production_method: BlockProductionMethod::default(),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(get_max_thread_count())
                 .expect("thread count is non-zero"),
@@ -510,6 +512,8 @@ impl Validator {
         tpu_enable_udp: bool,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     ) -> Result<Self, String> {
+        let start_time = Instant::now();
+
         let id = identity_keypair.pubkey();
         assert_eq!(&id, node.info.pubkey());
 
@@ -942,7 +946,7 @@ impl Validator {
                 bank.clone(),
                 None,
                 bank.ticks_per_slot(),
-                &id,
+                config.delay_leader_block_for_pending_fork,
                 blockstore.clone(),
                 blockstore.get_new_shred_signal(0),
                 &leader_schedule_cache,
@@ -1323,7 +1327,7 @@ impl Validator {
             config.wait_to_vote_slot,
             accounts_background_request_sender.clone(),
             config.runtime_config.log_messages_bytes_limit,
-            &connection_cache,
+            json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
@@ -1405,6 +1409,7 @@ impl Validator {
             ("id", id.to_string(), String),
             ("version", solana_version::version!(), String),
             ("cluster_type", genesis_config.cluster_type as u32, i64),
+            ("elapsed_ms", start_time.elapsed().as_millis() as i64, i64),
             ("waited_for_supermajority", waited_for_supermajority, bool),
             ("expected_shred_version", config.expected_shred_version, Option<i64>),
         );
@@ -2101,11 +2106,13 @@ fn maybe_warp_slot(
             warp_slot,
             solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
         ));
-        bank_forks.set_root(
-            warp_slot,
-            accounts_background_request_sender,
-            Some(warp_slot),
-        );
+        bank_forks
+            .set_root(
+                warp_slot,
+                accounts_background_request_sender,
+                Some(warp_slot),
+            )
+            .map_err(|err| err.to_string())?;
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
         let full_snapshot_archive_info = match snapshot_bank_utils::bank_to_full_snapshot_archive(
@@ -2531,7 +2538,7 @@ mod tests {
         super::*,
         crossbeam_channel::{bounded, RecvTimeoutError},
         solana_entry::entry,
-        solana_gossip::contact_info::{ContactInfo, LegacyContactInfo},
+        solana_gossip::contact_info::ContactInfo,
         solana_ledger::{
             blockstore, create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader,
             get_tmp_ledger_path_auto_delete,
@@ -2571,7 +2578,7 @@ mod tests {
             &validator_ledger_path,
             &voting_keypair.pubkey(),
             Arc::new(RwLock::new(vec![voting_keypair])),
-            vec![LegacyContactInfo::try_from(&leader_node.info).unwrap()],
+            vec![leader_node.info],
             &config,
             true, // should_check_duplicate_instance
             None, // rpc_to_plugin_manager_receiver
@@ -2656,7 +2663,7 @@ mod tests {
                     &validator_ledger_path,
                     &vote_account_keypair.pubkey(),
                     Arc::new(RwLock::new(vec![Arc::new(vote_account_keypair)])),
-                    vec![LegacyContactInfo::try_from(&leader_node.info).unwrap()],
+                    vec![leader_node.info.clone()],
                     &config,
                     true, // should_check_duplicate_instance.
                     None, // rpc_to_plugin_manager_receiver

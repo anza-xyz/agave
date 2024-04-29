@@ -10,7 +10,7 @@ use {
         compute_budget::ComputeBudget,
         invoke_context::InvokeContext,
         loaded_programs::{
-            BlockRelation, ForkGraph, LoadedProgram, ProgramCache, ProgramRuntimeEnvironments,
+            BlockRelation, ForkGraph, ProgramCache, ProgramCacheEntry, ProgramRuntimeEnvironments,
         },
         solana_rbpf::{
             program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
@@ -23,7 +23,6 @@ use {
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, Epoch, Slot, UnixTimestamp},
         epoch_schedule::EpochSchedule,
-        fee::FeeStructure,
         hash::Hash,
         instruction::AccountMeta,
         pubkey::Pubkey,
@@ -35,9 +34,8 @@ use {
         account_loader::TransactionCheckResult,
         runtime_config::RuntimeConfig,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processor::{
-            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingCallback,
-        },
+        transaction_processing_callback::TransactionProcessingCallback,
+        transaction_processor::{ExecutionRecordingConfig, TransactionBatchProcessor},
         transaction_results::TransactionExecutionResult,
     },
     std::{
@@ -236,7 +234,7 @@ fn register_builtins(
         mock_bank,
         bpf_loader_upgradeable::id(),
         BPF_LOADER_NAME,
-        LoadedProgram::new_builtin(
+        ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             BPF_LOADER_NAME.len(),
             solana_bpf_loader_program::Entrypoint::vm,
@@ -249,7 +247,7 @@ fn register_builtins(
         mock_bank,
         solana_system_program::id(),
         SYSTEM_PROGRAM_NAME,
-        LoadedProgram::new_builtin(
+        ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
             SYSTEM_PROGRAM_NAME.len(),
             solana_system_program::system_processor::Entrypoint::vm,
@@ -439,7 +437,6 @@ fn svm_integration() {
         EXECUTION_SLOT,
         EXECUTION_EPOCH,
         EpochSchedule::default(),
-        FeeStructure::default(),
         Arc::new(RuntimeConfig::default()),
         program_cache.clone(),
         HashSet::default(),

@@ -1,4 +1,3 @@
-#![allow(clippy::arithmetic_side_effects)]
 macro_rules! ACCOUNT_STRING {
     () => {
         r#" Address is one of:
@@ -28,7 +27,7 @@ pub mod checks;
 pub mod clap_app;
 pub mod cli;
 pub mod cluster_query;
-pub mod compute_unit_price;
+pub mod compute_budget;
 pub mod feature;
 pub mod inflation;
 pub mod memo;

@@ -1,21 +1,20 @@
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::meta::{StorableAccountsWithHashes, StoredAccountInfo, StoredAccountMeta},
+        account_storage::meta::StoredAccountMeta,
         accounts_db::AccountsFileId,
-        accounts_hash::AccountHash,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        pubkey::Pubkey,
+    solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
+    std::{
+        io::Read,
+        mem,
+        path::{Path, PathBuf},
     },
-    std::{borrow::Borrow, io::Read, mem, path::PathBuf},
     thiserror::Error,
 };
 
@@ -116,30 +115,38 @@ impl AccountsFile {
         format!("{slot}.{id}")
     }
 
-    /// Return (account metadata, next_index) pair for the account at the
-    /// specified `offset` if any.  Otherwise return None.   Also return the
-    /// index of the next entry.
-    pub fn get_account(&self, offset: usize) -> Option<(StoredAccountMeta<'_>, usize)> {
+    /// calls `callback` with the account located at the specified index offset.
+    pub fn get_stored_account_meta_callback<Ret>(
+        &self,
+        offset: usize,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
+    ) -> Option<Ret> {
         match self {
-            Self::AppendVec(av) => av.get_account(offset),
+            Self::AppendVec(av) => av.get_stored_account_meta_callback(offset, callback),
             // Note: The conversion here is needed as the AccountsDB currently
             // assumes all offsets are multiple of 8 while TieredStorage uses
             // IndexOffset that is equivalent to AccountInfo::reduced_offset.
             Self::TieredStorage(ts) => ts
                 .reader()?
-                .get_account(IndexOffset(AccountInfo::get_reduced_offset(offset)))
-                .ok()?
-                .map(|(metas, index_offset)| {
-                    (metas, AccountInfo::reduced_offset_to_offset(index_offset.0))
-                }),
+                .get_stored_account_meta_callback(
+                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
+                    callback,
+                )
+                .ok()?,
         }
     }
 
     /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_stored_account(&self, offset: usize) -> Option<AccountSharedData> {
+    pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match self {
-            Self::AppendVec(av) => av.get_stored_account(offset),
-            Self::TieredStorage(_) => unimplemented!(),
+            Self::AppendVec(av) => av.get_account_shared_data(offset),
+            Self::TieredStorage(ts) => {
+                // Note: The conversion here is needed as the AccountsDB currently
+                // assumes all offsets are multiple of 8 while TieredStorage uses
+                // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+                let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
+                ts.reader()?.get_account_shared_data(index_offset).ok()?
+            }
         }
     }
 
@@ -166,16 +173,26 @@ impl AccountsFile {
     }
 
     /// Return the path of the underlying account file.
-    pub fn get_path(&self) -> PathBuf {
+    pub fn path(&self) -> &Path {
         match self {
-            Self::AppendVec(av) => av.get_path(),
-            Self::TieredStorage(ts) => ts.path().to_path_buf(),
+            Self::AppendVec(av) => av.path(),
+            Self::TieredStorage(ts) => ts.path(),
         }
     }
 
-    /// Return iterator for account metadata
-    pub fn account_iter(&self) -> AccountsFileIter {
-        AccountsFileIter::new(self)
+    /// Iterate over all accounts and call `callback` with each account.
+    pub(crate) fn scan_accounts(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) {
+        match self {
+            Self::AppendVec(av) => av.scan_accounts(callback),
+            Self::TieredStorage(ts) => {
+                if let Some(reader) = ts.reader() {
+                    _ = reader.scan_accounts(callback);
+                }
+            }
+        }
     }
 
     /// for each offset in `sorted_offsets`, return the account size
@@ -202,7 +219,7 @@ impl AccountsFile {
     }
 
     /// iterate over all pubkeys
-    pub(crate) fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) {
+    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) {
         match self {
             Self::AppendVec(av) => av.scan_pubkeys(callback),
             Self::TieredStorage(ts) => {
@@ -238,17 +255,11 @@ impl AccountsFile {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<
-        'a,
-        'b,
-        T: ReadableAccount + Sync,
-        U: StorableAccounts<'a, T>,
-        V: Borrow<AccountHash>,
-    >(
+    pub fn append_accounts<'a>(
         &self,
-        accounts: &StorableAccountsWithHashes<'a, 'b, T, U, V>,
+        accounts: &impl StorableAccounts<'a>,
         skip: usize,
-    ) -> Option<Vec<StoredAccountInfo>> {
+    ) -> Option<StoredAccountsInfo> {
         match self {
             Self::AppendVec(av) => av.append_accounts(accounts, skip),
             // Note: The conversion here is needed as the AccountsDB currently
@@ -256,11 +267,11 @@ impl AccountsFile {
             // IndexOffset that is equivalent to AccountInfo::reduced_offset.
             Self::TieredStorage(ts) => ts
                 .write_accounts(accounts, skip, &HOT_FORMAT)
-                .map(|mut infos| {
-                    infos.iter_mut().for_each(|info| {
-                        info.offset = AccountInfo::reduced_offset_to_offset(info.offset as u32);
+                .map(|mut stored_accounts_info| {
+                    stored_accounts_info.offsets.iter_mut().for_each(|offset| {
+                        *offset = AccountInfo::reduced_offset_to_offset(*offset as u32);
                     });
-                    infos
+                    stored_accounts_info
                 })
                 .ok(),
         }
@@ -274,33 +285,6 @@ impl AccountsFile {
                 .reader()
                 .expect("must be a reader when archiving")
                 .data_for_archive(),
-        }
-    }
-}
-
-pub struct AccountsFileIter<'a> {
-    file_entry: &'a AccountsFile,
-    offset: usize,
-}
-
-impl<'a> AccountsFileIter<'a> {
-    pub fn new(file_entry: &'a AccountsFile) -> Self {
-        Self {
-            file_entry,
-            offset: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for AccountsFileIter<'a> {
-    type Item = StoredAccountMeta<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some((account, next_offset)) = self.file_entry.get_account(self.offset) {
-            self.offset = next_offset;
-            Some(account)
-        } else {
-            None
         }
     }
 }
@@ -322,6 +306,15 @@ impl AccountsFileProvider {
             Self::HotStorage => AccountsFile::TieredStorage(TieredStorage::new_writable(path)),
         }
     }
+}
+
+/// Information after storing accounts
+#[derive(Debug)]
+pub struct StoredAccountsInfo {
+    /// offset in the storage where each account was stored
+    pub offsets: Vec<usize>,
+    /// total size of all the stored accounts
+    pub size: usize,
 }
 
 #[cfg(test)]

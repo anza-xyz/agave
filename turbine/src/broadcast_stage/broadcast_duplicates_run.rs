@@ -177,16 +177,11 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        // Chained Merkle shreds are always discarded in epoch 0, due to
-        // feature_set::enable_chained_merkle_shreds. Below can be removed once
-        // the feature gated code is removed.
-        let should_chain_merkle_shreds = bank.epoch() > 0;
-
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
-            should_chain_merkle_shreds.then_some(self.chained_merkle_root),
+            Some(self.chained_merkle_root),
             self.next_shred_index,
             self.next_code_index,
             true, // merkle_variant
@@ -206,7 +201,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     keypair,
                     &[original_last_entry],
                     true,
-                    should_chain_merkle_shreds.then_some(self.chained_merkle_root),
+                    Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
                     true, // merkle_variant
@@ -220,7 +215,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     keypair,
                     &duplicate_extra_last_entries,
                     true,
-                    should_chain_merkle_shreds.then_some(self.chained_merkle_root),
+                    Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
                     true, // merkle_variant
@@ -237,9 +232,11 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                     sigs,
                 );
 
-                assert_eq!(original_last_data_shred.len(), 1);
-                assert_eq!(partition_last_data_shred.len(), 1);
-                self.next_shred_index += 1;
+                assert_eq!(
+                    original_last_data_shred.len(),
+                    partition_last_data_shred.len()
+                );
+                self.next_shred_index += u32::try_from(original_last_data_shred.len()).unwrap();
                 (original_last_data_shred, partition_last_data_shred)
             });
 

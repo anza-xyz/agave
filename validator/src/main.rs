@@ -38,7 +38,7 @@ use {
     },
     solana_gossip::{
         cluster_info::{Node, NodeConfig},
-        legacy_contact_info::LegacyContactInfo as ContactInfo,
+        contact_info::ContactInfo,
     },
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
@@ -1338,6 +1338,7 @@ pub fn main() {
         ip_echo_server_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        tvu_receive_threads,
     } = cli::thread_args::parse_num_threads_args(&matches);
 
     let mut validator_config = ValidatorConfig {
@@ -1481,6 +1482,8 @@ pub fn main() {
         ip_echo_server_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        delay_leader_block_for_pending_fork: matches
+            .is_present("delay_leader_block_for_pending_fork"),
         ..ValidatorConfig::default()
     };
 
@@ -1853,6 +1856,7 @@ pub fn main() {
         bind_ip_addr: bind_address,
         public_tpu_addr,
         public_tpu_forwards_addr,
+        num_tvu_sockets: tvu_receive_threads,
     };
 
     let cluster_entrypoints = entrypoint_addrs

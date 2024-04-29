@@ -11,6 +11,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountStorageEntry, AccountsDb, GetUniqueAccountsResult, PurgeStats},
         accounts_partition,
+        storable_accounts::StorableAccountsBySlot,
     },
     solana_measure::measure,
     solana_sdk::{
@@ -19,7 +20,7 @@ use {
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::Slot,
         pubkey::Pubkey,
-        sdk_ids,
+        reserved_account_keys::ReservedAccountKeys,
     },
     std::{
         collections::HashSet,
@@ -60,9 +61,8 @@ impl<'a> SnapshotMinimizer<'a> {
 
         minimizer.add_accounts(Self::get_active_bank_features, "active bank features");
         minimizer.add_accounts(Self::get_inactive_bank_features, "inactive bank features");
-        minimizer.add_accounts(Self::get_builtins, "builtin accounts");
         minimizer.add_accounts(Self::get_static_runtime_accounts, "static runtime accounts");
-        minimizer.add_accounts(Self::get_sdk_accounts, "sdk accounts");
+        minimizer.add_accounts(Self::get_reserved_accounts, "reserved accounts");
 
         minimizer.add_accounts(
             Self::get_rent_collection_accounts,
@@ -109,19 +109,6 @@ impl<'a> SnapshotMinimizer<'a> {
         });
     }
 
-    /// Used to get builtin accounts in `minimize`
-    fn get_builtins(&self) {
-        self.bank
-            .get_transaction_processor()
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .iter()
-            .for_each(|program_id| {
-                self.minimized_account_set.insert(*program_id);
-            });
-    }
-
     /// Used to get static runtime accounts in `minimize`
     fn get_static_runtime_accounts(&self) {
         static_ids::STATIC_IDS.iter().for_each(|pubkey| {
@@ -129,11 +116,11 @@ impl<'a> SnapshotMinimizer<'a> {
         });
     }
 
-    /// Used to get sdk accounts in `minimize`
-    fn get_sdk_accounts(&self) {
-        sdk_ids::SDK_IDS.iter().for_each(|pubkey| {
+    /// Used to get reserved accounts in `minimize`
+    fn get_reserved_accounts(&self) {
+        ReservedAccountKeys::all_keys_iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
-        });
+        })
     }
 
     /// Used to get rent collection accounts in `minimize`
@@ -358,21 +345,15 @@ impl<'a> SnapshotMinimizer<'a> {
         let aligned_total: u64 = AccountsDb::page_align(total_bytes as u64);
         let mut shrink_in_progress = None;
         if aligned_total > 0 {
-            let mut accounts = Vec::with_capacity(keep_accounts.len());
-            let mut hashes = Vec::with_capacity(keep_accounts.len());
-
-            for alive_account in keep_accounts {
-                accounts.push(alive_account);
-                hashes.push(alive_account.hash());
-            }
-
             shrink_in_progress = Some(self.accounts_db().get_store_for_shrink(slot, aligned_total));
             let new_storage = shrink_in_progress.as_ref().unwrap().new_storage();
-            self.accounts_db().store_accounts_frozen(
-                (slot, &accounts[..]),
-                Some(hashes),
-                new_storage,
-            );
+
+            let accounts = [(slot, &keep_accounts[..])];
+            let storable_accounts =
+                StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
+
+            self.accounts_db()
+                .store_accounts_frozen(storable_accounts, new_storage);
 
             new_storage.flush().unwrap();
         }
@@ -677,7 +658,9 @@ mod tests {
 
         let mut account_count = 0;
         snapshot_storages.into_iter().for_each(|storage| {
-            account_count += storage.accounts.account_iter().count();
+            storage.accounts.scan_pubkeys(|_| {
+                account_count += 1;
+            });
         });
 
         assert_eq!(

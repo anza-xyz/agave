@@ -11,7 +11,7 @@ use {
     memmap2::Mmap,
     num_enum::TryFromPrimitiveError,
     solana_sdk::{hash::Hash, pubkey::Pubkey},
-    std::{mem, path::Path},
+    std::{mem, path::Path, ptr},
     thiserror::Error,
 };
 
@@ -174,12 +174,14 @@ impl TieredStorageFooter {
         Self::new_from_footer_block(&file)
     }
 
-    pub fn write_footer_block(&self, file: &mut TieredWritableFile) -> TieredStorageResult<()> {
-        // SAFETY: The footer does not contain any uninitialized bytes.
-        unsafe { file.write_type(self)? };
-        file.write_pod(&TieredStorageMagicNumber::default())?;
+    pub fn write_footer_block(&self, file: &mut TieredWritableFile) -> TieredStorageResult<usize> {
+        let mut bytes_written = 0;
 
-        Ok(())
+        // SAFETY: The footer does not contain any uninitialized bytes.
+        bytes_written += unsafe { file.write_type(self)? };
+        bytes_written += file.write_pod(&TieredStorageMagicNumber::default())?;
+
+        Ok(bytes_written)
     }
 
     pub fn new_from_footer_block(file: &TieredReadableFile) -> TieredStorageResult<Self> {
@@ -258,13 +260,13 @@ impl TieredStorageFooter {
     /// prior to use.  This ensures the formats are valid to interpret as (rust) enums.
     fn sanitize(footer: &Self) -> Result<(), SanitizeFooterError> {
         let account_meta_format_u16 =
-            unsafe { &*(&footer.account_meta_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.account_meta_format).cast::<u16>()) };
         let owners_block_format_u16 =
-            unsafe { &*(&footer.owners_block_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.owners_block_format).cast::<u16>()) };
         let index_block_format_u16 =
-            unsafe { &*(&footer.index_block_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.index_block_format).cast::<u16>()) };
         let account_block_format_u16 =
-            unsafe { &*(&footer.account_block_format as *const _ as *const u16) };
+            unsafe { &*(ptr::from_ref(&footer.account_block_format).cast::<u16>()) };
 
         _ = AccountMetaFormat::try_from(*account_meta_format_u16)
             .map_err(SanitizeFooterError::InvalidAccountMetaFormat)?;
@@ -389,7 +391,7 @@ mod tests {
             let mut footer = TieredStorageFooter::default();
             unsafe {
                 std::ptr::write(
-                    &mut footer.account_meta_format as *mut _ as *mut u16,
+                    ptr::from_mut(&mut footer.account_meta_format).cast::<u16>(),
                     0xBAD0,
                 );
             }
@@ -405,7 +407,7 @@ mod tests {
             let mut footer = TieredStorageFooter::default();
             unsafe {
                 std::ptr::write(
-                    &mut footer.owners_block_format as *mut _ as *mut u16,
+                    ptr::from_mut(&mut footer.owners_block_format).cast::<u16>(),
                     0xBAD0,
                 );
             }
@@ -420,7 +422,10 @@ mod tests {
         {
             let mut footer = TieredStorageFooter::default();
             unsafe {
-                std::ptr::write(&mut footer.index_block_format as *mut _ as *mut u16, 0xBAD0);
+                std::ptr::write(
+                    ptr::from_mut(&mut footer.index_block_format).cast::<u16>(),
+                    0xBAD0,
+                );
             }
             let result = TieredStorageFooter::sanitize(&footer);
             assert!(matches!(
@@ -434,7 +439,7 @@ mod tests {
             let mut footer = TieredStorageFooter::default();
             unsafe {
                 std::ptr::write(
-                    &mut footer.account_block_format as *mut _ as *mut u16,
+                    ptr::from_mut(&mut footer.account_block_format).cast::<u16>(),
                     0xBAD0,
                 );
             }

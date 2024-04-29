@@ -19,7 +19,7 @@ use {
     },
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
-        contact_info::{LegacyContactInfo as ContactInfo, LegacyContactInfo, Protocol},
+        contact_info::{ContactInfo, LegacyContactInfo, Protocol},
         ping_pong::{self, PingCache, Pong},
         weighted_shuffle::WeightedShuffle,
     },
@@ -2163,7 +2163,7 @@ mod tests {
         // TODO: The test previously relied on corrupting shred payload
         // size which we no longer want to expose. Current test no longer
         // covers packet size check in repair_response_packet_from_bytes.
-        shreds.remove(0);
+        shreds.retain(|shred| shred.slot() != 1);
         blockstore
             .insert_shreds(shreds, None, false)
             .expect("Expect successful ledger write");
@@ -2192,7 +2192,7 @@ mod tests {
         let expected = vec![repair_response::repair_response_packet(
             &blockstore,
             2,
-            0,
+            31, // shred_index
             &socketaddr_any!(),
             nonce,
         )
@@ -2402,7 +2402,7 @@ mod tests {
             Shred::new_from_data(slot, index, 1, &[], ShredFlags::empty(), 0, 0, 0)
         }
         let repair = ShredRepairType::Orphan(9);
-        // Ensure new options are addded to this test
+        // Ensure new options are added to this test
         match repair {
             ShredRepairType::Orphan(_)
             | ShredRepairType::HighestShred(_, _)

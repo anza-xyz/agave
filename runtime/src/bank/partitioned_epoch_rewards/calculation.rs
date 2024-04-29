@@ -1,26 +1,32 @@
 use {
     super::{
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
-        CalculateRewardsAndDistributeVoteRewardsResult, EpochRewardCalculateParamInfo,
-        PartitionedRewardsCalculation, StakeRewardCalculationPartitioned, VoteRewardsAccounts,
+        CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
+        EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, StakeRewardCalculation,
+        StakeRewardCalculationPartitioned, VoteRewardsAccounts,
     },
     crate::bank::{
         PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-        StakeRewardCalculation, VoteAccount,
+        VoteAccount, VoteReward, VoteRewards,
     },
-    log::info,
+    dashmap::DashMap,
+    log::{debug, info},
     rayon::{
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool,
     },
+    solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
     solana_sdk::{
+        account::{AccountSharedData, ReadableAccount},
         clock::{Epoch, Slot},
         pubkey::Pubkey,
         reward_info::RewardInfo,
+        reward_type::RewardType,
+        stake::state::StakeStateV2,
     },
     solana_stake_program::points::PointValue,
-    std::sync::atomic::Ordering::Relaxed,
+    std::sync::atomic::{AtomicU64, Ordering::Relaxed},
 };
 
 impl Bank {
@@ -38,6 +44,7 @@ impl Bank {
         let CalculateRewardsAndDistributeVoteRewardsResult {
             total_rewards,
             distributed_rewards,
+            total_points,
             stake_rewards_by_partition,
         } = self.calculate_rewards_and_distribute_vote_rewards(
             parent_epoch,
@@ -49,11 +56,19 @@ impl Bank {
         let slot = self.slot();
         let credit_start = self.block_height() + self.get_reward_calculation_num_blocks();
 
+        let num_partitions = stake_rewards_by_partition.len() as u64;
+
         self.set_epoch_reward_status_active(stake_rewards_by_partition);
 
         // create EpochRewards sysvar that holds the balance of undistributed rewards with
         // (total_rewards, distributed_rewards, credit_start), total capital will increase by (total_rewards - distributed_rewards)
-        self.create_epoch_rewards_sysvar(total_rewards, distributed_rewards, credit_start);
+        self.create_epoch_rewards_sysvar(
+            total_rewards,
+            distributed_rewards,
+            credit_start,
+            num_partitions,
+            total_points,
+        );
 
         datapoint_info!(
             "epoch-rewards-status-update",
@@ -82,6 +97,7 @@ impl Bank {
             foundation_rate,
             prev_epoch_duration_in_years,
             capitalization,
+            total_points,
         } = self.calculate_rewards_for_partitioning(
             prev_epoch,
             reward_calc_tracer,
@@ -150,6 +166,7 @@ impl Bank {
         CalculateRewardsAndDistributeVoteRewardsResult {
             total_rewards: validator_rewards_paid + total_stake_rewards_lamports,
             distributed_rewards: validator_rewards_paid,
+            total_points,
             stake_rewards_by_partition,
         }
     }
@@ -181,7 +198,7 @@ impl Bank {
     }
 
     /// Calculate rewards from previous epoch to prepare for partitioned distribution.
-    pub(in crate::bank) fn calculate_rewards_for_partitioning(
+    pub(super) fn calculate_rewards_for_partitioning(
         &self,
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
@@ -198,7 +215,11 @@ impl Bank {
 
         let old_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
 
-        let (vote_account_rewards, mut stake_rewards) = self
+        let CalculateValidatorRewardsResult {
+            vote_rewards_accounts: vote_account_rewards,
+            stake_reward_calculation: mut stake_rewards,
+            total_points,
+        } = self
             .calculate_validator_rewards(
                 prev_epoch,
                 validator_rewards,
@@ -231,6 +252,7 @@ impl Bank {
             foundation_rate,
             prev_epoch_duration_in_years,
             capitalization,
+            total_points,
         }
     }
 
@@ -242,7 +264,7 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
-    ) -> Option<(VoteRewardsAccounts, StakeRewardCalculation)> {
+    ) -> Option<CalculateValidatorRewardsResult> {
         let stakes = self.stakes_cache.stakes();
         let reward_calculate_param = self.get_epoch_reward_calculate_param_info(&stakes);
 
@@ -253,15 +275,153 @@ impl Bank {
             metrics,
         )
         .map(|point_value| {
-            self.calculate_stake_vote_rewards(
-                &reward_calculate_param,
-                rewarded_epoch,
-                point_value,
-                thread_pool,
-                reward_calc_tracer,
-                metrics,
-            )
+            let total_points = point_value.points;
+            let (vote_rewards_accounts, stake_reward_calculation) = self
+                .calculate_stake_vote_rewards(
+                    &reward_calculate_param,
+                    rewarded_epoch,
+                    point_value,
+                    thread_pool,
+                    reward_calc_tracer,
+                    metrics,
+                );
+            CalculateValidatorRewardsResult {
+                vote_rewards_accounts,
+                stake_reward_calculation,
+                total_points,
+            }
         })
+    }
+
+    /// Calculates epoch rewards for stake/vote accounts
+    /// Returns vote rewards, stake rewards, and the sum of all stake rewards in lamports
+    fn calculate_stake_vote_rewards(
+        &self,
+        reward_calculate_params: &EpochRewardCalculateParamInfo,
+        rewarded_epoch: Epoch,
+        point_value: PointValue,
+        thread_pool: &ThreadPool,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+        metrics: &mut RewardsMetrics,
+    ) -> (VoteRewardsAccounts, StakeRewardCalculation) {
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = reward_calculate_params;
+
+        let solana_vote_program: Pubkey = solana_vote_program::id();
+
+        let get_vote_account = |vote_pubkey: &Pubkey| -> Option<VoteAccount> {
+            if let Some(vote_account) = cached_vote_accounts.get(vote_pubkey) {
+                return Some(vote_account.clone());
+            }
+            // If accounts-db contains a valid vote account, then it should
+            // already have been cached in cached_vote_accounts; so the code
+            // below is only for sanity checking, and can be removed once
+            // the cache is deemed to be reliable.
+            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            VoteAccount::try_from(account).ok()
+        };
+
+        let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let vote_account_rewards: VoteRewards = DashMap::new();
+        let total_stake_rewards = AtomicU64::default();
+        let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
+            stake_delegations
+                .par_iter()
+                .filter_map(|(stake_pubkey, stake_account)| {
+                    // curry closure to add the contextual stake_pubkey
+                    let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
+                        // inner
+                        move |inner_event: &_| {
+                            outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
+                        }
+                    });
+
+                    let stake_pubkey = **stake_pubkey;
+                    let stake_account = (*stake_account).to_owned();
+
+                    let delegation = stake_account.delegation();
+                    let (mut stake_account, stake_state) =
+                        <(AccountSharedData, StakeStateV2)>::from(stake_account);
+                    let vote_pubkey = delegation.voter_pubkey;
+                    let vote_account = get_vote_account(&vote_pubkey)?;
+                    if vote_account.owner() != &solana_vote_program {
+                        return None;
+                    }
+                    let vote_state = vote_account.vote_state().cloned().ok()?;
+
+                    let pre_lamport = stake_account.lamports();
+
+                    let redeemed = solana_stake_program::rewards::redeem_rewards(
+                        rewarded_epoch,
+                        stake_state,
+                        &mut stake_account,
+                        &vote_state,
+                        &point_value,
+                        stake_history,
+                        reward_calc_tracer.as_ref(),
+                        new_warmup_cooldown_rate_epoch,
+                    );
+
+                    let post_lamport = stake_account.lamports();
+
+                    if let Ok((stakers_reward, voters_reward)) = redeemed {
+                        debug!(
+                            "calculated reward: {} {} {} {}",
+                            stake_pubkey, pre_lamport, post_lamport, stakers_reward
+                        );
+
+                        // track voter rewards
+                        let mut voters_reward_entry = vote_account_rewards
+                            .entry(vote_pubkey)
+                            .or_insert(VoteReward {
+                                vote_account: vote_account.into(),
+                                commission: vote_state.commission,
+                                vote_rewards: 0,
+                                vote_needs_store: false,
+                            });
+
+                        voters_reward_entry.vote_needs_store = true;
+                        voters_reward_entry.vote_rewards = voters_reward_entry
+                            .vote_rewards
+                            .saturating_add(voters_reward);
+
+                        let post_balance = stake_account.lamports();
+                        total_stake_rewards.fetch_add(stakers_reward, Relaxed);
+                        return Some(StakeReward {
+                            stake_pubkey,
+                            stake_reward_info: RewardInfo {
+                                reward_type: RewardType::Staking,
+                                lamports: i64::try_from(stakers_reward).unwrap(),
+                                post_balance,
+                                commission: Some(vote_state.commission),
+                            },
+                            stake_account,
+                        });
+                    } else {
+                        debug!(
+                            "solana_stake_program::rewards::redeem_rewards() failed for {}: {:?}",
+                            stake_pubkey, redeemed
+                        );
+                    }
+                    None
+                })
+                .collect()
+        }));
+        let (vote_rewards, measure_vote_rewards_us) =
+            measure_us!(Self::calc_vote_accounts_to_store(vote_account_rewards));
+
+        metrics.redeem_rewards_us += measure_stake_rewards_us + measure_vote_rewards_us;
+
+        (
+            vote_rewards,
+            StakeRewardCalculation {
+                stake_rewards,
+                total_stake_rewards_lamports: total_stake_rewards.load(Relaxed),
+            },
+        )
     }
 
     /// Calculates epoch reward points from stake/vote accounts.
@@ -478,8 +638,11 @@ mod tests {
             &mut rewards_metrics,
         );
 
-        let vote_rewards = &calculated_rewards.as_ref().unwrap().0;
-        let stake_rewards = &calculated_rewards.as_ref().unwrap().1;
+        let vote_rewards = &calculated_rewards.as_ref().unwrap().vote_rewards_accounts;
+        let stake_rewards = &calculated_rewards
+            .as_ref()
+            .unwrap()
+            .stake_reward_calculation;
 
         let total_vote_rewards: u64 = vote_rewards
             .rewards

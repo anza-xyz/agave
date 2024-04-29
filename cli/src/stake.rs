@@ -5,7 +5,7 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
-        compute_unit_price::WithComputeUnitPrice,
+        compute_budget::WithComputeUnitPrice,
         feature::get_feature_activation_epoch,
         memo::WithMemo,
         nonce::check_nonce_account,
@@ -1371,37 +1371,34 @@ pub fn parse_show_stake_account(
     } else {
         None
     };
-    Ok(CliCommandInfo {
-        command: CliCommand::ShowStakeAccount {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowStakeAccount {
             pubkey: stake_account_pubkey,
             use_lamports_unit,
             with_rewards,
             use_csv,
         },
-        signers: vec![],
-    })
+    ))
 }
 
 pub fn parse_show_stake_history(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let use_lamports_unit = matches.is_present("lamports");
     let limit_results = value_of(matches, "limit").unwrap();
-    Ok(CliCommandInfo {
-        command: CliCommand::ShowStakeHistory {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowStakeHistory {
             use_lamports_unit,
             limit_results,
         },
-        signers: vec![],
-    })
+    ))
 }
 
 pub fn parse_stake_minimum_delegation(
     matches: &ArgMatches<'_>,
 ) -> Result<CliCommandInfo, CliError> {
     let use_lamports_unit = matches.is_present("lamports");
-    Ok(CliCommandInfo {
-        command: CliCommand::StakeMinimumDelegation { use_lamports_unit },
-        signers: vec![],
-    })
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::StakeMinimumDelegation { use_lamports_unit },
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2475,7 +2472,12 @@ pub fn get_epoch_boundary_timestamps(
                 break block_time;
             }
             Err(_) => {
-                epoch_start_slot += 1;
+                // TODO This is wrong.  We should not just increase the slot index if the RPC
+                // request failed.  It could have failed for a number of reasons, including, for
+                // example a network failure.
+                epoch_start_slot = epoch_start_slot
+                    .checked_add(1)
+                    .ok_or("Reached last slot that fits into u64")?;
             }
         }
     };
@@ -2489,7 +2491,8 @@ pub fn make_cli_reward(
 ) -> Option<CliEpochReward> {
     let wallclock_epoch_duration = epoch_end_time.checked_sub(epoch_start_time)?;
     if reward.post_balance > reward.amount {
-        let rate_change = reward.amount as f64 / (reward.post_balance - reward.amount) as f64;
+        let rate_change =
+            reward.amount as f64 / (reward.post_balance.saturating_sub(reward.amount)) as f64;
 
         let wallclock_epochs_per_year =
             (SECONDS_PER_DAY * 365) as f64 / wallclock_epoch_duration as f64;

@@ -1,7 +1,7 @@
 //! The `gossip_service` module implements the network control plane.
 
 use {
-    crate::{cluster_info::ClusterInfo, legacy_contact_info::LegacyContactInfo as ContactInfo},
+    crate::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     crossbeam_channel::{unbounded, Sender},
     rand::{thread_rng, Rng},
     solana_client::{
@@ -284,7 +284,7 @@ fn spy(
         if let Some(num) = num_nodes {
             // Only consider validators and archives for `num_nodes`
             let mut nodes: Vec<_> = tvu_peers.iter().collect();
-            nodes.sort();
+            nodes.sort_unstable_by_key(|node| node.pubkey());
             nodes.dedup();
 
             if nodes.len() >= num {

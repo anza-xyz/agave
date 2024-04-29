@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(verify, shred.verify(pk));
     }
 
-    fn run_test_data_shredder(slot: Slot, chained: bool) {
+    fn run_test_data_shredder(slot: Slot, chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
 
         // Test that parent cannot be > current slot
@@ -538,11 +538,15 @@ mod tests {
             })
             .collect();
 
-        let is_last_in_slot = true;
         let size = serialized_size(&entries).unwrap() as usize;
         // Integer division to ensure we have enough shreds to fit all the data
         let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
         let num_expected_data_shreds = (size + data_buffer_size - 1) / data_buffer_size;
+        let num_expected_data_shreds = num_expected_data_shreds.max(if is_last_in_slot {
+            DATA_SHREDS_PER_FEC_BLOCK
+        } else {
+            1
+        });
         let num_expected_coding_shreds =
             get_erasure_batch_size(num_expected_data_shreds, is_last_in_slot)
                 - num_expected_data_shreds;
@@ -574,8 +578,8 @@ mod tests {
                 slot,
                 parent_slot,
                 &keypair.pubkey(),
-                true,
-                is_last,
+                true, // verify
+                is_last && is_last_in_slot,
                 is_last,
             );
             assert!(!data_shred_indexes.contains(&index));
@@ -607,19 +611,27 @@ mod tests {
         assert_eq!(entries, deshred_entries);
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_data_shredder(chained: bool) {
-        run_test_data_shredder(0x1234_5678_9abc_def0, chained);
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_data_shredder(chained: bool, is_last_in_slot: bool) {
+        run_test_data_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_deserialize_shred_payload(chained: bool) {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_deserialize_shred_payload(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
-        let slot = 1;
-        let parent_slot = 0;
-        let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
+        let shredder = Shredder::new(
+            259_241_705, // slot
+            259_241_698, // parent_slot
+            178,         // reference_tick
+            27_471,      // version
+        )
+        .unwrap();
         let entries: Vec<_> = (0..5)
             .map(|_| {
                 let keypair0 = Keypair::new();
@@ -630,27 +642,29 @@ mod tests {
             })
             .collect();
 
-        let (data_shreds, _) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
+            369,  // next_shred_index
+            776,  // next_code_index
             true, // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
-        let deserialized_shred =
-            Shred::new_from_serialized_shred(data_shreds.last().unwrap().payload().clone())
-                .unwrap();
-        assert_eq!(deserialized_shred, *data_shreds.last().unwrap());
+        for shred in [data_shreds, coding_shreds].into_iter().flatten() {
+            let other = Shred::new_from_serialized_shred(shred.payload().clone());
+            assert_eq!(shred, other.unwrap());
+        }
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_shred_reference_tick(chained: bool) {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_shred_reference_tick(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
         let parent_slot = 0;
@@ -668,8 +682,8 @@ mod tests {
         let (data_shreds, _) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
-            // chained_merkle_root,
+            is_last_in_slot,
+            // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             0,    // next_shred_index
             0,    // next_code_index
@@ -688,9 +702,11 @@ mod tests {
         assert_eq!(deserialized_shred.reference_tick(), 5);
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_shred_reference_tick_overflow(chained: bool) {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_shred_reference_tick_overflow(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
         let parent_slot = 0;
@@ -708,7 +724,7 @@ mod tests {
         let (data_shreds, _) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             0,    // next_shred_index
@@ -737,7 +753,7 @@ mod tests {
         );
     }
 
-    fn run_test_data_and_code_shredder(slot: Slot, chained: bool) {
+    fn run_test_data_and_code_shredder(slot: Slot, chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(slot, slot - 5, 0, 0).unwrap();
         // Create enough entries to make > 1 shred
@@ -756,7 +772,7 @@ mod tests {
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             0,    // next_shred_index
@@ -773,7 +789,7 @@ mod tests {
                 slot - 5,
                 &keypair.pubkey(),
                 true,
-                i == data_shreds.len() - 1,
+                i == data_shreds.len() - 1 && is_last_in_slot,
                 i == data_shreds.len() - 1,
             );
         }
@@ -783,10 +799,12 @@ mod tests {
         }
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_data_and_code_shredder(chained: bool) {
-        run_test_data_and_code_shredder(0x1234_5678_9abc_def0, chained);
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_data_and_code_shredder(chained: bool, is_last_in_slot: bool) {
+        run_test_data_and_code_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
     }
 
     fn run_test_recovery_and_reassembly(slot: Slot, is_last_in_slot: bool) {
@@ -954,7 +972,7 @@ mod tests {
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true,  // is_last_in_slot
+            is_last_in_slot,
             None,  // chained_merkle_root
             25,    // next_shred_index,
             25,    // next_code_index
@@ -990,7 +1008,7 @@ mod tests {
                 slot - 5,
                 &keypair.pubkey(),
                 true,
-                index == 25 + num_data_shreds - 1,
+                index == 25 + num_data_shreds - 1 && is_last_in_slot,
                 index == 25 + num_data_shreds - 1,
             );
 
@@ -1094,9 +1112,11 @@ mod tests {
         }
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_shred_version(chained: bool) {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_shred_version(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());
         let version = shred_version::version_from_hash(&hash);
@@ -1115,7 +1135,7 @@ mod tests {
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             0,    // next_shred_index
@@ -1130,9 +1150,11 @@ mod tests {
             .any(|s| s.version() != version));
     }
 
-    #[test_case(false)]
-    #[test_case(true)]
-    fn test_shred_fec_set_index(chained: bool) {
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_shred_fec_set_index(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());
         let version = shred_version::version_from_hash(&hash);
@@ -1152,7 +1174,7 @@ mod tests {
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             start_index, // next_shred_index
@@ -1191,8 +1213,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_max_coding_shreds() {
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_max_coding_shreds(is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());
         let version = shred_version::version_from_hash(&hash);
@@ -1213,7 +1236,7 @@ mod tests {
         let data_shreds = shredder.entries_to_data_shreds(
             &keypair,
             &entries,
-            true, // is_last_in_slot
+            is_last_in_slot,
             start_index,
             &mut stats,
         );

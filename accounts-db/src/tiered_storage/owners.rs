@@ -16,10 +16,6 @@ use {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd)]
 pub struct OwnerOffset(pub u32);
 
-lazy_static! {
-    pub static ref OWNER_NO_OWNER: Pubkey = Pubkey::default();
-}
-
 /// Owner block holds a set of unique addresses of account owners,
 /// and an account meta has a owner_offset field for accessing
 /// it's owner address.
@@ -54,7 +50,7 @@ impl OwnersBlockFormat {
             Self::AddressesOnly => {
                 let mut bytes_written = 0;
                 for address in &owners_table.owners_set {
-                    bytes_written += file.write_pod(*address)?;
+                    bytes_written += file.write_pod(address)?;
                 }
 
                 Ok(bytes_written)
@@ -85,19 +81,19 @@ impl OwnersBlockFormat {
 /// The in-memory representation of owners block for write.
 /// It manages a set of unique addresses of account owners.
 #[derive(Debug, Default)]
-pub struct OwnersTable<'a> {
-    owners_set: IndexSet<&'a Pubkey>,
+pub struct OwnersTable {
+    owners_set: IndexSet<Pubkey>,
 }
 
 /// OwnersBlock is persisted as a consecutive bytes of pubkeys without any
 /// meta-data.  For each account meta, it has a owner_offset field to
 /// access its owner's address in the OwnersBlock.
-impl<'a> OwnersTable<'a> {
+impl OwnersTable {
     /// Add the specified pubkey as the owner into the OwnersWriterTable
     /// if the specified pubkey has not existed in the OwnersWriterTable
     /// yet.  In any case, the function returns its OwnerOffset.
-    pub fn insert(&mut self, pubkey: &'a Pubkey) -> OwnerOffset {
-        let (offset, _existed) = self.owners_set.insert_full(pubkey);
+    pub fn insert(&mut self, pubkey: &Pubkey) -> OwnerOffset {
+        let (offset, _existed) = self.owners_set.insert_full(*pubkey);
 
         OwnerOffset(offset as u32)
     }

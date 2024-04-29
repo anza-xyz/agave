@@ -10,7 +10,8 @@ use {
         ic_logger_msg, ic_msg,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
-            LoadProgramMetrics, LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET,
+            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
         stable_log,
@@ -68,12 +69,12 @@ pub fn load_program_from_bytes(
     deployment_slot: Slot,
     program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
     reloading: bool,
-) -> Result<LoadedProgram, InstructionError> {
+) -> Result<ProgramCacheEntry, InstructionError> {
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
     let loaded_program = if reloading {
         // Safety: this is safe because the program is being reloaded in the cache.
         unsafe {
-            LoadedProgram::reload(
+            ProgramCacheEntry::reload(
                 loader_key,
                 program_runtime_environment,
                 deployment_slot,
@@ -84,7 +85,7 @@ pub fn load_program_from_bytes(
             )
         }
     } else {
-        LoadedProgram::new(
+        ProgramCacheEntry::new(
             loader_key,
             program_runtime_environment,
             deployment_slot,
@@ -450,14 +451,13 @@ pub fn process_instruction_inner(
 
     executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     match &executor.program {
-        LoadedProgramType::FailedVerification(_)
-        | LoadedProgramType::Closed
-        | LoadedProgramType::DelayVisibility => {
+        ProgramCacheEntryType::FailedVerification(_)
+        | ProgramCacheEntryType::Closed
+        | ProgramCacheEntryType::DelayVisibility => {
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn std::error::Error>)
         }
-        LoadedProgramType::LegacyV0(executable) => execute(executable, invoke_context),
-        LoadedProgramType::LegacyV1(executable) => execute(executable, invoke_context),
+        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
         _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -1111,9 +1111,10 @@ fn process_loader_upgradeable_instruction(
                             let clock = invoke_context.get_sysvar_cache().get_clock()?;
                             invoke_context.programs_modified_by_tx.replenish(
                                 program_key,
-                                Arc::new(LoadedProgram::new_tombstone(
+                                Arc::new(ProgramCacheEntry::new_tombstone(
                                     clock.slot,
-                                    LoadedProgramType::Closed,
+                                    ProgramCacheEntryOwner::LoaderV3,
+                                    ProgramCacheEntryType::Closed,
                                 )),
                             );
                         }
@@ -3759,8 +3760,9 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
-        let program = LoadedProgram {
-            program: LoadedProgramType::Unloaded(env),
+        let program = ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
@@ -3802,8 +3804,9 @@ mod tests {
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
-        let program = LoadedProgram {
-            program: LoadedProgramType::Unloaded(env),
+        let program = ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,

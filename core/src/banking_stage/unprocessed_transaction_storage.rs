@@ -34,7 +34,7 @@ use {
 // multi-iterator change, there's no point in getting larger batches of
 // non-conflicting transactions.
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
-/// Maximum numer of votes a single receive call will accept
+/// Maximum number of votes a single receive call will accept
 const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
 
 #[derive(Debug)]
@@ -153,9 +153,13 @@ fn consume_scan_should_process_packet(
     }
 
     // Try to sanitize the packet
-    let (maybe_sanitized_transaction, sanitization_time_us) = measure_us!(
-        packet.build_sanitized_transaction(&bank.feature_set, bank.vote_only_bank(), bank)
-    );
+    let (maybe_sanitized_transaction, sanitization_time_us) = measure_us!(packet
+        .build_sanitized_transaction(
+            &bank.feature_set,
+            bank.vote_only_bank(),
+            bank,
+            bank.get_reserved_account_keys(),
+        ));
 
     payload
         .slot_metrics_tracker
@@ -770,7 +774,12 @@ impl ThreadLocalUnprocessedPackets {
                 .enumerate()
                 .filter_map(|(packet_index, deserialized_packet)| {
                     deserialized_packet
-                        .build_sanitized_transaction(&bank.feature_set, bank.vote_only_bank(), bank)
+                        .build_sanitized_transaction(
+                            &bank.feature_set,
+                            bank.vote_only_bank(),
+                            bank,
+                            bank.get_reserved_account_keys(),
+                        )
                         .map(|transaction| (transaction, packet_index))
                 })
                 .unzip();
@@ -1000,7 +1009,7 @@ mod tests {
             transaction::Transaction,
         },
         solana_vote_program::{
-            vote_state::VoteStateUpdate, vote_transaction::new_vote_state_update_transaction,
+            vote_state::TowerSync, vote_transaction::new_tower_sync_transaction,
         },
         std::error::Error,
     };
@@ -1207,8 +1216,8 @@ mod tests {
         )?;
         let mut vote = Packet::from_data(
             None,
-            new_vote_state_update_transaction(
-                VoteStateUpdate::default(),
+            new_tower_sync_transaction(
+                TowerSync::default(),
                 Hash::new_unique(),
                 &keypair,
                 &vote_keypair,

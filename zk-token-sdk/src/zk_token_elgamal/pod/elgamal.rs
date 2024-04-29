@@ -2,7 +2,10 @@
 
 #[cfg(not(target_os = "solana"))]
 use {
-    crate::encryption::elgamal::{self as decoded, ElGamalError},
+    crate::{
+        encryption::elgamal::{self as decoded},
+        errors::ElGamalError,
+    },
     curve25519_dalek::ristretto::CompressedRistretto,
 };
 use {
@@ -24,7 +27,7 @@ const ELGAMAL_PUBKEY_MAX_BASE64_LEN: usize = 44;
 pub(crate) const DECRYPT_HANDLE_LEN: usize = RISTRETTO_POINT_LEN;
 
 /// Byte length of an ElGamal ciphertext
-const ELGAMAL_CIPHERTEXT_LEN: usize = PEDERSEN_COMMITMENT_LEN + DECRYPT_HANDLE_LEN;
+pub(crate) const ELGAMAL_CIPHERTEXT_LEN: usize = PEDERSEN_COMMITMENT_LEN + DECRYPT_HANDLE_LEN;
 
 /// Maximum length of a base64 encoded ElGamal ciphertext
 const ELGAMAL_CIPHERTEXT_MAX_BASE64_LEN: usize = 88;

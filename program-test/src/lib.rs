@@ -17,7 +17,7 @@ use {
     solana_bpf_loader_program::serialization::serialize_parameters,
     solana_program_runtime::{
         compute_budget::ComputeBudget, ic_msg, invoke_context::BuiltinFunctionWithContext,
-        loaded_programs::LoadedProgram, stable_log, timings::ExecuteTimings,
+        loaded_programs::ProgramCacheEntry, stable_log, timings::ExecuteTimings,
     },
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -463,7 +463,7 @@ pub fn read_file<P: AsRef<Path>>(path: P) -> Vec<u8> {
 
 pub struct ProgramTest {
     accounts: Vec<(Pubkey, AccountSharedData)>,
-    builtin_programs: Vec<(Pubkey, &'static str, LoadedProgram)>,
+    builtin_programs: Vec<(Pubkey, &'static str, ProgramCacheEntry)>,
     compute_max_units: Option<u64>,
     prefer_bpf: bool,
     deactivate_feature_set: HashSet<Pubkey>,
@@ -728,7 +728,7 @@ impl ProgramTest {
         self.builtin_programs.push((
             program_id,
             program_name,
-            LoadedProgram::new_builtin(0, program_name.len(), builtin_function),
+            ProgramCacheEntry::new_builtin(0, program_name.len(), builtin_function),
         ));
     }
 
@@ -837,8 +837,7 @@ impl ProgramTest {
         let mut builtin_programs = Vec::new();
         std::mem::swap(&mut self.builtin_programs, &mut builtin_programs);
         for (program_id, name, builtin) in builtin_programs.into_iter() {
-            bank.get_transaction_processor()
-                .add_builtin(&bank, program_id, name, builtin);
+            bank.add_builtin(program_id, name, builtin);
         }
 
         for (address, account) in self.accounts.iter() {
@@ -1155,7 +1154,9 @@ impl ProgramTestContext {
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
         let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
 
-        bank_forks.set_root(pre_warp_slot, &abs_request_sender, Some(pre_warp_slot));
+        bank_forks
+            .set_root(pre_warp_slot, &abs_request_sender, Some(pre_warp_slot))
+            .unwrap();
 
         // The call to `set_root()` above will send an EAH request.  Need to intercept and handle
         // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
@@ -1217,11 +1218,13 @@ impl ProgramTestContext {
         bank.fill_bank_with_ticks_for_tests();
         let pre_warp_slot = bank.slot();
 
-        bank_forks.set_root(
-            pre_warp_slot,
-            &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-            Some(pre_warp_slot),
-        );
+        bank_forks
+            .set_root(
+                pre_warp_slot,
+                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
+                Some(pre_warp_slot),
+            )
+            .unwrap();
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;

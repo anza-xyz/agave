@@ -84,14 +84,39 @@ a `TransactionBatchProcessor` object the client need to specify the
 `slot`, `epoch`, `epoch_schedule`, `fee_structure`, `runtime_config`,
 and `program_cache`.
 
+- `slot: Slot` is a u64 value representing the ordinal number of a
+    particular blockchain state in context of which the transactions
+    are executed. This value is used to locate the on-chain program
+    versions used in the transaction execution.
+- `epoch: Epoch` is a u64 value representing the ordinal number of
+    a Solana epoch, in which the slot was created. This is another
+    index used to locate the onchain programs used in the execution of
+    transactions in the batch.
+- `epoch_schedule: EpochSchedule` is a struct that contains
+    information about epoch configuration, such as number of slots per
+    epoch, etc. TransactionBatchProcessor needs an instance of
+    EpochSchedule to obtain the first slot in the epoch in which the
+    transactions batch is being executed. This slot is sometimes
+    required for updating the information about the slot when a program
+    account has been accessed most recently. This is needed for
+    program cache bookkeeping.
+- `fee_structure: FeeStructure` an instance of `FeeStructure` is
+    needed to check the validity of every transaction in a batch when
+    the transaction accounts are being loaded and checked for
+    compliance with required fees for transaction execution.
+- `runtime_config: Arc<RuntimeConfig>` is a reference to a
+    RuntimeConfig struct instance. The `RuntimeConfig` is a collection
+    of fields that control parameters of runtime, such as compute
+    budget, the maximal size of log messages in bytes, etc.
+- `program_cache: Arc<RwLock<ProgramCache<FG>>>` is a reference to
+    a ProgramCache instance. All on chain programs used in transaction
+    batch execution are loaded from the program cache.
+
+In addition, `TransactionBatchProcessor` needs an instance of
+`SysvarCache` and a set of pubkeys of builtin program IDs.
+
 The main entry point to the SVM is the method
-`load_and_execute_sanitized_transactions`. In addition
-`TransactionBatchProcessor` provides utility methods
-    - `load_program_with_pubkey`, used in Bank to load program with a
-      specific pubkey from loaded programs cache, and update the program's
-      access slot as a side-effect;
-    - `program_modification_slot`, used in Bank to find the slot in
-      which the program was most recently modified.
+`load_and_execute_sanitized_transactions`.
 
 The method `load_and_execute_sanitized_transactions` takes the
 following arguments
@@ -164,7 +189,14 @@ Steps of `load_and_execute_sanitized_transactions`
 1. Steps of preparation for execution
    - filter executable program accounts and build program accounts map (explain)
    - add builtin programs to program accounts map
-   - replenish program cache using the program accounts map (explain)
+   - replenish program cache using the program accounts map
+        - Gather all required programs to load from the cache.
+        - Lock the global program cache and initialize the local program cache.
+        - Perform loading tasks to load all required programs from the cache,
+          loading, verifying, and compiling (where necessary) each program.
+        - A helper module - `program_loader` - provides utilities for loading
+          programs from on-chain, namely `load_program_with_pubkey`.
+        - Return the replenished local program cache.
 
 2. Load accounts (call to `load_accounts` function)
    - For each `SanitizedTransaction` and `TransactionCheckResult`, we:
@@ -198,12 +230,12 @@ Steps of `load_and_execute_sanitized_transactions`
    5. Make two local variables that will be used as output parameters
       of `MessageProcessor::process_message`. One will contain the
       number of executed units (the number of compute unites consumed
-      in the transaction). Another is a container of `LoadedProgramsForTxBatch`.
+      in the transaction). Another is a container of `ProgramCacheForTxBatch`.
       The latter is initialized with the slot, and
       the clone of environments of `programs_loaded_for_tx_batch`
-         - `programs_loaded_for_tx_batch` contains a reference to all the `LoadedProgram`s
+         - `programs_loaded_for_tx_batch` contains a reference to all the `ProgramCacheEntry`s
             necessary for the transaction. It maintains an `Arc` to the programs in the global
-            `LoadedPrograms` data structure.
+            `ProgramCacheEntrys` data structure.
       6. Call `MessageProcessor::process_message` to execute the
       transaction. `MessageProcessor` is contained in
       solana-program-runtime crate. The result of processing message
