@@ -18,7 +18,7 @@ use {
         loader_v4::{self, LoaderV4State, LoaderV4Status},
         pubkey::Pubkey,
     },
-    std::sync::Arc,
+    std::{collections::HashMap, sync::Arc},
 };
 
 #[derive(Debug)]
@@ -68,8 +68,13 @@ pub(crate) fn load_program_from_bytes(
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
+    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
 ) -> Option<ProgramAccountLoadResult> {
-    let program_account = callbacks.get_account_shared_data(pubkey)?;
+    let (program_account, _slot) = if let Some(found) = accounts_map.get(pubkey) {
+        found.clone()
+    } else {
+        callbacks.load_account_with(pubkey, |_| false)?
+    };
 
     if loader_v4::check_id(program_account.owner()) {
         return Some(
@@ -121,6 +126,8 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
+///
+/// 'accounts_map' contains a cache of the accounts that has been loaded before during transaction accounts filtering.
 pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph>(
     callbacks: &CB,
     program_cache: &ProgramCache<FG>,
@@ -129,6 +136,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph
     effective_epoch: Epoch,
     epoch_schedule: &EpochSchedule,
     reload: bool,
+    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
 ) -> Option<Arc<ProgramCacheEntry>> {
     let environments = program_cache.get_environments_for_epoch(effective_epoch);
     let mut load_program_metrics = LoadProgramMetrics {
@@ -136,7 +144,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph
         ..LoadProgramMetrics::default()
     };
 
-    let mut loaded_program = match load_program_accounts(callbacks, pubkey)? {
+    let mut loaded_program = match load_program_accounts(callbacks, pubkey, accounts_map)? {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
             ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
         ),
@@ -286,6 +294,15 @@ mod tests {
             }
         }
 
+        fn load_account_with(
+            &self,
+            pubkey: &Pubkey,
+            _callback: impl FnMut(&AccountSharedData) -> bool,
+        ) -> Option<(AccountSharedData, Slot)> {
+            let account = self.account_shared_data.borrow().get(pubkey).cloned()?;
+            Some((account, 100))
+        }
+
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.account_shared_data.borrow().get(pubkey).cloned()
         }
@@ -316,7 +333,7 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let key = Pubkey::new_unique();
 
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
         assert!(result.is_none());
 
         let mut account_data = AccountSharedData::default();
@@ -330,7 +347,7 @@ mod tests {
             .borrow_mut()
             .insert(key, account_data.clone());
 
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
         assert!(matches!(
             result,
             Some(ProgramAccountLoadResult::InvalidAccountData(_))
@@ -342,7 +359,7 @@ mod tests {
             .borrow_mut()
             .insert(key, account_data);
 
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
 
         assert!(matches!(
             result,
@@ -361,7 +378,7 @@ mod tests {
             .borrow_mut()
             .insert(key, account_data.clone());
 
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
         assert!(matches!(
             result,
             Some(ProgramAccountLoadResult::InvalidAccountData(_))
@@ -372,7 +389,7 @@ mod tests {
             .account_shared_data
             .borrow_mut()
             .insert(key, account_data.clone());
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
         assert!(matches!(
             result,
             Some(ProgramAccountLoadResult::InvalidAccountData(_))
@@ -394,7 +411,7 @@ mod tests {
             .borrow_mut()
             .insert(key, account_data.clone());
 
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
 
         match result {
             Some(ProgramAccountLoadResult::ProgramOfLoaderV4(data, slot)) => {
@@ -417,7 +434,7 @@ mod tests {
             .borrow_mut()
             .insert(key, account_data.clone());
 
-        let result = load_program_accounts(&mock_bank, &key);
+        let result = load_program_accounts(&mock_bank, &key, &HashMap::default());
         match result {
             Some(ProgramAccountLoadResult::ProgramOfLoaderV1(data))
             | Some(ProgramAccountLoadResult::ProgramOfLoaderV2(data)) => {
@@ -456,7 +473,7 @@ mod tests {
             .borrow_mut()
             .insert(key2, account_data2.clone());
 
-        let result = load_program_accounts(&mock_bank, &key1);
+        let result = load_program_accounts(&mock_bank, &key1, &HashMap::default());
 
         match result {
             Some(ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, slot)) => {
@@ -532,6 +549,7 @@ mod tests {
             50,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
         assert!(result.is_none());
     }
@@ -558,6 +576,7 @@ mod tests {
             20,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
 
         let loaded_program = ProgramCacheEntry::new_tombstone(
@@ -599,6 +618,7 @@ mod tests {
             20,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0,
@@ -631,6 +651,7 @@ mod tests {
             20,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
 
         let environments = ProgramRuntimeEnvironments::default();
@@ -687,6 +708,7 @@ mod tests {
             0,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0,
@@ -729,6 +751,7 @@ mod tests {
             20,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
 
         let data = account_data.data();
@@ -781,6 +804,7 @@ mod tests {
             0,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
             0,
@@ -819,6 +843,7 @@ mod tests {
             20,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
 
         let data = account_data.data()[LoaderV4State::program_data_offset()..].to_vec();
@@ -869,6 +894,7 @@ mod tests {
             20,
             &batch_processor.epoch_schedule,
             false,
+            &HashMap::default(),
         );
 
         let slot = batch_processor.epoch_schedule.get_first_slot_in_epoch(20);

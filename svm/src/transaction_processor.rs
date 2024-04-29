@@ -188,7 +188,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         limit_to_load_programs: bool,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
         let mut program_cache_time = Measure::start("program_cache");
-        // TODO: pass `_accounts_map` down to load_program and load_account.
         let (mut program_accounts_map, accounts_map) = self.filter_executable_program_accounts(
             callbacks,
             sanitized_txs,
@@ -361,8 +360,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             Entry::Vacant(prog_entry) => {
                                 if self.program_cache.read().unwrap().contains_key(key) {
                                     // Found in program cache, must be a program_account, insert into program_map `optimistically`.
-                                    // Note that the account could be `invalid`. Those accounts will be skipped in the following
-                                    // processing by function - `replenish_program_cache`.
+                                    // Note that the account could be `invalid`, i.e. closed, tombstoned. Those accounts will be
+                                    // checked and skipped in future processing by function - `replenish_program_cache`.
                                     prog_entry.insert(1);
                                 } else {
                                     match accounts_map.entry(*key) {
@@ -483,7 +482,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     accounts_map,
                 ) {
                     // We are expecting that the program account can be NOT found. `missing_program`, populated from `program_accounts_map`, which
-                    // may contain invalid program account. If the program account is NOT found, we need to skip this account and continue with the loop.
+                    // may contain invalid program account, i.e. closed, tombstoned. If the program account is NOT found, we need to skip this account
+                    // and continue with the loop.
                     Some(program) => {
                         program.tx_usage_counter.store(count, Ordering::Relaxed);
                         program_to_store = Some((key, program));
@@ -1113,7 +1113,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1124,12 +1123,15 @@ mod tests {
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
         account_maps.insert(key, 4);
 
-        batch_processor.replenish_program_cache(
+        let cache = batch_processor.replenish_program_cache(
             &mock_bank,
             &account_maps,
             true,
             &HashMap::default(),
         );
+
+        // assert that we skip `nonexistent` account.
+        assert!(cache.find(&key).is_none());
     }
 
     #[test]
