@@ -740,12 +740,12 @@ impl VoteState {
     /// Iterates VoteState::epoch_credits in reverse order, so will be most
     /// performant for a recent epoch. Returns zero if epoch cannot be found.
     pub fn credits_for_recent_epoch(&self, desired_epoch: Epoch) -> u64 {
-        for (epoch, credits, _prev_credits) in self.epoch_credits.iter().rev() {
-            if *epoch == desired_epoch {
-                return *credits;
-            }
-        }
-        0
+        self.epoch_credits
+            .iter()
+            .rev()
+            .find(|(epoch, _, _)| *epoch == desired_epoch)
+            .map(|(_, credits, _)| *credits)
+            .unwrap_or(0)
     }
 
     /// Number of "credits" owed to this account from the mining pool on a per-epoch basis,
