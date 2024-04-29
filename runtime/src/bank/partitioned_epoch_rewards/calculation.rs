@@ -631,7 +631,7 @@ mod tests {
         let expected_rewards = 100_000_000_000;
 
         let calculated_rewards = bank.calculate_validator_rewards(
-            1,
+            0,
             expected_rewards,
             null_tracer(),
             &thread_pool,
