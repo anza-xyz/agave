@@ -360,7 +360,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             }
                             Entry::Vacant(prog_entry) => {
                                 if self.program_cache.read().unwrap().contains_key(key) {
-                                    // Found in program cache, must be a program_account, insert into program_map.
+                                    // Found in program cache, must be a program_account, insert into program_map `optimistically`.
+                                    // Note that the account could be `invalid`. Those accounts will be skipped in the following
+                                    // processing by function - `replenish_program_cache`.
                                     prog_entry.insert(1);
                                 } else {
                                     match accounts_map.entry(*key) {
@@ -470,7 +472,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             if let Some((key, count)) = program_to_load {
                 // Load, verify and compile one program.
-                let program = load_program_with_pubkey(
+                match load_program_with_pubkey(
                     callback,
                     &self.program_cache.read().unwrap(),
                     &key,
@@ -479,10 +481,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &self.epoch_schedule,
                     false,
                     accounts_map,
-                )
-                .expect("called load_program_with_pubkey() with nonexistent account");
-                program.tx_usage_counter.store(count, Ordering::Relaxed);
-                program_to_store = Some((key, program));
+                ) {
+                    // We are expecting that the program account can be NOT found. `missing_program`, populated from `program_accounts_map`, which
+                    // may contain invalid program account. If the program account is NOT found, we need to skip this account and continue with the loop.
+                    Some(program) => {
+                        program.tx_usage_counter.store(count, Ordering::Relaxed);
+                        program_to_store = Some((key, program));
+                    }
+                    None => {
+                        missing_programs.retain(|x| x.0 != key);
+                        continue;
+                    }
+                }
             } else if missing_programs.is_empty() {
                 break;
             } else {
