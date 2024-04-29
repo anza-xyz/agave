@@ -7647,6 +7647,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "crossbeam-channel",
  "log",
  "prost",
  "prost-build",
@@ -7657,6 +7658,7 @@ dependencies = [
  "rustc_version 0.4.0",
  "serial_test",
  "solana-accounts-db",
+ "solana-core",
  "solana-entry",
  "solana-gossip",
  "solana-ledger",

@@ -28,9 +28,11 @@ solana-vote-program = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+crossbeam-channel = { worksapce = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-core = { workspace = true }
 solana-entry = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-streamer = { workspace = true }

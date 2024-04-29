@@ -6,7 +6,7 @@ use {
             LastVotedForkSlotsAggregate, LastVotedForkSlotsFinalResult,
         },
         solana::wen_restart_proto::{
-            self, HeaviestFork, LastVotedForkSlotsAggregateFinal,
+            self, GenerateSnapshotRecord, HeaviestFork, LastVotedForkSlotsAggregateFinal,
             LastVotedForkSlotsAggregateRecord, LastVotedForkSlotsRecord, State as RestartState,
             WenRestartProgress,
         },
@@ -27,8 +27,18 @@ use {
     },
     solana_program::{clock::Slot, hash::Hash},
     solana_program_runtime::timings::ExecuteTimings,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::timing::timestamp,
+    solana_runtime::{
+        accounts_background_service::AbsRequestSender,
+        bank::Bank,
+        bank_forks::BankForks,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils::bank_to_incremental_snapshot_archive,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils::{
+            get_highest_full_snapshot_archive_slot, get_incremental_snapshot_archives,
+        },
+    },
+    solana_sdk::{shred_version::compute_shred_version, timing::timestamp},
     solana_vote_program::vote_state::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
@@ -53,6 +63,8 @@ const REPAIR_THRESHOLD: f64 = 0.42;
 // made regarding how much non-conforming/offline validators the
 // algorithm can tolerate.
 const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
+
+const WAIT_FOR_SNAPSHOT_LOOP_SLEEP_IN_MS: u64 = 10_000;
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -134,6 +146,10 @@ pub(crate) enum WenRestartProgressInternalState {
     FindHeaviestFork {
         aggregate_final_result: LastVotedForkSlotsFinalResult,
         my_heaviest_fork: Option<HeaviestFork>,
+    },
+    GenerateSnapshot {
+        new_root_slot: Slot,
+        my_snapshot: Option<GenerateSnapshotRecord>,
     },
     Done,
 }
@@ -327,6 +343,75 @@ pub(crate) fn find_heaviest_fork(
     Ok((heaviest_fork_slot, heaviest_fork_bankhash))
 }
 
+// Given the agreed upon slot, make corresponding bank root and generate snapshot.
+pub(crate) fn generate_snapshot(
+    bank_forks: Arc<RwLock<BankForks>>,
+    snapshot_config: &SnapshotConfig,
+    accounts_background_request_sender: &AbsRequestSender,
+    genesis_config_hash: Hash,
+    new_root_slot: Slot,
+    exit: &Arc<AtomicBool>,
+) -> Result<GenerateSnapshotRecord> {
+    let new_root_bank;
+    {
+        let mut my_bank_forks = bank_forks.write().unwrap();
+        let old_root_bank = my_bank_forks.root_bank();
+        old_root_bank.register_hard_fork(new_root_slot);
+        new_root_bank = my_bank_forks.get(new_root_slot).unwrap();
+        new_root_bank.rehash();
+        // Only root banks can have snapshots generated.
+        my_bank_forks.set_root(
+            new_root_slot,
+            accounts_background_request_sender,
+            Some(new_root_slot),
+        );
+    }
+    // There can't be more than one EAH calculation in progress. If new_root is generated
+    // within the EAH window (1/4 epoch to 3/4 epoch), the following function will wait for
+    // EAH calculation to finish. So if we trigger another EAH when generating snapshots
+    // we won't hit a panic.
+    let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
+    // Trigger incremental snapshot generation.
+    bank_to_incremental_snapshot_archive(
+        snapshot_config.bank_snapshots_dir.clone(),
+        &new_root_bank,
+        get_highest_full_snapshot_archive_slot(snapshot_config.full_snapshot_archives_dir.clone())
+            .unwrap(),
+        Some(snapshot_config.snapshot_version),
+        snapshot_config.full_snapshot_archives_dir.clone(),
+        snapshot_config.incremental_snapshot_archives_dir.clone(),
+        snapshot_config.archive_format,
+        snapshot_config.maximum_full_snapshot_archives_to_retain,
+        snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+    )?;
+    let new_root_bank_hash = new_root_bank.hash();
+    let new_shred_version =
+        compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
+    info!(
+        "waiting for new snapshot to be generated on {}",
+        new_root_slot
+    );
+    loop {
+        if exit.load(Ordering::Relaxed) {
+            return Err(WenRestartError::Exiting.into());
+        }
+        for archive_info in get_incremental_snapshot_archives(
+            snapshot_config.incremental_snapshot_archives_dir.clone(),
+        ) {
+            if archive_info.slot() == new_root_slot {
+                info!("wen_restart snapshot generated {}", new_root_slot);
+                return Ok(GenerateSnapshotRecord {
+                    path: archive_info.path().display().to_string(),
+                    slot: new_root_slot,
+                    bankhash: new_root_bank_hash.to_string(),
+                    shred_version: new_shred_version as u32,
+                });
+            }
+        }
+        sleep(Duration::from_millis(WAIT_FOR_SNAPSHOT_LOOP_SLEEP_IN_MS));
+    }
+}
+
 // Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
 fn find_bankhash_of_heaviest_fork(
     heaviest_fork_slot: Slot,
@@ -405,18 +490,26 @@ fn find_bankhash_of_heaviest_fork(
     Ok(parent_bank.hash())
 }
 
-pub fn wait_for_wen_restart(
-    wen_restart_path: &PathBuf,
-    last_vote: VoteTransaction,
-    blockstore: Arc<Blockstore>,
-    cluster_info: Arc<ClusterInfo>,
-    bank_forks: Arc<RwLock<BankForks>>,
-    wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
-    wait_for_supermajority_threshold_percent: u64,
-    exit: Arc<AtomicBool>,
-) -> Result<()> {
-    let (mut state, mut progress) =
-        initialize(wen_restart_path, last_vote.clone(), blockstore.clone())?;
+pub struct WenRestartConfig {
+    pub wen_restart_path: PathBuf,
+    pub last_vote: VoteTransaction,
+    pub blockstore: Arc<Blockstore>,
+    pub cluster_info: Arc<ClusterInfo>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
+    pub wait_for_supermajority_threshold_percent: u64,
+    pub snapshot_config: SnapshotConfig,
+    pub accounts_background_request_sender: AbsRequestSender,
+    pub genesis_config_hash: Hash,
+    pub exit: Arc<AtomicBool>,
+}
+
+pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
+    let (mut state, mut progress) = initialize(
+        &config.wen_restart_path,
+        config.last_vote.clone(),
+        config.blockstore.clone(),
+    )?;
     loop {
         state = match state {
             WenRestartProgressInternalState::Init {
@@ -424,7 +517,7 @@ pub fn wait_for_wen_restart(
                 last_vote_bankhash,
             } => {
                 progress.my_last_voted_fork_slots = Some(send_restart_last_voted_fork_slots(
-                    cluster_info.clone(),
+                    config.cluster_info.clone(),
                     &last_voted_fork_slots,
                     last_vote_bankhash,
                 )?);
@@ -440,14 +533,14 @@ pub fn wait_for_wen_restart(
                 let final_result = match aggregate_final_result {
                     Some(result) => result,
                     None => aggregate_restart_last_voted_fork_slots(
-                        wen_restart_path,
-                        wait_for_supermajority_threshold_percent,
-                        cluster_info.clone(),
+                        &config.wen_restart_path,
+                        config.wait_for_supermajority_threshold_percent,
+                        config.cluster_info.clone(),
                         &last_voted_fork_slots,
-                        bank_forks.clone(),
-                        blockstore.clone(),
-                        wen_restart_repair_slots.clone().unwrap(),
-                        exit.clone(),
+                        config.bank_forks.clone(),
+                        config.blockstore.clone(),
+                        config.wen_restart_repair_slots.clone().unwrap(),
+                        config.exit.clone(),
                         &mut progress,
                     )?,
                 };
@@ -466,9 +559,9 @@ pub fn wait_for_wen_restart(
                         let total_active_stake = aggregate_final_result.total_active_stake;
                         let (slot, bankhash) = find_heaviest_fork(
                             aggregate_final_result.clone(),
-                            bank_forks.clone(),
-                            blockstore.clone(),
-                            exit.clone(),
+                            config.bank_forks.clone(),
+                            config.blockstore.clone(),
+                            config.exit.clone(),
                         )?;
                         info!(
                             "Heaviest fork found: slot: {}, bankhash: {}",
@@ -486,9 +579,33 @@ pub fn wait_for_wen_restart(
                     my_heaviest_fork: Some(heaviest_fork),
                 }
             }
+            WenRestartProgressInternalState::GenerateSnapshot {
+                new_root_slot,
+                my_snapshot,
+            } => {
+                let snapshot_record = match my_snapshot {
+                    Some(record) => record,
+                    None => generate_snapshot(
+                        config.bank_forks.clone(),
+                        &config.snapshot_config,
+                        &config.accounts_background_request_sender,
+                        config.genesis_config_hash,
+                        new_root_slot,
+                        &config.exit,
+                    )?,
+                };
+                WenRestartProgressInternalState::GenerateSnapshot {
+                    new_root_slot,
+                    my_snapshot: Some(snapshot_record),
+                }
+            }
             WenRestartProgressInternalState::Done => return Ok(()),
         };
-        state = increment_and_write_wen_restart_records(wen_restart_path, state, &mut progress)?;
+        state = increment_and_write_wen_restart_records(
+            &config.wen_restart_path,
+            state,
+            &mut progress,
+        )?;
     }
 }
 
@@ -535,11 +652,26 @@ pub(crate) fn increment_and_write_wen_restart_records(
             my_heaviest_fork,
         } => {
             if let Some(my_heaviest_fork) = my_heaviest_fork {
-                progress.set_state(RestartState::Done);
+                progress.set_state(RestartState::GenerateSnapshot);
                 progress.my_heaviest_fork = Some(my_heaviest_fork.clone());
-                WenRestartProgressInternalState::Done
+                WenRestartProgressInternalState::GenerateSnapshot {
+                    new_root_slot: my_heaviest_fork.slot,
+                    my_snapshot: None,
+                }
             } else {
                 return Err(WenRestartError::UnexpectedState(RestartState::HeaviestFork).into());
+            }
+        }
+        WenRestartProgressInternalState::GenerateSnapshot {
+            new_root_slot: _,
+            my_snapshot,
+        } => {
+            if let Some(my_snapshot) = my_snapshot {
+                progress.set_state(RestartState::Done);
+                progress.my_snapshot = Some(my_snapshot.clone());
+                WenRestartProgressInternalState::Done
+            } else {
+                return Err(WenRestartError::UnexpectedState(RestartState::Done).into());
             }
         }
         WenRestartProgressInternalState::Done => {
@@ -687,7 +819,12 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         assert_matches::assert_matches,
+        crossbeam_channel::unbounded,
         solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        solana_core::{
+            accounts_hash_verifier::AccountsHashVerifier,
+            snapshot_packager_service::SnapshotPackagerService,
+        },
         solana_entry::entry::create_ticks,
         solana_gossip::{
             cluster_info::ClusterInfo,
@@ -707,8 +844,15 @@ mod tests {
             hash::Hash,
             vote::state::{Vote, VoteStateUpdate},
         },
-        solana_runtime::genesis_utils::{
-            create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+        solana_runtime::{
+            accounts_background_service::{
+                AbsRequestHandlers, AccountsBackgroundService, PrunedBanksRequestHandler,
+                SnapshotRequestHandler,
+            },
+            genesis_utils::{
+                create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
+            },
+            snapshot_bank_utils::bank_to_full_snapshot_archive,
         },
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -761,6 +905,7 @@ mod tests {
         pub last_voted_fork_slots: Vec<Slot>,
         pub wen_restart_proto_path: PathBuf,
         pub last_blockhash: Hash,
+        pub genesis_config_hash: Hash,
     }
 
     fn insert_slots_into_blockstore(
@@ -851,6 +996,7 @@ mod tests {
             last_voted_fork_slots,
             wen_restart_proto_path,
             last_blockhash,
+            genesis_config_hash: genesis_config.hash(),
         }
     }
 
@@ -902,24 +1048,26 @@ mod tests {
         last_vote_bankhash: Hash,
         expected_progress: WenRestartProgress,
     ) {
-        let wen_restart_proto_path_clone = test_state.wen_restart_proto_path.clone();
         // continue normally after the error, we should be good.
         let exit = Arc::new(AtomicBool::new(false));
-        let exit_clone = exit.clone();
         let last_vote_slot: Slot = test_state.last_voted_fork_slots[0];
+        let wen_restart_config = WenRestartConfig {
+            wen_restart_path: test_state.wen_restart_proto_path.clone(),
+            last_vote: VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
+            blockstore: test_state.blockstore.clone(),
+            cluster_info: test_state.cluster_info.clone(),
+            bank_forks: test_state.bank_forks.clone(),
+            wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
+            wait_for_supermajority_threshold_percent: 80,
+            snapshot_config: SnapshotConfig::default(),
+            accounts_background_request_sender: AbsRequestSender::default(),
+            genesis_config_hash: test_state.genesis_config_hash,
+            exit: exit.clone(),
+        };
         let wen_restart_thread_handle = Builder::new()
             .name("solana-wen-restart".to_string())
             .spawn(move || {
-                let _ = wait_for_wen_restart(
-                    &wen_restart_proto_path_clone,
-                    VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
-                    test_state.blockstore,
-                    test_state.cluster_info,
-                    test_state.bank_forks,
-                    Some(Arc::new(RwLock::new(Vec::new()))),
-                    80,
-                    exit_clone,
-                );
+                let _ = wait_for_wen_restart(wen_restart_config);
             })
             .unwrap();
         wait_on_expected_progress_with_timeout(
@@ -937,28 +1085,105 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let wen_restart_repair_slots = Some(Arc::new(RwLock::new(Vec::new())));
         let test_state = wen_restart_test_init(&ledger_path);
-        let wen_restart_proto_path_clone = test_state.wen_restart_proto_path.clone();
-        let cluster_info_clone = test_state.cluster_info.clone();
         let last_vote_slot = test_state.last_voted_fork_slots[0];
         let last_vote_bankhash = Hash::new_unique();
         let expected_slots_to_repair: Vec<Slot> =
             (last_vote_slot + 1..last_vote_slot + 3).collect();
-        let blockstore_clone = test_state.blockstore.clone();
-        let bank_forks_clone = test_state.bank_forks.clone();
+
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_config = SnapshotConfig {
+            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .as_ref()
+                .to_path_buf(),
+            ..Default::default()
+        };
+        test_state
+            .bank_forks
+            .write()
+            .unwrap()
+            .set_snapshot_config(Some(snapshot_config.clone()));
+
+        let exit = Arc::new(AtomicBool::new(false));
+
+        // Set up snapshot service.
+        let (snapshot_package_sender, snapshot_package_receiver) = unbounded();
+        let _ = SnapshotPackagerService::new(
+            snapshot_package_sender.clone(),
+            snapshot_package_receiver,
+            None,
+            exit.clone(),
+            test_state.cluster_info.clone(),
+            snapshot_config.clone(),
+            false,
+        );
+        let (accounts_package_sender, accounts_package_receiver) = unbounded();
+        let _ = AccountsHashVerifier::new(
+            accounts_package_sender.clone(),
+            accounts_package_receiver,
+            Some(snapshot_package_sender),
+            exit.clone(),
+            snapshot_config.clone(),
+        );
+
+        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let accounts_background_request_sender =
+            AbsRequestSender::new(snapshot_request_sender.clone());
+        let snapshot_request_handler = SnapshotRequestHandler {
+            snapshot_config: snapshot_config.clone(),
+            snapshot_request_sender,
+            snapshot_request_receiver,
+            accounts_package_sender,
+        };
+        let pruned_banks_receiver =
+            AccountsBackgroundService::setup_bank_drop_callback(test_state.bank_forks.clone());
+        let pruned_banks_request_handler = PrunedBanksRequestHandler {
+            pruned_banks_receiver,
+        };
+        let _ = AccountsBackgroundService::new(
+            test_state.bank_forks.clone(),
+            exit.clone(),
+            AbsRequestHandlers {
+                snapshot_request_handler,
+                pruned_banks_request_handler,
+            },
+            false,
+            Some(0),
+        );
+
+        // Generate full snapshot for bank 0.
+        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
+        // Trigger full snapshot generation on old root bank.
+        let _ = bank_to_full_snapshot_archive(
+            snapshot_config.bank_snapshots_dir.clone(),
+            &old_root_bank,
+            Some(snapshot_config.snapshot_version),
+            snapshot_config.full_snapshot_archives_dir.clone(),
+            snapshot_config.incremental_snapshot_archives_dir.clone(),
+            snapshot_config.archive_format,
+            snapshot_config.maximum_full_snapshot_archives_to_retain,
+            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+        );
+        let wen_restart_config = WenRestartConfig {
+            wen_restart_path: test_state.wen_restart_proto_path.clone(),
+            last_vote: VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
+            blockstore: test_state.blockstore.clone(),
+            cluster_info: test_state.cluster_info.clone(),
+            bank_forks: test_state.bank_forks.clone(),
+            wen_restart_repair_slots: wen_restart_repair_slots.clone(),
+            wait_for_supermajority_threshold_percent: 80,
+            snapshot_config,
+            accounts_background_request_sender,
+            genesis_config_hash: test_state.genesis_config_hash,
+            exit: exit.clone(),
+        };
         let wen_restart_thread_handle = Builder::new()
             .name("solana-wen-restart".to_string())
             .spawn(move || {
-                assert!(wait_for_wen_restart(
-                    &wen_restart_proto_path_clone,
-                    VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
-                    blockstore_clone,
-                    cluster_info_clone,
-                    bank_forks_clone,
-                    wen_restart_repair_slots.clone(),
-                    80,
-                    Arc::new(AtomicBool::new(false)),
-                )
-                .is_ok());
+                assert!(wait_for_wen_restart(wen_restart_config).is_ok());
             })
             .unwrap();
         let mut rng = rand::thread_rng();
@@ -1001,6 +1226,7 @@ mod tests {
         );
 
         let _ = wen_restart_thread_handle.join();
+        info!("Thread joined");
         let progress = read_wen_restart_records(&test_state.wen_restart_proto_path).unwrap();
         let progress_start_time = progress
             .my_last_voted_fork_slots
@@ -1040,8 +1266,19 @@ mod tests {
                 }),
                 my_heaviest_fork: Some(HeaviestFork {
                     slot: expected_heaviest_fork_slot,
-                    bankhash: expected_heaviest_fork_bankhash.to_string(),
+                    bankhash: progress
+                        .my_heaviest_fork
+                        .as_ref()
+                        .unwrap()
+                        .bankhash
+                        .to_string(),
                     total_active_stake: 900
+                }),
+                my_snapshot: Some(GenerateSnapshotRecord {
+                    slot: expected_heaviest_fork_slot,
+                    bankhash: expected_heaviest_fork_bankhash.to_string(),
+                    shred_version: progress.my_snapshot.as_ref().unwrap().shred_version,
+                    path: progress.my_snapshot.as_ref().unwrap().path.clone(),
                 }),
             }
         );
@@ -1399,6 +1636,17 @@ mod tests {
                 total_active_stake: 900,
             }),
         });
+        let my_heaviest_fork = Some(HeaviestFork {
+            slot: 1,
+            bankhash: Hash::default().to_string(),
+            total_active_stake: 900,
+        });
+        let my_snapshot = Some(GenerateSnapshotRecord {
+            slot: 1,
+            bankhash: Hash::new_unique().to_string(),
+            path: "snapshot_1".to_string(),
+            shred_version: 2,
+        });
         let expected_slots_stake_map: HashMap<Slot, u64> =
             vec![(0, 900), (1, 800)].into_iter().collect();
         for (entrance_state, exit_state, entrance_progress, exit_progress) in [
@@ -1462,7 +1710,10 @@ mod tests {
                         total_active_stake: 900,
                     }),
                 },
-                WenRestartProgressInternalState::Done,
+                WenRestartProgressInternalState::GenerateSnapshot {
+                    new_root_slot: 1,
+                    my_snapshot: None,
+                },
                 WenRestartProgress {
                     state: RestartState::HeaviestFork.into(),
                     my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
@@ -1470,14 +1721,32 @@ mod tests {
                     ..Default::default()
                 },
                 WenRestartProgress {
+                    state: RestartState::GenerateSnapshot.into(),
+                    my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
+                    last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
+                    my_heaviest_fork: my_heaviest_fork.clone(),
+                    ..Default::default()
+                },
+            ),
+            (
+                WenRestartProgressInternalState::GenerateSnapshot {
+                    new_root_slot: 1,
+                    my_snapshot: my_snapshot.clone(),
+                },
+                WenRestartProgressInternalState::Done,
+                WenRestartProgress {
+                    state: RestartState::HeaviestFork.into(),
+                    my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
+                    last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
+                    my_heaviest_fork: my_heaviest_fork.clone(),
+                    ..Default::default()
+                },
+                WenRestartProgress {
                     state: RestartState::Done.into(),
                     my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
                     last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
-                    my_heaviest_fork: Some(HeaviestFork {
-                        slot: 1,
-                        bankhash: Hash::default().to_string(),
-                        total_active_stake: 900,
-                    }),
+                    my_heaviest_fork: my_heaviest_fork.clone(),
+                    my_snapshot: my_snapshot.clone(),
                 },
             ),
         ] {
