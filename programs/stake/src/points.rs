@@ -115,8 +115,8 @@ pub(crate) fn calculate_stake_points_and_credits(
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = new_vote_state.credits();
-    // if there is no newer credits since observed, return no point
-    if let Some(result) = compare_stake_vote_credits(
+    // if there is no newer credits since observed, return zero points
+    if let Some(result) = zero_stake_points(
         credits_in_vote,
         credits_in_stake,
         &inflation_point_calc_tracer,
@@ -149,8 +149,8 @@ pub(crate) fn calculate_stake_points_and_credits_through_epoch(
 ) -> CalculatedStakePoints {
     let credits_in_stake = stake.credits_observed;
     let credits_in_vote = new_vote_state.credits_for_recent_epoch(max_epoch);
-    // if there is no newer credits since observed, return no point
-    if let Some(result) = compare_stake_vote_credits(
+    // if there is no newer credits since observed, return zero points
+    if let Some(result) = zero_stake_points(
         credits_in_vote,
         credits_in_stake,
         &inflation_point_calc_tracer,
@@ -177,7 +177,10 @@ pub(crate) fn calculate_stake_points_and_credits_through_epoch(
     }
 }
 
-fn compare_stake_vote_credits(
+/// Given a set of vote and stake credits, determines whether stake points ought
+/// to be zero. Returns zero points if there were no credits earned since the
+/// last observation
+fn zero_stake_points(
     credits_in_vote: u64,
     credits_in_stake: u64,
     inflation_point_calc_tracer: &Option<impl Fn(&InflationPointCalculationEvent)>,
