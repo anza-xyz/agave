@@ -103,9 +103,9 @@ fn calculate_stake_points(
     .points
 }
 
-/// for a given stake and vote_state, calculate how many
-///   points were earned (credits * stake) and new value
-///   for credits_observed were the points paid
+/// For a given Stake and VoteState, calculate how many credits
+/// the stake account observed in the last epoch, and calculate the points
+/// (credits * stake) the stake account earned.
 pub(crate) fn calculate_stake_points_and_credits(
     stake: &Stake,
     new_vote_state: &VoteState,
@@ -127,6 +127,9 @@ pub(crate) fn calculate_stake_points_and_credits(
     )
 }
 
+/// For a given Stake and VoteState, determine how many credits the stake
+/// account observed through a particular past epoch, and calculate the points
+/// (credits * stake) the stake account earned.
 pub(crate) fn calculate_stake_points_and_credits_through_epoch(
     max_epoch: Epoch,
     stake: &Stake,
