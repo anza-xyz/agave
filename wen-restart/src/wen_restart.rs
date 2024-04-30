@@ -1389,20 +1389,21 @@ mod tests {
                 }
                 if let Ok(request) = snapshot_request_receiver.try_recv() {
                     let snapshot_bank = request.snapshot_root_bank;
-                    let _ = File::create(build_incremental_snapshot_archive_path(
+                    assert!(File::create(build_incremental_snapshot_archive_path(
                         snapshot_dir.clone(),
                         old_root_slot,
                         snapshot_bank.slot(),
                         &SnapshotHash(snapshot_bank.hash()),
                         archive_format,
-                    ));
+                    ))
+                    .is_ok());
                 }
                 sleep(WAIT_FOR_SNAPSHOT_LOOP_SLEEP);
             })
             .unwrap();
 
         // Trigger full snapshot generation on the old root bank.
-        let _ = bank_to_full_snapshot_archive(
+        assert!(bank_to_full_snapshot_archive(
             snapshot_config.bank_snapshots_dir.clone(),
             &old_root_bank,
             Some(snapshot_config.snapshot_version),
@@ -1411,7 +1412,8 @@ mod tests {
             snapshot_config.archive_format,
             snapshot_config.maximum_full_snapshot_archives_to_retain,
             snapshot_config.maximum_incremental_snapshot_archives_to_retain,
-        );
+        )
+        .is_ok(),);
         let wen_restart_config = WenRestartConfig {
             wen_restart_path: test_state.wen_restart_proto_path.clone(),
             last_vote: VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
@@ -1512,10 +1514,9 @@ mod tests {
             );
         }
 
-        let _ = wen_restart_thread_handle.join();
+        assert!(wen_restart_thread_handle.join().is_ok());
         exit.store(true, Ordering::Relaxed);
-        let _ = fake_snapshot_service_handle.join();
-        info!("Thread joined");
+        assert!(fake_snapshot_service_handle.join().is_ok());
         let progress = read_wen_restart_records(&test_state.wen_restart_proto_path).unwrap();
         let progress_start_time = progress
             .my_last_voted_fork_slots
