@@ -361,7 +361,7 @@ pub(crate) fn find_heaviest_fork(
 }
 
 // Given the agreed upon slot, make corresponding bank root and generate snapshot.
-pub(crate) fn generate_snapshot(
+fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
     snapshot_config: &SnapshotConfig,
     accounts_background_request_sender: &AbsRequestSender,
