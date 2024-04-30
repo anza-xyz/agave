@@ -189,12 +189,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let feature_set = callbacks.get_feature_set();
 
     let load_account = |pubkey, should_cache| {
-        let (account, _slot) = if let Some(Some(found)) = accounts_map.get(pubkey) {
-            found.clone()
+        let maybe_found = if let Some(found) = accounts_map.get(pubkey) {
+            found.as_ref().cloned()
         } else {
-            callbacks.load_account_with(pubkey, |_| should_cache)?
+            callbacks.load_account_with(pubkey, |_| should_cache)
         };
-        Some(account)
+        maybe_found.map(|x| x.0)
     };
 
     // There is no way to predict what program will execute without an error

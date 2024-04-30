@@ -70,12 +70,12 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     pubkey: &Pubkey,
     accounts_map: &HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
 ) -> Option<ProgramAccountLoadResult> {
-    let (program_account, _slot) = if let Some(Some(found)) = accounts_map.get(pubkey) {
-        found.clone()
+    let maybe_found = if let Some(found) = accounts_map.get(pubkey) {
+        found.as_ref().cloned()
     } else {
-        callbacks.load_account_with(pubkey, |_| false)?
+        callbacks.load_account_with(pubkey, |_| false)
     };
-
+    let (program_account, _slot) = maybe_found?;
     if loader_v4::check_id(program_account.owner()) {
         return Some(
             solana_loader_v4_program::get_state(program_account.data())
