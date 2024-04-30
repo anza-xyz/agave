@@ -1329,7 +1329,7 @@ mod tests {
         let wen_restart_thread_handle = Builder::new()
             .name("solana-wen-restart".to_string())
             .spawn(move || {
-                let _ = wait_for_wen_restart(wen_restart_config);
+                let _ = wait_for_wen_restart(wen_restart_config).is_ok();
             })
             .unwrap();
         wait_on_expected_progress_with_timeout(
@@ -1337,7 +1337,7 @@ mod tests {
             expected_progress,
         );
         exit.store(true, Ordering::Relaxed);
-        let _ = wen_restart_thread_handle.join();
+        assert!(wen_restart_thread_handle.join().is_ok());
         let _ = remove_file(&test_state.wen_restart_proto_path);
     }
 
@@ -1643,13 +1643,14 @@ mod tests {
                 });
             }
         );
-        let _ = write_wen_restart_records(
+        assert!(write_wen_restart_records(
             &test_state.wen_restart_proto_path,
             &WenRestartProgress {
                 state: RestartState::LastVotedForkSlots.into(),
                 ..Default::default()
             },
-        );
+        )
+        .is_ok());
         assert_eq!(
             initialize(
                 &test_state.wen_restart_proto_path,
@@ -1661,13 +1662,14 @@ mod tests {
             .to_string(),
             "Malformed last voted fork slots protobuf: None"
         );
-        let _ = write_wen_restart_records(
+        assert!(write_wen_restart_records(
             &test_state.wen_restart_proto_path,
             &WenRestartProgress {
                 state: RestartState::WaitingForSupermajority.into(),
                 ..Default::default()
             },
-        );
+        )
+        .is_ok());
         assert_eq!(
             initialize(
                 &test_state.wen_restart_proto_path,
@@ -1821,7 +1823,7 @@ mod tests {
             let wen_restart_thread_handle = Builder::new()
                 .name("solana-wen-restart".to_string())
                 .spawn(move || {
-                    let _ = aggregate_restart_last_voted_fork_slots(
+                    assert!(aggregate_restart_last_voted_fork_slots(
                         &wen_restart_proto_path_clone,
                         80,
                         cluster_info_clone,
@@ -1831,7 +1833,8 @@ mod tests {
                         Arc::new(RwLock::new(Vec::new())),
                         exit_clone,
                         &mut progress_clone,
-                    );
+                    )
+                    .is_ok());
                 })
                 .unwrap();
             let node_pubkey = keypairs.node_keypair.pubkey();
