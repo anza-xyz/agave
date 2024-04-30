@@ -413,7 +413,7 @@ fn generate_snapshot(
             snapshot_config.incremental_snapshot_archives_dir.clone(),
         ) {
             if archive_info.slot() == new_root_slot {
-                info!("wen_restart snapshot generated {}", new_root_slot);
+                info!("wen_restart snapshot generated {new_root_slot}");
                 return Ok(GenerateSnapshotRecord {
                     path: archive_info.path().display().to_string(),
                     slot: new_root_slot,
