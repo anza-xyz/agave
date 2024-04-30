@@ -113,30 +113,18 @@ pub(crate) fn calculate_stake_points_and_credits(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> CalculatedStakePoints {
-    let credits_in_stake = stake.credits_observed;
     let credits_in_vote = new_vote_state.credits();
-    // if there is no newer credits since observed, return zero points
-    if let Some(result) = zero_stake_points(
+    let credits_in_stake = stake.credits_observed;
+
+    _calculate_stake_points_and_credits(
         credits_in_vote,
         credits_in_stake,
-        &inflation_point_calc_tracer,
-    ) {
-        return result;
-    }
-
-    let (points, new_credits_observed) = handle_epoch_credits(
         new_vote_state.epoch_credits().iter().copied(),
         stake,
         stake_history,
         new_rate_activation_epoch,
         &inflation_point_calc_tracer,
-    );
-
-    CalculatedStakePoints {
-        points,
-        new_credits_observed,
-        force_credits_update_with_skipped_reward: false,
-    }
+    )
 }
 
 pub(crate) fn calculate_stake_points_and_credits_through_epoch(
@@ -147,18 +135,12 @@ pub(crate) fn calculate_stake_points_and_credits_through_epoch(
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> CalculatedStakePoints {
-    let credits_in_stake = stake.credits_observed;
     let credits_in_vote = new_vote_state.credits_for_recent_epoch(max_epoch);
-    // if there is no newer credits since observed, return zero points
-    if let Some(result) = zero_stake_points(
+    let credits_in_stake = stake.credits_observed;
+
+    _calculate_stake_points_and_credits(
         credits_in_vote,
         credits_in_stake,
-        &inflation_point_calc_tracer,
-    ) {
-        return result;
-    }
-
-    let (points, new_credits_observed) = handle_epoch_credits(
         new_vote_state
             .epoch_credits()
             .iter()
@@ -168,6 +150,33 @@ pub(crate) fn calculate_stake_points_and_credits_through_epoch(
         stake_history,
         new_rate_activation_epoch,
         &inflation_point_calc_tracer,
+    )
+}
+
+fn _calculate_stake_points_and_credits(
+    credits_in_vote: u64,
+    credits_in_stake: u64,
+    epoch_credits_iter: impl Iterator<Item = (Epoch, u64, u64)>,
+    stake: &Stake,
+    stake_history: &StakeHistory,
+    new_rate_activation_epoch: Option<Epoch>,
+    inflation_point_calc_tracer: &Option<impl Fn(&InflationPointCalculationEvent)>,
+) -> CalculatedStakePoints {
+    // if there are no newer credits since observed, return zero points
+    if let Some(result) = zero_stake_points(
+        credits_in_vote,
+        credits_in_stake,
+        inflation_point_calc_tracer,
+    ) {
+        return result;
+    }
+
+    let (points, new_credits_observed) = handle_epoch_credits(
+        epoch_credits_iter,
+        stake,
+        stake_history,
+        new_rate_activation_epoch,
+        inflation_point_calc_tracer,
     );
 
     CalculatedStakePoints {
