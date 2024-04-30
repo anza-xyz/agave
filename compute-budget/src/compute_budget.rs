@@ -1,5 +1,5 @@
 use {
-    solana_compute_budget::compute_budget_processor::{
+    crate::compute_budget_processor::{
         self, process_compute_budget_instructions, DEFAULT_HEAP_COST,
     },
     solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey, transaction::Result},

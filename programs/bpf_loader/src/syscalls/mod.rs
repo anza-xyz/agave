@@ -11,9 +11,9 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
-        compute_budget::ComputeBudget, ic_logger_msg, ic_msg, invoke_context::InvokeContext,
-        stable_log, timings::ExecuteTimings,
+        ic_logger_msg, ic_msg, invoke_context::InvokeContext, stable_log, timings::ExecuteTimings,
     },
     solana_rbpf::{
         declare_builtin_function,

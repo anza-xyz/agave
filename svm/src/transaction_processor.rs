@@ -16,9 +16,9 @@ use {
     },
     log::debug,
     percentage::Percentage,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        compute_budget::ComputeBudget,
         invoke_context::InvokeContext,
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,

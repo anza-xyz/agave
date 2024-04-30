@@ -145,8 +145,8 @@ impl MessageProcessor {
 mod tests {
     use {
         super::*,
+        solana_compute_budget::compute_budget::ComputeBudget,
         solana_program_runtime::{
-            compute_budget::ComputeBudget,
             declare_process_instruction,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,

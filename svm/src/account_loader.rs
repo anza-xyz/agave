@@ -457,13 +457,11 @@ mod tests {
         },
         nonce::state::Versions as NonceVersions,
         solana_compute_budget::{
+            compute_budget::ComputeBudget,
             compute_budget_processor,
             prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         },
-        solana_program_runtime::{
-            compute_budget::ComputeBudget,
-            loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
-        },
+        solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable,
