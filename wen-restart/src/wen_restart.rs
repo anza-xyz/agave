@@ -70,7 +70,7 @@ const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
 // We update HeaviestFork every 30 minutes or when we can exit.
 const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
 
-const WAIT_FOR_SNAPSHOT_LOOP_SLEEP_IN_MS: u64 = 10_000;
+const WAIT_FOR_SNAPSHOT_LOOP_SLEEP: Duration = Duration::from_secs(10);
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
