@@ -422,7 +422,7 @@ fn generate_snapshot(
                 });
             }
         }
-        sleep(Duration::from_millis(WAIT_FOR_SNAPSHOT_LOOP_SLEEP_IN_MS));
+        sleep(WAIT_FOR_SNAPSHOT_LOOP_SLEEP);
     }
 }
 
@@ -1397,7 +1397,7 @@ mod tests {
                         archive_format,
                     ));
                 }
-                sleep(Duration::from_millis(WAIT_FOR_SNAPSHOT_LOOP_SLEEP_IN_MS));
+                sleep(WAIT_FOR_SNAPSHOT_LOOP_SLEEP);
             })
             .unwrap();
 
