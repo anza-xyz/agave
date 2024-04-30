@@ -116,7 +116,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     fee_structure: &FeeStructure,
     account_overrides: Option<&AccountOverrides>,
     loaded_programs: &ProgramCacheForTxBatch,
-    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
+    accounts_map: &HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
 ) -> Vec<TransactionLoadResult> {
     let feature_set = callbacks.get_feature_set();
     txs.iter()
@@ -184,12 +184,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     error_counters: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     loaded_programs: &ProgramCacheForTxBatch,
-    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
+    accounts_map: &HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
 ) -> Result<LoadedTransaction> {
     let feature_set = callbacks.get_feature_set();
 
     let load_account = |pubkey, should_cache| {
-        let (account, _slot) = if let Some(found) = accounts_map.get(pubkey) {
+        let (account, _slot) = if let Some(Some(found)) = accounts_map.get(pubkey) {
             found.clone()
         } else {
             callbacks.load_account_with(pubkey, |_| should_cache)?

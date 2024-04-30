@@ -139,6 +139,11 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
     }
 }
 
+type FilterExecutableProgramAccountsResult = (
+    HashMap<Pubkey, u64>,
+    HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
+);
+
 impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     pub fn new(
         slot: Slot,
@@ -340,12 +345,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         txs: &[SanitizedTransaction],
         check_results: &mut [TransactionCheckResult],
         program_owners: &[Pubkey],
-    ) -> (
-        HashMap<Pubkey, u64>,
-        HashMap<Pubkey, (AccountSharedData, Slot)>,
-    ) {
+    ) -> FilterExecutableProgramAccountsResult {
         let mut program_accounts: HashMap<Pubkey, u64> = HashMap::new();
-        let mut accounts_map: HashMap<Pubkey, (AccountSharedData, Slot)> = HashMap::new();
+        let mut accounts_map: HashMap<Pubkey, Option<(AccountSharedData, Slot)>> = HashMap::new();
 
         check_results.iter_mut().zip(txs).for_each(|etx| {
             if let ((Ok(()), _nonce, lamports_per_signature), tx) = etx {
@@ -367,10 +369,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                     match accounts_map.entry(*key) {
                                         Entry::Occupied(account_entry) => {
                                             // Found in accounts_map, check owner
-                                            let owner = account_entry.get().0.owner();
-                                            if program_owners.contains(owner) {
-                                                // Owner is in program_owners. insert into program_map.
-                                                prog_entry.insert(1);
+                                            if let Some(account_entry) = account_entry.get() {
+                                                let owner = account_entry.0.owner();
+                                                if program_owners.contains(owner) {
+                                                    // Owner is in program_owners. insert into program_map.
+                                                    prog_entry.insert(1);
+                                                }
                                             }
                                         }
                                         Entry::Vacant(account_entry) => {
@@ -381,15 +385,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                                     !program_owners.contains(account.owner())
                                                 });
 
-                                            if let Some(loaded_account) = loaded_account {
-                                                // Save the account in accounts_map for later instruction/program account load. Insert
-                                                // it into program_map if owner is in program_owners.
+                                            if let Some(ref loaded_account) = loaded_account {
+                                                // Insert it into program_map if owner is in program_owners.
                                                 if program_owners.contains(loaded_account.0.owner())
                                                 {
                                                     prog_entry.insert(1);
                                                 }
-                                                account_entry.insert(loaded_account);
                                             }
+                                            // Save the account in accounts_map for later instruction/program account load.
+                                            account_entry.insert(loaded_account);
                                         }
                                     }
                                 }
@@ -412,7 +416,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         callback: &CB,
         program_accounts_map: &HashMap<Pubkey, u64>,
         limit_to_load_programs: bool,
-        accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
+        accounts_map: &HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
     ) -> ProgramCacheForTxBatch {
         let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
             program_accounts_map
@@ -1262,12 +1266,12 @@ mod tests {
         assert_eq!(result[&key2], 1);
 
         assert_eq!(accounts_map.len(), 2);
-        let (account1, slot1) = accounts_map.get(&key1).unwrap();
+        let (account1, slot1) = accounts_map.get(&key1).unwrap().as_ref().unwrap();
         assert_eq!(account1.lamports(), 93);
         assert_eq!(account1.owner(), &owner1);
         assert_eq!(*slot1, 100);
 
-        let (account2, slot2) = accounts_map.get(&key2).unwrap();
+        let (account2, slot2) = accounts_map.get(&key2).unwrap().as_ref().unwrap();
         assert_eq!(account2.lamports(), 90);
         assert_eq!(account2.owner(), &owner2);
         assert_eq!(*slot2, 100);

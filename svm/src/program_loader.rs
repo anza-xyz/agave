@@ -68,9 +68,9 @@ pub(crate) fn load_program_from_bytes(
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
-    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
+    accounts_map: &HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
 ) -> Option<ProgramAccountLoadResult> {
-    let (program_account, _slot) = if let Some(found) = accounts_map.get(pubkey) {
+    let (program_account, _slot) = if let Some(Some(found)) = accounts_map.get(pubkey) {
         found.clone()
     } else {
         callbacks.load_account_with(pubkey, |_| false)?
@@ -136,7 +136,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph
     effective_epoch: Epoch,
     epoch_schedule: &EpochSchedule,
     reload: bool,
-    accounts_map: &HashMap<Pubkey, (AccountSharedData, Slot)>,
+    accounts_map: &HashMap<Pubkey, Option<(AccountSharedData, Slot)>>,
 ) -> Option<Arc<ProgramCacheEntry>> {
     let environments = program_cache.get_environments_for_epoch(effective_epoch);
     let mut load_program_metrics = LoadProgramMetrics {
