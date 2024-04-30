@@ -277,7 +277,7 @@ impl ProgramSubCommands for App<'_, '_> {
                         .arg(compute_unit_price_arg())
                         .arg(
                             Arg::with_name("no_auto_extend")
-                                .long("no-extend")
+                                .long("no-auto-extend")
                                 .takes_value(false)
                                 .help("Don't automatically extend the program's data account size"),
                         ),

@@ -824,7 +824,7 @@ fn test_cli_program_upgrade_auto_extend() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend: false, // --no-extend present (true)
+        auto_extend: false, // --no-auto-extend flag is present (true)
         use_rpc: false,
     });
     process_command(&config).unwrap_err();
@@ -846,7 +846,7 @@ fn test_cli_program_upgrade_auto_extend() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        auto_extend: true, // --no-extend not present (false)
+        auto_extend: true, // --no-auto-extend flag is not present (false)
         use_rpc: false,
     });
     let response = process_command(&config);
