@@ -367,7 +367,7 @@ fn generate_snapshot(
     accounts_background_request_sender: &AbsRequestSender,
     genesis_config_hash: Hash,
     new_root_slot: Slot,
-    exit: &Arc<AtomicBool>,
+    exit: &AtomicBool,
 ) -> Result<GenerateSnapshotRecord> {
     let new_root_bank;
     {
@@ -433,7 +433,7 @@ fn find_bankhash_of_heaviest_fork(
     blockstore: Arc<Blockstore>,
     bank_forks: Arc<RwLock<BankForks>>,
     root_bank: Arc<Bank>,
-    exit: &Arc<AtomicBool>,
+    exit: &AtomicBool,
 ) -> Result<Hash> {
     let heaviest_fork_bankhash = bank_forks
         .read()
