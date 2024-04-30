@@ -404,10 +404,7 @@ fn generate_snapshot(
     let new_root_bank_hash = new_root_bank.hash();
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
-    info!(
-        "waiting for new snapshot to be generated on {}",
-        new_root_slot
-    );
+    info!("waiting for new snapshot to be generated on {new_root_slot}");
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
