@@ -95,6 +95,8 @@
 //! susceptible to the buffer bloat problem by itself as explained by the description and validated
 //! by the mentioned benchmark above. Thus, this should be solved elsewhere, specifically at the
 //! scheduler pool.
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
@@ -105,6 +107,8 @@ use {
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
+    #[cfg(feature = "dev-context-only-utils")]
+    use qualifier_attr::qualifiers;
     use std::{
         any::{self, TypeId},
         cell::{RefCell, UnsafeCell},
@@ -116,6 +120,7 @@ mod utils {
     /// A really tiny counter to hide `.checked_{add,sub}` all over the place.
     ///
     /// It's caller's reponsibility to ensure this (backed by [`u32`]) never overflow.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     #[derive(Debug, Clone, Copy)]
     pub(super) struct ShortCounter(u32);
 
@@ -249,6 +254,7 @@ mod utils {
     /// existence of mutable access over them by requiring the token itself to be mutably borrowed
     /// to get a mutable reference to the internal value of `TokenCell`.
     // *mut is used to make this type !Send and !Sync
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(super) struct Token<V: 'static>(PhantomData<*mut V>);
 
     impl<V> Token<V> {
@@ -411,6 +417,7 @@ type BlockedUsageCountToken = Token<ShortCounter>;
 const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 
 /// Internal scheduling data about a particular task.
+#[cfg_attr(feature = "dev-context-only-utils", field_qualifiers(index(pub)))]
 #[derive(Debug)]
 pub struct TaskInner {
     transaction: SanitizedTransaction,
@@ -614,6 +621,7 @@ const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
 
 /// A high-level `struct`, managing the overall scheduling of [tasks](Task), to be used by
 /// `solana-unified-scheduler-pool`.
+#[cfg_attr(feature = "dev-context-only-utils", field_qualifiers(count_token(pub)))]
 pub struct SchedulingStateMachine {
     unblocked_task_queue: VecDeque<Task>,
     active_task_count: ShortCounter,

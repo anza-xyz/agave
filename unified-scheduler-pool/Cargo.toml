@@ -11,22 +11,43 @@ edition = { workspace = true }
 
 [dependencies]
 assert_matches = { workspace = true }
+cpu-time = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derivative = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true }
+rustix = { workspace = true }
+serde_json = { workspace = true }
 solana-ledger = { workspace = true }
+solana-measure = { workspace = true }
+solana-metrics = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 solana-vote = { workspace = true }
 
+[target."cfg(target_os = \"linux\")".dependencies]
+procfs = { workspace = true }
+
 [dev-dependencies]
-assert_matches = { workspace = true }
+bincode = { workspace = true }
+criterion = "0.5.1"
+log = { workspace = true }
+rand = { workspace = true }
 solana-logger = { workspace = true }
+solana-nohash-hasher = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = { workspace = true }
+
+[[bench]]
+name = "lib"
+harness = false
 
 [features]
 dev-context-only-utils = []

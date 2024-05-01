@@ -341,8 +341,7 @@ fn process_batches(
         // scheduling always succeeds here without being blocked on actual transaction executions.
         // The transaction execution errors will be collected via the blocking fn called
         // BankWithScheduler::wait_for_completed_scheduler(), if any.
-        schedule_batches_for_execution(bank, batches);
-        Ok(())
+        schedule_batches_for_execution(bank, batches)
     } else {
         debug!(
             "process_batches()/rebatch_and_execute_batches({} batches)",
@@ -364,7 +363,7 @@ fn process_batches(
 fn schedule_batches_for_execution(
     bank: &BankWithScheduler,
     batches: &[TransactionBatchWithIndexes],
-) {
+) -> Result<()> {
     for TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
@@ -375,8 +374,9 @@ fn schedule_batches_for_execution(
                 .sanitized_transactions()
                 .iter()
                 .zip(transaction_indexes.iter()),
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn rebatch_transactions<'a>(
@@ -445,9 +445,7 @@ fn rebatch_and_execute_batches(
     {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         for tx_cost in &tx_costs {
-            cost_tracker
-                .try_add(tx_cost)
-                .map_err(TransactionError::from)?;
+            cost_tracker.try_add(tx_cost)?;
         }
     }
 
@@ -2149,6 +2147,7 @@ pub mod tests {
             instruction::{Instruction, InstructionError},
             native_token::LAMPORTS_PER_SOL,
             pubkey::Pubkey,
+            scheduling::SchedulingMode,
             signature::{Keypair, Signer},
             system_instruction::SystemError,
             system_transaction,
@@ -4751,7 +4750,7 @@ pub mod tests {
             ..
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::new(SchedulingMode::BlockVerification, bank.clone());
 
         let txs = create_test_transactions(&mint_keypair, &genesis_config.hash());
 
@@ -4766,7 +4765,7 @@ pub mod tests {
         mocked_scheduler
             .expect_schedule_execution()
             .times(txs.len())
-            .returning(|_| ());
+            .returning(|_| Ok(()));
         mocked_scheduler
             .expect_wait_for_termination()
             .with(mockall::predicate::eq(true))

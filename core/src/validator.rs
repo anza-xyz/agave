@@ -149,8 +149,8 @@ const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
-    #[default]
     BlockstoreProcessor,
+    #[default]
     UnifiedScheduler,
 }
 
@@ -1465,8 +1465,10 @@ impl Validator {
 
     // Used for notifying many nodes in parallel to exit
     pub fn exit(&mut self) {
+        info!("exit1");
         self.validator_exit.write().unwrap().exit();
 
+        info!("exit2");
         // drop all signals in blockstore
         self.blockstore.drop_signal();
     }
@@ -1502,24 +1504,29 @@ impl Validator {
     }
 
     pub fn join(self) {
-        drop(self.bank_forks);
+        info!("join1");
         drop(self.cluster_info);
 
+        info!("join2");
         self.poh_service.join().expect("poh_service");
         drop(self.poh_recorder);
 
+        info!("join3");
         if let Some(json_rpc_service) = self.json_rpc_service {
             json_rpc_service.join().expect("rpc_service");
         }
 
+        info!("join4");
         if let Some(pubsub_service) = self.pubsub_service {
             pubsub_service.join().expect("pubsub_service");
         }
 
+        info!("join5");
         self.rpc_completed_slots_service
             .join()
             .expect("rpc_completed_slots_service");
 
+        info!("join6");
         if let Some(optimistically_confirmed_bank_tracker) =
             self.optimistically_confirmed_bank_tracker
         {
@@ -1528,96 +1535,126 @@ impl Validator {
                 .expect("optimistically_confirmed_bank_tracker");
         }
 
+        info!("join7");
         if let Some(transaction_status_service) = self.transaction_status_service {
             transaction_status_service
                 .join()
                 .expect("transaction_status_service");
         }
 
+        info!("join8");
         if let Some(rewards_recorder_service) = self.rewards_recorder_service {
             rewards_recorder_service
                 .join()
                 .expect("rewards_recorder_service");
         }
 
+        info!("join9");
         if let Some(cache_block_meta_service) = self.cache_block_meta_service {
             cache_block_meta_service
                 .join()
                 .expect("cache_block_meta_service");
         }
 
+        info!("join10");
         if let Some(system_monitor_service) = self.system_monitor_service {
             system_monitor_service
                 .join()
                 .expect("system_monitor_service");
         }
 
+        info!("join11");
         if let Some(sample_performance_service) = self.sample_performance_service {
             sample_performance_service
                 .join()
                 .expect("sample_performance_service");
         }
 
+        info!("join12");
         if let Some(entry_notifier_service) = self.entry_notifier_service {
             entry_notifier_service
                 .join()
                 .expect("entry_notifier_service");
         }
 
+        info!("join13");
         if let Some(s) = self.snapshot_packager_service {
             s.join().expect("snapshot_packager_service");
         }
 
+        info!("join14");
         self.gossip_service.join().expect("gossip_service");
         if let Some(repair_quic_endpoint) = &self.repair_quic_endpoint {
             repair::quic_endpoint::close_quic_endpoint(repair_quic_endpoint);
         }
+        info!("join15");
         self.serve_repair_service
             .join()
             .expect("serve_repair_service");
+        info!("join15");
         if let Some(repair_quic_endpoint_join_handle) = self.repair_quic_endpoint_join_handle {
             self.repair_quic_endpoint_runtime
                 .map(|runtime| runtime.block_on(repair_quic_endpoint_join_handle))
                 .transpose()
                 .unwrap();
         };
+        info!("join16");
         self.stats_reporter_service
             .join()
             .expect("stats_reporter_service");
+        info!("join17");
         self.blockstore_metric_report_service
             .join()
             .expect("ledger_metric_report_service");
+        info!("join18");
         self.accounts_background_service
             .join()
             .expect("accounts_background_service");
+        info!("join19");
         self.accounts_hash_verifier
             .join()
             .expect("accounts_hash_verifier");
+        info!("join20");
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
+        info!("join21");
         self.tpu.join().expect("tpu");
+        info!("join22");
         self.tvu.join().expect("tvu");
+        info!("join23");
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
             self.turbine_quic_endpoint_runtime
                 .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
                 .transpose()
                 .unwrap();
         }
+        info!("join24");
         self.completed_data_sets_service
             .join()
             .expect("completed_data_sets_service");
+        info!("join25");
         if let Some(ip_echo_server) = self.ip_echo_server {
             ip_echo_server.shutdown_background();
         }
 
+        info!("join26");
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
             geyser_plugin_service.join().expect("geyser_plugin_service");
         }
 
+        info!("join27");
         self.poh_timing_report_service
             .join()
             .expect("poh_timing_report_service");
+        info!("join28");
+        self.bank_forks.write().unwrap().prepare_to_drop();
+        let sc = Arc::strong_count(&self.bank_forks);
+        if let Some(bank_forks) = Arc::into_inner(self.bank_forks) {
+            drop::<BankForks>(bank_forks.into_inner().unwrap());
+        } else {
+            warn!("seems bankforks are leaking...{}:", sc);
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use {
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
     log::*,
-    rand::seq::IteratorRandom,
+    rand::seq::SliceRandom,
     serial_test::serial,
     solana_accounts_db::{
         hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
@@ -5676,12 +5676,14 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
     );
 
     // Randomly switch to use unified scheduler
-    config
-        .validator_configs
-        .iter_mut()
-        .choose(&mut rand::thread_rng())
-        .unwrap()
-        .block_verification_method = BlockVerificationMethod::UnifiedScheduler;
+    let mut methods = [
+        BlockVerificationMethod::UnifiedScheduler,
+        BlockVerificationMethod::BlockstoreProcessor,
+    ];
+    methods.shuffle(&mut rand::thread_rng());
+    for (validator_config, method) in config.validator_configs.iter_mut().zip(methods) {
+        validator_config.block_verification_method = method;
+    }
 
     let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     cluster_tests::spend_and_verify_all_nodes(

@@ -823,7 +823,7 @@ pub struct Bank {
 
     epoch_reward_status: EpochRewardStatus,
 
-    transaction_processor: TransactionBatchProcessor<BankForks>,
+    pub transaction_processor: TransactionBatchProcessor<BankForks>,
 
     check_program_modification_slot: bool,
 

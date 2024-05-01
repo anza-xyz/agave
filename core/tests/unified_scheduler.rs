@@ -18,7 +18,8 @@ use {
     solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
-        genesis_utils::GenesisConfigInfo, prioritization_fee_cache::PrioritizationFeeCache,
+        genesis_utils::GenesisConfigInfo, installed_scheduler_pool::DefaultScheduleExecutionArg,
+        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_sdk::{
         hash::Hash,
@@ -27,11 +28,14 @@ use {
         transaction::{Result, SanitizedTransaction},
     },
     solana_unified_scheduler_pool::{
-        DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
+        DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, SpawnableScheduler,
+        TaskHandler,
     },
     std::{
         collections::HashMap,
         sync::{Arc, Mutex},
+        thread::sleep,
+        time::Duration,
     },
 };
 
@@ -41,10 +45,11 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
     static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
 
-    #[derive(Debug)]
+    #[derive(Clone, Debug)]
     struct StallingHandler;
-    impl TaskHandler for StallingHandler {
+    impl TaskHandler<DefaultScheduleExecutionArg> for StallingHandler {
         fn handle(
+            &self,
             result: &mut Result<()>,
             timings: &mut ExecuteTimings,
             bank: &Arc<Bank>,
@@ -55,10 +60,24 @@ fn test_scheduler_waited_by_drop_bank_service() {
             info!("Stalling at StallingHandler::handle()...");
             *LOCK_TO_STALL.lock().unwrap();
             // Wait a bit for the replay stage to prune banks
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            sleep(Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, bank, transaction, index, handler_context);
+            <DefaultTaskHandler as TaskHandler<DefaultScheduleExecutionArg>>::handle(
+                &DefaultTaskHandler,
+                result,
+                timings,
+                bank,
+                transaction,
+                index,
+                handler_context,
+            );
+        }
+
+        fn create<T: SpawnableScheduler<Self, DefaultScheduleExecutionArg>>(
+            _pool: &SchedulerPool<T, Self, DefaultScheduleExecutionArg>,
+        ) -> Self {
+            Self
         }
     }
 
@@ -72,7 +91,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
     let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler, _>, _, _>::new(
         None,
         None,
         None,
@@ -107,7 +126,9 @@ fn test_scheduler_waited_by_drop_bank_service() {
     // Delay transaction execution to ensure transaction execution happens after termintion has
     // been started
     let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
-    pruned_bank.schedule_transaction_executions([(&tx, &0)].into_iter());
+    pruned_bank
+        .schedule_transaction_executions([(&tx, &0)].into_iter())
+        .unwrap();
     drop(pruned_bank);
     assert_eq!(pool_raw.pooled_scheduler_count(), 0);
     drop(lock_to_stall);
