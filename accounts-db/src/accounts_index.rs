@@ -3450,7 +3450,8 @@ pub mod tests {
 
     #[test]
     fn test_purge_exact_spl_token_owner_secondary_index() {
-        let (key_start, key_end, secondary_indexes) = create_spl_token_owner_secondary_index_state();
+        let (key_start, key_end, secondary_indexes) =
+            create_spl_token_owner_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         run_test_purge_exact_secondary_index(
             &index,
@@ -3671,7 +3672,8 @@ pub mod tests {
 
     #[test]
     fn test_spl_token_owner_secondary_index() {
-        let (key_start, key_end, secondary_indexes) = create_spl_token_owner_secondary_index_state();
+        let (key_start, key_end, secondary_indexes) =
+            create_spl_token_owner_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         for token_id in SPL_TOKENS {
             run_test_spl_token_secondary_indexes(
