@@ -5,9 +5,13 @@ use {
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, StakeRewardCalculation,
         StakeRewardCalculationPartitioned, VoteRewardsAccounts,
     },
-    crate::bank::{
-        PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-        VoteAccount, VoteReward, VoteRewards,
+    crate::{
+        bank::{
+            PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
+            VoteAccount, VoteReward, VoteRewards,
+        },
+        stake_account::StakeAccount,
+        stakes::Stakes,
     },
     dashmap::DashMap,
     log::{debug, info},
@@ -23,7 +27,7 @@ use {
         pubkey::Pubkey,
         reward_info::RewardInfo,
         reward_type::RewardType,
-        stake::state::StakeStateV2,
+        stake::state::{Delegation, StakeStateV2},
     },
     solana_stake_program::points::PointValue,
     std::sync::atomic::{AtomicU64, Ordering::Relaxed},
@@ -291,6 +295,24 @@ impl Bank {
                 total_points,
             }
         })
+    }
+
+    /// calculate and return some reward calc info to avoid recalculation across functions
+    fn get_epoch_reward_calculate_param_info<'a>(
+        &self,
+        stakes: &'a Stakes<StakeAccount<Delegation>>,
+    ) -> EpochRewardCalculateParamInfo<'a> {
+        let stake_history = stakes.history().clone();
+
+        let stake_delegations = self.filter_stake_delegations(stakes);
+
+        let cached_vote_accounts = stakes.vote_accounts();
+
+        EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        }
     }
 
     /// Calculates epoch rewards for stake/vote accounts
