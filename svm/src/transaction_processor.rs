@@ -811,6 +811,7 @@ mod tests {
             rent_debits::RentDebits,
             reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signature},
+            signer::Signer,
             sysvar::{self, rent::Rent},
             transaction::{SanitizedTransaction, Transaction, TransactionError},
             transaction_context::TransactionContext,
@@ -1369,8 +1370,9 @@ mod tests {
             &1
         );
 
-        // `accounts_map` should contain all the accounts in the transactions.
-        assert_eq!(accounts_map.len(), 6);
+        // `accounts_map` should contain all the accounts in the transactions
+        // and the two fee payer accounts.
+        assert_eq!(accounts_map.len(), 8);
         for k in [
             non_program_pubkey1,
             non_program_pubkey2,
@@ -1381,6 +1383,13 @@ mod tests {
         ] {
             assert!(accounts_map.contains_key(&k));
         }
+
+        // assert that both fee payer accounts are in the accounts_map and their
+        // values are None b/c the accounts are not added to the bank
+        // intentionally. This is to test that we cache 'None' accounts and
+        // retrieve them correctly.
+        assert_eq!(accounts_map[&keypair1.pubkey()], None);
+        assert_eq!(accounts_map[&keypair2.pubkey()], None);
     }
 
     #[test]
@@ -1472,8 +1481,9 @@ mod tests {
         );
         assert_eq!(lock_results[1].0, Err(TransactionError::BlockhashNotFound));
 
-        // `accounts_map` should contain only the accounts in the transaction with valid blockhash.
-        assert_eq!(accounts_map.len(), 4);
+        // `accounts_map` should contain only the accounts in the transaction
+        // with valid blockhash and a fee payer account.
+        assert_eq!(accounts_map.len(), 5);
         for k in [
             non_program_pubkey1,
             account1_pubkey,
@@ -1482,6 +1492,10 @@ mod tests {
         ] {
             assert!(accounts_map.contains_key(&k));
         }
+        // assert that the fee payer account is in accounts_map and its value is
+        // None b/c the account is not added to the bank intentionally. This is
+        // to test that we cache 'None' account and retrieve it correctly.
+        assert_eq!(accounts_map[&keypair1.pubkey()], None);
 
         // `accounts_map` should not contain the accounts in the transaction with invalid blockhash.
         for k in [non_program_pubkey2, account4_pubkey] {
