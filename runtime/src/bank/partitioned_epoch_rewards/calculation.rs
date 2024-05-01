@@ -299,14 +299,24 @@ impl Bank {
 
     /// calculate and return some reward calc info to avoid recalculation across functions
     fn get_epoch_reward_calculate_param_info<'a>(
-        &self,
+        &'a self,
         stakes: &'a Stakes<StakeAccount<Delegation>>,
     ) -> EpochRewardCalculateParamInfo<'a> {
+        // Use `stakes` for stake-related info
         let stake_history = stakes.history().clone();
-
         let stake_delegations = self.filter_stake_delegations(stakes);
 
-        let cached_vote_accounts = stakes.vote_accounts();
+        // Use `EpochStakes` for vote accounts
+        let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
+        let epoch_stakes = self.epoch_stakes(leader_schedule_epoch)
+            .expect("calculation should always run after Bank::update_epoch_stakes(leader_schedule_epoch)")
+            .stakes();
+        {
+            // TODO: check how long this takes; remove if `stakes` are replaced
+            // with delegations from EpochStakes
+            assert!(crate::stakes::delegations_eq(stakes, epoch_stakes));
+        }
+        let cached_vote_accounts = epoch_stakes.vote_accounts();
 
         EpochRewardCalculateParamInfo {
             stake_history,
