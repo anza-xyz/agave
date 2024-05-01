@@ -534,6 +534,7 @@ mod tests {
         rayon::ThreadPoolBuilder,
         solana_sdk::{
             account::{accounts_equal, ReadableAccount, WritableAccount},
+            epoch_schedule::EpochSchedule,
             native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
             reward_type::RewardType,
             signature::Signer,
@@ -544,17 +545,22 @@ mod tests {
         std::sync::RwLockReadGuard,
     };
 
+    const SLOTS_PER_EPOCH: u64 = 32;
+
     /// Helper function to create a bank that pays some rewards
     fn create_reward_bank(expected_num_delegations: usize) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
         let validator_keypairs = (0..expected_num_delegations)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
 
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![2_000_000_000; expected_num_delegations],
         );
+        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
         let bank = Bank::new_for_tests(&genesis_config);
 
