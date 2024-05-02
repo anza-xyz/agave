@@ -146,6 +146,31 @@ impl QosService {
         }
     }
 
+    /// Record unadjusted costs for committed transactions.
+    /// This should be called instead of `update_costs` when the feature is
+    /// activated to no longer update costs.
+    pub fn record_unadjusted_costs<'a>(
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
+        transaction_committed_status: Option<&Vec<CommitTransactionDetails>>,
+        bank: &Bank,
+    ) {
+        if let Some(transaction_committed_status) = transaction_committed_status {
+            let mut cost_tracker = bank.write_cost_tracker().unwrap();
+            transaction_cost_results
+                .zip(transaction_committed_status)
+                .for_each(|(tx_cost, transaction_committed_details)| {
+                    if let Ok(tx_cost) = tx_cost {
+                        if matches!(
+                            transaction_committed_details,
+                            CommitTransactionDetails::Committed { .. }
+                        ) {
+                            cost_tracker.record_unadjusted_cost(tx_cost);
+                        }
+                    }
+                });
+        }
+    }
+
     /// Removes transaction costs from the cost tracker if not committed or recorded
     pub fn remove_costs<'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,

@@ -5,6 +5,7 @@
 //!
 use {
     crate::{block_cost_limits::*, transaction_cost::TransactionCost},
+    histogram::Histogram,
     solana_metrics::datapoint_info,
     solana_sdk::{
         clock::Slot, pubkey::Pubkey, saturating_add_assign, transaction::TransactionError,
@@ -48,7 +49,7 @@ impl From<CostTrackerError> for TransactionError {
     }
 }
 
-#[derive(AbiExample, Debug)]
+#[derive(Debug)]
 pub struct CostTracker {
     account_cost_limit: u64,
     block_cost_limit: u64,
@@ -65,6 +66,7 @@ pub struct CostTracker {
     /// the tracker, but are still waiting for an update with actual usage or
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: usize,
+    transaction_cost_histogram: Histogram,
 }
 
 impl Default for CostTracker {
@@ -88,7 +90,15 @@ impl Default for CostTracker {
             secp256k1_instruction_signature_count: 0,
             ed25519_instruction_signature_count: 0,
             in_flight_transaction_count: 0,
+            transaction_cost_histogram: Histogram::new(),
         }
+    }
+}
+
+#[cfg(RUSTC_WITH_SPECIALIZATION)]
+impl solana_frozen_abi::abi_example::AbiExample for CostTracker {
+    fn example() -> Self {
+        Self::default()
     }
 }
 
@@ -149,6 +159,18 @@ impl CostTracker {
                 );
             }
         }
+
+        // Add actual cost of transaction to histogram
+        let transaction_cost = estimated_tx_cost
+            .sum()
+            .saturating_sub(estimated_tx_cost.programs_execution_cost())
+            .saturating_add(actual_execution_units);
+        let _ = self.transaction_cost_histogram.increment(transaction_cost);
+    }
+
+    pub fn record_unadjusted_cost(&mut self, tx_cost: &TransactionCost) {
+        let transaction_cost = tx_cost.sum();
+        let _ = self.transaction_cost_histogram.increment(transaction_cost);
     }
 
     pub fn remove(&mut self, tx_cost: &TransactionCost) {
@@ -199,6 +221,32 @@ impl CostTracker {
             (
                 "inflight_transaction_count",
                 self.in_flight_transaction_count,
+                i64
+            ),
+            (
+                "transaction_cost_min",
+                self.transaction_cost_histogram
+                    .minimum()
+                    .unwrap_or_default(),
+                i64
+            ),
+            (
+                "transaction_cost_mean",
+                self.transaction_cost_histogram.mean().unwrap_or_default(),
+                i64
+            ),
+            (
+                "transaction_cost_max",
+                self.transaction_cost_histogram
+                    .maximum()
+                    .unwrap_or_default(),
+                i64
+            ),
+            (
+                "transaction_cost_p90",
+                self.transaction_cost_histogram
+                    .percentile(90.0)
+                    .unwrap_or_default(),
                 i64
             ),
         );

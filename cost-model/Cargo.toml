@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+histogram = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
@@ -17,7 +18,6 @@ solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-config-program = { workspace = true }
 solana-frozen-abi = { workspace = true }
-solana-frozen-abi-macro = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-metrics = { workspace = true }
 solana-program-runtime = { workspace = true }

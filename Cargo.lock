@@ -6015,6 +6015,7 @@ dependencies = [
 name = "solana-cost-model"
 version = "2.0.0"
 dependencies = [
+ "histogram",
  "lazy_static",
  "log",
  "rustc_version 0.4.0",
@@ -6023,7 +6024,6 @@ dependencies = [
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "solana-loader-v4-program",
  "solana-logger",
  "solana-metrics",
