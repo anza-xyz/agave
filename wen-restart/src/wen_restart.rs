@@ -374,8 +374,9 @@ fn generate_snapshot(
         let mut my_bank_forks = bank_forks.write().unwrap();
         let old_root_bank = my_bank_forks.root_bank();
         old_root_bank.register_hard_fork(new_root_slot);
+        // new_root_slot is guaranteed to have a bank in bank_forks, it's checked in
+        // find_bankhash_of_heaviest_fork().
         new_root_bank = my_bank_forks.get(new_root_slot).unwrap();
-        new_root_bank.rehash();
         // Only root banks can have snapshots generated.
         my_bank_forks.set_root(
             new_root_slot,
