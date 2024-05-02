@@ -60,7 +60,7 @@ fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
     let poh_config = PohConfig {
         // limit tick count to avoid clearing working_bank at
         // PohRecord then PohRecorderError(MaxHeightReached) at BankingStage
-        target_tick_count: Some(bank.max_tick_height() - 1),
+        target_tick_count: Some(bank.max_tick_height().saturating_sub(1)),
         ..PohConfig::default()
     };
 
