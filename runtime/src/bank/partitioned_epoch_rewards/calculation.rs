@@ -308,15 +308,10 @@ impl Bank {
 
         // Use `EpochStakes` for vote accounts
         let leader_schedule_epoch = self.epoch_schedule().get_leader_schedule_epoch(self.slot());
-        let epoch_stakes = self.epoch_stakes(leader_schedule_epoch)
+        let cached_vote_accounts = self.epoch_stakes(leader_schedule_epoch)
             .expect("calculation should always run after Bank::update_epoch_stakes(leader_schedule_epoch)")
-            .stakes();
-        {
-            // TODO: check how long this takes; remove if `stakes` are replaced
-            // with delegations from EpochStakes
-            assert!(crate::stakes::delegations_eq(stakes, epoch_stakes));
-        }
-        let cached_vote_accounts = epoch_stakes.vote_accounts();
+            .stakes()
+            .vote_accounts();
 
         EpochRewardCalculateParamInfo {
             stake_history,

@@ -542,18 +542,6 @@ impl PartialEq<StakesEnum> for StakesEnum {
     }
 }
 
-pub(crate) fn delegations_eq(stakes: &Stakes<StakeAccount>, stakes_enum: &StakesEnum) -> bool {
-    let stakes_delegations = Stakes::<Delegation>::from(stakes.clone()).stake_delegations;
-    match stakes_enum {
-        StakesEnum::Accounts(stakes) => {
-            let stakes_enum_delegations =
-                Stakes::<Delegation>::from(stakes.clone()).stake_delegations;
-            stakes_enum_delegations == stakes_delegations
-        }
-        StakesEnum::Delegations(stakes) => stakes.stake_delegations == stakes_delegations,
-    }
-}
-
 // In order to maintain backward compatibility, the StakesEnum in EpochStakes
 // and SerializableVersionedBank should be serialized as Stakes<Delegation>.
 pub(crate) mod serde_stakes_enum_compat {
@@ -631,13 +619,7 @@ pub(crate) mod tests {
         super::*,
         rand::Rng,
         rayon::ThreadPoolBuilder,
-        solana_sdk::{
-            account::WritableAccount,
-            account_utils::StateMut,
-            pubkey::Pubkey,
-            rent::Rent,
-            stake::{self, state::StakeStateV2},
-        },
+        solana_sdk::{account::WritableAccount, pubkey::Pubkey, rent::Rent, stake},
         solana_stake_program::stake_state,
         solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     };
@@ -1060,52 +1042,6 @@ pub(crate) mod tests {
                 *expected_warmed_stake
             );
         }
-    }
-
-    #[test]
-    fn test_delegations_eq() {
-        let stakes_cache = StakesCache::new(Stakes {
-            epoch: 42,
-            ..Stakes::default()
-        });
-
-        let mut vote_accounts = vec![];
-        let mut stake_accounts = vec![];
-
-        for i in 0..4 {
-            let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
-                create_staked_node_accounts(i);
-            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
-            vote_accounts.push((vote_pubkey, vote_account));
-            stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
-            stake_accounts.push((stake_pubkey, stake_account));
-        }
-
-        let mut stakes = stakes_cache.0.read().unwrap().clone();
-        let stakes_enum = StakesEnum::Accounts(stakes.clone());
-        assert!(delegations_eq(&stakes, &stakes_enum));
-
-        let delegations: Stakes<Delegation> = stakes.clone().into();
-        let delegations_stakes_enum = StakesEnum::Delegations(delegations);
-        assert!(delegations_eq(&stakes, &delegations_stakes_enum));
-
-        // modify one delegation in `stakes`
-        let (stake_pubkey, mut stake_account) = stake_accounts.last().unwrap().clone();
-        let StakeStateV2::Stake(meta, mut stake, flags) =
-            stake_state::from(&stake_account).unwrap()
-        else {
-            unreachable!()
-        };
-        stake.delegation.stake += 42;
-
-        stake_account
-            .set_state(&StakeStateV2::Stake(meta, stake, flags))
-            .unwrap();
-        let new_delegation = stake_account.try_into().unwrap();
-        stakes.upsert_stake_delegation(stake_pubkey, new_delegation, None);
-
-        assert!(!delegations_eq(&stakes, &stakes_enum));
-        assert!(!delegations_eq(&stakes, &delegations_stakes_enum));
     }
 
     #[test]
