@@ -646,11 +646,15 @@ impl Rocks {
         Ok(())
     }
 
-    fn multi_get_cf(
+    fn multi_get_cf<'a, K, I>(
         &self,
         cf: &ColumnFamily,
-        keys: Vec<&[u8]>,
-    ) -> Vec<Result<Option<DBPinnableSlice>>> {
+        keys: I,
+    ) -> Vec<Result<Option<DBPinnableSlice>>>
+    where
+        K: AsRef<[u8]> + 'a + ?Sized,
+        I: IntoIterator<Item = &'a K>,
+    {
         let values = self
             .db
             .batched_multi_get_cf(cf, keys, false)
