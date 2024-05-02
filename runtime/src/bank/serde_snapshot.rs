@@ -360,7 +360,7 @@ mod tests {
 
             if let Some(rewards) = epoch_reward_status_active.as_ref() {
                 assert_eq!(bank.block_height(), 1);
-                bank.set_epoch_reward_status_active(rewards.clone());
+                bank.set_epoch_reward_status_active(bank.block_height(), rewards.clone());
             }
 
             // Serialize
@@ -455,7 +455,7 @@ mod tests {
 
             if let Some(rewards) = epoch_reward_status_active.as_ref() {
                 assert_eq!(bank.block_height(), 1);
-                bank.set_epoch_reward_status_active(rewards.clone());
+                bank.set_epoch_reward_status_active(bank.block_height(), rewards.clone());
             }
 
             let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
