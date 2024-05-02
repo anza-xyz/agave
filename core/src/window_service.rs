@@ -552,7 +552,8 @@ impl WindowService {
                         }
                     }
 
-                    if last_print.elapsed().as_secs() > 2 {
+                    const METRICS_INTERVAL: Duration = Duration::from_secs(2);
+                    if last_print.elapsed() > METRICS_INTERVAL {
                         metrics.report_metrics("blockstore-insert-shreds");
                         metrics = BlockstoreInsertionMetrics::default();
                         ws_metrics.report_metrics("recv-window-insert-shreds");
