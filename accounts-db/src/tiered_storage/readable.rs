@@ -66,16 +66,6 @@ impl TieredStorageReader {
     }
 
     /// Returns the account located at the specified index offset.
-    pub fn get_stored_account_meta(
-        &self,
-        index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, IndexOffset)>> {
-        match self {
-            Self::Hot(hot) => hot.get_stored_account_meta(index_offset),
-        }
-    }
-
-    /// Returns the account located at the specified index offset.
     pub fn get_account_shared_data(
         &self,
         index_offset: IndexOffset,
@@ -117,17 +107,6 @@ impl TieredStorageReader {
                     .map_err(|_| MatchAccountOwnerError::UnableToLoad)?;
                 hot.account_matches_owners(account_offset, owners)
             }
-        }
-    }
-
-    /// Return a vector of account metadata for each account, starting from
-    /// `index_offset`
-    pub fn accounts(
-        &self,
-        index_offset: IndexOffset,
-    ) -> TieredStorageResult<Vec<StoredAccountMeta>> {
-        match self {
-            Self::Hot(hot) => hot.accounts(index_offset),
         }
     }
 

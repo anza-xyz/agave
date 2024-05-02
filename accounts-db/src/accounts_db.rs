@@ -1204,10 +1204,6 @@ impl AccountStorageEntry {
         }
     }
 
-    pub fn all_accounts(&self) -> Vec<StoredAccountMeta> {
-        self.accounts.accounts(0)
-    }
-
     fn remove_accounts(
         &self,
         num_bytes: usize,
@@ -9259,6 +9255,18 @@ pub(crate) enum UpdateIndexThreadSelection {
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
+impl AccountStorageEntry {
+    fn accounts_count(&self) -> usize {
+        let mut count = 0;
+        self.accounts.scan_accounts(|_| {
+            count += 1;
+        });
+        count
+    }
+}
+
+// These functions/fields are only usable from a dev context (i.e. tests and benches)
+#[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
     pub fn load_without_fixed_root(
         &self,
@@ -9341,10 +9349,8 @@ impl AccountsDb {
         let total_count = store.count();
         assert_eq!(store.status(), AccountStorageStatus::Available);
         assert_eq!(total_count, count);
-        let (expected_store_count, actual_store_count): (usize, usize) = (
-            store.approx_stored_count(),
-            self.all_account_count_in_accounts_file(slot),
-        );
+        let (expected_store_count, actual_store_count): (usize, usize) =
+            (store.approx_stored_count(), store.accounts_count());
         assert_eq!(expected_store_count, actual_store_count);
     }
 
@@ -9428,8 +9434,7 @@ impl AccountsDb {
     pub fn all_account_count_in_accounts_file(&self, slot: Slot) -> usize {
         let store = self.storage.get_slot_storage_entry(slot);
         if let Some(store) = store {
-            let mut count = 0;
-            store.accounts.scan_accounts(|_| count += 1);
+            let count = store.accounts_count();
             let stored_count = store.approx_stored_count();
             assert_eq!(stored_count, count);
             count
@@ -10259,11 +10264,10 @@ pub mod tests {
                 .map(|storage| {
                     let slot = storage.slot();
                     let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
-                    let all_accounts = storage
-                        .all_accounts()
-                        .iter()
-                        .map(|acct| (*acct.pubkey(), acct.to_account_shared_data()))
-                        .collect::<Vec<_>>();
+                    let mut all_accounts = Vec::default();
+                    storage.accounts.scan_accounts(|acct| {
+                        all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                    });
                     let accounts = all_accounts
                         .iter()
                         .map(|stored| (&stored.0, &stored.1))
@@ -10294,11 +10298,10 @@ pub mod tests {
             .map(|storage| {
                 let slot = storage.slot() + max_slot;
                 let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
-                let all_accounts = storage
-                    .all_accounts()
-                    .iter()
-                    .map(|acct| (*acct.pubkey(), acct.to_account_shared_data()))
-                    .collect::<Vec<_>>();
+                let mut all_accounts = Vec::default();
+                storage.accounts.scan_accounts(|acct| {
+                    all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                });
                 let accounts = all_accounts
                     .iter()
                     .map(|stored| (&stored.0, &stored.1))
@@ -12690,7 +12693,7 @@ pub mod tests {
         accounts.store_for_tests(current_slot, &[(&pubkey3, &zero_lamport_account)]);
 
         let snapshot_stores = accounts.get_snapshot_storages(..=current_slot).0;
-        let total_accounts: usize = snapshot_stores.iter().map(|s| s.all_accounts().len()).sum();
+        let total_accounts: usize = snapshot_stores.iter().map(|s| s.accounts_count()).sum();
         assert!(!snapshot_stores.is_empty());
         assert!(total_accounts > 0);
 
@@ -12704,7 +12707,7 @@ pub mod tests {
         accounts.print_accounts_stats("Post-D clean");
 
         let total_accounts_post_clean: usize =
-            snapshot_stores.iter().map(|s| s.all_accounts().len()).sum();
+            snapshot_stores.iter().map(|s| s.accounts_count()).sum();
         assert_eq!(total_accounts, total_accounts_post_clean);
 
         // should clean all 3 pubkeys
@@ -13954,9 +13957,8 @@ pub mod tests {
 
         // Flushing cache should only create one storage entry
         let storage0 = accounts_db.get_and_assert_single_storage(slot);
-        let accounts = storage0.all_accounts();
 
-        for account in accounts {
+        storage0.accounts.scan_accounts(|account| {
             let before_size = storage0.alive_bytes.load(Ordering::Acquire);
             let account_info = accounts_db
                 .accounts_index
@@ -13979,7 +13981,7 @@ pub mod tests {
             } else {
                 assert_eq!(before_size, after_size + account.stored_size());
             }
-        }
+        });
     });
 
     fn setup_accounts_db_cache_clean(

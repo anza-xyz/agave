@@ -530,15 +530,6 @@ impl HotStorageReader {
         index_offset: IndexOffset,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
     ) -> TieredStorageResult<Option<Ret>> {
-        let account = self.get_stored_account_meta(index_offset)?;
-        Ok(account.map(|(account, _offset)| callback(account)))
-    }
-
-    /// Returns the account located at the specified index offset.
-    pub fn get_stored_account_meta(
-        &self,
-        index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, IndexOffset)>> {
         if index_offset.0 >= self.footer.account_entry_count {
             return Ok(None);
         }
@@ -550,16 +541,13 @@ impl HotStorageReader {
         let owner = self.get_owner_address(meta.owner_offset())?;
         let account_block = self.get_account_block(account_offset, index_offset)?;
 
-        Ok(Some((
-            StoredAccountMeta::Hot(HotAccount {
-                meta,
-                address,
-                owner,
-                index: index_offset,
-                account_block,
-            }),
-            IndexOffset(index_offset.0.saturating_add(1)),
-        )))
+        Ok(Some(callback(StoredAccountMeta::Hot(HotAccount {
+            meta,
+            address,
+            owner,
+            index: index_offset,
+            account_block,
+        }))))
     }
 
     /// Returns the account located at the specified index offset.
@@ -584,24 +572,6 @@ impl HotStorageReader {
         Ok(Some(AccountSharedData::create(
             lamports, data, owner, executable, rent_epoch,
         )))
-    }
-
-    /// Return a vector of account metadata for each account, starting from
-    /// `index_offset`
-    pub fn accounts(
-        &self,
-        mut index_offset: IndexOffset,
-    ) -> TieredStorageResult<Vec<StoredAccountMeta>> {
-        let mut accounts = Vec::with_capacity(
-            self.footer
-                .account_entry_count
-                .saturating_sub(index_offset.0) as usize,
-        );
-        while let Some((account, next)) = self.get_stored_account_meta(index_offset)? {
-            accounts.push(account);
-            index_offset = next;
-        }
-        Ok(accounts)
     }
 
     /// iterate over all pubkeys
@@ -1605,26 +1575,21 @@ mod tests {
                 .unwrap();
         }
 
-        // verify get_accounts
-        let accounts = hot_storage.accounts(IndexOffset(0)).unwrap();
+        // verify everything
+        let mut i = 0;
+        hot_storage
+            .scan_accounts(|stored_meta| {
+                storable_accounts.account_default_if_zero_lamport(i, |account| {
+                    verify_test_account(
+                        &stored_meta,
+                        &account.to_account_shared_data(),
+                        account.pubkey(),
+                    );
+                });
+                i += 1;
+            })
+            .unwrap();
 
-        // first, we verify everything
-        for (i, stored_meta) in accounts.iter().enumerate() {
-            storable_accounts.account_default_if_zero_lamport(i, |account| {
-                verify_test_account(
-                    stored_meta,
-                    &account.to_account_shared_data(),
-                    account.pubkey(),
-                );
-            });
-        }
-
-        // second, we verify various initial position
-        let total_stored_accounts = accounts.len();
-        for i in 0..total_stored_accounts {
-            let partial_accounts = hot_storage.accounts(IndexOffset(i as u32)).unwrap();
-            assert_eq!(&partial_accounts, &accounts[i..]);
-        }
         let footer = hot_storage.footer();
 
         let expected_size = footer.owners_block_offset as usize

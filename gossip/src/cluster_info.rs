@@ -24,7 +24,7 @@ use {
         cluster_info_metrics::{
             submit_gossip_stats, Counter, GossipStats, ScopedTimer, TimedGuard,
         },
-        contact_info::{self, ContactInfo, Error as ContactInfoError, LegacyContactInfo},
+        contact_info::{self, ContactInfo, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
@@ -38,6 +38,7 @@ use {
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
         gossip_error::GossipError,
+        legacy_contact_info::LegacyContactInfo,
         ping_pong::{self, PingCache, Pong},
         restart_crds_values::{
             RestartHeaviestFork, RestartLastVotedForkSlots, RestartLastVotedForkSlotsError,
@@ -1289,13 +1290,24 @@ impl ClusterInfo {
             .collect()
     }
 
-    pub fn get_node_version(&self, pubkey: &Pubkey) -> Option<solana_version::LegacyVersion2> {
+    pub fn get_node_version(&self, pubkey: &Pubkey) -> Option<solana_version::Version> {
         let gossip_crds = self.gossip.crds.read().unwrap();
-        if let Some(version) = gossip_crds.get::<&Version>(*pubkey) {
-            return Some(version.version.clone());
-        }
-        let version: &crds_value::LegacyVersion = gossip_crds.get(*pubkey)?;
-        Some(version.version.clone().into())
+        gossip_crds
+            .get::<&ContactInfo>(*pubkey)
+            .map(ContactInfo::version)
+            .cloned()
+            .or_else(|| {
+                gossip_crds
+                    .get::<&Version>(*pubkey)
+                    .map(|entry| entry.version.clone())
+                    .or_else(|| {
+                        gossip_crds
+                            .get::<&crds_value::LegacyVersion>(*pubkey)
+                            .map(|entry| entry.version.clone())
+                            .map(solana_version::LegacyVersion2::from)
+                    })
+                    .map(solana_version::Version::from)
+            })
     }
 
     fn check_socket_addr_space<E>(&self, addr: &Result<SocketAddr, E>) -> bool {

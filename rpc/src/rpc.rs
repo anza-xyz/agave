@@ -1,7 +1,8 @@
 //! The `rpc` module implements the Solana RPC interface.
 use {
     crate::{
-        max_slots::MaxSlots, optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+        filter::filter_allows, max_slots::MaxSlots,
+        optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
@@ -2039,7 +2040,7 @@ impl JsonRpcRequestProcessor {
         let filter_closure = |account: &AccountSharedData| {
             filters
                 .iter()
-                .all(|filter_type| filter_type.allows(account))
+                .all(|filter_type| filter_allows(filter_type, account))
         };
         if self
             .config
@@ -2116,7 +2117,7 @@ impl JsonRpcRequestProcessor {
                         account.owner() == program_id
                             && filters
                                 .iter()
-                                .all(|filter_type| filter_type.allows(account))
+                                .all(|filter_type| filter_allows(filter_type, account))
                     },
                     &ScanConfig::default(),
                     bank.byte_limit_for_scans(),
@@ -2166,7 +2167,7 @@ impl JsonRpcRequestProcessor {
                         account.owner() == program_id
                             && filters
                                 .iter()
-                                .all(|filter_type| filter_type.allows(account))
+                                .all(|filter_type| filter_allows(filter_type, account))
                     },
                     &ScanConfig::default(),
                     bank.byte_limit_for_scans(),
@@ -5263,6 +5264,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_cluster_nodes() {
         let rpc = RpcHandler::start();
+        let version = solana_version::Version::default();
         let request = create_test_request("getClusterNodes", None);
         let result: Value = parse_success_result(rpc.handle_request_sync(request));
         let expected = json!([{
@@ -5273,8 +5275,8 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:8009",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
-            "version": null,
-            "featureSet": null,
+            "version": format!("{version}"),
+            "featureSet": version.feature_set,
         }, {
             "pubkey": rpc.leader_pubkey().to_string(),
             "gossip": "127.0.0.1:1235",
@@ -5283,8 +5285,8 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:1240",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
-            "version": null,
-            "featureSet": null,
+            "version": format!("{version}"),
+            "featureSet": version.feature_set,
         }]);
         assert_eq!(result, expected);
     }
