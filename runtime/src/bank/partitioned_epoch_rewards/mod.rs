@@ -150,6 +150,11 @@ impl Bank {
             .is_active(&feature_set::enable_partitioned_epoch_reward::id())
     }
 
+    pub(crate) fn is_epoch_stakes_snapshot_migration_feature_enabled(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::migrate_epoch_stakes_snapshot_field::id())
+    }
+
     pub(crate) fn set_epoch_reward_status_active(
         &mut self,
         stake_rewards_by_partition: Vec<StakeRewards>,

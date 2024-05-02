@@ -6,11 +6,13 @@ use {
     },
     crate::{
         bank::partitioned_epoch_rewards::EpochRewardStatus,
+        epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts},
         stakes::{serde_stakes_enum_compat, StakesEnum},
     },
     solana_accounts_db::{accounts_hash::AccountsHash, ancestors::AncestorsForSerialization},
     solana_measure::measure::Measure,
     solana_sdk::{deserialize_utils::ignore_eof_error, stake::state::Delegation},
+    solana_stake_program::stake_state::Stake,
     std::{cell::RefCell, collections::HashSet, sync::RwLock},
 };
 
@@ -139,7 +141,7 @@ struct SerializableVersionedBank<'a> {
     #[serde(serialize_with = "serde_stakes_enum_compat::serialize")]
     stakes: StakesEnum,
     unused_accounts: UnusedAccounts,
-    epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
+    epoch_stakes: HashMap<Epoch, EpochStakes>,
     is_delta: bool,
 }
 
@@ -204,6 +206,9 @@ impl<'a> TypeContext<'a> for Context {
         let epoch_reward_status = serializable_bank
             .bank
             .get_epoch_reward_status_to_serialize();
+        let use_new_epoch_stakes_field = serializable_bank
+            .bank
+            .is_epoch_stakes_snapshot_migration_feature_enabled();
         match get_serialize_bank_fields(
             SerializableVersionedBank::from(fields),
             SerializableAccountsDb::<'a, Self> {
@@ -222,9 +227,11 @@ impl<'a> TypeContext<'a> for Context {
                 .get_epoch_accounts_hash_to_serialize()
                 .map(|epoch_accounts_hash| *epoch_accounts_hash.as_ref()),
             epoch_reward_status,
+            use_new_epoch_stakes_field,
         ) {
             BankFieldsToSerialize::WithoutEpochRewardStatus(data) => data.serialize(serializer),
             BankFieldsToSerialize::WithEpochRewardStatus(data) => data.serialize(serializer),
+            BankFieldsToSerialize::WithVersionedEpochStakes(data) => data.serialize(serializer),
         }
     }
 
@@ -347,6 +354,16 @@ impl<'a> TypeContext<'a> for Context {
         let epoch_reward_status = ignore_eof_error(deserialize_from(&mut stream))?;
         bank_fields.epoch_reward_status = epoch_reward_status;
 
+        // If we deserialize the new epoch stakes, add all of the entries into the
+        // other deserialized map which could still have old epoch stakes entries
+        let new_epoch_stakes: HashMap<u64, VersionedEpochStakes> =
+            ignore_eof_error(deserialize_from(&mut stream))?;
+        bank_fields.epoch_stakes.extend(
+            new_epoch_stakes
+                .into_iter()
+                .map(|(epoch, versioned_epoch_stakes)| (epoch, versioned_epoch_stakes.into())),
+        );
+
         Ok((bank_fields, accounts_db_fields))
     }
 
@@ -413,10 +430,14 @@ impl<'a> TypeContext<'a> for Context {
             inflation: rhs.inflation,
             stakes: StakesEnum::from(rhs.stakes),
             unused_accounts: UnusedAccounts::default(),
-            epoch_stakes: &rhs.epoch_stakes,
+            epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
         };
 
+        let use_new_epoch_stakes_field = bank
+            .epoch_stakes
+            .values()
+            .any(|stakes| matches!(stakes.stakes(), &StakesEnum::Stakes(_)));
         match get_serialize_bank_fields(
             bank,
             accounts_db_fields,
@@ -425,6 +446,7 @@ impl<'a> TypeContext<'a> for Context {
             epoch_accounts_hash.copied(),
             matches!(epoch_reward_status, EpochRewardStatus::Active(_))
                 .then_some(&epoch_reward_status),
+            use_new_epoch_stakes_field,
         ) {
             BankFieldsToSerialize::WithoutEpochRewardStatus(data) => {
                 bincode::serialize_into(stream_writer, &data)
@@ -432,6 +454,43 @@ impl<'a> TypeContext<'a> for Context {
             BankFieldsToSerialize::WithEpochRewardStatus(data) => {
                 bincode::serialize_into(stream_writer, &data)
             }
+            BankFieldsToSerialize::WithVersionedEpochStakes(data) => {
+                bincode::serialize_into(stream_writer, &data)
+            }
+        }
+    }
+}
+
+#[derive(AbiExample, AbiEnumVisitor, Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub(crate) enum UnusedEnum {
+    #[default]
+    Unused = 1,
+}
+
+#[derive(AbiExample, AbiEnumVisitor, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) enum VersionedEpochStakes {
+    Current {
+        stakes: Stakes<Stake>,
+        total_stake: u64,
+        node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
+        epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+    },
+}
+
+impl Into<EpochStakes> for VersionedEpochStakes {
+    fn into(self) -> EpochStakes {
+        let VersionedEpochStakes::Current {
+            stakes,
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
+        } = self;
+
+        EpochStakes {
+            stakes: Arc::new(StakesEnum::Stakes(stakes)),
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
         }
     }
 }
@@ -460,18 +519,102 @@ enum BankFieldsToSerialize<'a, T: Serialize> {
             &'a EpochRewardStatus,
         ),
     ),
+    // this will not be readable by < 2.0
+    // serialize this if new_epoch_stakes_serialization is active
+    // This allows this code to be present and harmless
+    WithVersionedEpochStakes(
+        (
+            SerializableVersionedBank<'a>,
+            T,
+            u64,
+            Option<BankIncrementalSnapshotPersistence>,
+            Option<Hash>,
+            UnusedEnum,
+            HashMap<Epoch, VersionedEpochStakes>,
+        ),
+    ),
+}
+
+fn split_epoch_stakes(
+    bank_epoch_stakes: &mut HashMap<Epoch, EpochStakes>,
+) -> (
+    HashMap<Epoch, EpochStakes>,
+    HashMap<Epoch, VersionedEpochStakes>,
+) {
+    let mut old_epoch_stakes = HashMap::new();
+    let mut new_epoch_stakes = HashMap::new();
+    for (epoch, epoch_stakes) in bank_epoch_stakes.drain() {
+        let EpochStakes {
+            stakes,
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
+        } = epoch_stakes;
+
+        match stakes.as_ref() {
+            StakesEnum::Delegations(_) => {
+                old_epoch_stakes.insert(
+                    epoch,
+                    EpochStakes {
+                        stakes: stakes.clone(),
+                        total_stake,
+                        node_id_to_vote_accounts,
+                        epoch_authorized_voters,
+                    },
+                );
+            }
+            StakesEnum::Accounts(stakes) => {
+                new_epoch_stakes.insert(
+                    epoch,
+                    VersionedEpochStakes::Current {
+                        stakes: Stakes::<Stake>::from(stakes.clone()),
+                        total_stake,
+                        node_id_to_vote_accounts,
+                        epoch_authorized_voters,
+                    },
+                );
+            }
+            StakesEnum::Stakes(stakes) => {
+                new_epoch_stakes.insert(
+                    epoch,
+                    VersionedEpochStakes::Current {
+                        stakes: stakes.clone(),
+                        total_stake,
+                        node_id_to_vote_accounts,
+                        epoch_authorized_voters,
+                    },
+                );
+            }
+        }
+    }
+    (old_epoch_stakes, new_epoch_stakes)
 }
 
 /// serializing involves building these fields into a tuple
 /// This occurs during normal serialization and again during re-serialization.
 fn get_serialize_bank_fields<'a, T: Serialize>(
-    bank: SerializableVersionedBank<'a>,
+    mut bank: SerializableVersionedBank<'a>,
     accounts_db_fields: T,
     lamports_per_signature: u64,
     incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     epoch_accounts_hash: Option<Hash>,
     epoch_reward_status: Option<&'a EpochRewardStatus>,
+    use_new_epoch_stakes_field: bool,
 ) -> BankFieldsToSerialize<'a, T> {
+    if use_new_epoch_stakes_field {
+        let (old_epoch_stakes, new_epoch_stakes) = split_epoch_stakes(&mut bank.epoch_stakes);
+        bank.epoch_stakes = old_epoch_stakes;
+        return BankFieldsToSerialize::WithVersionedEpochStakes((
+            bank,
+            accounts_db_fields,
+            lamports_per_signature,
+            incremental_snapshot_persistence,
+            epoch_accounts_hash,
+            UnusedEnum::Unused,
+            new_epoch_stakes,
+        ));
+    }
+
     match epoch_reward_status {
         Some(epoch_reward_status) => BankFieldsToSerialize::WithEpochRewardStatus((
             bank,
