@@ -360,41 +360,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 saturating_add_assign!(*count, 1);
                             }
                             Entry::Vacant(prog_entry) => {
-                                if self.program_cache.read().unwrap().contains_key(key) {
-                                    // Found in program cache, must be a program_account, insert into program_map `optimistically`.
-                                    // Note that the account could be `invalid`, i.e. closed, tombstoned. Those accounts will be
-                                    // checked and skipped in future processing by function - `replenish_program_cache`.
-                                    prog_entry.insert(1);
-                                } else {
-                                    match accounts_map.entry(*key) {
-                                        Entry::Occupied(account_entry) => {
-                                            // Found in accounts_map, check owner
-                                            if let Some(account_entry) = account_entry.get() {
-                                                let owner = account_entry.0.owner();
-                                                if program_owners.contains(owner) {
-                                                    // Owner is in program_owners. insert into program_map.
-                                                    prog_entry.insert(1);
-                                                }
+                                match accounts_map.entry(*key) {
+                                    Entry::Occupied(account_entry) => {
+                                        // Found in accounts_map, check owner
+                                        if let Some(account_entry) = account_entry.get() {
+                                            let owner = account_entry.0.owner();
+                                            if program_owners.contains(owner) {
+                                                // Owner is in program_owners. insert into program_map.
+                                                prog_entry.insert(1);
                                             }
                                         }
-                                        Entry::Vacant(account_entry) => {
-                                            // Not found in accounts_map. Load the account. When loading if
-                                            // owner is in program_owners, don't store into read_cache.
-                                            let loaded_account = callbacks
-                                                .load_account_with(key, |account| {
-                                                    !program_owners.contains(account.owner())
-                                                });
+                                    }
+                                    Entry::Vacant(account_entry) => {
+                                        // Not found in accounts_map. Load the account. When loading if
+                                        // owner is in program_owners, don't store into read_cache.
+                                        let loaded_account = callbacks
+                                            .load_account_with(key, |account| {
+                                                !program_owners.contains(account.owner())
+                                            });
 
-                                            if let Some(ref loaded_account) = loaded_account {
-                                                // Insert it into program_map if owner is in program_owners.
-                                                if program_owners.contains(loaded_account.0.owner())
-                                                {
-                                                    prog_entry.insert(1);
-                                                }
+                                        if let Some(ref loaded_account) = loaded_account {
+                                            // Insert it into program_map if owner is in program_owners.
+                                            if program_owners.contains(loaded_account.0.owner()) {
+                                                prog_entry.insert(1);
                                             }
-                                            // Save the account in accounts_map for later instruction/program account load.
-                                            account_entry.insert(loaded_account);
                                         }
+                                        // Save the account in accounts_map for later instruction/program account load.
+                                        account_entry.insert(loaded_account);
                                     }
                                 }
                             }
@@ -475,7 +467,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             if let Some((key, count)) = program_to_load {
                 // Load, verify and compile one program.
-                match load_program_with_pubkey(
+
+                let program = load_program_with_pubkey(
                     callback,
                     &self.program_cache.read().unwrap(),
                     &key,
@@ -484,25 +477,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &self.epoch_schedule,
                     false,
                     accounts_map,
-                ) {
-                    // We are expecting that the program account can be NOT found. `missing_program`, populated from `program_accounts_map`, which
-                    // may contain invalid program account, i.e. closed, tombstoned. If the program account is NOT found, we need to skip this account
-                    // and continue with the loop.
-                    Some(program) => {
-                        program.tx_usage_counter.store(count, Ordering::Relaxed);
-                        program_to_store = Some((key, program));
-                    }
-                    None => {
-                        missing_programs.retain(|x| x.0 != key);
-                        // Notify other threads which might be waiting on us for current cooperative_loading_task of empty program account
-                        task_waiter.notify();
-                        if missing_programs.is_empty() {
-                            // break out possible infinite loop
-                            break;
-                        }
-                        continue;
-                    }
-                }
+                )
+                .expect("called load_program_with_pubkey() with nonexistent account");
+                program.tx_usage_counter.store(count, Ordering::Relaxed);
+                program_to_store = Some((key, program));
             } else if missing_programs.is_empty() {
                 break;
             } else {
@@ -1126,6 +1104,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1136,15 +1115,12 @@ mod tests {
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
         account_maps.insert(key, 4);
 
-        let cache = batch_processor.replenish_program_cache(
+        batch_processor.replenish_program_cache(
             &mock_bank,
             &account_maps,
             true,
             &HashMap::default(),
         );
-
-        // assert that we skip `nonexistent` account.
-        assert!(cache.find(&key).is_none());
     }
 
     #[test]
