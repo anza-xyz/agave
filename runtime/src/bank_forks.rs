@@ -283,27 +283,27 @@ impl BankForks {
         &self.banks[&self.highest_slot()]
     }
 
-    pub fn trigger_eah_calculation_if_needed(
+    /// Sends an EpochAccountsHash request if one of the `banks` crosses the EAH boundary.
+    /// Returns if the bank at slot `root` was squashed, and its timings.
+    ///
+    /// Panics if more than one bank in `banks` should send an EAH request.
+    pub fn send_eah_request_if_needed(
         &mut self,
-        root_bank: Arc<Bank>,
+        root: Slot,
+        banks: &[&Arc<Bank>],
         accounts_background_request_sender: &AbsRequestSender,
-        squash_timing: &mut SquashTiming,
-    ) -> Result<(bool, bool), SetRootError> {
+    ) -> Result<(bool, SquashTiming), SetRootError> {
         let mut is_root_bank_squashed = false;
-        let mut banks = vec![&root_bank];
-        let parents = root_bank.parents();
-        banks.extend(parents.iter());
+        let mut squash_timing = SquashTiming::default();
 
-        let mut eah_request_triggered = false;
-        // handle epoch accounts hash
-        // go through all the banks, oldest first
-        // find the newest bank where we should do EAH
-        // NOTE: Instead of filter-collect-assert, `.find()` could be used instead.  Once
-        // sufficient testing guarantees only one bank will ever request an EAH, change to
-        // `.find()`.
+        // Go through all the banks and see if we should send an EAH request.
+        // Only one EAH bank is allowed to send an EAH request.
+        // NOTE: Instead of filter-collect-assert, `.find()` could be used instead.
+        // Once sufficient testing guarantees only one bank will ever request an EAH,
+        // change to `.find()`.
         let eah_banks: Vec<_> = banks
             .iter()
-            .filter(|&&bank| self.should_request_epoch_accounts_hash(bank))
+            .filter(|bank| self.should_request_epoch_accounts_hash(bank))
             .collect();
         assert!(
             eah_banks.len() <= 1,
@@ -311,15 +311,15 @@ impl BankForks {
             eah_banks.len(),
             eah_banks.iter().map(|bank| bank.slot()).collect::<Vec<_>>(),
         );
-        if let Some(eah_bank) = eah_banks.first() {
+        if let Some(&&eah_bank) = eah_banks.first() {
             debug!(
                 "sending epoch accounts hash request, slot: {}",
-                eah_bank.slot()
+                eah_bank.slot(),
             );
 
             self.last_accounts_hash_slot = eah_bank.slot();
-            *squash_timing += eah_bank.squash();
-            is_root_bank_squashed = eah_bank.slot() == root_bank.slot();
+            squash_timing += eah_bank.squash();
+            is_root_bank_squashed = eah_bank.slot() == root;
 
             eah_bank
                 .rc
@@ -336,17 +336,15 @@ impl BankForks {
                 })
             {
                 return Err(SetRootError::SendEpochAccountHashError(eah_bank.slot(), e));
-            } else {
-                eah_request_triggered = true;
-            }
+            };
         }
-        drop(eah_banks);
-        Ok((eah_request_triggered, is_root_bank_squashed))
+
+        Ok((is_root_bank_squashed, squash_timing))
     }
 
     fn do_set_root_return_metrics(
         &mut self,
-        root: Slot,
+        root_bank: Arc<Bank>,
         accounts_background_request_sender: &AbsRequestSender,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
@@ -386,15 +384,10 @@ impl BankForks {
         let parents = root_bank.parents();
         banks.extend(parents.iter());
         let total_parent_banks = banks.len();
-        let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
 
-        let (_, root_squashed) = self.trigger_eah_calculation_if_needed(
-            root_bank.clone(),
-            accounts_background_request_sender,
-            &mut squash_timing,
-        )?;
-        let mut is_root_bank_squashed = root_squashed;
+        let (mut is_root_bank_squashed, mut squash_timing) =
+            self.send_eah_request_if_needed(root, &banks, accounts_background_request_sender)?;
 
         // After checking for EAH requests, also check for regular snapshot requests.
         //
