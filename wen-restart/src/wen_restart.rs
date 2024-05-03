@@ -34,14 +34,9 @@ use {
         bank::Bank,
         bank_forks::BankForks,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils::{
-            bank_to_full_snapshot_archive, bank_to_incremental_snapshot_archive,
-        },
+        snapshot_bank_utils::bank_to_full_snapshot_archive,
         snapshot_config::SnapshotConfig,
-        snapshot_utils::{
-            get_full_snapshot_archives, get_highest_full_snapshot_archive_slot,
-            get_incremental_snapshot_archives,
-        },
+        snapshot_utils::{get_full_snapshot_archives, get_highest_full_snapshot_archive_slot},
     },
     solana_sdk::{shred_version::compute_shred_version, timing::timestamp},
     solana_vote_program::vote_state::VoteTransaction,
@@ -74,6 +69,8 @@ const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
 const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
 
 const WAIT_FOR_SNAPSHOT_LOOP_SLEEP: Duration = Duration::from_secs(10);
+
+const SNAPSHOT_ARCHIVE_WEN_RESTART_DIR: &str = "wen_restart_snapshot";
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -396,79 +393,54 @@ fn generate_snapshot(
     // EAH calculation to finish. So if we trigger another EAH when generating snapshots
     // we won't hit a panic.
     let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
-    // Find the highest full snapshot archive to use as base.
-    let mut full_snapshot_base_slot = None;
-    let mut full_snapshot_infos =
-        get_full_snapshot_archives(snapshot_config.full_snapshot_archives_dir.clone());
-    full_snapshot_infos.sort_unstable();
-    let full_snapshot_base = full_snapshot_infos
-        .iter()
-        .rev()
-        .find(|info| info.slot() <= new_root_slot);
-    if let Some(full_snapshot_base) = full_snapshot_base {
-        full_snapshot_base_slot = Some(full_snapshot_base.slot());
-    }
-    if let Some(slot) = full_snapshot_base_slot {
-        // If the snapshot already exists, we can skip the snapshot generation.
-        if slot != new_root_slot {
-            bank_to_incremental_snapshot_archive(
-                snapshot_config.bank_snapshots_dir.clone(),
-                &new_root_bank,
-                get_highest_full_snapshot_archive_slot(
-                    snapshot_config.full_snapshot_archives_dir.clone(),
-                )
-                .unwrap(),
-                Some(snapshot_config.snapshot_version),
-                snapshot_config.full_snapshot_archives_dir.clone(),
-                snapshot_config.incremental_snapshot_archives_dir.clone(),
-                snapshot_config.archive_format,
-                snapshot_config.maximum_full_snapshot_archives_to_retain,
-                snapshot_config.maximum_incremental_snapshot_archives_to_retain,
-            )?;
+    // Even though generating incremental snapshot is faster, it involves finding a full
+    // snapshot to use as base, so the logic is more complicated. For now we always generate
+    // a full snapshot, even if one already exists, because after adding a hard fork the
+    // bankhash will change.
+    if let Some(slot) =
+        get_highest_full_snapshot_archive_slot(snapshot_config.full_snapshot_archives_dir.clone())
+    {
+        if slot > new_root_slot {
+            warn!(
+                "The new root slot {new_root_slot} should be no smaller than all previous
+                  roots, but the highest full snapshot archive slot is {slot}"
+            );
         }
-    } else {
-        bank_to_full_snapshot_archive(
-            snapshot_config.bank_snapshots_dir.clone(),
-            &new_root_bank,
-            Some(snapshot_config.snapshot_version),
-            snapshot_config.full_snapshot_archives_dir.clone(),
-            snapshot_config.incremental_snapshot_archives_dir.clone(),
-            snapshot_config.archive_format,
-            snapshot_config.maximum_full_snapshot_archives_to_retain,
-            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
-        )?;
     }
+    let snapshot_dir = snapshot_config
+        .full_snapshot_archives_dir
+        .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
+    bank_to_full_snapshot_archive(
+        snapshot_config.bank_snapshots_dir.clone(),
+        &new_root_bank,
+        Some(snapshot_config.snapshot_version),
+        snapshot_dir.clone(),
+        snapshot_config.incremental_snapshot_archives_dir.clone(),
+        snapshot_config.archive_format,
+        snapshot_config.maximum_full_snapshot_archives_to_retain,
+        snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+    )?;
 
     let new_root_bank_hash = new_root_bank.hash();
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
-    info!("waiting for new snapshot to be generated on {new_root_slot}");
+    let snapshot_dir_str = snapshot_dir.display().to_string();
+    info!("waiting for new snapshot to be generated on {new_root_slot} in {snapshot_dir_str}");
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
         // Return the path of the snapshot archive matching new_root_slot.
-        let snapshot_path = if full_snapshot_base_slot != Some(new_root_slot) {
-            get_incremental_snapshot_archives(
-                snapshot_config.incremental_snapshot_archives_dir.clone(),
-            )
-            .iter()
-            .find(|archive_info| archive_info.slot() == new_root_slot)
-            .map(|archive_info| archive_info.path().clone())
-        } else {
-            get_full_snapshot_archives(snapshot_config.full_snapshot_archives_dir.clone())
-                .iter()
-                .find(|archive_info| archive_info.slot() == new_root_slot)
-                .map(|archive_info| archive_info.path().clone())
-        };
-        if let Some(snapshot_path) = snapshot_path {
-            info!("wen_restart snapshot generated on {new_root_slot}");
-            return Ok(GenerateSnapshotRecord {
-                path: snapshot_path.display().to_string(),
-                slot: new_root_slot,
-                bankhash: new_root_bank_hash.to_string(),
-                shred_version: new_shred_version as u32,
-            });
+        for archive_info in get_full_snapshot_archives(snapshot_dir.clone()) {
+            if archive_info.slot() == new_root_slot {
+                info!("wen_restart snapshot generated on {new_root_slot}");
+                return Ok(GenerateSnapshotRecord {
+                    path: archive_info.path().display().to_string(),
+                    slot: new_root_slot,
+                    bankhash: new_root_bank_hash.to_string(),
+                    shred_version: new_shred_version as u32,
+                });
+            }
         }
         sleep(WAIT_FOR_SNAPSHOT_LOOP_SLEEP);
     }
