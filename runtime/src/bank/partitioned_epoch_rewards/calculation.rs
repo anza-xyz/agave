@@ -588,6 +588,7 @@ mod tests {
         crate::{
             bank::{
                 null_tracer,
+                partitioned_epoch_rewards::{EpochRewardStatus, StartBlockHeightAndRewards},
                 tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
                 VoteReward,
             },
@@ -1110,5 +1111,87 @@ mod tests {
         // Should panic
         let _recalculated_rewards =
             bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+    }
+
+    #[test]
+    fn test_recalculate_partitioned_rewards() {
+        let expected_num_delegations = 4;
+        let num_rewards_per_block = 2;
+        // Distribute 4 rewards over 2 blocks
+        let (bank, _, _) = create_reward_bank(expected_num_delegations, num_rewards_per_block);
+        let rewarded_epoch = bank.epoch();
+
+        // Advance to next epoch boundary to update EpochStakes Kludgy because
+        // mutable Bank methods require the bank not be Arc-wrapped.
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank = new_bank_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH - 1,
+        );
+        let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), SLOTS_PER_EPOCH);
+        let expected_starting_block_height = bank.block_height();
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let mut rewards_metrics = RewardsMetrics::default();
+        let PartitionedRewardsCalculation {
+            stake_rewards_by_partition:
+                StakeRewardCalculationPartitioned {
+                    stake_rewards_by_partition: expected_stake_rewards,
+                    ..
+                },
+            ..
+        } = bank.calculate_rewards_for_partitioning(
+            rewarded_epoch,
+            null_tracer(),
+            &thread_pool,
+            &mut rewards_metrics,
+        );
+
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        let EpochRewardStatus::Active(StartBlockHeightAndRewards {
+            start_block_height,
+            stake_rewards_by_partition: ref recalculated_rewards,
+        }) = bank.epoch_reward_status
+        else {
+            panic!("{:?} not active", bank.epoch_reward_status);
+        };
+        assert_eq!(expected_starting_block_height, start_block_height);
+        assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
+        compare_stake_rewards(&expected_stake_rewards, recalculated_rewards);
+
+        // Advance to first distribution slot
+        let mut bank =
+            Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 1);
+
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        let EpochRewardStatus::Active(StartBlockHeightAndRewards {
+            start_block_height,
+            stake_rewards_by_partition: ref recalculated_rewards,
+        }) = bank.epoch_reward_status
+        else {
+            panic!("{:?} not active", bank.epoch_reward_status);
+        };
+        assert_eq!(expected_starting_block_height, start_block_height);
+        assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
+        // First partition has already been distributed, so recalculation
+        // returns 0 rewards
+        assert_eq!(recalculated_rewards[0].len(), 0);
+        let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
+        let starting_index = (bank.block_height() + 1
+            - epoch_rewards_sysvar.distribution_starting_block_height)
+            as usize;
+        compare_stake_rewards(
+            &expected_stake_rewards[starting_index..],
+            &recalculated_rewards[starting_index..],
+        );
+
+        // Advance to last distribution slot
+        let mut bank =
+            Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 2);
+
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 }
