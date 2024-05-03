@@ -7205,12 +7205,10 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         invocation_message.clone(),
         bank.last_blockhash(),
     );
+    // See comments below at line 7230.
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::InvalidAccountData
-        )),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
@@ -7229,12 +7227,14 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let instruction = Instruction::new_with_bytes(buffer_address, &[], Vec::new());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
+    // This is a slightly change of behavior for this PR. In the old code, we
+    // short-circuit buffer account to fake it and mark it executable. So it
+    // passed program execution check but failed with `Err(InstructionError(0, InvalidAccountData))`.
+    // With this PR, we don't do that. The buffer account will NOT be executable. A different error is throw `Err(InvalidProgramForExecution)`.
+    // This will break consensus unfortunately! Maybe a feature gate is required for this PR?
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::InvalidAccountData,
-        )),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
