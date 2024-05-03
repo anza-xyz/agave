@@ -594,10 +594,18 @@ mod tests {
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
+            runtime_config::RuntimeConfig,
             stake_account::StakeAccount,
             stakes::Stakes,
         },
         rayon::ThreadPoolBuilder,
+        solana_accounts_db::{
+            accounts_db::{
+                AccountShrinkThreshold, AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            },
+            accounts_index::AccountSecondaryIndexes,
+            partitioned_rewards::{PartitionedEpochRewardsConfig, TestPartitionedEpochRewards},
+        },
         solana_sdk::{
             account::{accounts_equal, ReadableAccount, WritableAccount},
             epoch_schedule::EpochSchedule,
@@ -608,13 +616,25 @@ mod tests {
             vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         solana_vote_program::vote_state,
-        std::sync::RwLockReadGuard,
+        std::sync::{Arc, RwLockReadGuard},
     };
 
     const SLOTS_PER_EPOCH: u64 = 32;
 
-    /// Helper function to create a bank that pays some rewards
-    fn create_reward_bank(expected_num_delegations: usize) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
+    /// Helper functions to create a bank that pays some rewards
+    fn create_default_reward_bank(
+        expected_num_delegations: usize,
+    ) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
+        create_reward_bank(
+            expected_num_delegations,
+            PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
+        )
+    }
+
+    fn create_reward_bank(
+        expected_num_delegations: usize,
+        rewards_per_block: u64,
+    ) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
         let validator_keypairs = (0..expected_num_delegations)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -628,7 +648,27 @@ mod tests {
         );
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
-        let bank = Bank::new_for_tests(&genesis_config);
+        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
+        accounts_db_config.test_partitioned_epoch_rewards =
+            TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
+                reward_calculation_num_blocks: 1,
+                stake_account_stores_per_block: rewards_per_block,
+            };
+
+        let bank = Bank::new_with_paths(
+            &genesis_config,
+            Arc::new(RuntimeConfig::default()),
+            Vec::new(),
+            None,
+            None,
+            AccountSecondaryIndexes::default(),
+            AccountShrinkThreshold::default(),
+            false,
+            Some(accounts_db_config),
+            None,
+            Some(Pubkey::new_unique()),
+            Arc::default(),
+        );
 
         // Fill bank_forks with banks with votes landing in the next slot
         // Create enough banks such that vote account will root
@@ -727,7 +767,7 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 100;
-        let bank = create_reward_bank(expected_num_delegations).0;
+        let bank = create_default_reward_bank(expected_num_delegations).0;
 
         // Advance to next epoch boundary to update EpochStakes
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -778,7 +818,7 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 100;
-        let (bank, _, _) = create_reward_bank(expected_num_delegations);
+        let (bank, _, _) = create_default_reward_bank(expected_num_delegations);
 
         // Advance to next epoch boundary to update EpochStakes
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -837,7 +877,7 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 1;
-        let (bank, voters, stakers) = create_reward_bank(expected_num_delegations);
+        let (bank, voters, stakers) = create_default_reward_bank(expected_num_delegations);
 
         // Advance to next epoch boundary to update EpochStakes
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
