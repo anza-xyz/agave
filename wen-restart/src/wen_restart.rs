@@ -70,7 +70,7 @@ const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
 
 const WAIT_FOR_SNAPSHOT_LOOP_SLEEP: Duration = Duration::from_secs(10);
 
-const SNAPSHOT_ARCHIVE_WEN_RESTART_DIR: &str = "wen_restart_snapshot";
+const SNAPSHOT_ARCHIVE_WEN_RESTART_DIR: &str = "wen_restart";
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
