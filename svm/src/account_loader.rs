@@ -2249,4 +2249,316 @@ mod tests {
             vec![(Err(TransactionError::InvalidWritableAccount), None)]
         );
     }
+
+    #[test]
+    fn test_load_transaction_accounts_filter_executable_program_account() {
+        let mut mock_bank = TestCallbacks::default();
+        let key1 = Pubkey::new_unique();
+        let owner1 = Pubkey::new_unique();
+
+        let mut data = AccountSharedData::default();
+        data.set_owner(owner1);
+        data.set_lamports(93);
+        mock_bank.accounts_map.insert(key1, data);
+
+        let message = Message {
+            account_keys: vec![key1],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let sanitized_message = new_unchecked_sanitized_message(message);
+
+        let sanitized_transaction_1 = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+
+        let key2 = Pubkey::new_unique();
+        let owner2 = Pubkey::new_unique();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_owner(owner2);
+        account_data.set_lamports(90);
+        mock_bank.accounts_map.insert(key2, account_data);
+
+        let message = Message {
+            account_keys: vec![key1, key2],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        };
+
+        let sanitized_message = new_unchecked_sanitized_message(message);
+
+        let sanitized_transaction_2 = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+
+        let transactions = vec![
+            sanitized_transaction_1.clone(),
+            sanitized_transaction_2.clone(),
+            sanitized_transaction_2,
+            sanitized_transaction_1,
+        ];
+        let mut check_results = vec![
+            (Ok(()), None, Some(25)),
+            (Ok(()), None, Some(25)),
+            (Ok(()), None, None),
+            (Err(TransactionError::ProgramAccountNotFound), None, None),
+        ];
+        let owners = vec![owner1, owner2];
+
+        let mut program_accounts = HashMap::default();
+        let mut error_counter = TransactionErrorMetrics::default();
+
+        let _results = load_accounts(
+            &mock_bank,
+            &transactions,
+            &mut check_results,
+            &mut error_counter,
+            &FeeStructure::default(),
+            None,
+            &owners,
+            &mut program_accounts,
+        );
+
+        assert_eq!(
+            check_results[2],
+            (Err(TransactionError::BlockhashNotFound), None, None)
+        );
+        assert_eq!(program_accounts.len(), 2);
+        assert_eq!(program_accounts[&key1], 2);
+        assert_eq!(program_accounts[&key2], 1);
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_filter_executable_program_account_no_errors() {
+        let mut mock_bank = TestCallbacks::default();
+
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+
+        let non_program_pubkey1 = Pubkey::new_unique();
+        let non_program_pubkey2 = Pubkey::new_unique();
+        let program1_pubkey = Pubkey::new_unique();
+        let program2_pubkey = Pubkey::new_unique();
+        let account1_pubkey = Pubkey::new_unique();
+        let account2_pubkey = Pubkey::new_unique();
+        let account3_pubkey = Pubkey::new_unique();
+        let account4_pubkey = Pubkey::new_unique();
+        let account5_pubkey = Pubkey::new_unique();
+
+        let mut fee_payer_account_data = AccountSharedData::default();
+        fee_payer_account_data.set_lamports(200);
+        mock_bank
+            .accounts_map
+            .insert(keypair1.pubkey(), fee_payer_account_data.clone());
+
+        mock_bank
+            .accounts_map
+            .insert(keypair2.pubkey(), fee_payer_account_data.clone());
+
+        mock_bank.accounts_map.insert(
+            non_program_pubkey1,
+            AccountSharedData::new(1, 10, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            non_program_pubkey2,
+            AccountSharedData::new(1, 10, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            program1_pubkey,
+            AccountSharedData::new(40, 1, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            program2_pubkey,
+            AccountSharedData::new(40, 1, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            account1_pubkey,
+            AccountSharedData::new(1, 10, &non_program_pubkey1),
+        );
+        mock_bank.accounts_map.insert(
+            account2_pubkey,
+            AccountSharedData::new(1, 10, &non_program_pubkey2),
+        );
+        mock_bank.accounts_map.insert(
+            account3_pubkey,
+            AccountSharedData::new(40, 1, &program1_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            account4_pubkey,
+            AccountSharedData::new(40, 1, &program2_pubkey),
+        );
+
+        let tx1 = Transaction::new_with_compiled_instructions(
+            &[&keypair1],
+            &[non_program_pubkey1],
+            Hash::new_unique(),
+            vec![account1_pubkey, account2_pubkey, account3_pubkey],
+            vec![CompiledInstruction::new(1, &(), vec![0])],
+        );
+        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
+
+        let tx2 = Transaction::new_with_compiled_instructions(
+            &[&keypair2],
+            &[non_program_pubkey2],
+            Hash::new_unique(),
+            vec![account4_pubkey, account3_pubkey, account2_pubkey],
+            vec![CompiledInstruction::new(1, &(), vec![0])],
+        );
+        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
+
+        let owners = &[program1_pubkey, program2_pubkey];
+
+        let mut program_accounts = HashMap::default();
+        let mut error_counter = TransactionErrorMetrics::default();
+
+        let _results = load_accounts(
+            &mock_bank,
+            &[sanitized_tx1, sanitized_tx2],
+            &mut [(Ok(()), None, Some(0)), (Ok(()), None, Some(0))],
+            &mut error_counter,
+            &FeeStructure::default(),
+            None,
+            owners,
+            &mut program_accounts,
+        );
+
+        // The result should contain only account3_pubkey, and account4_pubkey as the program accounts
+        assert_eq!(program_accounts.len(), 2);
+        assert_eq!(
+            program_accounts
+                .get(&account3_pubkey)
+                .expect("failed to find the program account"),
+            &2
+        );
+        assert_eq!(
+            program_accounts
+                .get(&account4_pubkey)
+                .expect("failed to find the program account"),
+            &1
+        );
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_filter_executable_program_account_invalid_blockhash() {
+        let mut mock_bank = TestCallbacks::default();
+
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+
+        let non_program_pubkey1 = Pubkey::new_unique();
+        let non_program_pubkey2 = Pubkey::new_unique();
+        let program1_pubkey = Pubkey::new_unique();
+        let program2_pubkey = Pubkey::new_unique();
+        let account1_pubkey = Pubkey::new_unique();
+        let account2_pubkey = Pubkey::new_unique();
+        let account3_pubkey = Pubkey::new_unique();
+        let account4_pubkey = Pubkey::new_unique();
+        let account5_pubkey = Pubkey::new_unique();
+
+        let mut fee_payer_account_data = AccountSharedData::default();
+        fee_payer_account_data.set_lamports(200);
+        mock_bank
+            .accounts_map
+            .insert(keypair1.pubkey(), fee_payer_account_data.clone());
+
+        mock_bank
+            .accounts_map
+            .insert(keypair2.pubkey(), fee_payer_account_data.clone());
+
+        mock_bank.accounts_map.insert(
+            non_program_pubkey1,
+            AccountSharedData::new(1, 10, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            non_program_pubkey2,
+            AccountSharedData::new(1, 10, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            program1_pubkey,
+            AccountSharedData::new(40, 1, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            program2_pubkey,
+            AccountSharedData::new(40, 1, &account5_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            account1_pubkey,
+            AccountSharedData::new(1, 10, &non_program_pubkey1),
+        );
+        mock_bank.accounts_map.insert(
+            account2_pubkey,
+            AccountSharedData::new(1, 10, &non_program_pubkey2),
+        );
+        mock_bank.accounts_map.insert(
+            account3_pubkey,
+            AccountSharedData::new(40, 1, &program1_pubkey),
+        );
+        mock_bank.accounts_map.insert(
+            account4_pubkey,
+            AccountSharedData::new(40, 1, &program2_pubkey),
+        );
+
+        let tx1 = Transaction::new_with_compiled_instructions(
+            &[&keypair1],
+            &[non_program_pubkey1],
+            Hash::new_unique(),
+            vec![account1_pubkey, account2_pubkey, account3_pubkey],
+            vec![CompiledInstruction::new(1, &(), vec![0])],
+        );
+        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
+
+        let tx2 = Transaction::new_with_compiled_instructions(
+            &[&keypair2],
+            &[non_program_pubkey2],
+            Hash::new_unique(),
+            vec![account4_pubkey, account3_pubkey, account2_pubkey],
+            vec![CompiledInstruction::new(1, &(), vec![0])],
+        );
+        // Let's not register blockhash from tx2. This should cause the tx2 to fail
+        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
+
+        let owners = &[program1_pubkey, program2_pubkey];
+
+        let mut program_accounts = HashMap::default();
+        let mut error_counter = TransactionErrorMetrics::default();
+
+        let mut lock_results = vec![(Ok(()), None, Some(0)), (Ok(()), None, None)];
+
+        let _results = load_accounts(
+            &mock_bank,
+            &[sanitized_tx1, sanitized_tx2],
+            &mut lock_results,
+            &mut error_counter,
+            &FeeStructure::default(),
+            None,
+            owners,
+            &mut program_accounts,
+        );
+
+        // The result should contain only account3_pubkey as the program accounts
+        assert_eq!(program_accounts.len(), 1);
+        assert_eq!(
+            program_accounts
+                .get(&account3_pubkey)
+                .expect("failed to find the program account"),
+            &1
+        );
+        assert_eq!(lock_results[1].0, Err(TransactionError::BlockhashNotFound));
+    }
 }
