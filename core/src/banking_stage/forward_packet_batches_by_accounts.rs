@@ -113,8 +113,8 @@ impl ForwardPacketBatchesByAccounts {
                 forward_batch.forwardable_packets.push(immutable_packet);
             } else {
                 // A successfully added tx_cost means it does not exceed block limit, nor vote
-                // limit, nor account limit. batch_index calculated from "mod" op will not be
-                // out of bounds.
+                // limit, nor account limit. batch_index calculated as quotient from division
+                // will not be out of bounds.
                 unreachable!("batch_index out of bounds");
             }
             true
@@ -351,7 +351,7 @@ mod tests {
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(
                     &transaction_cost,
                     &UpdatedCosts {
-                        updated_block_cost: test_cost * 2,
+                        updated_block_cost: test_cost + 1,
                         updated_costliest_account_cost: 0
                     }
                 )
@@ -380,7 +380,7 @@ mod tests {
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(
                     &transaction_cost,
                     &UpdatedCosts {
-                        updated_block_cost: test_cost * 2,
+                        updated_block_cost: test_cost + 1,
                         updated_costliest_account_cost: 0
                     }
                 )
@@ -410,7 +410,7 @@ mod tests {
                     &transaction_cost,
                     &UpdatedCosts {
                         updated_block_cost: 0,
-                        updated_costliest_account_cost: test_cost * 2
+                        updated_costliest_account_cost: test_cost + 1
                     }
                 )
             );
