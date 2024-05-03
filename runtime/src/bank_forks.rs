@@ -344,7 +344,7 @@ impl BankForks {
 
     fn do_set_root_return_metrics(
         &mut self,
-        root_bank: Arc<Bank>,
+        root: Slot,
         accounts_background_request_sender: &AbsRequestSender,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
