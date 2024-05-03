@@ -1653,6 +1653,15 @@ impl Bank {
             HashSet::default(),
         );
 
+        let (thread_pool, _thread_pool_time) = measure!(
+            ThreadPoolBuilder::new()
+                .thread_name(|i| format!("solBnkNewFlds{i:02}"))
+                .build()
+                .expect("new rayon threadpool"),
+            "thread_pool_creation",
+        );
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+
         bank.finish_init(
             genesis_config,
             additional_builtins,
