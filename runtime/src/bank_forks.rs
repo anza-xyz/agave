@@ -283,6 +283,67 @@ impl BankForks {
         &self.banks[&self.highest_slot()]
     }
 
+    pub fn trigger_eah_calculation_if_needed(
+        &mut self,
+        root_bank: Arc<Bank>,
+        accounts_background_request_sender: &AbsRequestSender,
+        squash_timing: &mut SquashTiming,
+    ) -> Result<(bool, bool), SetRootError> {
+        let mut is_root_bank_squashed = false;
+        let mut banks = vec![&root_bank];
+        let parents = root_bank.parents();
+        banks.extend(parents.iter());
+
+        let mut eah_request_triggered = false;
+        // handle epoch accounts hash
+        // go through all the banks, oldest first
+        // find the newest bank where we should do EAH
+        // NOTE: Instead of filter-collect-assert, `.find()` could be used instead.  Once
+        // sufficient testing guarantees only one bank will ever request an EAH, change to
+        // `.find()`.
+        let eah_banks: Vec<_> = banks
+            .iter()
+            .filter(|&&bank| self.should_request_epoch_accounts_hash(bank))
+            .collect();
+        assert!(
+            eah_banks.len() <= 1,
+            "At most one bank should request an epoch accounts hash calculation! num banks: {}, bank slots: {:?}",
+            eah_banks.len(),
+            eah_banks.iter().map(|bank| bank.slot()).collect::<Vec<_>>(),
+        );
+        if let Some(eah_bank) = eah_banks.first() {
+            debug!(
+                "sending epoch accounts hash request, slot: {}",
+                eah_bank.slot()
+            );
+
+            self.last_accounts_hash_slot = eah_bank.slot();
+            *squash_timing += eah_bank.squash();
+            is_root_bank_squashed = eah_bank.slot() == root_bank.slot();
+
+            eah_bank
+                .rc
+                .accounts
+                .accounts_db
+                .epoch_accounts_hash_manager
+                .set_in_flight(eah_bank.slot());
+            if let Err(e) =
+                accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
+                    snapshot_root_bank: Arc::clone(eah_bank),
+                    status_cache_slot_deltas: Vec::default(),
+                    request_kind: SnapshotRequestKind::EpochAccountsHash,
+                    enqueued: Instant::now(),
+                })
+            {
+                return Err(SetRootError::SendEpochAccountHashError(eah_bank.slot(), e));
+            } else {
+                eah_request_triggered = true;
+            }
+        }
+        drop(eah_banks);
+        Ok((eah_request_triggered, is_root_bank_squashed))
+    }
+
     fn do_set_root_return_metrics(
         &mut self,
         root: Slot,
@@ -321,7 +382,6 @@ impl BankForks {
             .map(|bank| bank.transaction_count())
             .unwrap_or(0);
         // Calculate the accounts hash at a fixed interval
-        let mut is_root_bank_squashed = false;
         let mut banks = vec![root_bank];
         let parents = root_bank.parents();
         banks.extend(parents.iter());
@@ -329,50 +389,12 @@ impl BankForks {
         let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
 
-        // handle epoch accounts hash
-        // go through all the banks, oldest first
-        // find the newest bank where we should do EAH
-        // NOTE: Instead of filter-collect-assert, `.find()` could be used instead.  Once
-        // sufficient testing guarantees only one bank will ever request an EAH, change to
-        // `.find()`.
-        let eah_banks: Vec<_> = banks
-            .iter()
-            .filter(|&&bank| self.should_request_epoch_accounts_hash(bank))
-            .collect();
-        assert!(
-            eah_banks.len() <= 1,
-            "At most one bank should request an epoch accounts hash calculation! num banks: {}, bank slots: {:?}",
-            eah_banks.len(),
-            eah_banks.iter().map(|bank| bank.slot()).collect::<Vec<_>>(),
-        );
-        if let Some(eah_bank) = eah_banks.first() {
-            debug!(
-                "sending epoch accounts hash request, slot: {}",
-                eah_bank.slot()
-            );
-
-            self.last_accounts_hash_slot = eah_bank.slot();
-            squash_timing += eah_bank.squash();
-            is_root_bank_squashed = eah_bank.slot() == root;
-
-            eah_bank
-                .rc
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .set_in_flight(eah_bank.slot());
-            if let Err(e) =
-                accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
-                    snapshot_root_bank: Arc::clone(eah_bank),
-                    status_cache_slot_deltas: Vec::default(),
-                    request_kind: SnapshotRequestKind::EpochAccountsHash,
-                    enqueued: Instant::now(),
-                })
-            {
-                return Err(SetRootError::SendEpochAccountHashError(eah_bank.slot(), e));
-            };
-        }
-        drop(eah_banks);
+        let (_, root_squashed) = self.trigger_eah_calculation_if_needed(
+            root_bank.clone(),
+            accounts_background_request_sender,
+            &mut squash_timing,
+        )?;
+        let mut is_root_bank_squashed = root_squashed;
 
         // After checking for EAH requests, also check for regular snapshot requests.
         //

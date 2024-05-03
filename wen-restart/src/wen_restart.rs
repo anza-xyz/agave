@@ -31,7 +31,7 @@ use {
     solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
-        bank::Bank,
+        bank::{Bank, SquashTiming},
         bank_forks::BankForks,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::bank_to_incremental_snapshot_archive,
@@ -370,6 +370,7 @@ fn generate_snapshot(
     exit: &AtomicBool,
 ) -> Result<GenerateSnapshotRecord> {
     let new_root_bank;
+    let eah_request_triggered;
     {
         let mut my_bank_forks = bank_forks.write().unwrap();
         let old_root_bank = my_bank_forks.root_bank();
@@ -378,17 +379,21 @@ fn generate_snapshot(
         // find_bankhash_of_heaviest_fork().
         new_root_bank = my_bank_forks.get(new_root_slot).unwrap();
         // Only root banks can have snapshots generated.
-        my_bank_forks.set_root(
-            new_root_slot,
+        let mut squash_timing = SquashTiming::default();
+        let (request_triggered, _) = my_bank_forks.trigger_eah_calculation_if_needed(
+            new_root_bank.clone(),
             accounts_background_request_sender,
-            Some(new_root_slot),
+            &mut squash_timing,
         )?;
+        eah_request_triggered = request_triggered;
     }
     // There can't be more than one EAH calculation in progress. If new_root is generated
     // within the EAH window (1/4 epoch to 3/4 epoch), the following function will wait for
     // EAH calculation to finish. So if we trigger another EAH when generating snapshots
     // we won't hit a panic.
-    let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
+    if eah_request_triggered {
+        let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
+    }
     // Trigger incremental snapshot generation.
     bank_to_incremental_snapshot_archive(
         snapshot_config.bank_snapshots_dir.clone(),
