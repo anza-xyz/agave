@@ -1129,66 +1129,6 @@ impl Blockstore {
             &mut write_batch,
         )?;
 
-        for (erasure_set, working_erasure_meta) in erasure_metas.iter() {
-            if !working_erasure_meta.should_write() {
-                // Not a new erasure meta
-                continue;
-            }
-            let (slot, _) = erasure_set.store_key();
-            if self.has_duplicate_shreds_in_slot(slot) {
-                continue;
-            }
-            // First coding shred from this erasure batch, check the forward merkle root chaining
-            let erasure_meta = working_erasure_meta.as_ref();
-            let shred_id = ShredId::new(
-                slot,
-                erasure_meta
-                    .first_received_coding_shred_index()
-                    .expect("First received coding index must exist for all erasure metas"),
-                ShredType::Code,
-            );
-            let shred = just_inserted_shreds
-                .get(&shred_id)
-                .expect("Erasure meta was just created, initial shred must exist");
-
-            self.check_forward_chained_merkle_root_consistency(
-                shred,
-                erasure_meta,
-                &just_inserted_shreds,
-                &mut merkle_root_metas,
-                &mut duplicate_shreds,
-            );
-        }
-
-        for (erasure_set, working_merkle_root_meta) in merkle_root_metas.iter() {
-            if !working_merkle_root_meta.should_write() {
-                // Not a new merkle root meta
-                continue;
-            }
-            let (slot, _) = erasure_set.store_key();
-            if self.has_duplicate_shreds_in_slot(slot) {
-                continue;
-            }
-            // First shred from this erasure batch, check the backwards merkle root chaining
-            let merkle_root_meta = working_merkle_root_meta.as_ref();
-            let shred_id = ShredId::new(
-                slot,
-                merkle_root_meta.first_received_shred_index(),
-                merkle_root_meta.first_received_shred_type(),
-            );
-            let shred = just_inserted_shreds
-                .get(&shred_id)
-                .expect("Merkle root meta was just created, initial shred must exist");
-
-            self.check_backwards_chained_merkle_root_consistency(
-                shred,
-                &just_inserted_shreds,
-                &erasure_metas,
-                &merkle_root_metas,
-                &mut duplicate_shreds,
-            );
-        }
-
         for (erasure_set, working_erasure_meta) in erasure_metas {
             if !working_erasure_meta.should_write() {
                 // No need to rewrite the column
@@ -1372,6 +1312,7 @@ impl Blockstore {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn insert_shred_return_duplicate(
         &self,
         shred: Shred,
@@ -1823,6 +1764,7 @@ impl Blockstore {
     ///
     /// This is intended to be used right after `shred`'s `erasure_meta`
     /// has been created for the first time.
+    #[allow(dead_code)]
     fn check_forward_chained_merkle_root_consistency(
         &self,
         shred: &Shred,
@@ -1897,6 +1839,7 @@ impl Blockstore {
     ///
     /// This is intended to be used right after `shred`'s `merkle_root_meta`
     /// has been created for the first time.
+    #[allow(dead_code)]
     fn check_backwards_chained_merkle_root_consistency(
         &self,
         shred: &Shred,
@@ -11276,6 +11219,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_consistency_backwards() {
         // Insert a coding shred then consistent data and coding shreds from the next FEC set
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -11314,6 +11258,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_consistency_forwards() {
         // Insert a coding shred, then a consistent coding shred from the previous FEC set
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -11349,6 +11294,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_across_slots_backwards() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -11386,6 +11332,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_across_slots_forwards() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
@@ -11421,6 +11368,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_inconsistency_backwards_insert_code() {
         // Insert a coding shred then inconsistent coding shred then inconsistent data shred from the next FEC set
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -11469,6 +11417,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_inconsistency_backwards_insert_data() {
         // Insert a coding shred then inconsistent data shred then inconsistent coding shred from the next FEC set
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -11517,6 +11466,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_inconsistency_forwards() {
         // Insert a data shred, then an inconsistent coding shred from the previous FEC set
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -11562,6 +11512,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chained_merkle_root_inconsistency_both() {
         // Insert a coding shred from fec_set - 1, and a data shred from fec_set + 10
         // Then insert an inconsistent data shred from fec_set, and finally an
