@@ -1895,7 +1895,7 @@ impl Blockstore {
         else {
             warn!(
                 "The merkle root meta for the previous erasure set {prev_erasure_set:?} does not exist.
-                This should only happen if you have recently upgraded from a version < v1.18.12.
+                This should only happen if you have recently upgraded from a version < v1.18.13.
                 Skipping the backwards chained merkle root for {erasure_set:?}"
             );
             return true;
