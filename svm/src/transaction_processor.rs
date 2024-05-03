@@ -496,6 +496,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         missing_programs.retain(|x| x.0 != key);
                         // Notify other threads which might be waiting on us for current cooperative_loading_task of empty program account
                         task_waiter.notify();
+                        if missing_programs.is_empty() {
+                            // break out possible infinite loop
+                            break;
+                        }
                         continue;
                     }
                 }
