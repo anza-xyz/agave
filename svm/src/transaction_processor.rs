@@ -473,6 +473,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Unlock the global cache again.
             };
 
+            log::info!("Haoran REPLENISH_LOOP {} {:?}", self.slot, program_to_load);
             if let Some((key, count)) = program_to_load {
                 // Load, verify and compile one program.
                 match load_program_with_pubkey(
@@ -486,13 +487,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     accounts_map,
                 ) {
                     // We are expecting that the program account can be NOT found. `missing_program`, populated from `program_accounts_map`, which
-                    // may contain invalid program account, i.e. closed, tombstoned. If the program account is NOT found, we need to skip this account
-                    // and continue with the loop.
+                    // may contain invalid program account, i.e. closed, tombstoned, or doesn't exist on current fork. If the program account is
+                    // NOT found, we should skip this account and continue with the loop only if there are other missing_programs.
                     Some(program) => {
                         program.tx_usage_counter.store(count, Ordering::Relaxed);
                         program_to_store = Some((key, program));
                     }
                     None => {
+                        log::info!("Haoran REPLENISH_LOOP {} {:?} not found", self.slot, key);
                         missing_programs.retain(|x| x.0 != key);
                         // Notify other threads which might be waiting on us for current cooperative_loading_task of empty program account
                         task_waiter.notify();
