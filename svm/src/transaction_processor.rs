@@ -494,8 +494,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_to_store = Some((key, program));
                     }
                     None => {
-                        log::info!("Haoran REPLENISH_LOOP {} {:?} not found", self.slot, key);
+                        log::info!("Haoran REPLENISH_LOOP {} {:?} not found", self.slot, &key);
+                        // Remove empty account key from missing_programs
                         missing_programs.retain(|x| x.0 != key);
+                        // Remove cooperative loading task lock. Otherwise, cache prune for this entry will be blocked.
+                        self.program_cache
+                            .write()
+                            .unwrap()
+                            .clear_cooperative_loading_task_lock(&key);
                         // Notify other threads which might be waiting on us for current cooperative_loading_task of empty program account
                         task_waiter.notify();
                         if missing_programs.is_empty() {

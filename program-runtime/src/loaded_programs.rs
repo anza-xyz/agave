@@ -19,6 +19,7 @@ use {
         loader_v4, native_loader,
         pubkey::Pubkey,
         saturating_add_assign,
+        sysvar::recent_blockhashes::Entry,
     },
     std::{
         collections::HashMap,
@@ -1061,6 +1062,12 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             );
         }
         cooperative_loading_task
+    }
+
+    pub fn clear_cooperative_loading_task_lock(&mut self, key: &Pubkey) {
+        if let Some(ref mut second_level) = self.entries.get_mut(key) {
+            second_level.cooperative_loading_lock = None;
+        }
     }
 
     /// Called by Bank::replenish_program_cache() for each program that is done loading.
