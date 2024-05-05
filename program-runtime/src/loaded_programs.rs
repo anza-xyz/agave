@@ -21,7 +21,7 @@ use {
         saturating_add_assign,
     },
     std::{
-        collections::HashMap,
+        collections::{hash_map::Entry, HashMap},
         fmt::{Debug, Formatter},
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -583,11 +583,6 @@ impl LoadingTaskWaiter {
 struct SecondLevel {
     /// List of all versions (across all forks) of a program sorted by the slot in which they were modified
     slot_versions: Vec<Arc<ProgramCacheEntry>>,
-    /// `Some` if there is currently a cooperative loading task for this program address
-    ///
-    /// It is possible that multiple TX batches from different slots need different versions of a program.
-    /// However, that can only be figured out once a program is loaded and its deployment slot is known.
-    cooperative_loading_lock: Option<(Slot, std::thread::ThreadId)>,
 }
 
 /// This structure is the global cache of loaded, verified and compiled programs.
@@ -610,6 +605,15 @@ pub struct ProgramCache<FG: ForkGraph> {
     ///
     /// The first level is for the address at which programs are deployed and the second level for the slot (and thus also fork).
     entries: HashMap<Pubkey, SecondLevel>,
+    /// The entries that are getting loaded and have not yet finished loading.
+    ///
+    /// The key is the program address, the value is a tuple of the slot in which the program is
+    /// being loaded and the thread ID doing the load.
+    ///
+    /// It is possible that multiple TX batches from different slots need different versions of a
+    /// program. The deployment slot of a program is only known after load tho,
+    /// so all loads for a given program key are serialized.
+    loading_entries: Mutex<HashMap<Pubkey, (Slot, std::thread::ThreadId)>>,
     /// The slot of the last rerooting
     pub latest_root_slot: Slot,
     /// The epoch of the last rerooting
@@ -776,6 +780,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn new(root_slot: Slot, root_epoch: Epoch) -> Self {
         Self {
             entries: HashMap::new(),
+            loading_entries: Mutex::new(HashMap::new()),
             latest_root_slot: root_slot,
             latest_root_epoch: root_epoch,
             environments: ProgramRuntimeEnvironments::default(),
@@ -974,7 +979,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
-        &mut self,
+        &self,
         search_for: &mut Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
         is_first_round: bool,
@@ -983,7 +988,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         let locked_fork_graph = self.fork_graph.as_ref().unwrap().read().unwrap();
         let mut cooperative_loading_task = None;
         search_for.retain(|(key, (match_criteria, usage_count))| {
-            if let Some(second_level) = self.entries.get_mut(key) {
+            if let Some(second_level) = self.entries.get(key) {
                 for entry in second_level.slot_versions.iter().rev() {
                     if entry.deployment_slot <= self.latest_root_slot
                         || matches!(
@@ -1033,15 +1038,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 }
             }
             if cooperative_loading_task.is_none() {
-                // We have not selected a task so far
-                let second_level = self.entries.entry(*key).or_default();
-                if second_level.cooperative_loading_lock.is_none() {
-                    // Select this missing entry which is not selected by any other TX batch yet
-                    cooperative_loading_task = Some((*key, *usage_count));
-                    second_level.cooperative_loading_lock = Some((
+                let mut loading_entries = self.loading_entries.lock().unwrap();
+                let entry = loading_entries.entry(*key);
+                if let Entry::Vacant(entry) = entry {
+                    entry.insert((
                         loaded_programs_for_tx_batch.slot,
                         std::thread::current().id(),
                     ));
+                    cooperative_loading_task = Some((*key, *usage_count));
                 }
             }
             true
@@ -1066,12 +1070,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         key: Pubkey,
         loaded_program: Arc<ProgramCacheEntry>,
     ) -> bool {
-        let second_level = self.entries.entry(key).or_default();
-        debug_assert_eq!(
-            second_level.cooperative_loading_lock,
-            Some((slot, std::thread::current().id()))
-        );
-        second_level.cooperative_loading_lock = None;
+        let loading_thread = self.loading_entries.lock().unwrap().remove(&key);
+        debug_assert_eq!(loading_thread, Some((slot, std::thread::current().id())));
         // Check that it will be visible to our own fork once inserted
         if loaded_program.deployment_slot > self.latest_root_slot
             && !matches!(
@@ -1237,10 +1237,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
     fn remove_programs_with_no_entries(&mut self) {
         let num_programs_before_removal = self.entries.len();
-        self.entries.retain(|_, second_level| {
-            !second_level.slot_versions.is_empty()
-                || second_level.cooperative_loading_lock.is_some()
-        });
+        self.entries
+            .retain(|_key, second_level| !second_level.slot_versions.is_empty());
         if self.entries.len() < num_programs_before_removal {
             self.stats.empty_entries.fetch_add(
                 num_programs_before_removal.saturating_sub(self.entries.len()) as u64,
