@@ -1072,7 +1072,6 @@ mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
         assert_matches::assert_matches,
-        crossbeam_channel::unbounded,
         solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         solana_entry::entry::create_ticks,
         solana_gossip::{
@@ -1097,8 +1096,6 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_hash::SnapshotHash,
-            snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -1392,36 +1389,6 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
 
-        // We need to set up fake snapshot service here, can't use the real one because of circular dependency.
-        // We will just write a fake file to simulate snapshot generation.
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-        let accounts_background_request_sender =
-            AbsRequestSender::new(snapshot_request_sender.clone());
-        let exit_clone = exit.clone();
-        let snapshot_dir = snapshot_config.incremental_snapshot_archives_dir.clone();
-        let archive_format = snapshot_config.archive_format;
-        let old_root_slot = old_root_bank.slot();
-        let fake_snapshot_service_handle = Builder::new()
-            .name("fake-snapshot-service".to_string())
-            .spawn(move || loop {
-                if exit_clone.load(Ordering::Relaxed) {
-                    break;
-                }
-                if let Ok(request) = snapshot_request_receiver.try_recv() {
-                    let snapshot_bank = request.snapshot_root_bank;
-                    assert!(File::create(build_incremental_snapshot_archive_path(
-                        snapshot_dir.clone(),
-                        old_root_slot,
-                        snapshot_bank.slot(),
-                        &SnapshotHash(snapshot_bank.hash()),
-                        archive_format,
-                    ))
-                    .is_ok());
-                }
-                sleep(WAIT_FOR_SNAPSHOT_LOOP_SLEEP);
-            })
-            .unwrap();
-
         // Trigger full snapshot generation on the old root bank.
         assert!(bank_to_full_snapshot_archive(
             snapshot_config.bank_snapshots_dir.clone(),
@@ -1443,7 +1410,7 @@ mod tests {
             wen_restart_repair_slots: wen_restart_repair_slots.clone(),
             wait_for_supermajority_threshold_percent: 80,
             snapshot_config,
-            accounts_background_request_sender,
+            accounts_background_request_sender: AbsRequestSender::default(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
         };
@@ -1536,7 +1503,6 @@ mod tests {
 
         assert!(wen_restart_thread_handle.join().is_ok());
         exit.store(true, Ordering::Relaxed);
-        assert!(fake_snapshot_service_handle.join().is_ok());
         let progress = read_wen_restart_records(&test_state.wen_restart_proto_path).unwrap();
         let progress_start_time = progress
             .my_last_voted_fork_slots
