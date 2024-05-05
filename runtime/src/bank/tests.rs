@@ -7205,7 +7205,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         invocation_message.clone(),
         bank.last_blockhash(),
     );
-    // See comments below at line 7230.
+    // See comments below for Test buffer invocation.
     assert_eq!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InvalidProgramForExecution),
@@ -7231,7 +7231,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     // short-circuit buffer account to fake it and mark it executable. So it
     // passed program execution check but failed with `Err(InstructionError(0, InvalidAccountData))`.
     // With this PR, we don't do that. The buffer account will NOT be executable. A different error is throw `Err(InvalidProgramForExecution)`.
-    // This will break consensus unfortunately! Maybe a feature gate is required for this PR?
+    // This will NOT break consensus fortunately! Changing to `Err(InvalidProgramForExecution)` won't affect bank hash!
     assert_eq!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InvalidProgramForExecution),
