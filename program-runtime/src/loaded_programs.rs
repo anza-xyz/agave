@@ -1743,34 +1743,34 @@ mod tests {
     #[test_matrix(
         (
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::FailedVerification(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::FailedVerification(get_mock_env()),
             new_loaded_entry(get_mock_env()),
         ),
         (
-            ProgramCacheEntryType::FailedVerification(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::FailedVerification(get_mock_env()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::Unloaded(get_mock_env()),
             new_loaded_entry(get_mock_env()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
         )
     )]
     #[test_matrix(
         (
-            ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::Unloaded(get_mock_env()),
         ),
         (
-            ProgramCacheEntryType::FailedVerification(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::FailedVerification(get_mock_env()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::Unloaded(get_mock_env()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
         )
     )]
     #[test_matrix(
         (ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),),
         (
-            ProgramCacheEntryType::FailedVerification(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::FailedVerification(get_mock_env()),
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
+            ProgramCacheEntryType::Unloaded(get_mock_env()),
             new_loaded_entry(get_mock_env()),
         )
     )]
