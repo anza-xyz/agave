@@ -2075,17 +2075,22 @@ mod tests {
         keys: &[Pubkey],
     ) -> Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> {
         let locked_fork_graph = cache.fork_graph.as_ref().unwrap().read().unwrap();
+        let entries = cache.get_flattened_entries_for_tests();
         keys.iter()
             .filter_map(|key| {
-                let visible_entry = cache.entries.get(key).and_then(|second_level| {
-                    second_level.iter().rev().find(|entry| {
-                        matches!(
-                            locked_fork_graph.relationship(entry.deployment_slot, loading_slot),
-                            BlockRelation::Equal | BlockRelation::Ancestor,
-                        )
+                entries
+                    .iter()
+                    .rev()
+                    .find(|(program_id, entry)| {
+                        program_id == key
+                            && matches!(
+                                locked_fork_graph.relationship(entry.deployment_slot, loading_slot),
+                                BlockRelation::Equal | BlockRelation::Ancestor,
+                            )
                     })
-                });
-                visible_entry.map(|_| (*key, (ProgramCacheMatchCriteria::NoCriteria, 1)))
+                    .map(|(program_id, _entry)| {
+                        (*program_id, (ProgramCacheMatchCriteria::NoCriteria, 1))
+                    })
             })
             .collect()
     }
