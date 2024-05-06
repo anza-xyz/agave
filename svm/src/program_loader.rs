@@ -127,7 +127,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph
     pubkey: &Pubkey,
     slot: Slot,
     effective_epoch: Epoch,
-    epoch_schedule: &EpochSchedule,
+    _epoch_schedule: &EpochSchedule,
     reload: bool,
 ) -> Option<Arc<ProgramCacheEntry>> {
     let environments = program_cache.get_environments_for_epoch(effective_epoch);
@@ -136,7 +136,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph
         ..LoadProgramMetrics::default()
     };
 
-    let mut loaded_program = match load_program_accounts(callbacks, pubkey)? {
+    let loaded_program = match load_program_accounts(callbacks, pubkey)? {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
             ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
         ),
@@ -217,21 +217,6 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph
 
     let mut timings = ExecuteDetailsTimings::default();
     load_program_metrics.submit_datapoint(&mut timings);
-    if !Arc::ptr_eq(
-        &environments.program_runtime_v1,
-        &program_cache.environments.program_runtime_v1,
-    ) || !Arc::ptr_eq(
-        &environments.program_runtime_v2,
-        &program_cache.environments.program_runtime_v2,
-    ) {
-        // There can be two entries per program when the environment changes.
-        // One for the old environment before the epoch boundary and one for the new environment after the epoch boundary.
-        // These two entries have the same deployment slot, so they must differ in their effective slot instead.
-        // This is done by setting the effective slot of the entry for the new environment to the epoch boundary.
-        loaded_program.effective_slot = loaded_program
-            .effective_slot
-            .max(epoch_schedule.get_first_slot_in_epoch(effective_epoch));
-    }
     loaded_program.update_access_slot(slot);
     Some(Arc::new(loaded_program))
 }
