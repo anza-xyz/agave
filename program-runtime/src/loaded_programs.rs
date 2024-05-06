@@ -578,6 +578,27 @@ impl LoadingTaskWaiter {
     }
 }
 
+#[derive(Debug)]
+enum IndexImplementation {
+    /// Fork-graph aware index implementation
+    V1 {
+        /// A two level index:
+        ///
+        /// - the first level is for the address at which programs are deployed
+        /// - the second level for the slot (and thus also fork), sorted by slot number.
+        entries: HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
+        /// The entries that are getting loaded and have not yet finished loading.
+        ///
+        /// The key is the program address, the value is a tuple of the slot in which the program is
+        /// being loaded and the thread ID doing the load.
+        ///
+        /// It is possible that multiple TX batches from different slots need different versions of a
+        /// program. The deployment slot of a program is only known after load tho,
+        /// so all loads for a given program key are serialized.
+        loading_entries: Mutex<HashMap<Pubkey, (Slot, std::thread::ThreadId)>>,
+    },
+}
+
 /// This structure is the global cache of loaded, verified and compiled programs.
 ///
 /// It ...
@@ -594,20 +615,8 @@ impl LoadingTaskWaiter {
 /// - enforces that all programs used in a batch are eagerly loaded ahead of execution.
 /// - is not persisted to disk or a snapshot, so it needs to cold start and warm up first.
 pub struct ProgramCache<FG: ForkGraph> {
-    /// A two level index:
-    ///
-    /// - the first level is for the address at which programs are deployed
-    /// - the second level for the slot (and thus also fork), sorted by slot number.
-    entries: HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
-    /// The entries that are getting loaded and have not yet finished loading.
-    ///
-    /// The key is the program address, the value is a tuple of the slot in which the program is
-    /// being loaded and the thread ID doing the load.
-    ///
-    /// It is possible that multiple TX batches from different slots need different versions of a
-    /// program. The deployment slot of a program is only known after load tho,
-    /// so all loads for a given program key are serialized.
-    loading_entries: Mutex<HashMap<Pubkey, (Slot, std::thread::ThreadId)>>,
+    /// Index of the cached entries and cooperative loading tasks
+    index: IndexImplementation,
     /// The slot of the last rerooting
     pub latest_root_slot: Slot,
     /// The epoch of the last rerooting
@@ -636,7 +645,7 @@ impl<FG: ForkGraph> Debug for ProgramCache<FG> {
             .field("root slot", &self.latest_root_slot)
             .field("root epoch", &self.latest_root_epoch)
             .field("stats", &self.stats)
-            .field("cache", &self.entries)
+            .field("index", &self.index)
             .finish()
     }
 }
@@ -773,8 +782,10 @@ pub enum ProgramCacheMatchCriteria {
 impl<FG: ForkGraph> ProgramCache<FG> {
     pub fn new(root_slot: Slot, root_epoch: Epoch) -> Self {
         Self {
-            entries: HashMap::new(),
-            loading_entries: Mutex::new(HashMap::new()),
+            index: IndexImplementation::V1 {
+                entries: HashMap::new(),
+                loading_entries: Mutex::new(HashMap::new()),
+            },
             latest_root_slot: root_slot,
             latest_root_epoch: root_epoch,
             environments: ProgramRuntimeEnvironments::default(),
