@@ -12035,11 +12035,11 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
         assert_eq!(slot_versions.len(), 2);
         assert!(Arc::ptr_eq(
             slot_versions[0].program.get_environment().unwrap(),
-            &current_env
+            &upcoming_env
         ));
         assert!(Arc::ptr_eq(
             slot_versions[1].program.get_environment().unwrap(),
-            &upcoming_env
+            &current_env
         ));
     }
 
