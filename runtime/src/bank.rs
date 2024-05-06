@@ -6704,6 +6704,7 @@ impl Bank {
             effective_epoch,
             self.epoch_schedule(),
             reload,
+            &HashMap::default(),
         )
     }
 
@@ -6762,6 +6763,17 @@ impl TransactionProcessingCallback for Bank {
             .accounts_db
             .account_matches_owners(&self.ancestors, account, owners)
             .ok()
+    }
+
+    fn load_account_with(
+        &self,
+        pubkey: &Pubkey,
+        callback: impl for<'a> Fn(&'a AccountSharedData) -> bool,
+    ) -> Option<(AccountSharedData, Slot)> {
+        self.rc
+            .accounts
+            .accounts_db
+            .load_account_with(&self.ancestors, pubkey, callback)
     }
 
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
