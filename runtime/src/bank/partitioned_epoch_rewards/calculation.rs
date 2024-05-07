@@ -4,6 +4,7 @@ use {
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, StakeRewardCalculation,
         StakeRewardCalculationPartitioned, StakeRewards, VoteRewardsAccounts,
+        REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
@@ -60,7 +61,7 @@ impl Bank {
 
         let slot = self.slot();
         let distribution_starting_block_height =
-            self.block_height() + self.get_reward_calculation_num_blocks();
+            self.block_height() + REWARD_CALCULATION_NUM_BLOCKS;
 
         let num_partitions = stake_rewards_by_partition.len() as u64;
 

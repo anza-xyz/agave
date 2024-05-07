@@ -13,7 +13,6 @@ use {
     solana_sdk::{
         account::AccountSharedData,
         account_utils::StateMut,
-        clock::Slot,
         feature_set,
         pubkey::Pubkey,
         reward_info::RewardInfo,
@@ -179,13 +178,6 @@ impl Bank {
             .stake_account_stores_per_block
     }
 
-    /// reward calculation happens synchronously during the first block of the epoch boundary.
-    /// So, # blocks for reward calculation is 1.
-    pub(super) fn get_reward_calculation_num_blocks(&self) -> Slot {
-        self.partitioned_epoch_rewards_config()
-            .reward_calculation_num_blocks
-    }
-
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.
     pub(super) fn get_reward_distribution_num_blocks(&self, rewards: &StakeRewards) -> u64 {
         let total_stake_accounts = rewards.len();
@@ -223,7 +215,6 @@ impl Bank {
     pub(super) fn force_partition_rewards_in_first_block_of_epoch(&self) -> bool {
         self.partitioned_epoch_rewards_config()
             .test_enable_partitioned_rewards
-            && self.get_reward_calculation_num_blocks() == 0
             && self.partitioned_rewards_stake_account_stores_per_block() == u64::MAX
     }
 }
@@ -281,8 +272,7 @@ mod tests {
 
         /// Return the total number of blocks in reward interval (including both calculation and crediting).
         pub(in crate::bank) fn get_reward_total_num_blocks(&self, rewards: &StakeRewards) -> u64 {
-            self.get_reward_calculation_num_blocks()
-                + self.get_reward_distribution_num_blocks(rewards)
+            REWARD_CALCULATION_NUM_BLOCKS + self.get_reward_distribution_num_blocks(rewards)
         }
     }
 
@@ -314,7 +304,7 @@ mod tests {
         assert!(bank.is_partitioned_rewards_feature_enabled());
     }
 
-    /// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during small epoch
+    /// Test get_reward_distribution_num_blocks, get_reward_total_num_blocks during small epoch
     /// The num_credit_blocks should be cap to 10% of the total number of blocks in the epoch.
     #[test]
     fn test_get_reward_distribution_num_blocks_cap() {
@@ -363,13 +353,13 @@ mod tests {
                     expected_num_reward_distribution_blocks
                 );
                 assert_eq!(
-                    bank.get_reward_calculation_num_blocks(),
+                    REWARD_CALCULATION_NUM_BLOCKS,
                     expected_num_reward_computation_blocks
                 );
                 assert_eq!(
                     bank.get_reward_total_num_blocks(&stake_rewards),
                     bank.get_reward_distribution_num_blocks(&stake_rewards)
-                        + bank.get_reward_calculation_num_blocks(),
+                        + REWARD_CALCULATION_NUM_BLOCKS,
                 );
             };
 
@@ -389,7 +379,7 @@ mod tests {
         }
     }
 
-    /// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during normal epoch gives the expected result
+    /// Test get_reward_distribution_num_blocks, get_reward_total_num_blocks during normal epoch gives the expected result
     #[test]
     fn test_get_reward_distribution_num_blocks_normal() {
         solana_logger::setup();
@@ -406,15 +396,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);
-        assert_eq!(bank.get_reward_calculation_num_blocks(), 1);
         assert_eq!(
             bank.get_reward_total_num_blocks(&stake_rewards),
-            bank.get_reward_distribution_num_blocks(&stake_rewards)
-                + bank.get_reward_calculation_num_blocks(),
+            bank.get_reward_distribution_num_blocks(&stake_rewards) + REWARD_CALCULATION_NUM_BLOCKS,
         );
     }
 
-    /// Test get_reward_distribution_num_blocks, get_reward_calculation_num_blocks, get_reward_total_num_blocks during warm up epoch gives the expected result.
+    /// Test get_reward_distribution_num_blocks, get_reward_total_num_blocks during warm up epoch gives the expected result.
     /// The num_credit_blocks should be 1 during warm up epoch.
     #[test]
     fn test_get_reward_distribution_num_blocks_warmup() {
@@ -423,11 +411,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let rewards = vec![];
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
-        assert_eq!(bank.get_reward_calculation_num_blocks(), 1);
         assert_eq!(
             bank.get_reward_total_num_blocks(&rewards),
-            bank.get_reward_distribution_num_blocks(&rewards)
-                + bank.get_reward_calculation_num_blocks(),
+            bank.get_reward_distribution_num_blocks(&rewards) + REWARD_CALCULATION_NUM_BLOCKS,
         );
     }
 
