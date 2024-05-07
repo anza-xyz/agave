@@ -316,7 +316,6 @@ mod tests {
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
         accounts_db_config.test_partitioned_epoch_rewards =
             TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-                reward_calculation_num_blocks: 1,
                 stake_account_stores_per_block: 10,
             };
 
@@ -560,7 +559,6 @@ mod tests {
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
         accounts_db_config.test_partitioned_epoch_rewards =
             TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-                reward_calculation_num_blocks: 1,
                 stake_account_stores_per_block: 50,
             };
 
