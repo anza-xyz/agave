@@ -187,6 +187,7 @@ pub struct ForkStats {
     pub is_locked_out: bool,
     pub voted_stakes: VotedStakes,
     pub is_supermajority_confirmed: bool,
+    pub is_duplicate_confirmed: bool,
     pub computed: bool,
     pub lockout_intervals: LockoutIntervals,
     pub bank_hash: Option<Hash>,
@@ -377,6 +378,17 @@ impl ProgressMap {
         self.progress_map
             .get(&slot)
             .map(|s| s.fork_stats.is_supermajority_confirmed)
+    }
+
+    pub fn set_duplicate_confirmed_slot(&mut self, slot: Slot) {
+        let slot_progress = self.get_mut(&slot).unwrap();
+        slot_progress.fork_stats.is_duplicate_confirmed = true;
+    }
+
+    pub fn is_duplicate_confirmed(&self, slot: Slot) -> Option<bool> {
+        self.progress_map
+            .get(&slot)
+            .map(|s| s.fork_stats.is_duplicate_confirmed)
     }
 
     pub fn get_bank_prev_leader_slot(&self, bank: &Bank) -> Option<Slot> {

@@ -4150,6 +4150,14 @@ impl ReplayStage {
                 }
             }
 
+            if progress.is_duplicate_confirmed(*slot).unwrap_or(false) {
+                // Already duplicate confirmed, nothing left to do
+                continue;
+            }
+
+            progress.set_duplicate_confirmed_slot(*slot);
+            assert!(*frozen_hash != Hash::default());
+
             if *slot <= root_slot {
                 continue;
             }
@@ -4215,7 +4223,8 @@ impl ReplayStage {
                     datapoint_info!("validator-confirmation", ("duration_ms", duration, i64));
                     confirmed_forks
                         .push(ConfirmedSlot::new_supermajority_voted(*slot, bank.hash()));
-                } else if bank.is_frozen()
+                } else if !prog.fork_stats.is_duplicate_confirmed
+                    && bank.is_frozen()
                     && tower.is_slot_duplicate_confirmed(*slot, voted_stakes, total_stake)
                 {
                     info!(
