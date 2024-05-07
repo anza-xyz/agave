@@ -3681,53 +3681,6 @@ impl Blockstore {
         self.get_slot_entries_in_block(slot, vec![(start_index, end_index)], slot_meta)
     }
 
-    /// Returns the merkle roots from the last `DATA_SHREDS_PER_FEC_BLOCK`
-    /// data shreds of a slot.
-    /// Will fail if:
-    ///     - Slot meta is missing
-    ///     - LAST_SHRED_IN_SLOT flag has not been received
-    ///     - There are missing shreds in the last fec set
-    /// If there are fewer than `DATA_SHREDS_PER_FEC_BLOCK` shreds in the slot
-    /// this will return all that are available.
-    fn get_last_merkle_roots(&self, slot: Slot) -> Result<Vec<Option<Hash>>> {
-        let slot_meta = self
-            .meta_cf
-            .get(slot)?
-            .ok_or(BlockstoreError::SlotUnavailable)?;
-        let last_shred_index = slot_meta
-            .last_index
-            .ok_or(BlockstoreError::InvalidShredData(Box::new(
-                bincode::ErrorKind::Custom(format!(
-                    "last shred index is missing for {slot} {slot_meta:?}"
-                )),
-            )))?;
-        let num_shreds = u64::try_from(DATA_SHREDS_PER_FEC_BLOCK)
-            .expect("DATA_SHREDS_PER_FEC_BLOCK should fit in u64");
-        let start_index = last_shred_index
-            .saturating_sub(num_shreds)
-            .saturating_add(1);
-        let keys: Vec<(Slot, u64)> = (start_index..=last_shred_index)
-            .map(|index| (slot, index))
-            .collect();
-
-        self.data_shred_cf
-            .multi_get_bytes(keys)
-            .into_iter()
-            .enumerate()
-            .map(|(idx, shred_bytes)| {
-                let shred_bytes = shred_bytes.ok().flatten();
-                if shred_bytes.is_none() {
-                    return Err(BlockstoreError::InvalidShredData(Box::new(
-                        bincode::ErrorKind::Custom(format!(
-                            "Missing shred for slot {slot}, index {idx}"
-                        )),
-                    )));
-                }
-                Ok(shred::layout::get_merkle_root(&shred_bytes.unwrap()))
-            })
-            .collect()
-    }
-
     /// Returns true if the last `DATA_SHREDS_PER_FEC_BLOCK` data shreds of a
     /// slot have the same merkle root, indicating they are a part of the same
     /// FEC set.
@@ -3741,22 +3694,53 @@ impl Blockstore {
         // We compare the merkle roots of the last `DATA_SHREDS_PER_FEC_BLOCK` shreds in this block.
         // Since the merkle root contains the fec_set_index, if all of them match, we know that the last fec set has
         // at least `DATA_SHREDS_PER_FEC_BLOCK` shreds.
-        let last_merkle_roots = self.get_last_merkle_roots(slot)?;
-        if last_merkle_roots.len() < DATA_SHREDS_PER_FEC_BLOCK {
-            warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_merkle_roots.len());
+        let slot_meta = self
+            .meta_cf
+            .get(slot)?
+            .ok_or(BlockstoreError::SlotUnavailable)?;
+        let last_shred_index = slot_meta
+            .last_index
+            .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
+
+        let expected_num_shreds = u64::try_from(DATA_SHREDS_PER_FEC_BLOCK)
+            .expect("DATA_SHREDS_PER_FEC_BLOCK should fit in u64");
+        let minimum_index = expected_num_shreds
+            .checked_sub(1)
+            .expect("DATA_SHREDS_PER_FEC_BLOCK should be non-zero");
+        if last_shred_index < minimum_index {
+            warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
             return Ok(false);
         }
-        let expected_merkle_root =
-            last_merkle_roots
-                .first()
-                .unwrap()
-                .ok_or(BlockstoreError::InvalidShredData(Box::new(
-                    bincode::ErrorKind::Custom("block contains legacy shreds".to_string()),
-                )))?;
 
-        Ok(last_merkle_roots
-            .iter()
-            .all(|merkle_root| *merkle_root == Some(expected_merkle_root)))
+        let start_index = last_shred_index
+            .checked_sub(minimum_index)
+            .expect("last shred index must be >= minimum index");
+        let keys: Vec<(Slot, u64)> = (start_index..=last_shred_index)
+            .map(|index| (slot, index))
+            .collect();
+
+        let last_merkle_roots : Vec<Hash> = self
+            .data_shred_cf
+            .multi_get_bytes(keys)
+            .into_iter()
+            .enumerate()
+            .map(|(offset, shred_bytes)| {
+                let shred_bytes = shred_bytes.ok().flatten().ok_or_else(|| {
+                    let shred_index = start_index + u64::try_from(offset).unwrap();
+                    warn!("Missing shred for {slot} index {shred_index}");
+                    BlockstoreError::MissingShred(slot, shred_index)
+                })?;
+                shred::layout::get_merkle_root(&shred_bytes).ok_or_else(|| {
+                    let shred_index = start_index + u64::try_from(offset).unwrap();
+                    warn!("Found legacy shred for {slot}, index {shred_index}");
+                    BlockstoreError::LegacyShred(slot, shred_index)
+                })
+            })
+            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok())
+            .collect::<Result<Vec<Hash>>>()?;
+
+        // After the dedup there should be exactly one Hash left if the shreds were part of the same FEC set.
+        Ok(last_merkle_roots.len() == 1)
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
@@ -10356,7 +10340,7 @@ pub mod tests {
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &leader_keypair,
             &entries,
-            is_last_in_slot, // is_last_in_slot
+            is_last_in_slot,
             chained_merkle_root,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
