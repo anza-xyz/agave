@@ -1,5 +1,8 @@
 use {
-    crate::ledger_utils::get_program_ids,
+    crate::{
+        error::{LedgerToolError, Result},
+        ledger_utils::get_program_ids,
+    },
     chrono::{Local, TimeZone},
     serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     serde_derive::{Deserialize, Serialize},
@@ -10,7 +13,7 @@ use {
         VerboseDisplay,
     },
     solana_entry::entry::Entry,
-    solana_ledger::blockstore::Blockstore,
+    solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::bank::{Bank, TotalAccountsStats},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
@@ -414,23 +417,22 @@ pub fn output_slot(
     method: &OutputFormat,
     verbose_level: u64,
     all_program_ids: &mut HashMap<Pubkey, u64>,
-) -> std::result::Result<(), String> {
+) -> Result<()> {
     if blockstore.is_dead(slot) {
         if allow_dead_slots {
             if *method == OutputFormat::Display {
                 println!(" Slot is dead");
             }
         } else {
-            return Err("Dead slot".to_string());
+            return Err(LedgerToolError::from(BlockstoreError::DeadSlot));
         }
     }
 
-    let (entries, num_shreds, is_full) = blockstore
-        .get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)
-        .map_err(|err| format!("Failed to load entries for slot {slot}: {err:?}"))?;
+    let (entries, num_shreds, is_full) =
+        blockstore.get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)?;
 
     if *method == OutputFormat::Display {
-        if let Ok(Some(meta)) = blockstore.meta(slot) {
+        if let Some(meta) = blockstore.meta(slot)? {
             if verbose_level >= 1 {
                 println!("  {meta:?} is_full: {is_full}");
             } else {
@@ -492,16 +494,11 @@ pub fn output_ledger(
     num_slots: Option<Slot>,
     verbose_level: u64,
     only_rooted: bool,
-) {
-    let slot_iterator = blockstore
-        .slot_meta_iterator(starting_slot)
-        .unwrap_or_else(|err| {
-            eprintln!("Failed to load entries starting from slot {starting_slot}: {err:?}");
-            std::process::exit(1);
-        });
+) -> Result<()> {
+    let slot_iterator = blockstore.slot_meta_iterator(starting_slot)?;
 
     if method == OutputFormat::Json {
-        stdout().write_all(b"{\"ledger\":[\n").expect("open array");
+        stdout().write_all(b"{\"ledger\":[\n")?;
     }
 
     let num_slots = num_slots.unwrap_or(Slot::MAX);
@@ -520,8 +517,8 @@ pub fn output_ledger(
                 println!("Slot {} root?: {}", slot, blockstore.is_root(slot))
             }
             OutputFormat::Json => {
-                serde_json::to_writer(stdout(), &slot_meta).expect("serialize slot_meta");
-                stdout().write_all(b",\n").expect("newline");
+                serde_json::to_writer(stdout(), &slot_meta)?;
+                stdout().write_all(b",\n")?;
             }
             _ => unreachable!(),
         }
@@ -543,11 +540,12 @@ pub fn output_ledger(
     }
 
     if method == OutputFormat::Json {
-        stdout().write_all(b"\n]}\n").expect("close array");
+        stdout().write_all(b"\n]}\n")?;
     } else {
         println!("Summary of Programs:");
         output_sorted_program_ids(all_program_ids);
     }
+    Ok(())
 }
 
 pub fn output_sorted_program_ids(program_ids: HashMap<Pubkey, u64>) {
