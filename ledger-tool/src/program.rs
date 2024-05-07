@@ -12,7 +12,9 @@ use {
     solana_ledger::{blockstore_options::AccessType, use_snapshot_archives_at_startup},
     solana_program_runtime::{
         invoke_context::InvokeContext,
-        loaded_programs::{LoadProgramMetrics, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET},
+        loaded_programs::{
+            LoadProgramMetrics, ProgramCacheEntryType, DELAY_VISIBILITY_SLOT_OFFSET,
+        },
         with_mock_invoke_context,
     },
     solana_rbpf::{
@@ -21,14 +23,16 @@ use {
     },
     solana_runtime::bank::Bank,
     solana_sdk::{
-        account::AccountSharedData,
+        account::{create_account_shared_data_for_test, AccountSharedData},
         account_utils::StateMut,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         pubkey::Pubkey,
         slot_history::Slot,
+        sysvar,
         transaction_context::{IndexOfAccount, InstructionAccount},
     },
     std::{
+        collections::HashMap,
         fmt::{self, Debug, Formatter},
         fs::File,
         io::{Read, Seek, Write},
@@ -322,7 +326,7 @@ fn load_program<'a>(
     };
     let account_size = contents.len();
     let program_runtime_environment = create_program_runtime_environment_v1(
-        &invoke_context.feature_set,
+        invoke_context.get_feature_set(),
         invoke_context.get_compute_budget(),
         false, /* deployment */
         true,  /* debugging_features */
@@ -343,7 +347,7 @@ fn load_program<'a>(
         );
         match result {
             Ok(loaded_program) => match loaded_program.program {
-                LoadedProgramType::LegacyV1(program) => Ok(program),
+                ProgramCacheEntryType::Loaded(program) => Ok(program),
                 _ => unreachable!(),
             },
             Err(err) => Err(format!("Loading executable failed: {err:?}")),
@@ -444,60 +448,74 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 );
                 program_id
             });
-            for (index, account_info) in input.accounts.into_iter().enumerate() {
-                let pubkey = account_info.key.parse::<Pubkey>().unwrap_or_else(|err| {
-                    eprintln!("Invalid key in input {}, error {}", account_info.key, err);
-                    exit(1);
-                });
-                let data = account_info.data.unwrap_or(vec![]);
-                let space = data.len();
-                let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
-                    let owner = *account.owner();
-                    if bpf_loader_upgradeable::check_id(&owner) {
-                        if let Ok(UpgradeableLoaderState::Program {
-                            programdata_address,
-                        }) = account.state()
-                        {
-                            debug!("Program data address {}", programdata_address);
-                            if bank
-                                .get_account_with_fixed_root(&programdata_address)
-                                .is_some()
+            // Maps a public key to the transaction account index
+            let mut txn_acct_indices =
+                HashMap::<Pubkey, usize>::with_capacity(input.accounts.len());
+            instruction_accounts = input
+                .accounts
+                .into_iter()
+                .map(|account_info| {
+                    let pubkey = account_info.key.parse::<Pubkey>().unwrap_or_else(|err| {
+                        eprintln!("Invalid key in input {}, error {}", account_info.key, err);
+                        exit(1);
+                    });
+                    let data = account_info.data.unwrap_or_default();
+                    let space = data.len();
+                    let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
+                        let owner = *account.owner();
+                        if bpf_loader_upgradeable::check_id(&owner) {
+                            if let Ok(UpgradeableLoaderState::Program {
+                                programdata_address,
+                            }) = account.state()
                             {
-                                cached_account_keys.push(pubkey);
+                                debug!("Program data address {}", programdata_address);
+                                if bank
+                                    .get_account_with_fixed_root(&programdata_address)
+                                    .is_some()
+                                {
+                                    cached_account_keys.push(pubkey);
+                                }
                             }
                         }
-                    }
-                    // Override account data and lamports from input file if provided
-                    if space > 0 {
-                        let lamports = account_info.lamports.unwrap_or(account.lamports());
+                        // Override account data and lamports from input file if provided
+                        if space > 0 {
+                            let lamports = account_info.lamports.unwrap_or(account.lamports());
+                            let mut account = AccountSharedData::new(lamports, space, &owner);
+                            account.set_data_from_slice(&data);
+                            account
+                        } else {
+                            account
+                        }
+                    } else {
+                        let owner = account_info
+                            .owner
+                            .unwrap_or(Pubkey::new_unique().to_string());
+                        let owner = owner.parse::<Pubkey>().unwrap_or_else(|err| {
+                            eprintln!("Invalid owner key in input {owner}, error {err}");
+                            Pubkey::new_unique()
+                        });
+                        let lamports = account_info.lamports.unwrap_or(0);
                         let mut account = AccountSharedData::new(lamports, space, &owner);
                         account.set_data_from_slice(&data);
                         account
+                    };
+                    let txn_acct_index = if let Some(idx) = txn_acct_indices.get(&pubkey) {
+                        *idx
                     } else {
-                        account
+                        let idx = transaction_accounts.len();
+                        txn_acct_indices.insert(pubkey, idx);
+                        transaction_accounts.push((pubkey, account));
+                        idx
+                    };
+                    InstructionAccount {
+                        index_in_transaction: txn_acct_index as IndexOfAccount,
+                        index_in_caller: txn_acct_index as IndexOfAccount,
+                        index_in_callee: txn_acct_index as IndexOfAccount,
+                        is_signer: account_info.is_signer.unwrap_or(false),
+                        is_writable: account_info.is_writable.unwrap_or(false),
                     }
-                } else {
-                    let owner = account_info
-                        .owner
-                        .unwrap_or(Pubkey::new_unique().to_string());
-                    let owner = owner.parse::<Pubkey>().unwrap_or_else(|err| {
-                        eprintln!("Invalid owner key in input {owner}, error {err}");
-                        Pubkey::new_unique()
-                    });
-                    let lamports = account_info.lamports.unwrap_or(0);
-                    let mut account = AccountSharedData::new(lamports, space, &owner);
-                    account.set_data_from_slice(&data);
-                    account
-                };
-                transaction_accounts.push((pubkey, account));
-                instruction_accounts.push(InstructionAccount {
-                    index_in_transaction: index as IndexOfAccount,
-                    index_in_caller: index as IndexOfAccount,
-                    index_in_callee: index as IndexOfAccount,
-                    is_signer: account_info.is_signer.unwrap_or(false),
-                    is_writable: account_info.is_writable.unwrap_or(false),
-                });
-            }
+                })
+                .collect();
             input.instruction_data
         }
     };
@@ -510,15 +528,28 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
+    transaction_accounts.push((
+        sysvar::epoch_schedule::id(),
+        create_account_shared_data_for_test(bank.epoch_schedule()),
+    ));
     let interpreted = matches.value_of("mode").unwrap() != "jit";
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
+<<<<<<< HEAD
     let slot = bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET;
     let mut loaded_programs =
         LoadedProgramsForTxBatch::new(slot, bank.get_runtime_environments_for_slot(slot));
+=======
+    let mut loaded_programs =
+        bank.new_program_cache_for_tx_batch_for_slot(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
+>>>>>>> origin/patch-1
     for key in cached_account_keys {
-        loaded_programs.replenish(key, bank.load_program(&key, false, bank.epoch()));
+        loaded_programs.replenish(
+            key,
+            bank.load_program(&key, false, bank.epoch())
+                .expect("Couldn't find program account"),
+        );
         debug!("Loaded program {}", key);
     }
     invoke_context.programs_loaded_for_tx_batch = &loaded_programs;

@@ -872,7 +872,7 @@ impl RepairService {
             ServeRepair::repair_proto_to_bytes(&request_proto, &identity_keypair).unwrap();
 
         // Prepare packet batch to send
-        let reqs = vec![(packet_buf, address)];
+        let reqs = [(packet_buf, address)];
 
         // Send packet batch
         match batch_send(repair_socket, &reqs[..]) {
@@ -1665,7 +1665,7 @@ mod test {
             vec![
                 ShredRepairType::Shred(2, 0),
                 ShredRepairType::HighestShred(82, 0),
-                ShredRepairType::HighestShred(7, 3),
+                ShredRepairType::Shred(7, 3),
             ],
         );
     }

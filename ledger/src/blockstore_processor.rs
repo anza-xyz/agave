@@ -28,18 +28,24 @@ use {
     solana_measure::{measure, measure::Measure},
     solana_metrics::datapoint_error,
     solana_program_runtime::{
+<<<<<<< HEAD
         runtime_config::RuntimeConfig,
         timings::{ExecuteTimingType, ExecuteTimings, ThreadExecuteTimings},
+=======
+        report_execute_timings,
+        timings::{ExecuteTimingType, ExecuteTimings},
+>>>>>>> origin/patch-1
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
         bank::{Bank, TransactionBalancesSet},
-        bank_forks::BankForks,
+        bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
+        runtime_config::RuntimeConfig,
         transaction_batch::TransactionBatch,
     },
     solana_sdk::{
@@ -68,6 +74,7 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
+        ops::Index,
         path::PathBuf,
         result,
         sync::{
@@ -519,20 +526,23 @@ pub fn process_entries_for_tests(
 
     let mut entry_starting_index: usize = bank.transaction_count().try_into().unwrap();
     let mut batch_timing = BatchExecutionTiming::default();
-    let mut replay_entries: Vec<_> =
-        entry::verify_transactions(entries, Arc::new(verify_transaction))?
-            .into_iter()
-            .map(|entry| {
-                let starting_index = entry_starting_index;
-                if let EntryType::Transactions(ref transactions) = entry {
-                    entry_starting_index = entry_starting_index.saturating_add(transactions.len());
-                }
-                ReplayEntry {
-                    entry,
-                    starting_index,
-                }
-            })
-            .collect();
+    let mut replay_entries: Vec<_> = entry::verify_transactions(
+        entries,
+        &replay_tx_thread_pool,
+        Arc::new(verify_transaction),
+    )?
+    .into_iter()
+    .map(|entry| {
+        let starting_index = entry_starting_index;
+        if let EntryType::Transactions(ref transactions) = entry {
+            entry_starting_index = entry_starting_index.saturating_add(transactions.len());
+        }
+        ReplayEntry {
+            entry,
+            starting_index,
+        }
+    })
+    .collect();
 
     let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
     let result = process_entries(
@@ -684,6 +694,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
+
+    #[error("set root error {0}")]
+    SetRootError(#[from] SetRootError),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -1136,6 +1149,152 @@ impl BatchExecutionTiming {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ThreadExecuteTimings {
+    pub total_thread_us: u64,
+    pub total_transactions_executed: u64,
+    pub execute_timings: ExecuteTimings,
+}
+
+impl ThreadExecuteTimings {
+    pub fn report_stats(&self, slot: Slot) {
+        lazy! {
+            datapoint_info!(
+                "replay-slot-end-to-end-stats",
+                ("slot", slot as i64, i64),
+                ("total_thread_us", self.total_thread_us as i64, i64),
+                ("total_transactions_executed", self.total_transactions_executed as i64, i64),
+                // Everything inside the `eager!` block will be eagerly expanded before
+                // evaluation of the rest of the surrounding macro.
+                eager!{report_execute_timings!(self.execute_timings)}
+            );
+        };
+    }
+
+    pub fn accumulate(&mut self, other: &ThreadExecuteTimings) {
+        self.execute_timings.accumulate(&other.execute_timings);
+        saturating_add_assign!(self.total_thread_us, other.total_thread_us);
+        saturating_add_assign!(
+            self.total_transactions_executed,
+            other.total_transactions_executed
+        );
+    }
+}
+
+#[derive(Default)]
+pub struct ReplaySlotStats(ConfirmationTiming);
+impl std::ops::Deref for ReplaySlotStats {
+    type Target = ConfirmationTiming;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ReplaySlotStats {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl ReplaySlotStats {
+    pub fn report_stats(
+        &self,
+        slot: Slot,
+        num_txs: usize,
+        num_entries: usize,
+        num_shreds: u64,
+        bank_complete_time_us: u64,
+    ) {
+        lazy! {
+            datapoint_info!(
+                "replay-slot-stats",
+                ("slot", slot as i64, i64),
+                ("fetch_entries_time", self.fetch_elapsed as i64, i64),
+                (
+                    "fetch_entries_fail_time",
+                    self.fetch_fail_elapsed as i64,
+                    i64
+                ),
+                (
+                    "entry_poh_verification_time",
+                    self.poh_verify_elapsed as i64,
+                    i64
+                ),
+                (
+                    "entry_transaction_verification_time",
+                    self.transaction_verify_elapsed as i64,
+                    i64
+                ),
+                ("confirmation_time_us", self.confirmation_elapsed as i64, i64),
+                ("replay_time", self.replay_elapsed as i64, i64),
+                ("execute_batches_us", self.batch_execute.wall_clock_us as i64, i64),
+                (
+                    "replay_total_elapsed",
+                    self.started.elapsed().as_micros() as i64,
+                    i64
+                ),
+                ("bank_complete_time_us", bank_complete_time_us, i64),
+                ("total_transactions", num_txs as i64, i64),
+                ("total_entries", num_entries as i64, i64),
+                ("total_shreds", num_shreds as i64, i64),
+                // Everything inside the `eager!` block will be eagerly expanded before
+                // evaluation of the rest of the surrounding macro.
+                eager!{report_execute_timings!(self.batch_execute.totals)}
+            );
+        };
+
+        self.batch_execute.slowest_thread.report_stats(slot);
+
+        let mut per_pubkey_timings: Vec<_> = self
+            .batch_execute
+            .totals
+            .details
+            .per_program_timings
+            .iter()
+            .collect();
+        per_pubkey_timings.sort_by(|a, b| b.1.accumulated_us.cmp(&a.1.accumulated_us));
+        let (total_us, total_units, total_count, total_errored_units, total_errored_count) =
+            per_pubkey_timings.iter().fold(
+                (0, 0, 0, 0, 0),
+                |(sum_us, sum_units, sum_count, sum_errored_units, sum_errored_count), a| {
+                    (
+                        sum_us + a.1.accumulated_us,
+                        sum_units + a.1.accumulated_units,
+                        sum_count + a.1.count,
+                        sum_errored_units + a.1.total_errored_units,
+                        sum_errored_count + a.1.errored_txs_compute_consumed.len(),
+                    )
+                },
+            );
+
+        for (pubkey, time) in per_pubkey_timings.iter().take(5) {
+            datapoint_trace!(
+                "per_program_timings",
+                ("slot", slot as i64, i64),
+                ("pubkey", pubkey.to_string(), String),
+                ("execute_us", time.accumulated_us, i64),
+                ("accumulated_units", time.accumulated_units, i64),
+                ("errored_units", time.total_errored_units, i64),
+                ("count", time.count, i64),
+                (
+                    "errored_count",
+                    time.errored_txs_compute_consumed.len(),
+                    i64
+                ),
+            );
+        }
+        datapoint_info!(
+            "per_program_timings",
+            ("slot", slot as i64, i64),
+            ("pubkey", "all", String),
+            ("execute_us", total_us, i64),
+            ("accumulated_units", total_units, i64),
+            ("count", total_count, i64),
+            ("errored_units", total_errored_units, i64),
+            ("errored_count", total_errored_count, i64)
+        );
+    }
+}
+
 #[derive(Default)]
 pub struct ConfirmationProgress {
     pub last_entry: Hash,
@@ -1292,7 +1451,11 @@ fn confirm_slot_entries(
     let last_entry_hash = entries.last().map(|e| e.hash);
     let verifier = if !skip_verification {
         datapoint_debug!("verify-batch-size", ("size", num_entries as i64, i64));
-        let entry_state = entries.start_verify(&progress.last_entry, recyclers.clone());
+        let entry_state = entries.start_verify(
+            &progress.last_entry,
+            replay_tx_thread_pool,
+            recyclers.clone(),
+        );
         if entry_state.status() == EntryVerificationStatus::Failure {
             warn!("Ledger proof of history failed at slot: {}", slot);
             return Err(BlockError::InvalidEntryHash.into());
@@ -1315,6 +1478,7 @@ fn confirm_slot_entries(
     let transaction_verification_result = entry::start_verify_transactions(
         entries,
         skip_verification,
+        replay_tx_thread_pool,
         recyclers.clone(),
         Arc::new(verify_transaction),
     );
@@ -1381,7 +1545,7 @@ fn confirm_slot_entries(
     }
 
     if let Some(mut verifier) = verifier {
-        let verified = verifier.finish_verify();
+        let verified = verifier.finish_verify(replay_tx_thread_pool);
         *poh_verify_elapsed += verifier.poh_duration_us();
         if !verified {
             warn!("Ledger proof of history failed at slot: {}", bank.slot());
@@ -1679,7 +1843,7 @@ fn load_frozen_forks(
                     root,
                     accounts_background_request_sender,
                     None,
-                );
+                )?;
                 m.stop();
                 set_root_us += m.as_us();
 
@@ -1788,7 +1952,7 @@ fn supermajority_root_from_vote_accounts(
 // Processes and replays the contents of a single slot, returns Error
 // if failed to play the slot
 #[allow(clippy::too_many_arguments)]
-fn process_single_slot(
+pub fn process_single_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
@@ -3743,11 +3907,15 @@ pub mod tests {
             &mut ExecuteTimings::default(),
         )
         .unwrap();
-        bank_forks.write().unwrap().set_root(
-            1,
-            &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-            None,
-        );
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(
+                1,
+                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
+                None,
+            )
+            .unwrap();
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 

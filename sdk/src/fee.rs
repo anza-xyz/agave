@@ -47,6 +47,23 @@ impl FeeDetails {
             (total_fee as f64).round() as u64
         }
     }
+
+    pub fn accumulate(&mut self, fee_details: &FeeDetails) {
+        self.transaction_fee = self
+            .transaction_fee
+            .saturating_add(fee_details.transaction_fee);
+        self.prioritization_fee = self
+            .prioritization_fee
+            .saturating_add(fee_details.prioritization_fee)
+    }
+
+    pub fn transaction_fee(&self) -> u64 {
+        self.transaction_fee
+    }
+
+    pub fn prioritization_fee(&self) -> u64 {
+        self.prioritization_fee
+    }
 }
 
 pub const ACCOUNT_DATA_COST_PAGE_SIZE: u64 = 32_u64.saturating_mul(1024);
@@ -93,6 +110,12 @@ impl FeeStructure {
             .saturating_mul(heap_cost)
     }
 
+    /// Backward compatibility - lamports_per_signature == 0 means to clear
+    /// transaction fee to zero
+    pub fn to_clear_transaction_fee(lamports_per_signature: u64) -> bool {
+        lamports_per_signature == 0
+    }
+
     /// Calculate fee for `SanitizedMessage`
     #[cfg(not(target_os = "solana"))]
     pub fn calculate_fee(
@@ -103,6 +126,7 @@ impl FeeStructure {
         include_loaded_account_data_size_in_fee: bool,
         remove_rounding_in_fee_calculation: bool,
     ) -> u64 {
+<<<<<<< HEAD
         // Fee based on compute units and signatures
         let congestion_multiplier = if lamports_per_signature == 0 {
             0 // test only
@@ -117,6 +141,18 @@ impl FeeStructure {
         )
         .total_fee(remove_rounding_in_fee_calculation)
         .saturating_mul(congestion_multiplier)
+=======
+        if Self::to_clear_transaction_fee(lamports_per_signature) {
+            0
+        } else {
+            self.calculate_fee_details(
+                message,
+                budget_limits,
+                include_loaded_account_data_size_in_fee,
+            )
+            .total_fee(remove_rounding_in_fee_calculation)
+        }
+>>>>>>> origin/patch-1
     }
 
     /// Calculate fee details for `SanitizedMessage`

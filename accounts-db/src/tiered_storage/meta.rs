@@ -68,6 +68,17 @@ pub trait TieredAccountMeta: Sized {
     /// does not persist this optional field.
     fn rent_epoch(&self, _account_block: &[u8]) -> Option<Epoch>;
 
+<<<<<<< HEAD
+=======
+    /// Returns the epoch that this account will next owe rent by parsing
+    /// the specified account block.  RENT_EXEMPT_RENT_EPOCH will be returned
+    /// if the account is rent-exempt.
+    ///
+    /// For a zero-lamport account, Epoch::default() will be returned to
+    /// default states of an AccountSharedData.
+    fn final_rent_epoch(&self, account_block: &[u8]) -> Epoch;
+
+>>>>>>> origin/patch-1
     /// Returns the offset of the optional fields based on the specified account
     /// block.
     fn optional_fields_offset(&self, _account_block: &[u8]) -> usize;
@@ -129,6 +140,7 @@ const MAX_ACCOUNT_ADDRESS: Pubkey = Pubkey::new_from_array([0xFFu8; 32]);
 
 #[derive(Debug)]
 /// A struct that maintains an address-range using its min and max fields.
+<<<<<<< HEAD
 pub struct AccountAddressRange<'a> {
     /// The minimum address observed via update()
     pub min: &'a Pubkey,
@@ -141,10 +153,25 @@ impl Default for AccountAddressRange<'_> {
         Self {
             min: &MAX_ACCOUNT_ADDRESS,
             max: &MIN_ACCOUNT_ADDRESS,
+=======
+pub struct AccountAddressRange {
+    /// The minimum address observed via update()
+    pub min: Pubkey,
+    /// The maximum address observed via update()
+    pub max: Pubkey,
+}
+
+impl Default for AccountAddressRange {
+    fn default() -> Self {
+        Self {
+            min: MAX_ACCOUNT_ADDRESS,
+            max: MIN_ACCOUNT_ADDRESS,
+>>>>>>> origin/patch-1
         }
     }
 }
 
+<<<<<<< HEAD
 impl<'a> AccountAddressRange<'a> {
     pub fn update(&mut self, address: &'a Pubkey) {
         if *self.min > *address {
@@ -152,6 +179,15 @@ impl<'a> AccountAddressRange<'a> {
         }
         if *self.max < *address {
             self.max = address;
+=======
+impl AccountAddressRange {
+    pub fn update(&mut self, address: &Pubkey) {
+        if self.min > *address {
+            self.min = *address;
+        }
+        if self.max < *address {
+            self.max = *address;
+>>>>>>> origin/patch-1
         }
     }
 }
@@ -261,8 +297,13 @@ pub mod tests {
 
         address_range.update(&address);
         // For a single update, the min and max should equal to the address
+<<<<<<< HEAD
         assert_eq!(*address_range.min, address);
         assert_eq!(*address_range.max, address);
+=======
+        assert_eq!(address_range.min, address);
+        assert_eq!(address_range.max, address);
+>>>>>>> origin/patch-1
     }
 
     #[test]
@@ -293,7 +334,12 @@ pub mod tests {
             .iter()
             .for_each(|address| address_range.update(address));
 
+<<<<<<< HEAD
         assert_eq!(*address_range.min, addresses[min_index]);
         assert_eq!(*address_range.max, addresses[max_index]);
+=======
+        assert_eq!(address_range.min, addresses[min_index]);
+        assert_eq!(address_range.max, addresses[max_index]);
+>>>>>>> origin/patch-1
     }
 }

@@ -9,18 +9,21 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+chrono = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
+csv = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
-solana-core = { workspace = true }
+solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true }
 solana-genesis = { workspace = true }
 solana-gossip = { workspace = true }
@@ -28,11 +31,12 @@ solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-quic-client = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
-solana-runtime = { workspace = true }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
@@ -50,3 +54,6 @@ tempfile = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = []

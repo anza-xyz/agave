@@ -14,7 +14,6 @@ pub struct ReadWriteAccountSet {
 
 impl ReadWriteAccountSet {
     /// Returns true if all account locks were available and false otherwise.
-    #[allow(dead_code)]
     pub fn check_locks(&self, message: &SanitizedMessage) -> bool {
         message
             .account_keys()
@@ -139,6 +138,7 @@ mod tests {
             MessageHash::Compute,
             Some(false),
             bank,
+            bank.get_reserved_account_keys(),
         )
         .unwrap()
     }

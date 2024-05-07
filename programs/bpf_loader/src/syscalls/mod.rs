@@ -34,7 +34,7 @@ use {
         feature_set::bpf_account_data_direct_mapping,
         feature_set::FeatureSet,
         feature_set::{
-            self, blake3_syscall_enabled, curve25519_syscall_enabled,
+            self, abort_on_invalid_curve, blake3_syscall_enabled, curve25519_syscall_enabled,
             disable_deploy_of_alloc_free_syscall, disable_fees_sysvar,
             enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall,
             enable_big_mod_exp_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
@@ -237,6 +237,24 @@ macro_rules! register_feature_gated_function {
             Ok(0)
         }
     };
+}
+
+pub fn morph_into_deployment_environment_v1(
+    from: Arc<BuiltinProgram<InvokeContext>>,
+) -> Result<BuiltinProgram<InvokeContext>, Error> {
+    let mut config = *from.get_config();
+    config.reject_broken_elfs = true;
+
+    let mut result = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
+
+    for (key, (name, value)) in from.get_function_registry().iter() {
+        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
+        if name != *b"sol_alloc_free_" {
+            result.register_function(key, name, value)?;
+        }
+    }
+
+    Ok(BuiltinProgram::new_loader(config, result))
 }
 
 pub fn create_program_runtime_environment_v1<'a>(
@@ -898,7 +916,16 @@ declare_builtin_function!(
                     Ok(1)
                 }
             }
-            _ => Ok(1),
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
         }
     }
 );
@@ -1006,7 +1033,16 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                _ => Ok(1),
+                _ => {
+                    if invoke_context
+                        .get_feature_set()
+                        .is_active(&abort_on_invalid_curve::id())
+                    {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
             },
 
             CURVE25519_RISTRETTO => match group_op {
@@ -1096,10 +1132,28 @@ declare_builtin_function!(
                         Ok(1)
                     }
                 }
-                _ => Ok(1),
+                _ => {
+                    if invoke_context
+                        .get_feature_set()
+                        .is_active(&abort_on_invalid_curve::id())
+                    {
+                        Err(SyscallError::InvalidAttribute.into())
+                    } else {
+                        Ok(1)
+                    }
+                }
             },
 
-            _ => Ok(1),
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
         }
     }
 );
@@ -1122,14 +1176,8 @@ declare_builtin_function!(
             curve_syscall_traits::*, edwards, ristretto, scalar,
         };
 
-        let restrict_msm_length = invoke_context
-            .feature_set
-            .is_active(&feature_set::curve25519_restrict_msm_length::id());
-        #[allow(clippy::collapsible_if)]
-        if restrict_msm_length {
-            if points_len > 512 {
-                return Err(Box::new(SyscallError::InvalidLength));
-            }
+        if points_len > 512 {
+            return Err(Box::new(SyscallError::InvalidLength));
         }
 
         match curve_id {
@@ -1211,7 +1259,16 @@ declare_builtin_function!(
                 }
             }
 
-            _ => Ok(1),
+            _ => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&abort_on_invalid_curve::id())
+                {
+                    Err(SyscallError::InvalidAttribute.into())
+                } else {
+                    Ok(1)
+                }
+            }
         }
     }
 );
@@ -1555,14 +1612,24 @@ declare_builtin_function!(
             }
         };
 
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
             Err(e) => {
-                return Ok(e.into());
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                };
             }
         };
 
-        if result_point.len() != output {
+        // This can never happen and should be removed when the
+        // simplify_alt_bn128_syscall_error_codes feature gets activated
+        if result_point.len() != output && !simplify_alt_bn128_syscall_error_codes {
             return Ok(AltBn128Error::SliceOutOfBounds.into());
         }
 
@@ -1702,10 +1769,19 @@ declare_builtin_function!(
                 )
             })
             .collect::<Result<Vec<_>, Error>>()?;
+
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
             Err(e) => {
-                return Ok(e.into());
+                return if simplify_alt_bn128_syscall_error_codes {
+                    Ok(1)
+                } else {
+                    Ok(e.into())
+                };
             }
         };
         hash_result.copy_from_slice(&hash.to_bytes());
@@ -1789,12 +1865,20 @@ declare_builtin_function!(
             invoke_context.get_check_aligned(),
         )?;
 
+        let simplify_alt_bn128_syscall_error_codes = invoke_context
+            .get_feature_set()
+            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+
         match op {
             ALT_BN128_G1_COMPRESS => {
                 let result_point = match alt_bn128_g1_compress(input) {
                     Ok(result_point) => result_point,
                     Err(e) => {
-                        return Ok(e.into());
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -1804,7 +1888,11 @@ declare_builtin_function!(
                 let result_point = match alt_bn128_g1_decompress(input) {
                     Ok(result_point) => result_point,
                     Err(e) => {
-                        return Ok(e.into());
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -1814,7 +1902,11 @@ declare_builtin_function!(
                 let result_point = match alt_bn128_g2_compress(input) {
                     Ok(result_point) => result_point,
                     Err(e) => {
-                        return Ok(e.into());
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -1824,7 +1916,11 @@ declare_builtin_function!(
                 let result_point = match alt_bn128_g2_decompress(input) {
                     Ok(result_point) => result_point,
                     Err(e) => {
-                        return Ok(e.into());
+                        return if simplify_alt_bn128_syscall_error_codes {
+                            Ok(1)
+                        } else {
+                            Ok(e.into())
+                        };
                     }
                 };
                 call_result.copy_from_slice(&result_point);
@@ -2388,7 +2484,7 @@ mod tests {
         // many small unaligned allocs
         {
             prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            invoke_context.feature_set = Arc::new(FeatureSet::default());
+            invoke_context.mock_set_feature_set(Arc::new(FeatureSet::default()));
             mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
             let mut vm = vm.unwrap();
             let invoke_context = &mut vm.context_object_pointer;
@@ -3299,16 +3395,20 @@ mod tests {
         src_rent.burn_percent = 3;
 
         let mut src_rewards = create_filled_type::<EpochRewards>(false);
+        src_rewards.distribution_starting_block_height = 42;
+        src_rewards.num_partitions = 2;
+        src_rewards.parent_blockhash = Hash::new(&[3; 32]);
+        src_rewards.total_points = 4;
         src_rewards.total_rewards = 100;
         src_rewards.distributed_rewards = 10;
-        src_rewards.distribution_complete_block_height = 42;
+        src_rewards.active = true;
 
         let mut sysvar_cache = SysvarCache::default();
         sysvar_cache.set_clock(src_clock.clone());
         sysvar_cache.set_epoch_schedule(src_epochschedule.clone());
         sysvar_cache.set_fees(src_fees.clone());
         sysvar_cache.set_rent(src_rent.clone());
-        sysvar_cache.set_epoch_rewards(src_rewards);
+        sysvar_cache.set_epoch_rewards(src_rewards.clone());
 
         let transaction_accounts = vec![
             (
@@ -3501,10 +3601,14 @@ mod tests {
             assert_eq!(got_rewards, src_rewards);
 
             let mut clean_rewards = create_filled_type::<EpochRewards>(true);
+            clean_rewards.distribution_starting_block_height =
+                src_rewards.distribution_starting_block_height;
+            clean_rewards.num_partitions = src_rewards.num_partitions;
+            clean_rewards.parent_blockhash = src_rewards.parent_blockhash;
+            clean_rewards.total_points = src_rewards.total_points;
             clean_rewards.total_rewards = src_rewards.total_rewards;
             clean_rewards.distributed_rewards = src_rewards.distributed_rewards;
-            clean_rewards.distribution_complete_block_height =
-                src_rewards.distribution_complete_block_height;
+            clean_rewards.active = src_rewards.active;
             assert!(are_bytes_equal(&got_rewards, &clean_rewards));
         }
     }

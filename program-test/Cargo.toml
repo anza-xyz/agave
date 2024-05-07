@@ -22,6 +22,7 @@ solana-banks-client = { workspace = true }
 solana-banks-interface = { workspace = true }
 solana-banks-server = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
+solana-inline-spl = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
@@ -29,9 +30,9 @@ solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
 solana-vote-program = { workspace = true }
 solana_rbpf = { workspace = true }
-test-case = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 solana-stake-program = { workspace = true }
+test-case = { workspace = true }

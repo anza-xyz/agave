@@ -21,6 +21,7 @@ use {
 /// Reasons the stake might have had an error
 #[derive(Error, Debug, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub enum StakeError {
+    // 0
     #[error("not enough credits to redeem")]
     NoCreditsToRedeem,
 
@@ -36,6 +37,7 @@ pub enum StakeError {
     #[error("split amount is more than is staked")]
     InsufficientStake,
 
+    // 5
     #[error("stake account with transient stake cannot be merged")]
     MergeTransientStake,
 
@@ -51,6 +53,7 @@ pub enum StakeError {
     #[error("insufficient voting activity in the reference vote account")]
     InsufficientReferenceVotes,
 
+    // 10
     #[error("stake account is not delegated to the provided vote account")]
     VoteAddressMismatch,
 
@@ -68,8 +71,12 @@ pub enum StakeError {
     #[error("stake redelegation to the same vote account is not permitted")]
     RedelegateToSameVoteAccount,
 
+    // 15
     #[error("redelegated stake must be fully activated before deactivation")]
     RedelegatedStakeMustFullyActivateBeforeDeactivationIsPermitted,
+
+    #[error("stake action is not permitted while the epoch rewards period is active")]
+    EpochRewardsActive,
 }
 
 impl<E> DecodeError<E> for StakeError {
@@ -108,7 +115,7 @@ pub enum StakeInstruction {
     ///   1. `[]` Vote account to which this stake will be delegated
     ///   2. `[]` Clock sysvar
     ///   3. `[]` Stake history sysvar that carries stake warmup/cooldown history
-    ///   4. `[]` Address of config account that carries stake config
+    ///   4. `[]` Unused account, formerly the stake config
     ///   5. `[SIGNER]` Stake authority
     ///
     /// The entire balance of the staking account is staked.  DelegateStake
@@ -289,7 +296,7 @@ pub enum StakeInstruction {
     ///      plus rent exempt minimum
     ///   1. `[WRITE]` Uninitialized stake account that will hold the redelegated stake
     ///   2. `[]` Vote account to which this stake will be re-delegated
-    ///   3. `[]` Address of config account that carries stake config
+    ///   3. `[]` Unused account, formerly the stake config
     ///   4. `[SIGNER]` Stake authority
     ///
     Redelegate,
@@ -677,6 +684,7 @@ pub fn delegate_stake(
         AccountMeta::new_readonly(sysvar::clock::id(), false),
         AccountMeta::new_readonly(sysvar::stake_history::id(), false),
         #[allow(deprecated)]
+        // For backwards compatibility we pass the stake config, although this account is unused
         AccountMeta::new_readonly(config::id(), false),
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
@@ -782,6 +790,7 @@ fn _redelegate(
         AccountMeta::new(*uninitialized_stake_pubkey, false),
         AccountMeta::new_readonly(*vote_pubkey, false),
         #[allow(deprecated)]
+        // For backwards compatibility we pass the stake config, although this account is unused
         AccountMeta::new_readonly(config::id(), false),
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];

@@ -53,9 +53,14 @@ use {
     solana_core::repair::serve_repair::{RepairProtocol, RepairRequestHeader, ServeRepair},
     solana_dos::cli::*,
     solana_gossip::{
+<<<<<<< HEAD
         contact_info::Protocol,
         gossip_service::{discover, get_client},
         legacy_contact_info::LegacyContactInfo as ContactInfo,
+=======
+        contact_info::{ContactInfo, Protocol},
+        gossip_service::{discover, get_client},
+>>>>>>> origin/patch-1
     },
     solana_measure::measure::Measure,
     solana_rpc_client::rpc_client::RpcClient,
@@ -760,7 +765,7 @@ fn run_dos<T: 'static + BenchTpsClient + Send + Sync>(
 }
 
 fn main() {
-    solana_logger::setup_with_default("solana=info");
+    solana_logger::setup_with_default_filter();
     let cmd_params = build_cli_parameters();
 
     let (nodes, client) = if !cmd_params.skip_gossip {
@@ -795,6 +800,10 @@ fn main() {
                 DEFAULT_TPU_CONNECTION_POOL_SIZE,
             ),
         };
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/patch-1
         let client = get_client(&validators, Arc::new(connection_cache));
         (gossip_nodes, Some(client))
     } else {
@@ -818,17 +827,21 @@ fn main() {
 pub mod test {
     use {
         super::*,
+<<<<<<< HEAD
         solana_client::tpu_client::QuicTpuClient,
+=======
+>>>>>>> origin/patch-1
         solana_core::validator::ValidatorConfig,
         solana_faucet::faucet::run_local_faucet,
-        solana_gossip::contact_info::LegacyContactInfo,
         solana_local_cluster::{
             cluster::Cluster,
             local_cluster::{ClusterConfig, LocalCluster},
             validator_configs::make_identical_validator_configs,
         },
+        solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
         solana_rpc::rpc::JsonRpcConfig,
         solana_sdk::timing::timestamp,
+        solana_tpu_client::tpu_client::TpuClient,
     };
 
     const TEST_SEND_BATCH_SIZE: usize = 1;
@@ -836,7 +849,13 @@ pub mod test {
     // thin wrapper for the run_dos function
     // to avoid specifying everywhere generic parameters
     fn run_dos_no_client(nodes: &[ContactInfo], iterations: usize, params: DosClientParameters) {
+<<<<<<< HEAD
         run_dos::<QuicTpuClient>(nodes, iterations, None, params);
+=======
+        run_dos::<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>(
+            nodes, iterations, None, params,
+        );
+>>>>>>> origin/patch-1
     }
 
     #[test]
@@ -932,11 +951,7 @@ pub mod test {
         assert_eq!(cluster.validators.len(), num_nodes);
 
         let nodes = cluster.get_node_pubkeys();
-        let node = cluster
-            .get_contact_info(&nodes[0])
-            .map(LegacyContactInfo::try_from)
-            .unwrap()
-            .unwrap();
+        let node = cluster.get_contact_info(&nodes[0]).unwrap().clone();
         let nodes_slice = [node];
 
         // send random transactions to TPU
@@ -969,11 +984,7 @@ pub mod test {
         assert_eq!(cluster.validators.len(), num_nodes);
 
         let nodes = cluster.get_node_pubkeys();
-        let node = cluster
-            .get_contact_info(&nodes[0])
-            .map(LegacyContactInfo::try_from)
-            .unwrap()
-            .unwrap();
+        let node = cluster.get_contact_info(&nodes[0]).unwrap().clone();
         let nodes_slice = [node];
 
         let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
@@ -1103,11 +1114,7 @@ pub mod test {
         cluster.transfer(&cluster.funding_keypair, &faucet_pubkey, 100_000_000);
 
         let nodes = cluster.get_node_pubkeys();
-        let node = cluster
-            .get_contact_info(&nodes[0])
-            .map(LegacyContactInfo::try_from)
-            .unwrap()
-            .unwrap();
+        let node = cluster.get_contact_info(&nodes[0]).unwrap().clone();
         let nodes_slice = [node];
 
         let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {

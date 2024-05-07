@@ -5,7 +5,7 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
-        compute_unit_price::WithComputeUnitPrice,
+        compute_budget::WithComputeUnitPrice,
         memo::WithMemo,
         nonce::check_nonce_account,
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
@@ -673,15 +673,14 @@ pub fn parse_vote_get_account_command(
     } else {
         None
     };
-    Ok(CliCommandInfo {
-        command: CliCommand::ShowVoteAccount {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::ShowVoteAccount {
             pubkey: vote_account_pubkey,
             use_lamports_unit,
             use_csv,
             with_rewards,
         },
-        signers: vec![],
-    })
+    ))
 }
 
 pub fn parse_withdraw_from_vote_account(
@@ -1246,7 +1245,7 @@ pub fn process_show_vote_account(
             votes.push(vote.into());
         }
         for (epoch, credits, prev_credits) in vote_state.epoch_credits().iter().copied() {
-            let credits_earned = credits - prev_credits;
+            let credits_earned = credits.saturating_sub(prev_credits);
             let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
             epoch_voting_history.push(CliEpochVotingHistory {
                 epoch,

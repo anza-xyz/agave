@@ -38,4 +38,12 @@ solana-version = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dev-dependencies]
+solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-local-cluster = { workspace = true }
+<<<<<<< HEAD
+=======
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+
+[features]
+dev-context-only-utils = []
+>>>>>>> origin/patch-1

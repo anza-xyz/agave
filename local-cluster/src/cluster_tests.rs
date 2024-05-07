@@ -5,16 +5,19 @@
 use log::*;
 use {
     rand::{thread_rng, Rng},
-    rayon::prelude::*,
+    rayon::{prelude::*, ThreadPool},
     solana_client::{
         connection_cache::{ConnectionCache, Protocol},
         thin_client::ThinClient,
     },
-    solana_core::consensus::VOTE_THRESHOLD_DEPTH,
-    solana_entry::entry::{Entry, EntrySlice},
+    solana_core::consensus::{
+        tower_storage::{FileTowerStorage, SavedTower, SavedTowerVersions, TowerStorage},
+        VOTE_THRESHOLD_DEPTH,
+    },
+    solana_entry::entry::{self, Entry, EntrySlice},
     solana_gossip::{
         cluster_info::{self, ClusterInfo},
-        contact_info::{ContactInfo, LegacyContactInfo},
+        contact_info::ContactInfo,
         crds::Cursor,
         crds_value::{self, CrdsData, CrdsValue, CrdsValueLabel},
         gossip_error::GossipError,
@@ -40,10 +43,9 @@ use {
     solana_vote::vote_transaction::VoteTransaction,
     solana_vote_program::vote_transaction,
     std::{
-        borrow::Borrow,
         collections::{HashMap, HashSet, VecDeque},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
-        path::Path,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -53,11 +55,10 @@ use {
     },
 };
 
-pub fn get_client_facing_addr<T: Borrow<LegacyContactInfo>>(
+pub fn get_client_facing_addr(
     protocol: Protocol,
-    contact_info: T,
+    contact_info: &ContactInfo,
 ) -> (SocketAddr, SocketAddr) {
-    let contact_info = contact_info.borrow();
     let rpc = contact_info.rpc().unwrap();
     let mut tpu = contact_info.tpu(protocol).unwrap();
     // QUIC certificate authentication requires the IP Address to match. ContactInfo might have
@@ -122,9 +123,7 @@ pub fn verify_balances<S: ::std::hash::BuildHasher>(
     node: &ContactInfo,
     connection_cache: Arc<ConnectionCache>,
 ) {
-    let (rpc, tpu) = LegacyContactInfo::try_from(node)
-        .map(|node| get_client_facing_addr(connection_cache.protocol(), node))
-        .unwrap();
+    let (rpc, tpu) = get_client_facing_addr(connection_cache.protocol(), node);
     let client = ThinClient::new(rpc, tpu, connection_cache);
     for (pk, b) in expected_balances {
         let bal = client
@@ -135,7 +134,7 @@ pub fn verify_balances<S: ::std::hash::BuildHasher>(
 }
 
 pub fn send_many_transactions(
-    node: &LegacyContactInfo,
+    node: &ContactInfo,
     funding_keypair: &Keypair,
     connection_cache: &Arc<ConnectionCache>,
     max_tokens_per_transfer: u64,
@@ -177,6 +176,8 @@ pub fn send_many_transactions(
 
 pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
     let ledger = Blockstore::open(ledger_path).unwrap();
+    let thread_pool = entry::thread_pool_for_tests();
+
     let zeroth_slot = ledger.get_slot_entries(0, 0).unwrap();
     let last_id = zeroth_slot.last().unwrap().hash;
     let next_slots = ledger.get_slots_since(&[0]).unwrap().remove(&0).unwrap();
@@ -198,7 +199,7 @@ pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
             None
         };
 
-        let last_id = verify_slot_ticks(&ledger, slot, &last_id, should_verify_ticks);
+        let last_id = verify_slot_ticks(&ledger, &thread_pool, slot, &last_id, should_verify_ticks);
         pending_slots.extend(
             next_slots
                 .into_iter()
@@ -237,9 +238,7 @@ pub fn kill_entry_and_spend_and_verify_rest(
     )
     .unwrap();
     assert!(cluster_nodes.len() >= nodes);
-    let (rpc, tpu) = LegacyContactInfo::try_from(entry_point_info)
-        .map(|node| get_client_facing_addr(connection_cache.protocol(), node))
-        .unwrap();
+    let (rpc, tpu) = get_client_facing_addr(connection_cache.protocol(), entry_point_info);
     let client = ThinClient::new(rpc, tpu, connection_cache.clone());
 
     // sleep long enough to make sure we are in epoch 3
@@ -334,6 +333,51 @@ pub fn kill_entry_and_spend_and_verify_rest(
     }
 }
 
+pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, tower_path: PathBuf) {
+    let tower_storage = FileTowerStorage::new(tower_path);
+    let mut tower = tower_storage.load(&node_keypair.pubkey()).unwrap();
+    for (slot, hash) in votes {
+        tower.record_vote(slot, hash);
+    }
+    let saved_tower = SavedTowerVersions::from(SavedTower::new(&tower, node_keypair).unwrap());
+    tower_storage.store(&saved_tower).unwrap();
+}
+
+pub fn check_min_slot_is_rooted(
+    min_slot: Slot,
+    contact_infos: &[ContactInfo],
+    connection_cache: &Arc<ConnectionCache>,
+    test_name: &str,
+) {
+    let mut last_print = Instant::now();
+    let loop_start = Instant::now();
+    let loop_timeout = Duration::from_secs(180);
+    for ingress_node in contact_infos.iter() {
+        let (rpc, tpu) = get_client_facing_addr(connection_cache.protocol(), ingress_node);
+        let client = ThinClient::new(rpc, tpu, connection_cache.clone());
+        loop {
+            let root_slot = client
+                .get_slot_with_commitment(CommitmentConfig::finalized())
+                .unwrap_or(0);
+            if root_slot >= min_slot || last_print.elapsed().as_secs() > 3 {
+                info!(
+                    "{} waiting for node {} to see root >= {}.. observed latest root: {}",
+                    test_name,
+                    ingress_node.pubkey(),
+                    min_slot,
+                    root_slot
+                );
+                last_print = Instant::now();
+                if root_slot >= min_slot {
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
+            assert!(loop_start.elapsed() < loop_timeout);
+        }
+    }
+}
+
 pub fn check_for_new_roots(
     num_new_roots: usize,
     contact_infos: &[ContactInfo],
@@ -350,9 +394,7 @@ pub fn check_for_new_roots(
         assert!(loop_start.elapsed() < loop_timeout);
 
         for (i, ingress_node) in contact_infos.iter().enumerate() {
-            let (rpc, tpu) = LegacyContactInfo::try_from(ingress_node)
-                .map(|node| get_client_facing_addr(connection_cache.protocol(), node))
-                .unwrap();
+            let (rpc, tpu) = get_client_facing_addr(connection_cache.protocol(), ingress_node);
             let client = ThinClient::new(rpc, tpu, connection_cache.clone());
             let root_slot = client
                 .get_slot_with_commitment(CommitmentConfig::finalized())
@@ -375,7 +417,7 @@ pub fn check_for_new_roots(
 
 pub fn check_no_new_roots(
     num_slots_to_wait: usize,
-    contact_infos: &[LegacyContactInfo],
+    contact_infos: &[&ContactInfo],
     connection_cache: &Arc<ConnectionCache>,
     test_name: &str,
 ) {
@@ -443,7 +485,7 @@ pub fn check_no_new_roots(
 
 fn poll_all_nodes_for_signature(
     entry_point_info: &ContactInfo,
-    cluster_nodes: &[LegacyContactInfo],
+    cluster_nodes: &[ContactInfo],
     connection_cache: &Arc<ConnectionCache>,
     sig: &Signature,
     confs: usize,
@@ -580,21 +622,23 @@ pub fn start_gossip_voter(
 
 fn get_and_verify_slot_entries(
     blockstore: &Blockstore,
+    thread_pool: &ThreadPool,
     slot: Slot,
     last_entry: &Hash,
 ) -> Vec<Entry> {
     let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert!(entries.verify(last_entry));
+    assert!(entries.verify(last_entry, thread_pool));
     entries
 }
 
 fn verify_slot_ticks(
     blockstore: &Blockstore,
+    thread_pool: &ThreadPool,
     slot: Slot,
     last_entry: &Hash,
     expected_num_ticks: Option<usize>,
 ) -> Hash {
-    let entries = get_and_verify_slot_entries(blockstore, slot, last_entry);
+    let entries = get_and_verify_slot_entries(blockstore, thread_pool, slot, last_entry);
     let num_ticks: usize = entries.iter().map(|entry| entry.is_tick() as usize).sum();
     if let Some(expected_num_ticks) = expected_num_ticks {
         assert_eq!(num_ticks, expected_num_ticks);

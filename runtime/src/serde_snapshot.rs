@@ -1,11 +1,13 @@
+#[cfg(target_os = "linux")]
+use std::ffi::{CStr, CString};
 use {
     crate::{
-        bank::{Bank, BankFieldsToDeserialize, BankRc},
-        builtins::BuiltinPrototype,
+        bank::{builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::EpochStakes,
+        runtime_config::RuntimeConfig,
         serde_snapshot::storage::SerializableAccountStorageEntry,
         snapshot_utils::{
-            self, SnapshotError, StorageAndNextAppendVecId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
+            self, SnapshotError, StorageAndNextAccountsFileId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
         },
         stakes::Stakes,
     },
@@ -16,8 +18,8 @@ use {
         account_storage::meta::StoredMetaWriteVersion,
         accounts::Accounts,
         accounts_db::{
-            AccountShrinkThreshold, AccountStorageEntry, AccountsDb, AccountsDbConfig, AppendVecId,
-            AtomicAppendVecId, BankHashStats, IndexGenerationInfo,
+            AccountShrinkThreshold, AccountStorageEntry, AccountsDb, AccountsDbConfig,
+            AccountsFileId, AtomicAccountsFileId, BankHashStats, IndexGenerationInfo,
         },
         accounts_file::AccountsFile,
         accounts_hash::AccountsHash,
@@ -63,7 +65,7 @@ pub(crate) use {
     solana_accounts_db::accounts_hash::{
         SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
     },
-    storage::SerializedAppendVecId,
+    storage::SerializedAccountsFileId,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -285,7 +287,7 @@ pub(crate) fn compare_two_serialized_banks(
 /// Get snapshot storage lengths from accounts_db_fields
 pub(crate) fn snapshot_storage_lengths_from_fields(
     accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
-) -> HashMap<Slot, HashMap<SerializedAppendVecId, usize>> {
+) -> HashMap<Slot, HashMap<SerializedAccountsFileId, usize>> {
     let AccountsDbFields(snapshot_storage, ..) = &accounts_db_fields;
     snapshot_storage
         .iter()
@@ -352,7 +354,7 @@ pub(crate) fn bank_from_streams<R>(
     serde_style: SerdeStyle,
     snapshot_streams: &mut SnapshotStreams<R>,
     account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAppendVecId,
+    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -581,7 +583,7 @@ fn reconstruct_bank_from_fields<E>(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAppendVecId,
+    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&[BuiltinPrototype]>,
     account_secondary_indexes: AccountSecondaryIndexes,
@@ -645,7 +647,7 @@ pub(crate) fn reconstruct_single_storage(
     slot: &Slot,
     append_vec_path: &Path,
     current_len: usize,
-    append_vec_id: AppendVecId,
+    append_vec_id: AccountsFileId,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     let (accounts_file, num_accounts) = AccountsFile::new_from_file(append_vec_path, current_len)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
@@ -656,30 +658,55 @@ pub(crate) fn reconstruct_single_storage(
     )))
 }
 
-fn remap_append_vec_file(
+// Remap the AppendVec ID to handle any duplicate IDs that may previously existed
+// due to full snapshots and incremental snapshots generated from different
+// nodes
+pub(crate) fn remap_append_vec_file(
     slot: Slot,
-    old_append_vec_id: SerializedAppendVecId,
+    old_append_vec_id: SerializedAccountsFileId,
     append_vec_path: &Path,
-    next_append_vec_id: &AtomicAppendVecId,
+    next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
-) -> io::Result<(AppendVecId, PathBuf)> {
-    // Remap the AppendVec ID to handle any duplicate IDs that may previously existed
-    // due to full snapshots and incremental snapshots generated from different nodes
+) -> io::Result<(AccountsFileId, PathBuf)> {
+    #[cfg(target_os = "linux")]
+    let append_vec_path_cstr = cstring_from_path(append_vec_path)?;
+
+    let mut remapped_append_vec_path = append_vec_path.to_path_buf();
+
+    // Break out of the loop in the following situations:
+    // 1. The new ID is the same as the original ID.  This means we do not need to
+    //    rename the file, since the ID is the "correct" one already.
+    // 2. There is not a file already at the new path.  This means it is safe to
+    //    rename the file to this new path.
     let (remapped_append_vec_id, remapped_append_vec_path) = loop {
         let remapped_append_vec_id = next_append_vec_id.fetch_add(1, Ordering::AcqRel);
-        let remapped_file_name = AccountsFile::file_name(slot, remapped_append_vec_id);
-        let remapped_append_vec_path = append_vec_path.parent().unwrap().join(remapped_file_name);
 
-        // Break out of the loop in the following situations:
-        // 1. The new ID is the same as the original ID.  This means we do not need to
-        //    rename the file, since the ID is the "correct" one already.
-        // 2. There is not a file already at the new path.  This means it is safe to
-        //    rename the file to this new path.
-        //    **DEVELOPER NOTE:**  Keep this check last so that it can short-circuit if
-        //    possible.
-        if old_append_vec_id == remapped_append_vec_id as SerializedAppendVecId
-            || std::fs::metadata(&remapped_append_vec_path).is_err()
+        // this can only happen in the first iteration of the loop
+        if old_append_vec_id == remapped_append_vec_id as SerializedAccountsFileId {
+            break (remapped_append_vec_id, remapped_append_vec_path);
+        }
+
+        let remapped_file_name = AccountsFile::file_name(slot, remapped_append_vec_id);
+        remapped_append_vec_path = append_vec_path.parent().unwrap().join(remapped_file_name);
+
+        #[cfg(target_os = "linux")]
         {
+            let remapped_append_vec_path_cstr = cstring_from_path(&remapped_append_vec_path)?;
+
+            // On linux we use renameat2(NO_REPLACE) instead of IF metadata(path).is_err() THEN
+            // rename() in order to save a statx() syscall.
+            match rename_no_replace(&append_vec_path_cstr, &remapped_append_vec_path_cstr) {
+                // If the file was successfully renamed, break out of the loop
+                Ok(_) => break (remapped_append_vec_id, remapped_append_vec_path),
+                // If there's already a file at the new path, continue so we try
+                // the next ID
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        if std::fs::metadata(&remapped_append_vec_path).is_err() {
             break (remapped_append_vec_id, remapped_append_vec_path);
         }
 
@@ -687,8 +714,11 @@ fn remap_append_vec_file(
         // and try again.
         num_collisions.fetch_add(1, Ordering::Relaxed);
     };
-    // Only rename the file if the new ID is actually different from the original.
-    if old_append_vec_id != remapped_append_vec_id as SerializedAppendVecId {
+
+    // Only rename the file if the new ID is actually different from the original. In the target_os
+    // = linux case, we have already renamed if necessary.
+    #[cfg(not(target_os = "linux"))]
+    if old_append_vec_id != remapped_append_vec_id as SerializedAccountsFileId {
         std::fs::rename(append_vec_path, &remapped_append_vec_path)?;
     }
 
@@ -697,10 +727,10 @@ fn remap_append_vec_file(
 
 pub(crate) fn remap_and_reconstruct_single_storage(
     slot: Slot,
-    old_append_vec_id: SerializedAppendVecId,
+    old_append_vec_id: SerializedAccountsFileId,
     current_len: usize,
     append_vec_path: &Path,
-    next_append_vec_id: &AtomicAppendVecId,
+    next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     let (remapped_append_vec_id, remapped_append_vec_path) = remap_append_vec_file(
@@ -729,7 +759,7 @@ struct ReconstructedAccountsDbInfo {
 fn reconstruct_accountsdb_from_fields<E>(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAppendVecId,
+    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     genesis_config: &GenesisConfig,
     account_secondary_indexes: AccountSecondaryIndexes,
     limit_load_slot_count_from_snapshot: Option<usize>,
@@ -876,7 +906,7 @@ where
             .unwrap_or_else(|err| panic!("Failed to create directory {}: {}", path.display(), err));
     }
 
-    let StorageAndNextAppendVecId {
+    let StorageAndNextAccountsFileId {
         storage,
         next_append_vec_id,
     } = storage_and_next_append_vec_id;
@@ -889,7 +919,7 @@ where
     let next_append_vec_id = next_append_vec_id.load(Ordering::Acquire);
     let max_append_vec_id = next_append_vec_id - 1;
     assert!(
-        max_append_vec_id <= AppendVecId::MAX / 2,
+        max_append_vec_id <= AccountsFileId::MAX / 2,
         "Storage id {max_append_vec_id} larger than allowed max"
     );
 
@@ -953,4 +983,33 @@ where
         Arc::try_unwrap(accounts_db).unwrap(),
         ReconstructedAccountsDbInfo { accounts_data_len },
     ))
+}
+
+// Rename `src` to `dest` only if `dest` doesn't already exist.
+#[cfg(target_os = "linux")]
+fn rename_no_replace(src: &CStr, dest: &CStr) -> io::Result<()> {
+    let ret = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            src.as_ptr() as *const _,
+            libc::AT_FDCWD,
+            dest.as_ptr() as *const _,
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if ret == -1 {
+        return Err(io::Error::last_os_error());
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn cstring_from_path(path: &Path) -> io::Result<CString> {
+    // It is better to allocate here than use the stack. Jemalloc is going to give us a chunk of a
+    // preallocated small arena anyway. Instead if we used the stack since PATH_MAX=4096 it would
+    // result in LLVM inserting a stack probe, see
+    // https://docs.rs/compiler_builtins/latest/compiler_builtins/probestack/index.html.
+    CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }

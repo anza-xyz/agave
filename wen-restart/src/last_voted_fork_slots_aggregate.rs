@@ -11,7 +11,7 @@ use {
     },
 };
 
-pub struct LastVotedForkSlotsAggregate {
+pub(crate) struct LastVotedForkSlotsAggregate {
     root_slot: Slot,
     repair_threshold: f64,
     // TODO(wen): using local root's EpochStakes, need to fix if crossing Epoch boundary.
@@ -22,6 +22,15 @@ pub struct LastVotedForkSlotsAggregate {
     slots_to_repair: HashSet<Slot>,
 }
 
+<<<<<<< HEAD
+=======
+#[derive(Clone, Debug, PartialEq)]
+pub struct LastVotedForkSlotsFinalResult {
+    pub slots_stake_map: HashMap<Slot, u64>,
+    pub total_active_stake: u64,
+}
+
+>>>>>>> origin/patch-1
 impl LastVotedForkSlotsAggregate {
     pub(crate) fn new(
         root_slot: Slot,
@@ -35,7 +44,7 @@ impl LastVotedForkSlotsAggregate {
         active_peers.insert(*my_pubkey);
         let mut slots_stake_map = HashMap::new();
         for slot in last_voted_fork_slots {
-            if slot > &root_slot {
+            if slot >= &root_slot {
                 slots_stake_map.insert(*slot, sender_stake);
             }
         }
@@ -136,6 +145,24 @@ impl LastVotedForkSlotsAggregate {
 
     pub(crate) fn slots_to_repair_iter(&self) -> impl Iterator<Item = &Slot> {
         self.slots_to_repair.iter()
+<<<<<<< HEAD
+=======
+    }
+
+    // TODO(wen): use better epoch stake and add a test later.
+    fn total_active_stake(&self) -> u64 {
+        self.active_peers.iter().fold(0, |sum: u64, pubkey| {
+            sum.saturating_add(Self::validator_stake(&self.epoch_stakes, pubkey))
+        })
+    }
+
+    pub(crate) fn get_final_result(self) -> LastVotedForkSlotsFinalResult {
+        let total_active_stake = self.total_active_stake();
+        LastVotedForkSlotsFinalResult {
+            slots_stake_map: self.slots_stake_map,
+            total_active_stake,
+        }
+>>>>>>> origin/patch-1
     }
 }
 

@@ -40,6 +40,7 @@ members = [
     "geyser-plugin-interface",
     "geyser-plugin-manager",
     "gossip",
+    "inline-spl",
     "install",
     "keygen",
     "ledger",
@@ -106,6 +107,7 @@ members = [
     "tokens",
     "tpu-client",
     "transaction-dos",
+    "transaction-metrics-tracker",
     "transaction-status",
     "turbine",
     "udp-client",
@@ -118,19 +120,25 @@ members = [
     "watchtower",
     "wen-restart",
     "zk-keygen",
+    "zk-sdk",
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf"]
+exclude = ["programs/sbf", "svm/tests/example-programs"]
 
-# This prevents a Travis CI error when building for Windows.
 resolver = "2"
 
 [workspace.package]
 version = "2.0.0"
+<<<<<<< HEAD
 authors = ["Solana Labs Maintainers <maintainers@solanalabs.com>"]
 repository = "https://github.com/solana-labs/solana"
 homepage = "https://solanalabs.com/"
+=======
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+repository = "https://github.com/anza-xyz/agave"
+homepage = "https://anza.xyz/"
+>>>>>>> origin/patch-1
 license = "Apache-2.0"
 edition = "2021"
 
@@ -139,7 +147,7 @@ Inflector = "0.11.4"
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.10.3"
 ahash = "0.8.10"
-anyhow = "1.0.80"
+anyhow = "1.0.82"
 arbitrary = "1.3.2"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
@@ -157,9 +165,9 @@ backoff = "0.4.0"
 base64 = "0.22.0"
 bincode = "1.3.3"
 bitflags = { version = "2.4.2", features = ["serde"] }
-blake3 = "1.5.0"
+blake3 = "1.5.1"
 block-buffer = "0.10.4"
-borsh = { version = "1.2.1", features = ["derive", "unstable__schema"] }
+borsh = { version = "1.5.0", features = ["derive", "unstable__schema"] }
 bs58 = "0.4.0"
 bv = "0.11.1"
 byte-unit = "4.0.19"
@@ -170,8 +178,8 @@ bytes = "1.5"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
-cc = "1.0.83"
-chrono = { version = "0.4.34", default-features = false }
+cc = "1.0.94"
+chrono = { version = "0.4.37", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
 console = "0.15.8"
@@ -183,7 +191,7 @@ criterion = "0.5.1"
 criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.12"
 csv = "1.3.0"
-ctrlc = "3.4.2"
+ctrlc = "3.4.4"
 curve25519-dalek = "3.2.1"
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
@@ -228,7 +236,7 @@ itertools = "0.10.5"
 jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.68"
+js-sys = "0.3.69"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -236,6 +244,10 @@ jsonrpc-derive = "18.0.0"
 jsonrpc-http-server = "18.0.0"
 jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
+<<<<<<< HEAD
+=======
+lazy-lru = "0.1.2"
+>>>>>>> origin/patch-1
 lazy_static = "1.4.0"
 libc = "0.2.153"
 libloading = "0.7.4"
@@ -250,7 +262,7 @@ merlin = "3"
 min-max-heap = "1.3.0"
 mockall = "0.11.4"
 modular-bitfield = "0.11.2"
-nix = "0.26.4"
+nix = "0.28.0"
 num-bigint = "0.4.4"
 num-derive = "0.4"
 num-traits = "0.2"
@@ -283,10 +295,11 @@ rayon = "1.9.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.10.3"
 reqwest = { version = "0.11.23", default-features = false }
+reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
 rustc_version = "0.4"
-rustls = { version = "0.21.10", default-features = false, features = ["quic"] }
+rustls = { version = "0.21.11", default-features = false, features = ["quic"] }
 rustversion = "1.0.14"
 scopeguard = "1.2.0"
 semver = "1.0.22"
@@ -294,15 +307,15 @@ seqlock = "0.2.0"
 serde = "1.0.197"
 serde_bytes = "0.11.14"
 serde_derive = "1.0.103"
-serde_json = "1.0.114"
+serde_json = "1.0.115"
 serde_with = { version = "2.3.3", default-features = false }
-serde_yaml = "0.9.32"
+serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 signal-hook = "0.3.17"
 siphasher = "0.3.11"
-smallvec = "1.13.1"
+smallvec = "1.13.2"
 smpl_jwt = "0.7.1"
 socket2 = "0.5.6"
 soketto = "0.7"
@@ -316,7 +329,11 @@ solana-bench-tps = { path = "bench-tps", version = "=2.0.0" }
 solana-bloom = { path = "bloom", version = "=2.0.0" }
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.0.0" }
 solana-bucket-map = { path = "bucket_map", version = "=2.0.0" }
+<<<<<<< HEAD
 solana-cargo-registry = { path = "cargo-registry", version = "=2.0.0" }
+=======
+agave-cargo-registry = { path = "cargo-registry", version = "=2.0.0" }
+>>>>>>> origin/patch-1
 solana-clap-utils = { path = "clap-utils", version = "=2.0.0" }
 solana-clap-v3-utils = { path = "clap-v3-utils", version = "=2.0.0" }
 solana-cli = { path = "cli", version = "=2.0.0" }
@@ -335,9 +352,16 @@ solana-frozen-abi = { path = "frozen-abi", version = "=2.0.0" }
 solana-frozen-abi-macro = { path = "frozen-abi/macro", version = "=2.0.0" }
 solana-genesis = { path = "genesis", version = "=2.0.0" }
 solana-genesis-utils = { path = "genesis-utils", version = "=2.0.0" }
+<<<<<<< HEAD
 solana-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.0.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.0.0" }
 solana-gossip = { path = "gossip", version = "=2.0.0" }
+=======
+agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.0.0" }
+solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.0.0" }
+solana-gossip = { path = "gossip", version = "=2.0.0" }
+solana-inline-spl = { path = "inline-spl", version = "=2.0.0" }
+>>>>>>> origin/patch-1
 solana-ledger = { path = "ledger", version = "=2.0.0" }
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.0.0" }
 solana-local-cluster = { path = "local-cluster", version = "=2.0.0" }
@@ -378,6 +402,10 @@ solana-test-validator = { path = "test-validator", version = "=2.0.0" }
 solana-thin-client = { path = "thin-client", version = "=2.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.0.0", default-features = false }
 solana-transaction-status = { path = "transaction-status", version = "=2.0.0" }
+<<<<<<< HEAD
+=======
+solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.0.0" }
+>>>>>>> origin/patch-1
 solana-turbine = { path = "turbine", version = "=2.0.0" }
 solana-udp-client = { path = "udp-client", version = "=2.0.0" }
 solana-version = { path = "version", version = "=2.0.0" }
@@ -385,17 +413,21 @@ solana-vote = { path = "vote", version = "=2.0.0" }
 solana-vote-program = { path = "programs/vote", version = "=2.0.0" }
 solana-wen-restart = { path = "wen-restart", version = "=2.0.0" }
 solana-zk-keygen = { path = "zk-keygen", version = "=2.0.0" }
+<<<<<<< HEAD
+=======
+solana-zk-sdk = { path = "zk-sdk", version = "=2.0.0" }
+>>>>>>> origin/patch-1
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.0.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.0.0" }
 solana_rbpf = "=0.8.0"
-spl-associated-token-account = "=2.3.1"
+spl-associated-token-account = "=3.0.2"
 spl-instruction-padding = "0.1"
 spl-memo = "=4.0.1"
-spl-pod = "=0.1.1"
+spl-pod = "=0.2.2"
 spl-token = "=4.0.1"
-spl-token-2022 = "=2.0.1"
-spl-token-group-interface = "=0.1.1"
-spl-token-metadata-interface = "=0.2.1"
+spl-token-2022 = "=3.0.2"
+spl-token-group-interface = "=0.2.3"
+spl-token-metadata-interface = "=0.3.3"
 static_assertions = "1.1.0"
 stream-cancel = "0.8.2"
 strum = "0.24"
@@ -410,7 +442,7 @@ tar = "0.4.40"
 tarpc = "0.29.0"
 tempfile = "3.10.1"
 test-case = "3.3.1"
-thiserror = "1.0.57"
+thiserror = "1.0.58"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.29.1"
@@ -470,6 +502,7 @@ crossbeam-epoch = { git = "https://github.com/solana-labs/crossbeam", rev = "fd2
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
 solana-program = { path = "sdk/program" }
+solana-zk-sdk = { path = "zk-sdk" }
 solana-zk-token-sdk = { path = "zk-token-sdk" }
 #
 # === zeroize versioning issues ===

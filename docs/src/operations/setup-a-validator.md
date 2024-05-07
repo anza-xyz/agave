@@ -307,7 +307,7 @@ not start without the settings below.
 #### **Optimize sysctl knobs**
 
 ```bash
-sudo bash -c "cat >/etc/sysctl.d/21-solana-validator.conf <<EOF
+sudo bash -c "cat >/etc/sysctl.d/21-agave-validator.conf <<EOF
 # Increase UDP buffer sizes
 net.core.rmem_default = 134217728
 net.core.rmem_max = 134217728
@@ -323,7 +323,7 @@ EOF"
 ```
 
 ```bash
-sudo sysctl -p /etc/sysctl.d/21-solana-validator.conf
+sudo sysctl -p /etc/sysctl.d/21-agave-validator.conf
 ```
 
 #### **Increase systemd and session file limits**
@@ -384,7 +384,7 @@ su - sol
 ## Install The Solana CLI on Remote Machine
 
 Your remote machine will need the Solana cli installed to run the validator
-software. Refer again to
+software. For simplicity, install the cli with user `sol`. Refer again to
 [Solana's Install Tool](../cli/install.md#use-solanas-install-tool) or
 [build from source](../cli/install.md#build-from-source). It is best for
 operators to build from source rather than using the pre built binaries.
@@ -409,16 +409,18 @@ nano /home/sol/bin/validator.sh
 Copy and paste the following contents into `validator.sh` then save the file:
 
 ```
-exec solana-validator \
-    --identity validator-keypair.json \
-    --vote-account vote-account-keypair.json \
+#!/bin/bash
+exec agave-validator \
+    --identity /home/sol/validator-keypair.json \
+    --vote-account /home/sol/vote-account-keypair.json \
     --known-validator 5D1fNXzvv5NjV1ysLjirC4WY92RNsVH18vjmcszZd8on \
     --known-validator 7XSY3MrYnK8vq693Rju17bbPkCN3Z7KvvfvJx4kdrsSY \
     --known-validator Ft5fbkqNa76vnsjYNwjDZUXoTWpP7VYm3mtsaQckQADN \
     --known-validator 9QxCLckBiJc783jnMvXZubK4wH86Eqqvashtrwvcsgkv \
     --only-known-rpc \
-    --log /home/sol/solana-validator.log \
+    --log /home/sol/agave-validator.log \
     --ledger /mnt/ledger \
+    --accounts /mnt/accounts \
     --rpc-port 8899 \
     --dynamic-port-range 8000-8020 \
     --entrypoint entrypoint.testnet.solana.com:8001 \
@@ -429,7 +431,7 @@ exec solana-validator \
     --limit-ledger-size
 ```
 
-Refer to `solana-validator --help` for more information on what each flag is
+Refer to `agave-validator --help` for more information on what each flag is
 doing in this script. Also refer to the section on
 [best practices for operating a validator](./best-practices/general.md).
 
@@ -442,14 +444,14 @@ Test that your `validator.sh` file is running properly by executing the
 /home/sol/bin/validator.sh
 ```
 
-The script should execute the `solana-validator` process. In a new terminal
+The script should execute the `agave-validator` process. In a new terminal
 window, shh into your server, then verify that the process is running:
 
 ```
-ps aux | grep solana-validator
+ps aux | grep agave-validator
 ```
 
-You should see a line in the output that includes `solana-validator` with all
+You should see a line in the output that includes `agave-validator` with all
 the flags that were added to your `validator.sh` script.
 
 Next, we need to look at the logs to make sure everything is operating properly.
@@ -464,7 +466,7 @@ In a new terminal window, ssh into your validator machine, switch users to the
 
 ```
 su - sol
-tail -f solana-validator.log
+tail -f agave-validator.log
 ```
 
 The `tail` command will continue to display the output of a file as the file
@@ -508,10 +510,12 @@ through the validator log output.
 
 ### Solana Validators
 
-After you have verified that your validator is in gossip, you can verify that
-your validator has joined the network using the `solana validators` command. The
-command lists all validators in the network, but like before, we can `grep` the
-output for the validator we care about:
+After you have verified that your validator is in gossip, you should stake some
+SOL to your validator. Once the stake has activated (which happens at the start
+of the next epoch), you can verify that your validator is ready to be a voting
+participant of the network with the `solana validators` command. The command
+lists all validators in the network, but like before, we can `grep` the output
+for the validator we care about:
 
 ```
 solana validators | grep <pubkey>
@@ -567,14 +571,14 @@ Now verify that the validator is running properly by tailing the logs and using
 the commands mentioned earlier to check gossip and Solana validators:
 
 ```
-tail -f /home/sol/solana-validator*.log
+tail -f /home/sol/agave-validator*.log
 ```
 
 ## Monitoring
 
-`solana-watchtower` is a command you can run on a separate machine to monitor
+`agave-watchtower` is a command you can run on a separate machine to monitor
 your server. You can read more about handling
-[automatic restarts and monitoring](./best-practices/monitoring.md#solana-watchtower)
+[automatic restarts and monitoring](./best-practices/monitoring.md#agave-watchtower)
 using Solana Watchtower here in the docs.
 
 ## Common issues

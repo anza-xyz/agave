@@ -5,7 +5,9 @@
 
 use {
     super::{committer::CommitTransactionDetails, BatchedTransactionDetails},
-    solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
+    solana_cost_model::{
+        cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
+    },
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     solana_sdk::{
@@ -104,8 +106,8 @@ impl QosService {
                 match cost {
                     Ok(cost) => {
                         match cost_tracker.try_add(&cost) {
-                            Ok(current_block_cost) => {
-                                debug!("slot {:?}, transaction {:?}, cost {:?}, fit into current block, current block cost {}", bank.slot(), tx, cost, current_block_cost);
+                            Ok(UpdatedCosts{updated_block_cost, updated_costliest_account_cost}) => {
+                                debug!("slot {:?}, transaction {:?}, cost {:?}, fit into current block, current block cost {}, updated costliest account cost {}", bank.slot(), tx, cost, updated_block_cost, updated_costliest_account_cost);
                                 self.metrics.stats.selected_txs_count.fetch_add(1, Ordering::Relaxed);
                                 num_included += 1;
                                 Ok(cost)
@@ -120,6 +122,7 @@ impl QosService {
                 }
             })
             .collect();
+        cost_tracker.add_transactions_in_flight(num_included);
 
         cost_tracking_time.stop();
         self.metrics
@@ -167,17 +170,20 @@ impl QosService {
         bank: &Bank,
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        let mut num_included = 0;
         transaction_cost_results
             .zip(transaction_committed_status)
             .for_each(|(tx_cost, transaction_committed_details)| {
                 // Only transactions that the qos service included have to be
                 // checked for update
                 if let Ok(tx_cost) = tx_cost {
+                    num_included += 1;
                     if *transaction_committed_details == CommitTransactionDetails::NotCommitted {
                         cost_tracker.remove(tx_cost)
                     }
                 }
             });
+        cost_tracker.sub_transactions_in_flight(num_included);
     }
 
     fn update_committed_transaction_costs<'a>(
@@ -206,13 +212,16 @@ impl QosService {
         bank: &Bank,
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        let mut num_included = 0;
         transaction_cost_results.for_each(|tx_cost| {
             // Only transactions that the qos service included have to be
             // removed
             if let Ok(tx_cost) = tx_cost {
+                num_included += 1;
                 cost_tracker.remove(tx_cost);
             }
         });
+        cost_tracker.sub_transactions_in_flight(num_included);
     }
 
     // metrics are reported by bank slot
@@ -384,7 +393,7 @@ struct QosServiceMetrics {
     /// banking_stage creates one QosService instance per working threads, that is uniquely
     /// identified by id. This field allows to categorize metrics for gossip votes, TPU votes
     /// and other transactions.
-    id: u32,
+    id: String,
 
     /// aggregate metrics per slot
     slot: AtomicU64,
@@ -453,7 +462,7 @@ struct QosServiceMetricsErrors {
 impl QosServiceMetrics {
     pub fn new(id: u32) -> Self {
         QosServiceMetrics {
-            id,
+            id: id.to_string(),
             ..QosServiceMetrics::default()
         }
     }
@@ -462,7 +471,7 @@ impl QosServiceMetrics {
         if bank_slot != self.slot.load(Ordering::Relaxed) {
             datapoint_info!(
                 "qos-service-stats",
-                ("id", self.id, i64),
+                "id" => self.id,
                 ("bank_slot", bank_slot, i64),
                 (
                     "compute_cost_time",
@@ -525,7 +534,7 @@ impl QosServiceMetrics {
             );
             datapoint_info!(
                 "qos-service-errors",
-                ("id", self.id, i64),
+                "id" => self.id,
                 ("bank_slot", bank_slot, i64),
                 (
                     "retried_txs_per_block_limit_count",

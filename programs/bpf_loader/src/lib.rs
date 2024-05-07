@@ -10,7 +10,8 @@ use {
         ic_logger_msg, ic_msg,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
-            LoadProgramMetrics, LoadedProgram, LoadedProgramType, DELAY_VISIBILITY_SLOT_OFFSET,
+            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
         stable_log,
@@ -51,7 +52,7 @@ use {
         rc::Rc,
         sync::{atomic::Ordering, Arc},
     },
-    syscalls::create_program_runtime_environment_v1,
+    syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
 };
 
 pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
@@ -68,12 +69,12 @@ pub fn load_program_from_bytes(
     deployment_slot: Slot,
     program_runtime_environment: Arc<BuiltinProgram<InvokeContext<'static>>>,
     reloading: bool,
-) -> Result<LoadedProgram, InstructionError> {
+) -> Result<ProgramCacheEntry, InstructionError> {
     let effective_slot = deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET);
     let loaded_program = if reloading {
         // Safety: this is safe because the program is being reloaded in the cache.
         unsafe {
-            LoadedProgram::reload(
+            ProgramCacheEntry::reload(
                 loader_key,
                 program_runtime_environment,
                 deployment_slot,
@@ -84,7 +85,7 @@ pub fn load_program_from_bytes(
             )
         }
     } else {
-        LoadedProgram::new(
+        ProgramCacheEntry::new(
             loader_key,
             program_runtime_environment,
             deployment_slot,
@@ -106,11 +107,16 @@ macro_rules! deploy_program {
      $account_size:expr, $slot:expr, $drop:expr, $new_programdata:expr $(,)?) => {{
         let mut load_program_metrics = LoadProgramMetrics::default();
         let mut register_syscalls_time = Measure::start("register_syscalls_time");
-        let deployment_program_runtime_environment = create_program_runtime_environment_v1(
-            &$invoke_context.feature_set,
-            $invoke_context.get_compute_budget(),
-            true, /* deployment */
-            false, /* debugging_features */
+        let deployment_slot: Slot = $slot;
+        let environments = $invoke_context.get_environments_for_slot(
+            deployment_slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET)
+        ).map_err(|e| {
+            // This will never fail since the epoch schedule is already configured.
+            ic_msg!($invoke_context, "Failed to get runtime environment: {}", e);
+            InstructionError::ProgramEnvironmentSetupFailure
+        })?;
+        let deployment_program_runtime_environment = morph_into_deployment_environment_v1(
+            environments.program_runtime_v1.clone(),
         ).map_err(|e| {
             ic_msg!($invoke_context, "Failed to register syscalls: {}", e);
             InstructionError::ProgramEnvironmentSetupFailure
@@ -143,7 +149,7 @@ macro_rules! deploy_program {
             $loader_key,
             $account_size,
             $slot,
-            $invoke_context.programs_modified_by_tx.environments.program_runtime_v1.clone(),
+            environments.program_runtime_v1.clone(),
             true,
         )?;
         if let Some(old_entry) = $invoke_context.find_program_in_cache(&$program_id) {
@@ -161,6 +167,29 @@ macro_rules! deploy_program {
         load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
         $invoke_context.programs_modified_by_tx.replenish($program_id, Arc::new(executor));
     }};
+}
+
+/// Directly deploy a program using a provided invoke context.
+/// This function should only be invoked from the runtime, since it does not
+/// provide any account loads or checks.
+pub fn direct_deploy_program(
+    invoke_context: &mut InvokeContext,
+    program_id: &Pubkey,
+    loader_key: &Pubkey,
+    account_size: usize,
+    elf: &[u8],
+    slot: Slot,
+) -> Result<(), InstructionError> {
+    deploy_program!(
+        invoke_context,
+        *program_id,
+        loader_key,
+        account_size,
+        slot,
+        {},
+        elf,
+    );
+    Ok(())
 }
 
 fn write_program_data(
@@ -422,14 +451,13 @@ pub fn process_instruction_inner(
 
     executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     match &executor.program {
-        LoadedProgramType::FailedVerification(_)
-        | LoadedProgramType::Closed
-        | LoadedProgramType::DelayVisibility => {
+        ProgramCacheEntryType::FailedVerification(_)
+        | ProgramCacheEntryType::Closed
+        | ProgramCacheEntryType::DelayVisibility => {
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn std::error::Error>)
         }
-        LoadedProgramType::LegacyV0(executable) => execute(executable, invoke_context),
-        LoadedProgramType::LegacyV1(executable) => execute(executable, invoke_context),
+        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
         _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -929,7 +957,7 @@ fn process_loader_upgradeable_instruction(
         }
         UpgradeableLoaderInstruction::SetAuthorityChecked => {
             if !invoke_context
-                .feature_set
+                .get_feature_set()
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
             {
                 return Err(InstructionError::InvalidInstructionData);
@@ -1083,9 +1111,10 @@ fn process_loader_upgradeable_instruction(
                             let clock = invoke_context.get_sysvar_cache().get_clock()?;
                             invoke_context.programs_modified_by_tx.replenish(
                                 program_key,
-                                Arc::new(LoadedProgram::new_tombstone(
+                                Arc::new(ProgramCacheEntry::new_tombstone(
                                     clock.slot,
-                                    LoadedProgramType::Closed,
+                                    ProgramCacheEntryOwner::LoaderV3,
+                                    ProgramCacheEntryType::Closed,
                                 )),
                             );
                         }
@@ -1323,7 +1352,7 @@ fn execute<'a, 'b: 'a>(
     #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
     let use_jit = executable.get_compiled_program().is_some();
     let direct_mapping = invoke_context
-        .feature_set
+        .get_feature_set()
         .is_active(&bpf_account_data_direct_mapping::id());
 
     let mut serialize_time = Measure::start("serialize");
@@ -1476,7 +1505,7 @@ pub mod test_utils {
     pub fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
         let mut load_program_metrics = LoadProgramMetrics::default();
         let program_runtime_environment = create_program_runtime_environment_v1(
-            &invoke_context.feature_set,
+            invoke_context.get_feature_set(),
             invoke_context.get_compute_budget(),
             false, /* deployment */
             false, /* debugging_features */
@@ -1536,6 +1565,7 @@ mod tests {
             },
             account_utils::StateMut,
             clock::Clock,
+            epoch_schedule::EpochSchedule,
             instruction::{AccountMeta, InstructionError},
             pubkey::Pubkey,
             rent::Rent,
@@ -3723,12 +3753,16 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_upgrade() {
-        let transaction_accounts = vec![];
+        let transaction_accounts = vec![(
+            sysvar::epoch_schedule::id(),
+            create_account_for_test(&EpochSchedule::default()),
+        )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
-        let program = LoadedProgram {
-            program: LoadedProgramType::Unloaded(env),
+        let program = ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,
@@ -3763,12 +3797,16 @@ mod tests {
 
     #[test]
     fn test_program_usage_count_on_non_upgrade() {
-        let transaction_accounts = vec![];
+        let transaction_accounts = vec![(
+            sysvar::epoch_schedule::id(),
+            create_account_for_test(&EpochSchedule::default()),
+        )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
         let env = Arc::new(BuiltinProgram::new_mock());
-        let program = LoadedProgram {
-            program: LoadedProgramType::Unloaded(env),
+        let program = ProgramCacheEntry {
+            program: ProgramCacheEntryType::Unloaded(env),
+            account_owner: ProgramCacheEntryOwner::LoaderV2,
             account_size: 0,
             deployment_slot: 0,
             effective_slot: 0,

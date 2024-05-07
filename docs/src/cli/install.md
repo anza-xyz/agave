@@ -20,7 +20,7 @@ on your preferred workflow:
 - Open your favorite Terminal application
 
 - Install the Solana release
-  [LATEST_SOLANA_RELEASE_VERSION](https://github.com/solana-labs/solana/releases/tag/LATEST_SOLANA_RELEASE_VERSION)
+  [LATEST_SOLANA_RELEASE_VERSION](https://github.com/anza-xyz/agave/releases/tag/LATEST_SOLANA_RELEASE_VERSION)
   on your machine by running:
 
 ```bash
@@ -38,7 +38,7 @@ downloading LATEST_SOLANA_RELEASE_VERSION installer
 Configuration: /home/solana/.config/solana/install/config.yml
 Active release directory: /home/solana/.local/share/solana/install/active_release
 * Release version: LATEST_SOLANA_RELEASE_VERSION
-* Release URL: https://github.com/solana-labs/solana/releases/download/LATEST_SOLANA_RELEASE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+* Release URL: https://github.com/anza-xyz/agave/releases/download/LATEST_SOLANA_RELEASE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2
 Update successful
 ```
 
@@ -56,7 +56,7 @@ Please update your PATH environment variable to include the solana programs:
 solana --version
 ```
 
-- After a successful install, `solana-install update` may be used to easily
+- After a successful install, `agave-install update` may be used to easily
   update the Solana software to a newer version at any time.
 
 ---
@@ -74,7 +74,7 @@ solana --version
   installer into a temporary directory:
 
 ```bash
-cmd /c "curl https://release.solana.com/LATEST_SOLANA_RELEASE_VERSION/solana-install-init-x86_64-pc-windows-msvc.exe --output C:\solana-install-tmp\solana-install-init.exe --create-dirs"
+cmd /c "curl https://release.solana.com/LATEST_SOLANA_RELEASE_VERSION/agave-install-init-x86_64-pc-windows-msvc.exe --output C:\agave-install-tmp\agave-install-init.exe --create-dirs"
 ```
 
 - Copy and paste the following command, then press Enter to install the latest
@@ -82,7 +82,7 @@ cmd /c "curl https://release.solana.com/LATEST_SOLANA_RELEASE_VERSION/solana-ins
   to allow the program to run.
 
 ```bash
-C:\solana-install-tmp\solana-install-init.exe LATEST_SOLANA_RELEASE_VERSION
+C:\agave-install-tmp\agave-install-init.exe LATEST_SOLANA_RELEASE_VERSION
 ```
 
 - When the installer is finished, press Enter.
@@ -97,18 +97,18 @@ C:\solana-install-tmp\solana-install-init.exe LATEST_SOLANA_RELEASE_VERSION
 solana --version
 ```
 
-- After a successful install, `solana-install update` may be used to easily
+- After a successful install, `agave-install update` may be used to easily
   update the Solana software to a newer version at any time.
 
 ## Download Prebuilt Binaries
 
-If you would rather not use `solana-install` to manage the install, you can
+If you would rather not use `agave-install` to manage the install, you can
 manually download and install the binaries.
 
 ### Linux
 
 Download the binaries by navigating to
-[https://github.com/solana-labs/solana/releases/latest](https://github.com/solana-labs/solana/releases/latest),
+[https://github.com/anza-xyz/agave/releases/latest](https://github.com/anza-xyz/agave/releases/latest),
 download **solana-release-x86_64-unknown-linux-gnu.tar.bz2**, then extract the
 archive:
 
@@ -121,7 +121,7 @@ export PATH=$PWD/bin:$PATH
 ### MacOS
 
 Download the binaries by navigating to
-[https://github.com/solana-labs/solana/releases/latest](https://github.com/solana-labs/solana/releases/latest),
+[https://github.com/anza-xyz/agave/releases/latest](https://github.com/anza-xyz/agave/releases/latest),
 download **solana-release-x86_64-apple-darwin.tar.bz2**, then extract the
 archive:
 
@@ -134,7 +134,7 @@ export PATH=$PWD/bin:$PATH
 ### Windows
 
 - Download the binaries by navigating to
-  [https://github.com/solana-labs/solana/releases/latest](https://github.com/solana-labs/solana/releases/latest),
+  [https://github.com/anza-xyz/agave/releases/latest](https://github.com/anza-xyz/agave/releases/latest),
   download **solana-release-x86_64-pc-windows-msvc.tar.bz2**, then extract the
   archive using WinZip or similar.
 
@@ -242,7 +242,7 @@ above.
 
 After installing the prerequisites, proceed with building Solana from source,
 navigate to
-[Solana's GitHub releases page](https://github.com/solana-labs/solana/releases/latest),
+[Solana's GitHub releases page](https://github.com/anza-xyz/agave/releases/latest),
 and download the **Source Code** archive. Extract the code and build the
 binaries with:
 
@@ -255,7 +255,7 @@ You can then run the following command to obtain the same result as with
 prebuilt binaries:
 
 ```bash
-solana-install init
+agave-install init
 ```
 
 ## Use Homebrew

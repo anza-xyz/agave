@@ -261,7 +261,7 @@ pull_or_push_steps() {
     all_test_steps
   fi
 
-  # docs changes run on Travis or Github actions...
+  # docs changes run on Github actions...
 }
 
 
@@ -287,7 +287,7 @@ if [[ $BUILDKITE_BRANCH =~ ^pull ]]; then
 
   # Add helpful link back to the corresponding Github Pull Request
   annotate --style info --context pr-backlink \
-    "Github Pull Request: https://github.com/solana-labs/solana/$BUILDKITE_BRANCH"
+    "Github Pull Request: https://github.com/anza-xyz/agave/$BUILDKITE_BRANCH"
 
   if [[ $GITHUB_USER = "dependabot[bot]" ]]; then
     command_step dependabot "ci/dependabot-pr.sh" 5

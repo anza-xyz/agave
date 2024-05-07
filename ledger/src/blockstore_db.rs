@@ -151,6 +151,8 @@ pub enum BlockstoreError {
     MissingTransactionMetadata,
     #[error("transaction-index overflow")]
     TransactionIndexOverflow,
+    #[error("invalid erasure config")]
+    InvalidErasureConfig,
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 
@@ -431,7 +433,7 @@ impl Rocks {
                 info!(
                     "Opening Rocks with secondary (read only) access at: {secondary_path:?}. \
                     This secondary access could temporarily degrade other accesses, such as \
-                    by solana-validator"
+                    by agave-validator"
                 );
                 DB::open_cf_descriptors_as_secondary(
                     &db_options,
@@ -644,21 +646,19 @@ impl Rocks {
         Ok(())
     }
 
-    fn multi_get_cf(
+    fn multi_get_cf<'a, K, I>(
         &self,
         cf: &ColumnFamily,
-        keys: Vec<&[u8]>,
-    ) -> Vec<Result<Option<DBPinnableSlice>>> {
-        let values = self
-            .db
-            .batched_multi_get_cf(cf, keys, false)
+        keys: I,
+    ) -> impl Iterator<Item = Result<Option<DBPinnableSlice>>>
+    where
+        K: AsRef<[u8]> + 'a + ?Sized,
+        I: IntoIterator<Item = &'a K>,
+    {
+        self.db
+            .batched_multi_get_cf(cf, keys, /*sorted_input:*/ false)
             .into_iter()
-            .map(|result| match result {
-                Ok(opt) => Ok(opt),
-                Err(e) => Err(BlockstoreError::RocksDb(e)),
-            })
-            .collect::<Vec<_>>();
-        values
+            .map(|out| out.map_err(BlockstoreError::RocksDb))
     }
 
     fn delete_cf(&self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
@@ -1451,7 +1451,7 @@ impl Database {
     }
 
     #[inline]
-    pub fn cf_handle<C: ColumnName>(&self) -> &ColumnFamily
+    pub fn cf_handle<C>(&self) -> &ColumnFamily
     where
         C: Column + ColumnName,
     {
@@ -1568,25 +1568,20 @@ where
         result
     }
 
-    pub fn multi_get_bytes(&self, keys: Vec<C::Index>) -> Vec<Result<Option<Vec<u8>>>> {
-        let rocks_keys: Vec<_> = keys.into_iter().map(|key| C::key(key)).collect();
+    pub(crate) fn multi_get_bytes<I>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
+    where
+        I: IntoIterator<Item = C::Index>,
+    {
+        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
         {
-            let ref_rocks_keys: Vec<_> = rocks_keys.iter().map(|k| &k[..]).collect();
             let is_perf_enabled = maybe_enable_rocksdb_perf(
                 self.column_options.rocks_perf_sample_interval,
                 &self.read_perf_status,
             );
             let result = self
                 .backend
-                .multi_get_cf(self.handle(), ref_rocks_keys)
-                .into_iter()
-                .map(|r| match r {
-                    Ok(opt) => match opt {
-                        Some(pinnable_slice) => Ok(Some(pinnable_slice.as_ref().to_vec())),
-                        None => Ok(None),
-                    },
-                    Err(e) => Err(e),
-                })
+                .multi_get_cf(self.handle(), &keys)
+                .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)))
                 .collect::<Vec<Result<Option<_>>>>();
             if let Some(op_start_instant) = is_perf_enabled {
                 // use multi-get instead
@@ -1685,25 +1680,20 @@ impl<C> LedgerColumn<C>
 where
     C: TypedColumn + ColumnName,
 {
-    pub fn multi_get(&self, keys: Vec<C::Index>) -> Vec<Result<Option<C::Type>>> {
-        let rocks_keys: Vec<_> = keys.into_iter().map(|key| C::key(key)).collect();
+    pub(crate) fn multi_get<I>(&self, keys: I) -> Vec<Result<Option<C::Type>>>
+    where
+        I: IntoIterator<Item = C::Index>,
+    {
+        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
         {
-            let ref_rocks_keys: Vec<_> = rocks_keys.iter().map(|k| &k[..]).collect();
             let is_perf_enabled = maybe_enable_rocksdb_perf(
                 self.column_options.rocks_perf_sample_interval,
                 &self.read_perf_status,
             );
             let result = self
                 .backend
-                .multi_get_cf(self.handle(), ref_rocks_keys)
-                .into_iter()
-                .map(|r| match r {
-                    Ok(opt) => match opt {
-                        Some(pinnable_slice) => Ok(Some(deserialize(pinnable_slice.as_ref())?)),
-                        None => Ok(None),
-                    },
-                    Err(e) => Err(e),
-                })
+                .multi_get_cf(self.handle(), &keys)
+                .map(|out| Ok(out?.as_deref().map(deserialize).transpose()?))
                 .collect::<Vec<Result<Option<_>>>>();
             if let Some(op_start_instant) = is_perf_enabled {
                 // use multi-get instead

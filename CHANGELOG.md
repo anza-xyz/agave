@@ -17,6 +17,13 @@ Release channels have their own copy of this changelog:
 * Changes
   * `central-scheduler` as default option for `--block-production-method` (#34891)
   * `solana-rpc-client-api`: `RpcFilterError` depends on `base64` version 0.22, so users may need to upgrade to `base64` version 0.22
+<<<<<<< HEAD
+=======
+  * Changed default value for `--health-check-slot-distance` from 150 to 128
+  * CLI: Can specify `--with-compute-unit-price`, `--max-sign-attempts`, and `--use-rpc` during program deployment
+  * RPC's `simulateTransaction` now returns an extra `replacementBlockhash` field in the response
+    when the `replaceRecentBlockhash` config param is `true` (#380)
+>>>>>>> origin/patch-1
 
 ## [1.18.0]
 * Changes
@@ -38,6 +45,10 @@ Release channels have their own copy of this changelog:
     double the size. Program accounts must be extended with `solana program extend`
     before an upgrade if they need to accommodate larger programs.
   * Interface for `gossip_service::get_client()` has changed. `gossip_service::get_multi_client()` has been removed.
+<<<<<<< HEAD
+=======
+  * CLI: Can specify `--with-compute-unit-price`, `--max-sign-attempts`, and `--use-rpc` during program deployment
+>>>>>>> origin/patch-1
 * Upgrade Notes
   * `solana-program` and `solana-sdk` default to support for Borsh v1, with
 limited backward compatibility for v0.10 and v0.9. Please upgrade to Borsh v1.

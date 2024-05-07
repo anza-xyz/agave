@@ -171,6 +171,7 @@ impl AncestorHashesService {
             Duration::from_millis(1), // coalesce
             false,                    // use_pinned_memory
             None,                     // in_vote_only_mode
+            false,                    //  is_staked_service
         );
 
         let (quic_endpoint_response_sender, quic_endpoint_response_receiver) = unbounded();
@@ -1304,6 +1305,7 @@ mod test {
                 Duration::from_millis(1), // coalesce
                 false,
                 None,
+                false,
             );
             let (remote_request_sender, remote_request_receiver) = unbounded();
             let t_packet_adapter = Builder::new()
@@ -1906,7 +1908,9 @@ mod test {
         {
             let mut w_bank_forks = bank_forks.write().unwrap();
             w_bank_forks.insert(new_root_bank);
-            w_bank_forks.set_root(new_root_slot, &AbsRequestSender::default(), None);
+            w_bank_forks
+                .set_root(new_root_slot, &AbsRequestSender::default(), None)
+                .unwrap();
         }
         popular_pruned_slot_pool.insert(dead_duplicate_confirmed_slot);
         assert!(!dead_slot_pool.is_empty());

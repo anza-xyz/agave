@@ -93,7 +93,7 @@ echo --- Creating release tarball
 
   tar cvf "${TARBALL_BASENAME}"-$TARGET.tar "${RELEASE_BASENAME}"
   bzip2 "${TARBALL_BASENAME}"-$TARGET.tar
-  cp "${RELEASE_BASENAME}"/bin/solana-install-init solana-install-init-$TARGET
+  cp "${RELEASE_BASENAME}"/bin/agave-install-init agave-install-init-$TARGET
   cp "${RELEASE_BASENAME}"/version.yml "${TARBALL_BASENAME}"-$TARGET.yml
 )
 
@@ -110,7 +110,7 @@ fi
 
 source ci/upload-ci-artifact.sh
 
-for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.yml solana-install-init-"$TARGET"* $MAYBE_TARBALLS; do
+for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.yml agave-install-init-"$TARGET"* $MAYBE_TARBALLS; do
   if [[ -n $DO_NOT_PUBLISH_TAR ]]; then
     upload-ci-artifact "$file"
     echo "Skipped $file due to DO_NOT_PUBLISH_TAR"
@@ -118,25 +118,14 @@ for file in "${TARBALL_BASENAME}"-$TARGET.tar.bz2 "${TARBALL_BASENAME}"-$TARGET.
   fi
 
   if [[ -n $BUILDKITE ]]; then
-    echo --- AWS S3 Store: "$file"
-    upload-s3-artifact "/solana/$file" s3://release.solana.com/"$CHANNEL_OR_TAG"/"$file"
+    echo --- GCS Store: "$file"
+    upload-gcs-artifact "/solana/$file" gs://anza-release/"$CHANNEL_OR_TAG"/"$file"
 
     echo Published to:
-    $DRYRUN ci/format-url.sh https://release.solana.com/"$CHANNEL_OR_TAG"/"$file"
+    $DRYRUN ci/format-url.sh https://release.anza.xyz/"$CHANNEL_OR_TAG"/"$file"
 
     if [[ -n $TAG ]]; then
       ci/upload-github-release-asset.sh "$file"
-    fi
-  elif [[ -n $TRAVIS ]]; then
-    # .travis.yml uploads everything in the travis-s3-upload/ directory to release.solana.com
-    mkdir -p travis-s3-upload/"$CHANNEL_OR_TAG"
-    cp -v "$file" travis-s3-upload/"$CHANNEL_OR_TAG"/
-
-    if [[ -n $TAG ]]; then
-      # .travis.yaml uploads everything in the travis-release-upload/ directory to
-      # the associated Github Release
-      mkdir -p travis-release-upload/
-      cp -v "$file" travis-release-upload/
     fi
   elif [[ -n $GITHUB_ACTIONS ]]; then
     mkdir -p github-action-s3-upload/"$CHANNEL_OR_TAG"

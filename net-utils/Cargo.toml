@@ -14,7 +14,7 @@ bincode = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"] }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
-nix = { workspace = true }
+nix = { workspace = true, features = ["socket"] }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
@@ -22,6 +22,7 @@ socket2 = { workspace = true }
 solana-logger = { workspace = true }
 solana-sdk = { workspace = true }
 solana-version = { workspace = true }
+static_assertions = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 

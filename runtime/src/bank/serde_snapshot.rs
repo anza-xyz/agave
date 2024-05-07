@@ -3,10 +3,11 @@ mod tests {
     use {
         crate::{
             bank::{
-                epoch_accounts_hash_utils, test_utils as bank_test_utils, Bank, EpochRewardStatus,
-                StartBlockHeightAndRewards,
+                epoch_accounts_hash_utils, partitioned_epoch_rewards::StartBlockHeightAndRewards,
+                test_utils as bank_test_utils, Bank, EpochRewardStatus,
             },
             genesis_utils::activate_all_features,
+            runtime_config::RuntimeConfig,
             serde_snapshot::{
                 reserialize_bank_with_new_accounts_hash, BankIncrementalSnapshotPersistence,
                 SerdeAccountsHash, SerdeIncrementalAccountsHash, SerdeStyle, SnapshotStreams,
@@ -14,7 +15,7 @@ mod tests {
             snapshot_bank_utils,
             snapshot_utils::{
                 self, create_tmp_accounts_dir_for_tests, get_storages_to_serialize, ArchiveFormat,
-                StorageAndNextAppendVecId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
+                StorageAndNextAccountsFileId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
             },
             status_cache::StatusCache,
         },
@@ -23,7 +24,7 @@ mod tests {
             account_storage::{AccountStorageMap, AccountStorageReference},
             accounts_db::{
                 get_temp_accounts_paths, AccountShrinkThreshold, AccountStorageEntry, AccountsDb,
-                AtomicAppendVecId,
+                AtomicAccountsFileId,
             },
             accounts_file::{AccountsFile, AccountsFileError},
             accounts_hash::{AccountsDeltaHash, AccountsHash},
@@ -53,13 +54,13 @@ mod tests {
     fn copy_append_vecs<P: AsRef<Path>>(
         accounts_db: &AccountsDb,
         output_dir: P,
-    ) -> Result<StorageAndNextAppendVecId, AccountsFileError> {
+    ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_snapshot_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory
-            let storage_path = storage_entry.get_path();
+            let storage_path = storage_entry.path();
             let file_name =
                 AccountsFile::file_name(storage_entry.slot(), storage_entry.append_vec_id());
             let output_path = output_dir.as_ref().join(file_name);
@@ -84,9 +85,9 @@ mod tests {
             );
         }
 
-        Ok(StorageAndNextAppendVecId {
+        Ok(StorageAndNextAccountsFileId {
             storage,
-            next_append_vec_id: AtomicAppendVecId::new(next_append_vec_id + 1),
+            next_append_vec_id: AtomicAccountsFileId::new(next_append_vec_id + 1),
         })
     }
 
@@ -101,13 +102,14 @@ mod tests {
         let (mut genesis_config, _) = create_genesis_config(500);
         genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
+        let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
         let eah_start_slot = epoch_accounts_hash_utils::calculation_start(&bank0);
         let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank0.squash();
 
         // Create an account on a non-root fork
         let key1 = Keypair::new();
-        bank_test_utils::deposit(&bank1, &key1.pubkey(), 5).unwrap();
+        bank_test_utils::deposit(&bank1, &key1.pubkey(), deposit_amount).unwrap();
 
         // If setting an initial EAH, then the bank being snapshotted must be in the EAH calculation
         // window.  Otherwise `bank_to_stream()` below will *not* include the EAH in the bank snapshot,
@@ -120,12 +122,12 @@ mod tests {
         let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
 
         // Test new account
-        let key2 = Keypair::new();
-        bank_test_utils::deposit(&bank2, &key2.pubkey(), 10).unwrap();
-        assert_eq!(bank2.get_balance(&key2.pubkey()), 10);
+        let key2 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank2, &key2, deposit_amount).unwrap();
+        assert_eq!(bank2.get_balance(&key2), deposit_amount);
 
-        let key3 = Keypair::new();
-        bank_test_utils::deposit(&bank2, &key3.pubkey(), 0).unwrap();
+        let key3 = Pubkey::new_unique();
+        bank_test_utils::deposit(&bank2, &key3, 0).unwrap();
 
         bank2.freeze();
         bank2.squash();
@@ -277,8 +279,8 @@ mod tests {
         .unwrap();
         dbank.status_cache = Arc::new(RwLock::new(status_cache));
         assert_eq!(dbank.get_balance(&key1.pubkey()), 0);
-        assert_eq!(dbank.get_balance(&key2.pubkey()), 10);
-        assert_eq!(dbank.get_balance(&key3.pubkey()), 0);
+        assert_eq!(dbank.get_balance(&key2), deposit_amount);
+        assert_eq!(dbank.get_balance(&key3), 0);
         if let Some(incremental_snapshot_persistence) = incremental.clone() {
             assert_eq!(dbank.get_accounts_hash(), None,);
             assert_eq!(
@@ -605,7 +607,7 @@ mod tests {
 
         // This some what long test harness is required to freeze the ABI of
         // Bank's serialization due to versioned nature
-        #[frozen_abi(digest = "7BH2s2Y1yKy396c3ixC4TTyvvpkyenAvWDSiZvY5yb7P")]
+        #[frozen_abi(digest = "8BVfyLYrPt1ranknjF4sLePjZaZjpKXXrHt4wKf47g3W")]
         #[derive(Serialize, AbiExample)]
         pub struct BankAbiTestWrapperNewer {
             #[serde(serialize_with = "wrapper_newer")]

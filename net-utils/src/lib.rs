@@ -16,7 +16,10 @@ use {
 };
 
 mod ip_echo_server;
-pub use ip_echo_server::{ip_echo_server, IpEchoServer, MAX_PORT_COUNT_PER_MESSAGE};
+pub use ip_echo_server::{
+    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
+    MINIMUM_IP_ECHO_SERVER_THREADS,
+};
 use ip_echo_server::{IpEchoServerMessage, IpEchoServerResponse};
 
 /// A data type representing a public Udp socket
@@ -394,16 +397,16 @@ fn udp_socket(reuseaddr: bool) -> io::Result<Socket> {
             setsockopt,
             sockopt::{ReuseAddr, ReusePort},
         },
-        std::os::unix::io::AsRawFd,
+        std::os::fd::AsFd,
     };
 
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    let sock_fd = sock.as_raw_fd();
+    let sock_fd = sock.as_fd();
 
     if reuseaddr {
         // best effort, i.e. ignore errors here, we'll get the failure in caller
-        setsockopt(sock_fd, ReusePort, &true).ok();
-        setsockopt(sock_fd, ReuseAddr, &true).ok();
+        setsockopt(&sock_fd, ReusePort, &true).ok();
+        setsockopt(&sock_fd, ReuseAddr, &true).ok();
     }
 
     Ok(sock)
@@ -744,7 +747,11 @@ mod tests {
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 
-        let _runtime = ip_echo_server(server_tcp_listener, /*shred_version=*/ Some(42));
+        let _runtime = ip_echo_server(
+            server_tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            /*shred_version=*/ Some(42),
+        );
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
@@ -764,7 +771,11 @@ mod tests {
         let (client_port, (client_udp_socket, client_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 
-        let _runtime = ip_echo_server(server_tcp_listener, /*shred_version=*/ Some(65535));
+        let _runtime = ip_echo_server(
+            server_tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            /*shred_version=*/ Some(65535),
+        );
 
         let ip_echo_server_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(

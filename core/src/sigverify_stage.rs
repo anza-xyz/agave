@@ -96,7 +96,12 @@ struct SigVerifierStats {
 }
 
 impl SigVerifierStats {
-    fn report(&self, name: &'static str) {
+    fn maybe_report(&self, name: &'static str) {
+        // No need to report a datapoint if no batches/packets received
+        if self.total_batches == 0 {
+            return;
+        }
+
         datapoint_info!(
             name,
             (
@@ -443,7 +448,11 @@ impl SigVerifyStage {
                         }
                     }
                     if last_print.elapsed().as_secs() > 2 {
+<<<<<<< HEAD
                         stats.report(metrics_name);
+=======
+                        stats.maybe_report(metrics_name);
+>>>>>>> origin/patch-1
                         stats = SigVerifierStats::default();
                         last_print = Instant::now();
                     }

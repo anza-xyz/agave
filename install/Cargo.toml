@@ -1,7 +1,7 @@
 [package]
-name = "solana-install"
+name = "agave-install"
 description = "The solana cluster software installer"
-documentation = "https://docs.rs/solana-install"
+documentation = "https://docs.rs/agave-install"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -21,7 +21,7 @@ ctrlc = { workspace = true, features = ["termination"] }
 dirs-next = { workspace = true }
 indicatif = { workspace = true }
 lazy_static = { workspace = true }
-nix = { workspace = true }
+nix = { workspace = true, features = ["signal"] }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 scopeguard = { workspace = true }
 semver = { workspace = true }

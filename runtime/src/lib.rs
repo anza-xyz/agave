@@ -9,13 +9,10 @@ pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
 pub mod bank_utils;
-pub mod builtins;
 pub mod commitment;
 pub mod compute_budget_details;
-mod epoch_rewards_hasher;
 pub mod epoch_stakes;
 pub mod genesis_utils;
-pub mod inline_spl_associated_token_account;
 pub mod installed_scheduler_pool;
 pub mod loader_utils;
 pub mod non_circulating_supply;
@@ -45,3 +42,6 @@ extern crate serde_derive;
 
 #[macro_use]
 extern crate solana_frozen_abi_macro;
+
+// Don't make crates import the SVM if all they need is this module.
+pub use solana_svm::runtime_config;

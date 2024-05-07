@@ -121,8 +121,8 @@ EOF
 
 trigger_secondary_step() {
   cat  >> "$output_file" <<"EOF"
-  - name: "Trigger Build on solana-secondary"
-    trigger: "solana-secondary"
+  - name: "Trigger Build on agave-secondary"
+    trigger: "agave-secondary"
     branches: "!pull/*"
     async: true
     soft_fail: true
@@ -143,6 +143,7 @@ all_test_steps() {
   command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
   command_step checks2 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh check-bins" 15 check
   command_step checks3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh check-all-targets" 15 check
+  command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
   wait_step
 
   # Full test suite
@@ -307,7 +308,7 @@ pull_or_push_steps() {
     all_test_steps
   fi
 
-  # docs changes run on Travis or Github actions...
+  # docs changes run on Github actions...
 }
 
 
@@ -315,7 +316,7 @@ if [[ -n $BUILDKITE_TAG ]]; then
   start_pipeline "Tag pipeline for $BUILDKITE_TAG"
 
   annotate --style info --context release-tag \
-    "https://github.com/solana-labs/solana/releases/$BUILDKITE_TAG"
+    "https://github.com/anza-xyz/agave/releases/$BUILDKITE_TAG"
 
   # Jump directly to the secondary build to publish release artifacts quickly
   trigger_secondary_step
@@ -333,7 +334,7 @@ if [[ $BUILDKITE_BRANCH =~ ^pull ]]; then
 
   # Add helpful link back to the corresponding Github Pull Request
   annotate --style info --context pr-backlink \
-    "Github Pull Request: https://github.com/solana-labs/solana/$BUILDKITE_BRANCH"
+    "Github Pull Request: https://github.com/anza-xyz/agave/$BUILDKITE_BRANCH"
 
   if [[ $GITHUB_USER = "dependabot[bot]" ]]; then
     command_step dependabot "ci/dependabot-pr.sh" 5

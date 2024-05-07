@@ -122,7 +122,7 @@ Operate a configured testnet
 
  sanity/start-specific options:
    -F                   - Discard validator nodes that didn't bootup successfully
-   -o noInstallCheck    - Skip solana-install sanity
+   -o noInstallCheck    - Skip agave-install sanity
    -o rejectExtraNodes  - Require the exact number of nodes
 
  stop-specific options:
@@ -138,7 +138,7 @@ Operate a configured testnet
    --netem-cmd         - Optional command argument to netem. Default is "add". Use "cleanup" to remove rules.
 
  update-specific options:
-   --platform linux|osx|windows       - Deploy the tarball using 'solana-install deploy ...' for the
+   --platform linux|osx|windows       - Deploy the tarball using 'agave-install deploy ...' for the
                                         given platform (multiple platforms may be specified)
                                         (-t option must be supplied as well)
 
@@ -514,11 +514,11 @@ deployUpdate() {
   declare bootstrapLeader=${validatorIpList[0]}
 
   for updatePlatform in $updatePlatforms; do
-    echo "--- Deploying solana-install update: $updatePlatform"
+    echo "--- Deploying agave-install update: $updatePlatform"
     (
       set -x
 
-      scripts/solana-install-update-manifest-keypair.sh "$updatePlatform"
+      scripts/agave-install-update-manifest-keypair.sh "$updatePlatform"
 
       timeout 30s scp "${sshOptions[@]}" \
         update_manifest_keypair.json "$bootstrapLeader:solana/update_manifest_keypair.json"
@@ -563,7 +563,7 @@ prepareDeploy() {
     if [[ -n $releaseChannel ]]; then
       echo "Downloading release from channel: $releaseChannel"
       rm -f "$SOLANA_ROOT"/solana-release.tar.bz2
-      declare updateDownloadUrl=https://release.solana.com/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+      declare updateDownloadUrl=https://release.anza.xyz/"$releaseChannel"/solana-release-x86_64-unknown-linux-gnu.tar.bz2
       (
         set -x
         curl -L -I "$updateDownloadUrl"

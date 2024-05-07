@@ -67,6 +67,7 @@ use {
         native_token::{lamports_to_sol, sol_to_lamports, Sol},
         pubkey::Pubkey,
         rent::Rent,
+        reserved_account_keys::ReservedAccountKeys,
         shred_version::compute_shred_version,
         stake::{self, state::StakeStateV2},
         system_program,
@@ -461,6 +462,9 @@ fn compute_slot_cost(
     let mut program_ids = HashMap::new();
     let mut cost_tracker = CostTracker::default();
 
+    let feature_set = FeatureSet::all_enabled();
+    let reserved_account_keys = ReservedAccountKeys::new_all_activated();
+
     for entry in entries {
         num_transactions += entry.transactions.len();
         entry
@@ -472,6 +476,7 @@ fn compute_slot_cost(
                     MessageHash::Compute,
                     None,
                     SimpleAddressLoader::Disabled,
+                    &reserved_account_keys.active,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {:?}", err);
@@ -481,7 +486,7 @@ fn compute_slot_cost(
             .for_each(|transaction| {
                 num_programs += transaction.message().instructions().len();
 
-                let tx_cost = CostModel::calculate_cost(&transaction, &FeatureSet::all_enabled());
+                let tx_cost = CostModel::calculate_cost(&transaction, &feature_set);
                 let result = cost_tracker.try_add(&tx_cost);
                 if result.is_err() {
                     println!(
@@ -555,7 +560,7 @@ fn main() {
     const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: usize = std::usize::MAX;
     const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: usize = std::usize::MAX;
 
-    solana_logger::setup_with_default("solana=info");
+    solana_logger::setup_with_default_filter();
 
     let no_snapshot_arg = Arg::with_name("no_snapshot")
         .long("no-snapshot")
@@ -758,6 +763,13 @@ fn main() {
         .takes_value(true)
         .multiple(true)
         .help("Specify the configuration file for the Geyser plugin.");
+
+    let log_messages_bytes_limit_arg = Arg::with_name("log_messages_bytes_limit")
+        .long("log-messages-bytes-limit")
+        .takes_value(true)
+        .validator(is_parsable::<usize>)
+        .value_name("BYTES")
+        .help("Maximum number of bytes written to the program log before truncation");
 
     let accounts_data_encoding_arg = Arg::with_name("encoding")
         .long("encoding")
@@ -988,6 +1000,7 @@ fn main() {
                 .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(&debug_key_arg)
                 .arg(&geyser_plugin_args)
+                .arg(&log_messages_bytes_limit_arg)
                 .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("skip_poh_verify")
@@ -1146,6 +1159,7 @@ fn main() {
                 .arg(&maximum_full_snapshot_archives_to_retain)
                 .arg(&maximum_incremental_snapshot_archives_to_retain)
                 .arg(&geyser_plugin_args)
+                .arg(&log_messages_bytes_limit_arg)
                 .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("snapshot_slot")
@@ -1358,6 +1372,7 @@ fn main() {
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
                 .arg(&geyser_plugin_args)
+                .arg(&log_messages_bytes_limit_arg)
                 .arg(&accounts_data_encoding_arg)
                 .arg(&use_snapshot_archives_at_startup)
                 .arg(&max_genesis_archive_unpacked_size_arg)
@@ -1420,6 +1435,7 @@ fn main() {
                 .arg(&hard_forks_arg)
                 .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(&geyser_plugin_args)
+                .arg(&log_messages_bytes_limit_arg)
                 .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("warp_epoch")
@@ -1501,6 +1517,12 @@ fn main() {
 
     let verbose_level = matches.occurrences_of("verbose");
 
+    // Name the rayon global thread pool
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("solRayonGlob{i:02}"))
+        .build_global()
+        .unwrap();
+
     match matches.subcommand() {
         ("bigtable", Some(arg_matches)) => bigtable_process_command(&ledger_path, arg_matches),
         ("blockstore", Some(arg_matches)) => blockstore_process_command(&ledger_path, arg_matches),
@@ -1512,7 +1534,6 @@ fn main() {
         | ("copy", Some(_))
         | ("dead-slots", Some(_))
         | ("duplicate-slots", Some(_))
-        | ("json", Some(_))
         | ("latest-optimistic-slots", Some(_))
         | ("list-roots", Some(_))
         | ("parse_full_frozen", Some(_))
@@ -2767,7 +2788,7 @@ fn main() {
                         for (pubkey, warped_account) in all_accounts {
                             // Don't output sysvars; it's always updated but not related to
                             // inflation.
-                            if solana_sdk::sysvar::is_sysvar_id(&pubkey) {
+                            if solana_sdk::sysvar::check_id(warped_account.owner()) {
                                 continue;
                             }
 

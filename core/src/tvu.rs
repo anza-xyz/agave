@@ -53,6 +53,7 @@ use {
     std::{
         collections::HashSet,
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
     },
@@ -81,7 +82,6 @@ pub struct TvuSockets {
     pub ancestor_hashes_requests: UdpSocket,
 }
 
-#[derive(Default)]
 pub struct TvuConfig {
     pub max_ledger_shreds: Option<u64>,
     pub shred_version: u16,
@@ -90,7 +90,22 @@ pub struct TvuConfig {
     // Validators which should be given priority when serving repairs
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     pub wait_for_vote_to_start_leader: bool,
-    pub replay_slots_concurrently: bool,
+    pub replay_forks_threads: NonZeroUsize,
+    pub replay_transactions_threads: NonZeroUsize,
+}
+
+impl Default for TvuConfig {
+    fn default() -> Self {
+        Self {
+            max_ledger_shreds: None,
+            shred_version: 0,
+            repair_validators: None,
+            repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
+            wait_for_vote_to_start_leader: false,
+            replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+        }
+    }
 }
 
 impl Tvu {
@@ -135,7 +150,7 @@ impl Tvu {
         wait_to_vote_slot: Option<Slot>,
         accounts_background_request_sender: AbsRequestSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: &Arc<ConnectionCache>,
+        connection_cache: Option<&Arc<ConnectionCache>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
@@ -265,7 +280,8 @@ impl Tvu {
             ancestor_hashes_replay_update_sender,
             tower_storage: tower_storage.clone(),
             wait_to_vote_slot,
-            replay_slots_concurrently: tvu_config.replay_slots_concurrently,
+            replay_forks_threads: tvu_config.replay_forks_threads,
+            replay_transactions_threads: tvu_config.replay_transactions_threads,
         };
 
         let (voting_sender, voting_receiver) = unbounded();
@@ -276,16 +292,19 @@ impl Tvu {
             tower_storage,
         );
 
-        let warm_quic_cache_service = if connection_cache.use_quic() {
-            Some(WarmQuicCacheService::new(
-                connection_cache.clone(),
-                cluster_info.clone(),
-                poh_recorder.clone(),
-                exit.clone(),
-            ))
-        } else {
-            None
-        };
+        let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
+            if connection_cache.use_quic() {
+                Some(WarmQuicCacheService::new(
+                    connection_cache.clone(),
+                    cluster_info.clone(),
+                    poh_recorder.clone(),
+                    exit.clone(),
+                ))
+            } else {
+                None
+            }
+        });
+
         let (cost_update_sender, cost_update_receiver) = unbounded();
         let cost_update_service = CostUpdateService::new(blockstore.clone(), cost_update_receiver);
 
@@ -493,7 +512,7 @@ pub mod tests {
             None,
             AbsRequestSender::default(),
             None,
-            &Arc::new(ConnectionCache::new("connection_cache_test")),
+            Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
             &ignored_prioritization_fee_cache,
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,

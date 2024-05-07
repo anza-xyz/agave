@@ -2,6 +2,15 @@
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
 use {
+    agave_validator::{
+        admin_rpc_service,
+        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
+        bootstrap,
+        cli::{self, app, warn_for_deprecated_arguments, DefaultArgs},
+        dashboard::Dashboard,
+        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
+        redirect_stderr_to_file,
+    },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
     console::style,
     crossbeam_channel::unbounded,
@@ -27,7 +36,10 @@ use {
             ValidatorConfig, ValidatorStartProgress,
         },
     },
-    solana_gossip::{cluster_info::Node, legacy_contact_info::LegacyContactInfo as ContactInfo},
+    solana_gossip::{
+        cluster_info::{Node, NodeConfig},
+        contact_info::ContactInfo,
+    },
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         blockstore_options::{
@@ -46,6 +58,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcLeaderScheduleConfig,
     solana_runtime::{
+        runtime_config::RuntimeConfig,
         snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
@@ -60,15 +73,6 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-    solana_validator::{
-        admin_rpc_service,
-        admin_rpc_service::{load_staked_nodes_overrides, StakedNodesOverrides},
-        bootstrap,
-        cli::{app, warn_for_deprecated_arguments, DefaultArgs},
-        dashboard::Dashboard,
-        ledger_lockfile, lock_ledger, new_spinner_progress_bar, println_name_value,
-        redirect_stderr_to_file,
-    },
     std::{
         collections::{HashSet, VecDeque},
         env,
@@ -917,7 +921,7 @@ pub fn main() {
         let logfile = matches
             .value_of("logfile")
             .map(|s| s.into())
-            .unwrap_or_else(|| format!("solana-validator-{}.log", identity_keypair.pubkey()));
+            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
 
         if logfile == "-" {
             None
@@ -1331,6 +1335,13 @@ pub fn main() {
 
     let full_api = matches.is_present("full_rpc_api");
 
+    let cli::thread_args::NumThreadConfig {
+        ip_echo_server_threads,
+        replay_forks_threads,
+        replay_transactions_threads,
+        tvu_receive_threads,
+    } = cli::thread_args::parse_num_threads_args(&matches);
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -1464,12 +1475,16 @@ pub fn main() {
             ..RuntimeConfig::default()
         },
         staked_nodes_overrides: staked_nodes_overrides.clone(),
-        replay_slots_concurrently: matches.is_present("replay_slots_concurrently"),
         use_snapshot_archives_at_startup: value_t_or_exit!(
             matches,
             use_snapshot_archives_at_startup::cli::NAME,
             UseSnapshotArchivesAtStartup
         ),
+        ip_echo_server_threads,
+        replay_forks_threads,
+        replay_transactions_threads,
+        delay_leader_block_for_pending_fork: matches
+            .is_present("delay_leader_block_for_pending_fork"),
         ..ValidatorConfig::default()
     };
 
@@ -1836,19 +1851,21 @@ pub fn main() {
                 })
             });
 
+    let node_config = NodeConfig {
+        gossip_addr,
+        port_range: dynamic_port_range,
+        bind_ip_addr: bind_address,
+        public_tpu_addr,
+        public_tpu_forwards_addr,
+        num_tvu_sockets: tvu_receive_threads,
+    };
+
     let cluster_entrypoints = entrypoint_addrs
         .iter()
         .map(ContactInfo::new_gossip_entry_point)
         .collect::<Vec<_>>();
 
-    let mut node = Node::new_with_external_ip(
-        &identity_keypair.pubkey(),
-        &gossip_addr,
-        dynamic_port_range,
-        bind_address,
-        public_tpu_addr,
-        public_tpu_forwards_addr,
-    );
+    let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports

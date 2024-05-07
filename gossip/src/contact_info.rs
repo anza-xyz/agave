@@ -1,5 +1,6 @@
+pub use solana_client::connection_cache::Protocol;
 use {
-    crate::crds_value::MAX_WALLCLOCK,
+    crate::{crds_value::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_sdk::{
@@ -17,9 +18,6 @@ use {
         time::{SystemTime, UNIX_EPOCH},
     },
     thiserror::Error,
-};
-pub use {
-    crate::legacy_contact_info::LegacyContactInfo, solana_client::connection_cache::Protocol,
 };
 
 pub const SOCKET_ADDR_UNSPECIFIED: SocketAddr =
@@ -210,6 +208,11 @@ impl ContactInfo {
         self.shred_version
     }
 
+    #[inline]
+    pub(crate) fn version(&self) -> &solana_version::Version {
+        &self.version
+    }
+
     pub fn set_pubkey(&mut self, pubkey: Pubkey) {
         self.pubkey = pubkey
     }
@@ -366,6 +369,29 @@ impl ContactInfo {
         LegacyContactInfo::is_valid_address(addr, socket_addr_space)
     }
 
+    /// New random ContactInfo for tests and simulations.
+    pub fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
+        let delay = 10 * 60 * 1000; // 10 minutes
+        let now = solana_sdk::timing::timestamp() - delay + rng.gen_range(0..2 * delay);
+        let pubkey = pubkey.unwrap_or_else(solana_sdk::pubkey::new_rand);
+        let mut node = ContactInfo::new_localhost(&pubkey, now);
+        let _ = node.set_gossip((Ipv4Addr::LOCALHOST, rng.gen_range(1024..u16::MAX)));
+        node
+    }
+
+    /// Construct a ContactInfo that's only usable for gossip
+    pub fn new_gossip_entry_point(gossip_addr: &SocketAddr) -> Self {
+        let mut node = Self::new(
+            Pubkey::default(),
+            solana_sdk::timing::timestamp(), // wallclock
+            0,                               // shred_version
+        );
+        if let Err(err) = node.set_gossip(*gossip_addr) {
+            error!("Invalid entrypoint: {gossip_addr}, {err:?}");
+        }
+        node
+    }
+
     // Only for tests and simulations.
     pub fn new_localhost(pubkey: &Pubkey, wallclock: u64) -> Self {
         let mut node = Self::new(*pubkey, wallclock, /*shred_version:*/ 0u16);
@@ -406,6 +432,16 @@ impl ContactInfo {
         node.set_serve_repair((addr, port + 8)).unwrap();
         node.set_serve_repair_quic((addr, port + 4)).unwrap();
         node
+    }
+}
+
+impl Default for ContactInfo {
+    fn default() -> Self {
+        Self::new(
+            Pubkey::default(),
+            0, // wallclock
+            0, // shred_version
+        )
     }
 }
 
@@ -615,6 +651,24 @@ mod tests {
 
     fn new_rand_socket<R: Rng>(rng: &mut R) -> SocketAddr {
         SocketAddr::new(new_rand_addr(rng), new_rand_port(rng))
+    }
+
+    #[test]
+    fn test_new_gossip_entry_point() {
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 10));
+        let ci = ContactInfo::new_gossip_entry_point(&addr);
+        assert_eq!(ci.gossip().unwrap(), addr);
+        assert_matches!(ci.rpc(), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.rpc_pubsub(), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.serve_repair(Protocol::QUIC), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.serve_repair(Protocol::UDP), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu(Protocol::QUIC), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu(Protocol::UDP), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu_forwards(Protocol::QUIC), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu_forwards(Protocol::UDP), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu_vote(), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tvu(Protocol::QUIC), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tvu(Protocol::UDP), Err(Error::InvalidPort(0)));
     }
 
     #[test]

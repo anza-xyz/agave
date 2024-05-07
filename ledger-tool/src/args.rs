@@ -12,7 +12,11 @@ use {
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+<<<<<<< HEAD
     solana_program_runtime::runtime_config::RuntimeConfig,
+=======
+    solana_runtime::runtime_config::RuntimeConfig,
+>>>>>>> origin/patch-1
     solana_sdk::clock::Slot,
     std::{
         collections::HashSet,
@@ -27,7 +31,11 @@ use {
 pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> ProcessOptions {
     let new_hard_forks = hardforks_of(arg_matches, "hard_forks");
     let accounts_db_config = Some(get_accounts_db_config(ledger_path, arg_matches));
-    let runtime_config = RuntimeConfig::default();
+    let log_messages_bytes_limit = value_t!(arg_matches, "log_messages_bytes_limit", usize).ok();
+    let runtime_config = RuntimeConfig {
+        log_messages_bytes_limit,
+        ..RuntimeConfig::default()
+    };
 
     if arg_matches.is_present("skip_poh_verify") {
         eprintln!("--skip-poh-verify is deprecated.  Replace with --skip-verification.");

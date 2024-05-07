@@ -2,7 +2,10 @@ use {
     crate::{
         compute_budget::ComputeBudget,
         ic_msg,
-        loaded_programs::{LoadedProgram, LoadedProgramType, LoadedProgramsForTxBatch},
+        loaded_programs::{
+            ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
+            ProgramRuntimeEnvironments,
+        },
         log_collector::LogCollector,
         stable_log,
         sysvar_cache::SysvarCache,
@@ -17,8 +20,10 @@ use {
         vm::{Config, ContextObject, EbpfVm},
     },
     solana_sdk::{
-        account::AccountSharedData,
+        account::{create_account_shared_data_for_test, AccountSharedData},
         bpf_loader_deprecated,
+        clock::Slot,
+        epoch_schedule::EpochSchedule,
         feature_set::FeatureSet,
         hash::Hash,
         instruction::{AccountMeta, InstructionError},
@@ -26,6 +31,7 @@ use {
         pubkey::Pubkey,
         saturating_add_assign,
         stable_layout::stable_instruction::StableInstruction,
+        sysvar,
         transaction_context::{
             IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
         },
@@ -138,6 +144,28 @@ impl BpfAllocator {
     }
 }
 
+pub struct EnvironmentConfig<'a> {
+    pub blockhash: Hash,
+    pub feature_set: Arc<FeatureSet>,
+    pub lamports_per_signature: u64,
+    sysvar_cache: &'a SysvarCache,
+}
+impl<'a> EnvironmentConfig<'a> {
+    pub fn new(
+        blockhash: Hash,
+        feature_set: Arc<FeatureSet>,
+        lamports_per_signature: u64,
+        sysvar_cache: &'a SysvarCache,
+    ) -> Self {
+        Self {
+            blockhash,
+            feature_set,
+            lamports_per_signature,
+            sysvar_cache,
+        }
+    }
+}
+
 pub struct SyscallContext {
     pub allocator: BpfAllocator,
     pub accounts_metadata: Vec<SerializedAccountMetadata>,
@@ -153,19 +181,19 @@ pub struct SerializedAccountMetadata {
     pub vm_owner_addr: u64,
 }
 
+/// Main pipeline from runtime to program execution.
 pub struct InvokeContext<'a> {
+    /// Information about the currently executing transaction.
     pub transaction_context: &'a mut TransactionContext,
-    sysvar_cache: &'a SysvarCache,
+    /// Runtime configurations used to provision the invocation environment.
+    pub environment_config: EnvironmentConfig<'a>,
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     compute_budget: ComputeBudget,
     current_compute_budget: ComputeBudget,
     compute_meter: RefCell<u64>,
-    pub programs_loaded_for_tx_batch: &'a LoadedProgramsForTxBatch,
-    pub programs_modified_by_tx: &'a mut LoadedProgramsForTxBatch,
-    pub feature_set: Arc<FeatureSet>,
+    pub programs_loaded_for_tx_batch: &'a ProgramCacheForTxBatch,
+    pub programs_modified_by_tx: &'a mut ProgramCacheForTxBatch,
     pub timings: ExecuteDetailsTimings,
-    pub blockhash: Hash,
-    pub lamports_per_signature: u64,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
 }
@@ -174,39 +202,44 @@ impl<'a> InvokeContext<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction_context: &'a mut TransactionContext,
-        sysvar_cache: &'a SysvarCache,
+        environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
         compute_budget: ComputeBudget,
-        programs_loaded_for_tx_batch: &'a LoadedProgramsForTxBatch,
-        programs_modified_by_tx: &'a mut LoadedProgramsForTxBatch,
-        feature_set: Arc<FeatureSet>,
-        blockhash: Hash,
-        lamports_per_signature: u64,
+        programs_loaded_for_tx_batch: &'a ProgramCacheForTxBatch,
+        programs_modified_by_tx: &'a mut ProgramCacheForTxBatch,
     ) -> Self {
         Self {
             transaction_context,
-            sysvar_cache,
+            environment_config,
             log_collector,
             current_compute_budget: compute_budget,
             compute_budget,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
             programs_loaded_for_tx_batch,
             programs_modified_by_tx,
-            feature_set,
             timings: ExecuteDetailsTimings::default(),
-            blockhash,
-            lamports_per_signature,
             syscall_context: Vec::new(),
             traces: Vec::new(),
         }
     }
 
-    pub fn find_program_in_cache(&self, pubkey: &Pubkey) -> Option<Arc<LoadedProgram>> {
+    pub fn find_program_in_cache(&self, pubkey: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
         // First lookup the cache of the programs modified by the current transaction. If not found, lookup
         // the cache of the cache of the programs that are loaded for the transaction batch.
         self.programs_modified_by_tx
             .find(pubkey)
             .or_else(|| self.programs_loaded_for_tx_batch.find(pubkey))
+    }
+
+    pub fn get_environments_for_slot(
+        &self,
+        effective_slot: Slot,
+    ) -> Result<&ProgramRuntimeEnvironments, InstructionError> {
+        let epoch_schedule = self.environment_config.sysvar_cache.get_epoch_schedule()?;
+        let epoch = epoch_schedule.get_epoch(effective_slot);
+        Ok(self
+            .programs_loaded_for_tx_batch
+            .get_environments_for_epoch(epoch))
     }
 
     /// Push a stack frame onto the invocation stack
@@ -441,7 +474,7 @@ impl<'a> InvokeContext<'a> {
         timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let mut process_executable_chain_time = Measure::start("process_executable_chain_time");
+        let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
             let borrowed_root_account = instruction_context
@@ -462,7 +495,7 @@ impl<'a> InvokeContext<'a> {
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
-            LoadedProgramType::Builtin(program) => program
+            ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
                 .map(|(_name, function)| function),
@@ -523,13 +556,12 @@ impl<'a> InvokeContext<'a> {
             return Err(InstructionError::BuiltinProgramsMustConsumeComputeUnits);
         }
 
-        process_executable_chain_time.stop();
         saturating_add_assign!(
             timings
                 .execute_accessories
                 .process_instructions
                 .process_executable_chain_us,
-            process_executable_chain_time.as_us()
+            process_executable_chain_time.end_as_us()
         );
         result
     }
@@ -562,9 +594,21 @@ impl<'a> InvokeContext<'a> {
         &self.current_compute_budget
     }
 
+    /// Get the current feature set.
+    pub fn get_feature_set(&self) -> &FeatureSet {
+        &self.environment_config.feature_set
+    }
+
+    /// Set feature set.
+    ///
+    /// Only use for tests and benchmarks.
+    pub fn mock_set_feature_set(&mut self, feature_set: Arc<FeatureSet>) {
+        self.environment_config.feature_set = feature_set;
+    }
+
     /// Get cached sysvars
     pub fn get_sysvar_cache(&self) -> &SysvarCache {
-        self.sysvar_cache
+        self.environment_config.sysvar_cache
     }
 
     // Should alignment be enforced during user pointer translation
@@ -629,8 +673,10 @@ macro_rules! with_mock_invoke_context {
             },
             std::sync::Arc,
             $crate::{
-                compute_budget::ComputeBudget, invoke_context::InvokeContext,
-                loaded_programs::LoadedProgramsForTxBatch, log_collector::LogCollector,
+                compute_budget::ComputeBudget,
+                invoke_context::{EnvironmentConfig, InvokeContext},
+                loaded_programs::ProgramCacheForTxBatch,
+                log_collector::LogCollector,
                 sysvar_cache::SysvarCache,
             },
         };
@@ -659,18 +705,21 @@ macro_rules! with_mock_invoke_context {
                 }
             }
         });
-        let programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::default();
-        let mut programs_modified_by_tx = LoadedProgramsForTxBatch::default();
+        let environment_config = EnvironmentConfig::new(
+            Hash::default(),
+            Arc::new(FeatureSet::all_enabled()),
+            0,
+            &sysvar_cache,
+        );
+        let programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
+        let mut programs_modified_by_tx = ProgramCacheForTxBatch::default();
         let mut $invoke_context = InvokeContext::new(
             &mut $transaction_context,
-            &sysvar_cache,
+            environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
             &programs_loaded_for_tx_batch,
             &mut programs_modified_by_tx,
-            Arc::new(FeatureSet::all_enabled()),
-            Hash::default(),
-            0,
         );
     };
 }
@@ -713,11 +762,23 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
     let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
     transaction_accounts.push((*loader_id, processor_account));
+    let pop_epoch_schedule_account = if !transaction_accounts
+        .iter()
+        .any(|(key, _)| *key == sysvar::epoch_schedule::id())
+    {
+        transaction_accounts.push((
+            sysvar::epoch_schedule::id(),
+            create_account_shared_data_for_test(&EpochSchedule::default()),
+        ));
+        true
+    } else {
+        false
+    };
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-    let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::default();
+    let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
     programs_loaded_for_tx_batch.replenish(
         *loader_id,
-        Arc::new(LoadedProgram::new_builtin(0, 0, builtin_function)),
+        Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
     );
     invoke_context.programs_loaded_for_tx_batch = &programs_loaded_for_tx_batch;
     pre_adjustments(&mut invoke_context);
@@ -731,6 +792,9 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
     let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
+    if pop_epoch_schedule_account {
+        transaction_accounts.pop();
+    }
     transaction_accounts.pop();
     transaction_accounts
 }
@@ -968,10 +1032,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::default();
+        let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
         programs_loaded_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(LoadedProgram::new_builtin(0, 1, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
         );
         invoke_context.programs_loaded_for_tx_batch = &programs_loaded_for_tx_batch;
 
@@ -1117,10 +1181,10 @@ mod tests {
             },
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        let mut programs_loaded_for_tx_batch = LoadedProgramsForTxBatch::default();
+        let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
         programs_loaded_for_tx_batch.replenish(
             program_key,
-            Arc::new(LoadedProgram::new_builtin(0, 0, MockBuiltin::vm)),
+            Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
         invoke_context.programs_loaded_for_tx_batch = &programs_loaded_for_tx_batch;
 

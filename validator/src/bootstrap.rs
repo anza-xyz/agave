@@ -8,10 +8,9 @@ use {
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
-        contact_info::Protocol,
+        contact_info::{ContactInfo, Protocol},
         crds_value,
         gossip_service::GossipService,
-        legacy_contact_info::LegacyContactInfo as ContactInfo,
     },
     solana_metrics::datapoint_info,
     solana_rpc_client::rpc_client::RpcClient,
@@ -447,7 +446,7 @@ pub fn attempt_download_genesis_and_snapshot(
         )
         .unwrap_or_else(|err| {
             // Consider failures here to be more likely due to user error (eg,
-            // incorrect `solana-validator` command-line arguments) rather than the
+            // incorrect `agave-validator` command-line arguments) rather than the
             // RPC node failing.
             //
             // Power users can always use the `--no-check-vote-account` option to

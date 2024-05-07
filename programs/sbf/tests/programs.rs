@@ -81,6 +81,7 @@ use {
         message::Message,
         pubkey::Pubkey,
         rent::Rent,
+        reserved_account_keys::ReservedAccountKeys,
         signature::{Keypair, Signer},
         system_program,
         transaction::{SanitizedTransaction, Transaction, TransactionError},
@@ -201,7 +202,11 @@ fn execute_transactions(
                     }
                     .expect("lamports_per_signature must be available");
                     let fee = bank.get_fee_for_message_with_lamports_per_signature(
-                        &SanitizedMessage::try_from_legacy_message(tx.message().clone()).unwrap(),
+                        &SanitizedMessage::try_from_legacy_message(
+                            tx.message().clone(),
+                            &ReservedAccountKeys::empty_key_set(),
+                        )
+                        .unwrap(),
                         lamports_per_signature,
                     );
 
@@ -3687,7 +3692,7 @@ fn test_program_fees() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     let fee_structure =
         FeeStructure::new(0.000005, 0.0, vec![(200, 0.0000005), (1400000, 0.000005)]);
-    bank.fee_structure = fee_structure.clone();
+    bank.set_fee_structure(&fee_structure);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank);
     let authority_keypair = Keypair::new();
@@ -3706,7 +3711,11 @@ fn test_program_fees() {
         Some(&mint_keypair.pubkey()),
     );
 
-    let sanitized_message = SanitizedMessage::try_from_legacy_message(message.clone()).unwrap();
+    let sanitized_message = SanitizedMessage::try_from_legacy_message(
+        message.clone(),
+        &ReservedAccountKeys::empty_key_set(),
+    )
+    .unwrap();
     let expected_normal_fee = fee_structure.calculate_fee(
         &sanitized_message,
         congestion_multiplier,
@@ -3730,7 +3739,11 @@ fn test_program_fees() {
         ],
         Some(&mint_keypair.pubkey()),
     );
-    let sanitized_message = SanitizedMessage::try_from_legacy_message(message.clone()).unwrap();
+    let sanitized_message = SanitizedMessage::try_from_legacy_message(
+        message.clone(),
+        &ReservedAccountKeys::empty_key_set(),
+    )
+    .unwrap();
     let expected_prioritized_fee = fee_structure.calculate_fee(
         &sanitized_message,
         congestion_multiplier,
@@ -4268,7 +4281,7 @@ fn test_cpi_deprecated_loader_realloc() {
 #[test]
 #[cfg(feature = "sbf_rust")]
 fn test_cpi_change_account_data_memory_allocation() {
-    use solana_program_runtime::{declare_process_instruction, loaded_programs::LoadedProgram};
+    use solana_program_runtime::{declare_process_instruction, loaded_programs::ProgramCacheEntry};
 
     solana_logger::setup();
 
@@ -4278,7 +4291,7 @@ fn test_cpi_change_account_data_memory_allocation() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    let mut bank = Bank::new_for_tests(&genesis_config);
+    let bank = Bank::new_for_tests(&genesis_config);
 
     declare_process_instruction!(MockBuiltin, 42, |invoke_context| {
         let transaction_context = &invoke_context.transaction_context;
@@ -4314,10 +4327,11 @@ fn test_cpi_change_account_data_memory_allocation() {
     });
 
     let builtin_program_id = Pubkey::new_unique();
-    bank.add_builtin(
+    bank.get_transaction_processor().add_builtin(
+        &bank,
         builtin_program_id,
-        "test_cpi_change_account_data_memory_allocation_builtin".to_string(),
-        LoadedProgram::new_builtin(0, 42, MockBuiltin::vm),
+        "test_cpi_change_account_data_memory_allocation_builtin",
+        ProgramCacheEntry::new_builtin(0, 42, MockBuiltin::vm),
     );
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();

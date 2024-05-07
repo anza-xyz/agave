@@ -43,6 +43,7 @@ impl<T> OptionSerializer<T> {
     }
 
     pub fn is_some(&self) -> bool {
+<<<<<<< HEAD
         matches!(*self, OptionSerializer::Some(_))
     }
 
@@ -52,6 +53,26 @@ impl<T> OptionSerializer<T> {
 
     pub fn is_skip(&self) -> bool {
         matches!(*self, OptionSerializer::Skip)
+=======
+        match self {
+            OptionSerializer::Some(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_none(&self) -> bool {
+        match self {
+            OptionSerializer::None => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_skip(&self) -> bool {
+        match self {
+            OptionSerializer::Skip => true,
+            _ => false,
+        }
+>>>>>>> origin/patch-1
     }
 
     pub fn expect(self, msg: &str) -> T {

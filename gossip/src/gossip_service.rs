@@ -1,14 +1,20 @@
 //! The `gossip_service` module implements the network control plane.
 
 use {
-    crate::{cluster_info::ClusterInfo, legacy_contact_info::LegacyContactInfo as ContactInfo},
+    crate::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     crossbeam_channel::{unbounded, Sender},
     rand::{thread_rng, Rng},
     solana_client::{
+<<<<<<< HEAD
         connection_cache::ConnectionCache,
         rpc_client::RpcClient,
         tpu_client::{TpuClient, TpuClientConfig, TpuClientWrapper},
     },
+=======
+        connection_cache::ConnectionCache, rpc_client::RpcClient, tpu_client::TpuClientWrapper,
+    },
+    solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
+>>>>>>> origin/patch-1
     solana_perf::recycler::Recycler,
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
@@ -19,6 +25,7 @@ use {
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
     },
+    solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{
         collections::HashSet,
         net::{SocketAddr, TcpListener, UdpSocket},
@@ -63,6 +70,7 @@ impl GossipService {
             Duration::from_millis(1), // coalesce
             false,
             None,
+            false,
         );
         let (consume_sender, listen_receiver) = unbounded();
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
@@ -160,8 +168,14 @@ pub fn discover(
     if let Some(my_gossip_addr) = my_gossip_addr {
         info!("Gossip Address: {:?}", my_gossip_addr);
     }
-    let _ip_echo_server = ip_echo
-        .map(|tcp_listener| solana_net_utils::ip_echo_server(tcp_listener, Some(my_shred_version)));
+
+    let _ip_echo_server = ip_echo.map(|tcp_listener| {
+        solana_net_utils::ip_echo_server(
+            tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            Some(my_shred_version),
+        )
+    });
     let (met_criteria, elapsed, all_peers, tvu_peers) = spy(
         spy_ref.clone(),
         num_nodes,
@@ -277,7 +291,7 @@ fn spy(
         if let Some(num) = num_nodes {
             // Only consider validators and archives for `num_nodes`
             let mut nodes: Vec<_> = tvu_peers.iter().collect();
-            nodes.sort();
+            nodes.sort_unstable_by_key(|node| node.pubkey());
             nodes.dedup();
 
             if nodes.len() >= num {

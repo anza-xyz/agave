@@ -6,8 +6,6 @@ use {
         ancestors::Ancestors,
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         contains::Contains,
-        inline_spl_token::{self, GenericTokenAccount},
-        inline_spl_token_2022,
         pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
         secondary_index::*,
@@ -120,7 +118,7 @@ impl ScanConfig {
     /// use existing 'abort' if available, otherwise allocate one
     pub fn recreate_with_abort(&self) -> Self {
         ScanConfig {
-            abort: Some(self.abort.as_ref().map(Arc::clone).unwrap_or_default()),
+            abort: Some(self.abort.clone().unwrap_or_default()),
             collect_all_unsorted: self.collect_all_unsorted,
         }
     }
@@ -637,8 +635,8 @@ pub enum AccountsIndexScanResult {
 pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub account_maps: LockMapType<T, U>,
     pub bin_calculator: PubkeyBinCalculator24,
-    program_id_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
-    spl_token_mint_index: SecondaryIndex<DashMapSecondaryIndexEntry>,
+    program_id_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
+    spl_token_mint_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     spl_token_owner_index: SecondaryIndex<RwLockSecondaryIndexEntry>,
     pub roots_tracker: RwLock<RootsTracker>,
     ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
@@ -685,10 +683,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         Self {
             account_maps,
             bin_calculator,
-            program_id_index: SecondaryIndex::<DashMapSecondaryIndexEntry>::new(
+            program_id_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
                 "program_id_index_stats",
             ),
-            spl_token_mint_index: SecondaryIndex::<DashMapSecondaryIndexEntry>::new(
+            spl_token_mint_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
                 "spl_token_mint_index_stats",
             ),
             spl_token_owner_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
@@ -1468,7 +1466,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         max_root
     }
 
-    fn update_spl_token_secondary_indexes<G: GenericTokenAccount>(
+    fn update_spl_token_secondary_indexes<G: solana_inline_spl::token::GenericTokenAccount>(
         &self,
         token_id: &Pubkey,
         pubkey: &Pubkey,
@@ -1559,15 +1557,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // (as persisted tombstone for snapshots). This will then ultimately be
         // filtered out by post-scan filters, like in `get_filtered_spl_token_accounts_by_owner()`.
 
-        self.update_spl_token_secondary_indexes::<inline_spl_token::Account>(
-            &inline_spl_token::id(),
+        self.update_spl_token_secondary_indexes::<solana_inline_spl::token::Account>(
+            &solana_inline_spl::token::id(),
             pubkey,
             account_owner,
             account_data,
             account_indexes,
         );
-        self.update_spl_token_secondary_indexes::<inline_spl_token_2022::Account>(
-            &inline_spl_token_2022::id(),
+        self.update_spl_token_secondary_indexes::<solana_inline_spl::token_2022::Account>(
+            &solana_inline_spl::token_2022::id(),
             pubkey,
             account_owner,
             account_data,
@@ -2016,13 +2014,18 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 pub mod tests {
     use {
         super::*,
-        crate::inline_spl_token::*,
+        solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             pubkey::PUBKEY_BYTES,
         },
         std::ops::RangeInclusive,
     };
+
+    const SPL_TOKENS: &[Pubkey] = &[
+        solana_inline_spl::token::id(),
+        solana_inline_spl::token_2022::id(),
+    ];
 
     pub enum SecondaryIndexTypes<'a> {
         RwLock(&'a SecondaryIndex<RwLockSecondaryIndexEntry>),
@@ -2047,17 +2050,17 @@ pub mod tests {
         }
     }
 
-    fn create_dashmap_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
+    fn create_spl_token_mint_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
         {
             // Check that we're actually testing the correct variant
             let index = AccountsIndex::<bool, bool>::default_for_tests();
-            let _type_check = SecondaryIndexTypes::DashMap(&index.spl_token_mint_index);
+            let _type_check = SecondaryIndexTypes::RwLock(&index.spl_token_mint_index);
         }
 
         (0, PUBKEY_BYTES, spl_token_mint_index_enabled())
     }
 
-    fn create_rwlock_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
+    fn create_spl_token_owner_secondary_index_state() -> (usize, usize, AccountSecondaryIndexes) {
         {
             // Check that we're actually testing the correct variant
             let index = AccountsIndex::<bool, bool>::default_for_tests();
@@ -3362,6 +3365,10 @@ pub mod tests {
         );
     }
 
+    fn make_empty_token_account_data() -> Vec<u8> {
+        vec![0; solana_inline_spl::token::Account::get_packed_len()]
+    }
+
     fn run_test_purge_exact_secondary_index<
         SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send,
     >(
@@ -3376,7 +3383,7 @@ pub mod tests {
         let index_key = Pubkey::new_unique();
         let account_key = Pubkey::new_unique();
 
-        let mut account_data = vec![0; inline_spl_token::Account::get_packed_len()];
+        let mut account_data = make_empty_token_account_data();
         account_data[key_start..key_end].clone_from_slice(&(index_key.to_bytes()));
 
         // Insert slots into secondary index
@@ -3389,7 +3396,7 @@ pub mod tests {
                 &AccountSharedData::create(
                     0,
                     account_data.to_vec(),
-                    inline_spl_token::id(),
+                    solana_inline_spl::token::id(),
                     false,
                     0,
                 ),
@@ -3429,8 +3436,8 @@ pub mod tests {
     }
 
     #[test]
-    fn test_purge_exact_dashmap_secondary_index() {
-        let (key_start, key_end, secondary_indexes) = create_dashmap_secondary_index_state();
+    fn test_purge_exact_spl_token_mint_secondary_index() {
+        let (key_start, key_end, secondary_indexes) = create_spl_token_mint_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         run_test_purge_exact_secondary_index(
             &index,
@@ -3442,8 +3449,9 @@ pub mod tests {
     }
 
     #[test]
-    fn test_purge_exact_rwlock_secondary_index() {
-        let (key_start, key_end, secondary_indexes) = create_rwlock_secondary_index_state();
+    fn test_purge_exact_spl_token_owner_secondary_index() {
+        let (key_start, key_end, secondary_indexes) =
+            create_spl_token_owner_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         run_test_purge_exact_secondary_index(
             &index,
@@ -3558,7 +3566,7 @@ pub mod tests {
         let mut secondary_indexes = secondary_indexes.clone();
         let account_key = Pubkey::new_unique();
         let index_key = Pubkey::new_unique();
-        let mut account_data = vec![0; inline_spl_token::Account::get_packed_len()];
+        let mut account_data = make_empty_token_account_data();
         account_data[key_start..key_end].clone_from_slice(&(index_key.to_bytes()));
 
         // Wrong program id
@@ -3647,12 +3655,12 @@ pub mod tests {
     }
 
     #[test]
-    fn test_dashmap_secondary_index() {
-        let (key_start, key_end, secondary_indexes) = create_dashmap_secondary_index_state();
+    fn test_spl_token_mint_secondary_index() {
+        let (key_start, key_end, secondary_indexes) = create_spl_token_mint_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        for token_id in [inline_spl_token::id(), inline_spl_token_2022::id()] {
+        for token_id in SPL_TOKENS {
             run_test_spl_token_secondary_indexes(
-                &token_id,
+                token_id,
                 &index,
                 &index.spl_token_mint_index,
                 key_start,
@@ -3663,12 +3671,13 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rwlock_secondary_index() {
-        let (key_start, key_end, secondary_indexes) = create_rwlock_secondary_index_state();
+    fn test_spl_token_owner_secondary_index() {
+        let (key_start, key_end, secondary_indexes) =
+            create_spl_token_owner_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        for token_id in [inline_spl_token::id(), inline_spl_token_2022::id()] {
+        for token_id in SPL_TOKENS {
             run_test_spl_token_secondary_indexes(
-                &token_id,
+                token_id,
                 &index,
                 &index.spl_token_owner_index,
                 key_start,
@@ -3692,10 +3701,10 @@ pub mod tests {
         let secondary_key1 = Pubkey::new_unique();
         let secondary_key2 = Pubkey::new_unique();
         let slot = 1;
-        let mut account_data1 = vec![0; inline_spl_token::Account::get_packed_len()];
+        let mut account_data1 = make_empty_token_account_data();
         account_data1[index_key_start..index_key_end]
             .clone_from_slice(&(secondary_key1.to_bytes()));
-        let mut account_data2 = vec![0; inline_spl_token::Account::get_packed_len()];
+        let mut account_data2 = make_empty_token_account_data();
         account_data2[index_key_start..index_key_end]
             .clone_from_slice(&(secondary_key2.to_bytes()));
 
@@ -3768,12 +3777,12 @@ pub mod tests {
     }
 
     #[test]
-    fn test_dashmap_secondary_index_same_slot_and_forks() {
-        let (key_start, key_end, account_index) = create_dashmap_secondary_index_state();
+    fn test_spl_token_mint_secondary_index_same_slot_and_forks() {
+        let (key_start, key_end, account_index) = create_spl_token_mint_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        for token_id in [inline_spl_token::id(), inline_spl_token_2022::id()] {
+        for token_id in SPL_TOKENS {
             run_test_secondary_indexes_same_slot_and_forks(
-                &token_id,
+                token_id,
                 &index,
                 &index.spl_token_mint_index,
                 key_start,
@@ -3785,11 +3794,11 @@ pub mod tests {
 
     #[test]
     fn test_rwlock_secondary_index_same_slot_and_forks() {
-        let (key_start, key_end, account_index) = create_rwlock_secondary_index_state();
+        let (key_start, key_end, account_index) = create_spl_token_owner_secondary_index_state();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        for token_id in [inline_spl_token::id(), inline_spl_token_2022::id()] {
+        for token_id in SPL_TOKENS {
             run_test_secondary_indexes_same_slot_and_forks(
-                &token_id,
+                token_id,
                 &index,
                 &index.spl_token_owner_index,
                 key_start,

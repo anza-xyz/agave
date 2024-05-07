@@ -2,6 +2,10 @@ use {
     crate::{
         account_storage::meta::StoredAccountMeta,
         accounts_file::MatchAccountOwnerError,
+<<<<<<< HEAD
+=======
+        append_vec::IndexInfo,
+>>>>>>> origin/patch-1
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -10,7 +14,11 @@ use {
             TieredStorageResult,
         },
     },
+<<<<<<< HEAD
     solana_sdk::pubkey::Pubkey,
+=======
+    solana_sdk::{account::AccountSharedData, pubkey::Pubkey},
+>>>>>>> origin/patch-1
     std::path::Path,
 };
 
@@ -27,6 +35,29 @@ impl TieredStorageReader {
         let footer = TieredStorageFooter::new_from_footer_block(&file)?;
         match footer.account_meta_format {
             AccountMetaFormat::Hot => Ok(Self::Hot(HotStorageReader::new(file)?)),
+<<<<<<< HEAD
+=======
+        }
+    }
+
+    /// Returns the size of the underlying storage.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Hot(hot) => hot.len(),
+        }
+    }
+
+    /// Returns whether the nderlying storage is empty.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Hot(hot) => hot.is_empty(),
+        }
+    }
+
+    pub fn capacity(&self) -> u64 {
+        match self {
+            Self::Hot(hot) => hot.capacity(),
+>>>>>>> origin/patch-1
         }
     }
 
@@ -45,12 +76,23 @@ impl TieredStorageReader {
     }
 
     /// Returns the account located at the specified index offset.
-    pub fn get_account(
+    pub fn get_account_shared_data(
         &self,
         index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<(StoredAccountMeta<'_>, IndexOffset)>> {
+    ) -> TieredStorageResult<Option<AccountSharedData>> {
         match self {
-            Self::Hot(hot) => hot.get_account(index_offset),
+            Self::Hot(hot) => hot.get_account_shared_data(index_offset),
+        }
+    }
+
+    /// calls `callback` with the account located at the specified index offset.
+    pub fn get_stored_account_meta_callback<Ret>(
+        &self,
+        index_offset: IndexOffset,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
+        match self {
+            Self::Hot(hot) => hot.get_stored_account_meta_callback(index_offset, callback),
         }
     }
 
@@ -78,14 +120,44 @@ impl TieredStorageReader {
         }
     }
 
-    /// Return a vector of account metadata for each account, starting from
-    /// `index_offset`
-    pub fn accounts(
-        &self,
-        index_offset: IndexOffset,
-    ) -> TieredStorageResult<Vec<StoredAccountMeta>> {
+    /// iterate over all pubkeys
+    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) -> TieredStorageResult<()> {
         match self {
-            Self::Hot(hot) => hot.accounts(index_offset),
+            Self::Hot(hot) => hot.scan_pubkeys(callback),
+        }
+    }
+
+    /// iterate over all entries to put in index
+    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) -> TieredStorageResult<()> {
+        match self {
+            Self::Hot(hot) => hot.scan_index(callback),
+        }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    pub(crate) fn scan_accounts(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) -> TieredStorageResult<()> {
+        match self {
+            Self::Hot(hot) => hot.scan_accounts(callback),
+        }
+    }
+
+    /// for each offset in `sorted_offsets`, return the account size
+    pub(crate) fn get_account_sizes(
+        &self,
+        sorted_offsets: &[usize],
+    ) -> TieredStorageResult<Vec<usize>> {
+        match self {
+            Self::Hot(hot) => hot.get_account_sizes(sorted_offsets),
+        }
+    }
+
+    /// Returns a slice suitable for use when archiving tiered storages
+    pub fn data_for_archive(&self) -> &[u8] {
+        match self {
+            Self::Hot(hot) => hot.data_for_archive(),
         }
     }
 }

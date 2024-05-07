@@ -370,7 +370,7 @@ pub mod update_rewards_from_cached_accounts {
     solana_sdk::declare_id!("28s7i3htzhahXQKqmS2ExzbEoUypg9krwvtK2M9UWXh9");
 }
 pub mod enable_partitioned_epoch_reward {
-    solana_sdk::declare_id!("41tVp5qR1XwWRt5WifvtSQyuxtqQWJgEK8w91AtBqSwP");
+    solana_sdk::declare_id!("9bn2vTJUsUcnpiZWbu2woSKtTGW3ErZC9ERv88SDqQjK");
 }
 
 pub mod spl_token_v3_4_0 {
@@ -553,6 +553,11 @@ pub mod enable_bpf_loader_set_authority_checked_ix {
 pub mod enable_alt_bn128_syscall {
     solana_sdk::declare_id!("A16q37opZdQMCbe5qJ6xpBB9usykfv8jZaMkxvZQi4GJ");
 }
+
+pub mod simplify_alt_bn128_syscall_error_codes {
+    solana_sdk::declare_id!("JDn5q3GBeqzvUa7z67BbmVHVdE3EbUAjvFep3weR3jxX");
+}
+
 pub mod enable_alt_bn128_compression_syscall {
     solana_sdk::declare_id!("EJJewYSddEEtSZHiqugnvhQHiWyZKjkFDQASd7oKSagn");
 }
@@ -768,6 +773,10 @@ pub mod enable_gossip_duplicate_proof_ingestion {
     solana_sdk::declare_id!("FNKCMBzYUdjhHyPdsKG2LSmdzH8TCHXn3ytj8RNBS4nG");
 }
 
+pub mod chained_merkle_conflict_duplicate_proofs {
+    solana_sdk::declare_id!("chaie9S2zVfuxJKNRGkyTDokLwWxx6kD2ZLsqQHaDD8");
+}
+
 pub mod enable_chained_merkle_shreds {
     solana_sdk::declare_id!("7uZBkJXJ1HkuP6R3MJfZs7mLwymBcDbKdqbF51ZWLier");
 }
@@ -776,10 +785,28 @@ pub mod remove_rounding_in_fee_calculation {
     solana_sdk::declare_id!("BtVN7YjDzNE6Dk7kTT7YTDgMNUZTNgiSJgsdzAeTg2jF");
 }
 
+<<<<<<< HEAD
+=======
+pub mod enable_tower_sync_ix {
+    solana_sdk::declare_id!("tSynMCspg4xFiCj1v3TDb4c7crMR5tSBhLz4sF7rrNA");
+}
+
+>>>>>>> origin/patch-1
 pub mod deprecate_unused_legacy_vote_plumbing {
     solana_sdk::declare_id!("6Uf8S75PVh91MYgPQSHnjRAPQq6an5BDv9vomrCwDqLe");
 }
 
+<<<<<<< HEAD
+=======
+pub mod reward_full_priority_fee {
+    solana_sdk::declare_id!("3opE3EzAKnUftUDURkzMgwpNgimBAypW1mNDYH4x4Zg7");
+}
+
+pub mod abort_on_invalid_curve {
+    solana_sdk::declare_id!("FuS3FPfJDKSNot99ECLXtp3rueq36hMNStJkPJwWodLh");
+}
+
+>>>>>>> origin/patch-1
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -912,6 +939,7 @@ lazy_static! {
         (check_syscall_outputs_do_not_overlap::id(), "check syscall outputs do_not overlap #28600"),
         (enable_bpf_loader_set_authority_checked_ix::id(), "enable bpf upgradeable loader SetAuthorityChecked instruction #28424"),
         (enable_alt_bn128_syscall::id(), "add alt_bn128 syscalls #27961"),
+        (simplify_alt_bn128_syscall_error_codes::id(), "simplify alt_bn128 syscall error codes SIMD-0129"),
         (enable_program_redeployment_cooldown::id(), "enable program redeployment cooldown #29135"),
         (commission_updates_only_allowed_in_first_half_of_epoch::id(), "validator commission updates are only allowed in the first half of an epoch #29362"),
         (enable_turbine_fanout_experiments::id(), "enable turbine fanout experiments #29393"),
@@ -970,6 +998,13 @@ lazy_static! {
         (enable_chained_merkle_shreds::id(), "Enable chained Merkle shreds #34916"),
         (remove_rounding_in_fee_calculation::id(), "Removing unwanted rounding in fee calculation #34982"),
         (deprecate_unused_legacy_vote_plumbing::id(), "Deprecate unused legacy vote tx plumbing"),
+<<<<<<< HEAD
+=======
+        (enable_tower_sync_ix::id(), "Enable tower sync vote instruction"),
+        (chained_merkle_conflict_duplicate_proofs::id(), "generate duplicate proofs for chained merkle root conflicts"),
+        (reward_full_priority_fee::id(), "Reward full priority fee to validators #34731"),
+        (abort_on_invalid_curve::id(), "Abort when elliptic curve syscalls invoked on invalid curve id SIMD-0137")
+>>>>>>> origin/patch-1
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

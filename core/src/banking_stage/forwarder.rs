@@ -24,7 +24,7 @@ use {
     },
 };
 
-pub(crate) struct Forwarder {
+pub struct Forwarder {
     poh_recorder: Arc<RwLock<PohRecorder>>,
     bank_forks: Arc<RwLock<BankForks>>,
     socket: UdpSocket,
@@ -34,7 +34,7 @@ pub(crate) struct Forwarder {
 }
 
 impl Forwarder {
-    pub(crate) fn new(
+    pub fn new(
         poh_recorder: Arc<RwLock<PohRecorder>>,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
@@ -51,7 +51,7 @@ impl Forwarder {
         }
     }
 
-    pub(crate) fn handle_forwarding(
+    pub fn handle_forwarding(
         &self,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         hold: bool,
@@ -61,9 +61,9 @@ impl Forwarder {
     ) {
         let forward_option = unprocessed_transaction_storage.forward_option();
 
-        // get current root bank from bank_forks, use it to sanitize transaction and
+        // get current working bank from bank_forks, use it to sanitize transaction and
         // load all accounts from address loader;
-        let current_bank = self.bank_forks.read().unwrap().root_bank();
+        let current_bank = self.bank_forks.read().unwrap().working_bank();
 
         let mut forward_packet_batches_by_accounts =
             ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
@@ -144,7 +144,7 @@ impl Forwarder {
     /// Forwards all valid, unprocessed packets in the iterator, up to a rate limit.
     /// Returns whether forwarding succeeded, the number of attempted forwarded packets
     /// if any, the time spent forwarding in us, and the leader pubkey if any.
-    pub(crate) fn forward_packets<'a>(
+    pub fn forward_packets<'a>(
         &self,
         forward_option: &ForwardOption,
         forwardable_packets: impl Iterator<Item = &'a Packet>,
@@ -161,6 +161,7 @@ impl Forwarder {
         self.update_data_budget();
         let packet_vec: Vec<_> = forwardable_packets
             .filter(|p| !p.meta().forwarded())
+            .filter(|p| p.meta().is_from_staked_node())
             .filter(|p| self.data_budget.take(p.meta().size))
             .filter_map(|p| p.data(..).map(|data| data.to_vec()))
             .collect();

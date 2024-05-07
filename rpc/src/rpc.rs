@@ -1,7 +1,8 @@
 //! The `rpc` module implements the Solana RPC interface.
 use {
     crate::{
-        max_slots::MaxSlots, optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+        filter::filter_allows, max_slots::MaxSlots,
+        optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
@@ -16,13 +17,15 @@ use {
     solana_accounts_db::{
         accounts::AccountAddressFilter,
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig},
-        inline_spl_token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-        inline_spl_token_2022::{self, ACCOUNTTYPE_ACCOUNT},
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_entry::entry::Entry,
     solana_faucet::faucet::request_airdrop_transaction,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_inline_spl::{
+        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
+        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
+    },
     solana_ledger::{
         blockstore::{Blockstore, SignatureInfosForAddress},
         blockstore_db::BlockstoreError,
@@ -59,7 +62,7 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         account_utils::StateMut,
-        clock::{Slot, UnixTimestamp, MAX_RECENT_BLOCKHASHES},
+        clock::{Slot, UnixTimestamp, MAX_PROCESSING_AGE},
         commitment_config::{CommitmentConfig, CommitmentLevel},
         epoch_info::EpochInfo,
         epoch_schedule::EpochSchedule,
@@ -2037,7 +2040,7 @@ impl JsonRpcRequestProcessor {
         let filter_closure = |account: &AccountSharedData| {
             filters
                 .iter()
-                .all(|filter_type| filter_type.allows(account))
+                .all(|filter_type| filter_allows(filter_type, account))
         };
         if self
             .config
@@ -2114,7 +2117,7 @@ impl JsonRpcRequestProcessor {
                         account.owner() == program_id
                             && filters
                                 .iter()
-                                .all(|filter_type| filter_type.allows(account))
+                                .all(|filter_type| filter_allows(filter_type, account))
                     },
                     &ScanConfig::default(),
                     bank.byte_limit_for_scans(),
@@ -2164,7 +2167,7 @@ impl JsonRpcRequestProcessor {
                         account.owner() == program_id
                             && filters
                                 .iter()
-                                .all(|filter_type| filter_type.allows(account))
+                                .all(|filter_type| filter_allows(filter_type, account))
                     },
                     &ScanConfig::default(),
                     bank.byte_limit_for_scans(),
@@ -2388,7 +2391,7 @@ fn get_spl_token_owner_filter(program_id: &Pubkey, filters: &[RpcFilterType]) ->
                 offset,
                 bytes: MemcmpEncodedBytes::Bytes(bytes),
                 ..
-            }) if *offset == account_packed_len && *program_id == inline_spl_token_2022::id() => {
+            }) if *offset == account_packed_len && *program_id == token_2022::id() => {
                 memcmp_filter = Some(bytes)
             }
             #[allow(deprecated)]
@@ -2446,7 +2449,7 @@ fn get_spl_token_mint_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> 
                 offset,
                 bytes: MemcmpEncodedBytes::Bytes(bytes),
                 ..
-            }) if *offset == account_packed_len && *program_id == inline_spl_token_2022::id() => {
+            }) if *offset == account_packed_len && *program_id == token_2022::id() => {
                 memcmp_filter = Some(bytes)
             }
             #[allow(deprecated)]
@@ -2589,7 +2592,7 @@ pub mod rpc_minimal {
         #[rpc(meta, name = "getVersion")]
         fn get_version(&self, meta: Self::Metadata) -> Result<RpcVersionInfo>;
 
-        // TODO: Refactor `solana-validator wait-for-restart-window` to not require this method, so
+        // TODO: Refactor `agave-validator wait-for-restart-window` to not require this method, so
         //       it can be removed from rpc_minimal
         #[rpc(meta, name = "getVoteAccounts")]
         fn get_vote_accounts(
@@ -2598,7 +2601,7 @@ pub mod rpc_minimal {
             config: Option<RpcGetVoteAccountsConfig>,
         ) -> Result<RpcVoteAccountStatus>;
 
-        // TODO: Refactor `solana-validator wait-for-restart-window` to not require this method, so
+        // TODO: Refactor `agave-validator wait-for-restart-window` to not require this method, so
         //       it can be removed from rpc_minimal
         #[rpc(meta, name = "getLeaderSchedule")]
         fn get_leader_schedule(
@@ -2724,7 +2727,7 @@ pub mod rpc_minimal {
             })
         }
 
-        // TODO: Refactor `solana-validator wait-for-restart-window` to not require this method, so
+        // TODO: Refactor `agave-validator wait-for-restart-window` to not require this method, so
         //       it can be removed from rpc_minimal
         fn get_vote_accounts(
             &self,
@@ -2735,7 +2738,7 @@ pub mod rpc_minimal {
             meta.get_vote_accounts(config)
         }
 
-        // TODO: Refactor `solana-validator wait-for-restart-window` to not require this method, so
+        // TODO: Refactor `agave-validator wait-for-restart-window` to not require this method, so
         //       it can be removed from rpc_minimal
         fn get_leader_schedule(
             &self,
@@ -3645,14 +3648,21 @@ pub mod rpc_full {
             let (wire_transaction, unsanitized_tx) =
                 decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
-            let preflight_commitment =
-                preflight_commitment.map(|commitment| CommitmentConfig { commitment });
+            let preflight_commitment = if skip_preflight {
+                Some(CommitmentConfig::processed())
+            } else {
+                preflight_commitment.map(|commitment| CommitmentConfig { commitment })
+            };
             let preflight_bank = &*meta.get_bank_with_config(RpcContextConfig {
                 commitment: preflight_commitment,
                 min_context_slot,
             })?;
 
-            let transaction = sanitize_transaction(unsanitized_tx, preflight_bank)?;
+            let transaction = sanitize_transaction(
+                unsanitized_tx,
+                preflight_bank,
+                preflight_bank.get_reserved_account_keys(),
+            )?;
             let signature = *transaction.signature();
 
             let mut last_valid_block_height = preflight_bank
@@ -3662,13 +3672,12 @@ pub mod rpc_full {
             let durable_nonce_info = transaction
                 .get_durable_nonce()
                 .map(|&pubkey| (pubkey, *transaction.message().recent_blockhash()));
-            if durable_nonce_info.is_some() {
+            if durable_nonce_info.is_some() || (skip_preflight && last_valid_block_height == 0) {
                 // While it uses a defined constant, this last_valid_block_height value is chosen arbitrarily.
                 // It provides a fallback timeout for durable-nonce transaction retries in case of
                 // malicious packing of the retry queue. Durable-nonce transactions are otherwise
                 // retried until the nonce is advanced.
-                last_valid_block_height =
-                    preflight_bank.block_height() + MAX_RECENT_BLOCKHASHES as u64;
+                last_valid_block_height = preflight_bank.block_height() + MAX_PROCESSING_AGE as u64;
             }
 
             if !skip_preflight {
@@ -3718,6 +3727,7 @@ pub mod rpc_full {
                             units_consumed: Some(units_consumed),
                             return_data: return_data.map(|return_data| return_data.into()),
                             inner_instructions: None,
+                            replacement_blockhash: None,
                         },
                     }
                     .into());
@@ -3763,18 +3773,28 @@ pub mod rpc_full {
                 commitment,
                 min_context_slot,
             })?;
+            let mut blockhash: Option<RpcBlockhash> = None;
             if replace_recent_blockhash {
                 if sig_verify {
                     return Err(Error::invalid_params(
                         "sigVerify may not be used with replaceRecentBlockhash",
                     ));
                 }
+                let recent_blockhash = bank.last_blockhash();
                 unsanitized_tx
                     .message
-                    .set_recent_blockhash(bank.last_blockhash());
+                    .set_recent_blockhash(recent_blockhash);
+                let last_valid_block_height = bank
+                    .get_blockhash_last_valid_block_height(&recent_blockhash)
+                    .expect("bank blockhash queue should contain blockhash");
+                blockhash.replace(RpcBlockhash {
+                    blockhash: recent_blockhash.to_string(),
+                    last_valid_block_height,
+                });
             }
 
-            let transaction = sanitize_transaction(unsanitized_tx, bank)?;
+            let transaction =
+                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
             if sig_verify {
                 verify_transaction(&transaction, &bank.feature_set)?;
             }
@@ -3852,6 +3872,7 @@ pub mod rpc_full {
                     units_consumed: Some(units_consumed),
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
+                    replacement_blockhash: blockhash,
                 },
             ))
         }
@@ -4025,10 +4046,12 @@ pub mod rpc_full {
                 .map_err(|err| {
                     Error::invalid_params(format!("invalid transaction message: {err}"))
                 })?;
-            let sanitized_message = SanitizedMessage::try_new(sanitized_versioned_message, bank)
-                .map_err(|err| {
-                    Error::invalid_params(format!("invalid transaction message: {err}"))
-                })?;
+            let sanitized_message = SanitizedMessage::try_new(
+                sanitized_versioned_message,
+                bank,
+                bank.get_reserved_account_keys(),
+            )
+            .map_err(|err| Error::invalid_params(format!("invalid transaction message: {err}")))?;
             let fee = bank.get_fee_for_message(&sanitized_message);
             Ok(new_response(bank, fee))
         }
@@ -4607,9 +4630,16 @@ where
 fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
+    reserved_account_keys: &HashSet<Pubkey>,
 ) -> Result<SanitizedTransaction> {
-    SanitizedTransaction::try_create(transaction, MessageHash::Compute, None, address_loader)
-        .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
+    SanitizedTransaction::try_create(
+        transaction,
+        MessageHash::Compute,
+        None,
+        address_loader,
+        reserved_account_keys,
+    )
+    .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
 
 pub fn create_validator_exit(exit: Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
@@ -4720,7 +4750,6 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_accounts_db::{inline_spl_token, inline_spl_token_2022},
         solana_entry::entry::next_versioned_entry,
         solana_gossip::socketaddr,
         solana_ledger::{
@@ -4746,7 +4775,7 @@ pub mod tests {
                 self,
                 state::{AddressLookupTable, LookupTableMeta},
             },
-            clock::MAX_RECENT_BLOCKHASHES,
+            clock::MAX_PROCESSING_AGE,
             compute_budget::ComputeBudgetInstruction,
             fee_calculator::{FeeRateGovernor, DEFAULT_BURN_PERCENT},
             hash::{hash, Hash},
@@ -4756,6 +4785,7 @@ pub mod tests {
                 Message, MessageHeader, VersionedMessage,
             },
             nonce::{self, state::DurableNonce},
+            reserved_account_keys::ReservedAccountKeys,
             rpc_port,
             signature::{Keypair, Signer},
             slot_hashes::SlotHashes,
@@ -4777,7 +4807,8 @@ pub mod tests {
         spl_token_2022::{
             extension::{
                 immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
-                mint_close_authority::MintCloseAuthority, ExtensionType, StateWithExtensionsMut,
+                mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut,
+                ExtensionType, StateWithExtensionsMut,
             },
             solana_program::{program_option::COption, pubkey::Pubkey as SplTokenPubkey},
             state::{AccountState as TokenAccountState, Mint},
@@ -5072,11 +5103,11 @@ pub mod tests {
             self.bank_forks.write().unwrap().insert(new_bank);
 
             for root in roots.iter() {
-                self.bank_forks.write().unwrap().set_root(
-                    *root,
-                    &AbsRequestSender::default(),
-                    Some(0),
-                );
+                self.bank_forks
+                    .write()
+                    .unwrap()
+                    .set_root(*root, &AbsRequestSender::default(), Some(0))
+                    .unwrap();
                 let block_time = self
                     .bank_forks
                     .read()
@@ -5233,6 +5264,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_cluster_nodes() {
         let rpc = RpcHandler::start();
+        let version = solana_version::Version::default();
         let request = create_test_request("getClusterNodes", None);
         let result: Value = parse_success_result(rpc.handle_request_sync(request));
         let expected = json!([{
@@ -5243,8 +5275,8 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:8009",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
-            "version": null,
-            "featureSet": null,
+            "version": format!("{version}"),
+            "featureSet": version.feature_set,
         }, {
             "pubkey": rpc.leader_pubkey().to_string(),
             "gossip": "127.0.0.1:1235",
@@ -5253,8 +5285,8 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:1240",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
-            "version": null,
-            "featureSet": null,
+            "version": format!("{version}"),
+            "featureSet": version.feature_set,
         }]);
         assert_eq!(result, expected);
     }
@@ -6005,6 +6037,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":150,
                 }
@@ -6090,6 +6123,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":150,
                 }
@@ -6119,7 +6153,8 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
-                    "returnData":null,
+                    "replacementBlockhash": null,
+                    "returnData": null,
                     "unitsConsumed":150,
                 }
             },
@@ -6169,7 +6204,8 @@ pub mod tests {
                     "accounts":null,
                     "innerInstructions":null,
                     "logs":[],
-                    "returnData":null,
+                    "replacementBlockhash": null,
+                    "returnData": null,
                     "unitsConsumed":0,
                 }
             },
@@ -6187,6 +6223,11 @@ pub mod tests {
             r#"{{"jsonrpc":"2.0","id":1,"method":"simulateTransaction","params":["{tx_invalid_recent_blockhash}", {{"replaceRecentBlockhash": true}}]}}"#,
         );
         let res = io.handle_request_sync(&req, meta.clone());
+        let latest_blockhash = bank.confirmed_last_blockhash();
+        let expiry_slot = bank
+            .get_blockhash_last_valid_block_height(&latest_blockhash)
+            .expect("blockhash exists");
+
         let expected = json!({
             "jsonrpc": "2.0",
             "result": {
@@ -6199,6 +6240,10 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": {
+                        "blockhash": latest_blockhash.to_string(),
+                        "lastValidBlockHeight": expiry_slot
+                    },
                     "returnData":null,
                     "unitsConsumed":150,
                 }
@@ -6343,6 +6388,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData": null,
                     "unitsConsumed": 150,
                 }
@@ -6423,6 +6469,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 success",
                         "Program AddressLookupTab1e1111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":1200,
                 }
@@ -6466,6 +6513,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 success",
                         "Program AddressLookupTab1e1111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":1200,
                 }
@@ -6552,6 +6600,7 @@ pub mod tests {
                         "Program 11111111111111111111111111111111 success",
                         "Program AddressLookupTab1e1111111111111111111111111 success"
                     ],
+                    "replacementBlockhash": null,
                     "returnData":null,
                     "unitsConsumed":1200,
                 }
@@ -6716,8 +6765,8 @@ pub mod tests {
                     "feeCalculator": {
                         "lamportsPerSignature": TEST_SIGNATURE_FEE,
                     },
-                    "lastValidSlot": MAX_RECENT_BLOCKHASHES,
-                    "lastValidBlockHeight": MAX_RECENT_BLOCKHASHES,
+                    "lastValidSlot": MAX_PROCESSING_AGE,
+                    "lastValidBlockHeight": MAX_PROCESSING_AGE,
                 },
             },
             "id": 1
@@ -6927,7 +6976,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"logs":[],"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
             )
         );
 
@@ -7891,7 +7940,7 @@ pub mod tests {
             let token_account_pubkey = solana_sdk::pubkey::new_rand();
             let token_with_different_mint_pubkey = solana_sdk::pubkey::new_rand();
             let new_mint = SplTokenPubkey::new_from_array([5; 32]);
-            if program_id == inline_spl_token_2022::id() {
+            if program_id == solana_inline_spl::token_2022::id() {
                 // Add the token account
                 let account_base = TokenAccount {
                     mint,
@@ -8148,7 +8197,7 @@ pub mod tests {
                 .expect("actual response deserialization");
             let accounts: Vec<RpcKeyedAccount> =
                 serde_json::from_value(result["result"].clone()).unwrap();
-            if program_id == inline_spl_token::id() {
+            if program_id == solana_inline_spl::token::id() {
                 // native mint is included for token-v3
                 assert_eq!(accounts.len(), 4);
             } else {
@@ -8386,7 +8435,7 @@ pub mod tests {
             let delegate = SplTokenPubkey::new_from_array([4; 32]);
             let token_account_pubkey = solana_sdk::pubkey::new_rand();
             let (program_name, account_size, mint_size) = if program_id
-                == inline_spl_token_2022::id()
+                == solana_inline_spl::token_2022::id()
             {
                 let account_base = TokenAccount {
                     mint,
@@ -8539,7 +8588,7 @@ pub mod tests {
                     }
                 }
             });
-            if program_id == inline_spl_token_2022::id() {
+            if program_id == solana_inline_spl::token_2022::id() {
                 expected_value["parsed"]["info"]["extensions"] = json!([
                     {
                         "extension": "immutableOwner"
@@ -8575,7 +8624,7 @@ pub mod tests {
                     }
                 }
             });
-            if program_id == inline_spl_token_2022::id() {
+            if program_id == solana_inline_spl::token_2022::id() {
                 expected_value["parsed"]["info"]["extensions"] = json!([
                     {
                         "extension": "mintCloseAuthority",
@@ -8595,7 +8644,7 @@ pub mod tests {
         let owner = Pubkey::new_unique();
         assert_eq!(
             get_spl_token_owner_filter(
-                &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+                &spl_token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                     RpcFilterType::DataSize(165)
@@ -8608,7 +8657,7 @@ pub mod tests {
         // Filtering on token-2022 account type
         assert_eq!(
             get_spl_token_owner_filter(
-                &Pubkey::from_str("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap(),
+                &token_2022::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8621,7 +8670,7 @@ pub mod tests {
         // Filtering on token account state
         assert_eq!(
             get_spl_token_owner_filter(
-                &Pubkey::from_str("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap(),
+                &token_2022::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                     RpcFilterType::TokenAccountState,
@@ -8633,7 +8682,7 @@ pub mod tests {
 
         // Can't filter on account type for token-v3
         assert!(get_spl_token_owner_filter(
-            &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+            &solana_inline_spl::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8643,7 +8692,7 @@ pub mod tests {
 
         // Filtering on mint instead of owner
         assert!(get_spl_token_owner_filter(
-            &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+            &solana_inline_spl::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, owner.to_bytes().to_vec())),
                 RpcFilterType::DataSize(165)
@@ -8676,7 +8725,7 @@ pub mod tests {
         let mint = Pubkey::new_unique();
         assert_eq!(
             get_spl_token_mint_filter(
-                &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+                &solana_inline_spl::token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::DataSize(165)
@@ -8689,7 +8738,7 @@ pub mod tests {
         // Filtering on token-2022 account type
         assert_eq!(
             get_spl_token_mint_filter(
-                &Pubkey::from_str("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb").unwrap(),
+                &solana_inline_spl::token_2022::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8702,7 +8751,7 @@ pub mod tests {
         // Filtering on token account state
         assert_eq!(
             get_spl_token_mint_filter(
-                &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+                &solana_inline_spl::token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::TokenAccountState,
@@ -8714,7 +8763,7 @@ pub mod tests {
 
         // Can't filter on account type for token-v3
         assert!(get_spl_token_mint_filter(
-            &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+            &solana_inline_spl::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8724,7 +8773,7 @@ pub mod tests {
 
         // Filtering on owner instead of mint
         assert!(get_spl_token_mint_filter(
-            &Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap(),
+            &solana_inline_spl::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, mint.to_bytes().to_vec())),
                 RpcFilterType::DataSize(165)
@@ -9017,8 +9066,12 @@ pub mod tests {
                 .to_string(),
         );
         assert_eq!(
-            sanitize_transaction(unsanitary_versioned_tx, SimpleAddressLoader::Disabled)
-                .unwrap_err(),
+            sanitize_transaction(
+                unsanitary_versioned_tx,
+                SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set()
+            )
+            .unwrap_err(),
             expect58
         );
     }
@@ -9038,7 +9091,12 @@ pub mod tests {
         };
 
         assert_eq!(
-            sanitize_transaction(versioned_tx, SimpleAddressLoader::Disabled).unwrap_err(),
+            sanitize_transaction(
+                versioned_tx,
+                SimpleAddressLoader::Disabled,
+                &ReservedAccountKeys::empty_key_set()
+            )
+            .unwrap_err(),
             Error::invalid_params(
                 "invalid transaction: Transaction version is unsupported".to_string(),
             )

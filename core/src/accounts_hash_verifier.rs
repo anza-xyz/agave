@@ -24,6 +24,7 @@ use {
         hash::Hash,
     },
     std::{
+        io::{Error as IoError, Result as IoResult},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -71,12 +72,24 @@ impl AccountsHashVerifier {
                     info!("handling accounts package: {accounts_package:?}");
                     let enqueued_time = accounts_package.enqueued.elapsed();
 
+<<<<<<< HEAD
                     let (_, handling_time_us) = measure_us!(Self::process_accounts_package(
+=======
+                    let (result, handling_time_us) = measure_us!(Self::process_accounts_package(
+>>>>>>> origin/patch-1
                         accounts_package,
                         snapshot_package_sender.as_ref(),
                         &snapshot_config,
                         &exit,
                     ));
+<<<<<<< HEAD
+=======
+                    if let Err(err) = result {
+                        error!("Stopping AccountsHashVerifier! Fatal error while processing accounts package: {err}");
+                        exit.store(true, Ordering::Relaxed);
+                        break;
+                    }
+>>>>>>> origin/patch-1
 
                     datapoint_info!(
                         "accounts_hash_verifier",
@@ -208,9 +221,9 @@ impl AccountsHashVerifier {
         snapshot_package_sender: Option<&Sender<SnapshotPackage>>,
         snapshot_config: &SnapshotConfig,
         exit: &AtomicBool,
-    ) {
+    ) -> IoResult<()> {
         let accounts_hash =
-            Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config);
+            Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config)?;
 
         Self::save_epoch_accounts_hash(&accounts_package, accounts_hash);
 
@@ -221,13 +234,15 @@ impl AccountsHashVerifier {
             accounts_hash,
             exit,
         );
+
+        Ok(())
     }
 
     /// returns calculated accounts hash
     fn calculate_and_verify_accounts_hash(
         accounts_package: &AccountsPackage,
         snapshot_config: &SnapshotConfig,
-    ) -> AccountsHashKind {
+    ) -> IoResult<AccountsHashKind> {
         let accounts_hash_calculation_kind = match accounts_package.package_kind {
             AccountsPackageKind::AccountsHashVerifier => CalcAccountsHashKind::Full,
             AccountsPackageKind::EpochAccountsHash => CalcAccountsHashKind::Full,
@@ -303,6 +318,23 @@ impl AccountsHashVerifier {
                 &accounts_hash_for_reserialize,
                 bank_incremental_snapshot_persistence.as_ref(),
             );
+
+            // now write the full snapshot slot file after reserializing so this bank snapshot is loadable
+            let full_snapshot_archive_slot = match accounts_package.package_kind {
+                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(base_slot)) => {
+                    base_slot
+                }
+                _ => accounts_package.slot,
+            };
+            snapshot_utils::write_full_snapshot_slot_file(
+                &snapshot_info.bank_snapshot_dir,
+                full_snapshot_archive_slot,
+            )
+            .map_err(|err| {
+                IoError::other(format!(
+                    "failed to calculate accounts hash for {accounts_package:?}: {err}"
+                ))
+            })?;
         }
 
         if accounts_package.package_kind
@@ -340,7 +372,7 @@ impl AccountsHashVerifier {
             );
         }
 
-        accounts_hash_kind
+        Ok(accounts_hash_kind)
     }
 
     fn _calculate_full_accounts_hash(
@@ -357,7 +389,6 @@ impl AccountsHashVerifier {
 
         let calculate_accounts_hash_config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
-            check_hash: false,
             ancestors: None,
             epoch_schedule: &accounts_package.epoch_schedule,
             rent_collector: &accounts_package.rent_collector,
@@ -365,16 +396,13 @@ impl AccountsHashVerifier {
         };
 
         let slot = accounts_package.slot;
-        let ((accounts_hash, lamports), measure_hash_us) = measure_us!(accounts_package
-            .accounts
-            .accounts_db
-            .update_accounts_hash(
+        let ((accounts_hash, lamports), measure_hash_us) =
+            measure_us!(accounts_package.accounts.accounts_db.update_accounts_hash(
                 &calculate_accounts_hash_config,
                 &sorted_storages,
                 slot,
                 timings,
-            )
-            .unwrap()); // unwrap here will never fail since check_hash = false
+            ));
 
         if accounts_package.expected_capitalization != lamports {
             // before we assert, run the hash calc again. This helps track down whether it could have been a failure in a race condition possibly with shrink.
@@ -397,7 +425,7 @@ impl AccountsHashVerifier {
             _ = accounts_package
                 .accounts
                 .accounts_db
-                .calculate_accounts_hash_from_storages(
+                .calculate_accounts_hash(
                     &calculate_accounts_hash_config,
                     &sorted_storages,
                     HashStats::default(),
@@ -436,25 +464,21 @@ impl AccountsHashVerifier {
 
         let calculate_accounts_hash_config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
-            check_hash: false,
             ancestors: None,
             epoch_schedule: &accounts_package.epoch_schedule,
             rent_collector: &accounts_package.rent_collector,
             store_detailed_debug_info_on_failure: false,
         };
 
-        let (incremental_accounts_hash, measure_hash_us) = measure_us!(
-            accounts_package
-                .accounts
-                .accounts_db
-                .update_incremental_accounts_hash(
-                    &calculate_accounts_hash_config,
-                    &sorted_storages,
-                    accounts_package.slot,
-                    HashStats::default(),
-                )
-                .unwrap() // unwrap here will never fail since check_hash = false
-        );
+        let (incremental_accounts_hash, measure_hash_us) = measure_us!(accounts_package
+            .accounts
+            .accounts_db
+            .update_incremental_accounts_hash(
+                &calculate_accounts_hash_config,
+                &sorted_storages,
+                accounts_package.slot,
+                HashStats::default(),
+            ));
 
         datapoint_info!(
             "accounts_hash_verifier",

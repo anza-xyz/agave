@@ -1,4 +1,8 @@
 use {
+    agave_validator::{
+        admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
+        println_name_value, redirect_stderr_to_file,
+    },
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     itertools::Itertools,
@@ -28,10 +32,6 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::*,
-    solana_validator::{
-        admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
-        println_name_value, redirect_stderr_to_file,
-    },
     std::{
         collections::HashSet,
         fs, io,
@@ -423,9 +423,11 @@ fn main() {
         None
     };
 
-    let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage") {
+    let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
+        || matches.is_present("enable_bigtable_ledger_upload")
+    {
         Some(RpcBigtableConfig {
-            enable_bigtable_ledger_upload: false,
+            enable_bigtable_ledger_upload: matches.is_present("enable_bigtable_ledger_upload"),
             bigtable_instance_name: value_t_or_exit!(matches, "rpc_bigtable_instance", String),
             bigtable_app_profile_id: value_t_or_exit!(
                 matches,

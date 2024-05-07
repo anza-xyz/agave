@@ -1,7 +1,7 @@
 use {
     crate::cli_output::CliSignatureVerificationStatus,
     base64::{prelude::BASE64_STANDARD, Engine},
-    chrono::{Local, NaiveDateTime, SecondsFormat, TimeZone, Utc},
+    chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
     indicatif::{ProgressBar, ProgressStyle},
     solana_cli_config::SettingType,
@@ -13,6 +13,7 @@ use {
         native_token::lamports_to_sol,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
+        reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
         stake,
         transaction::{TransactionError, TransactionVersion, VersionedTransaction},
@@ -217,24 +218,21 @@ fn write_transaction<W: io::Write>(
     write_recent_blockhash(w, message.recent_blockhash(), prefix)?;
     write_signatures(w, &transaction.signatures, sigverify_status, prefix)?;
 
-    let mut fee_payer_index = None;
+    let reserved_account_keys = ReservedAccountKeys::new_all_activated().active;
     for (account_index, account) in account_keys.iter().enumerate() {
-        if fee_payer_index.is_none() && message.is_non_loader_key(account_index) {
-            fee_payer_index = Some(account_index)
-        }
-
         let account_meta = CliAccountMeta {
             is_signer: message.is_signer(account_index),
-            is_writable: message.is_maybe_writable(account_index),
+            is_writable: message.is_maybe_writable(account_index, Some(&reserved_account_keys)),
             is_invoked: message.is_invoked(account_index),
         };
 
+        let is_fee_payer = account_index == 0;
         write_account(
             w,
             account_index,
             *account,
             format_account_mode(account_meta),
-            Some(account_index) == fee_payer_index,
+            is_fee_payer,
             prefix,
         )?;
     }
@@ -715,10 +713,8 @@ pub fn new_spinner_progress_bar() -> ProgressBar {
 }
 
 pub fn unix_timestamp_to_string(unix_timestamp: UnixTimestamp) -> String {
-    match NaiveDateTime::from_timestamp_opt(unix_timestamp, 0) {
-        Some(ndt) => Utc
-            .from_utc_datetime(&ndt)
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
+    match DateTime::from_timestamp(unix_timestamp, 0) {
+        Some(ndt) => ndt.to_rfc3339_opts(SecondsFormat::Secs, true),
         None => format!("UnixTimestamp {unix_timestamp}"),
     }
 }
@@ -975,5 +971,10 @@ Rewards:
             &format_labeled_address(&pubkey, &address_labels),
             "abcdefghijklmnopqrstuvwxyz12345 (1111..1111)"
         );
+    }
+
+    #[test]
+    fn test_unix_timestamp_to_string() {
+        assert_eq!(unix_timestamp_to_string(1628633791), "2021-08-10T22:16:31Z");
     }
 }

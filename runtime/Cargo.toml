@@ -28,8 +28,8 @@ im = { workspace = true, features = ["rayon", "serde"] }
 index_list = { workspace = true }
 itertools = { workspace = true }
 lazy_static = { workspace = true }
+libc = { workspace = true }
 log = { workspace = true }
-lru = { workspace = true }
 lz4 = { workspace = true }
 memmap2 = { workspace = true }
 mockall = { workspace = true }
@@ -55,6 +55,7 @@ solana-config-program = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-frozen-abi = { workspace = true }
 solana-frozen-abi-macro = { workspace = true }
+solana-inline-spl = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }

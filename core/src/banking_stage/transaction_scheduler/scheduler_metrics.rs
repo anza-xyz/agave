@@ -1,6 +1,8 @@
 use {
     itertools::MinMaxResult,
+    solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, timing::AtomicInterval},
+    std::time::Instant,
 };
 
 #[derive(Default)]
@@ -57,6 +59,8 @@ pub struct SchedulerCountMetricsInner {
     pub num_finished: usize,
     /// Number of transactions that were retryable.
     pub num_retryable: usize,
+    /// Number of transactions that were scheduled to be forwarded.
+    pub num_forwarded: usize,
 
     /// Number of transactions that were immediately dropped on receive.
     pub num_dropped_on_receive: usize,
@@ -120,6 +124,7 @@ impl SchedulerCountMetricsInner {
             ),
             ("num_finished", self.num_finished, i64),
             ("num_retryable", self.num_retryable, i64),
+            ("num_forwarded", self.num_forwarded, i64),
             ("num_dropped_on_receive", self.num_dropped_on_receive, i64),
             (
                 "num_dropped_on_sanitization",
@@ -160,6 +165,7 @@ impl SchedulerCountMetricsInner {
             || self.num_schedule_filtered_out != 0
             || self.num_finished != 0
             || self.num_retryable != 0
+            || self.num_forwarded != 0
             || self.num_dropped_on_receive != 0
             || self.num_dropped_on_sanitization != 0
             || self.num_dropped_on_validate_locks != 0
@@ -177,6 +183,7 @@ impl SchedulerCountMetricsInner {
         self.num_schedule_filtered_out = 0;
         self.num_finished = 0;
         self.num_retryable = 0;
+        self.num_forwarded = 0;
         self.num_dropped_on_receive = 0;
         self.num_dropped_on_sanitization = 0;
         self.num_dropped_on_validate_locks = 0;
@@ -264,10 +271,8 @@ pub struct SchedulerTimingMetricsInner {
     pub schedule_filter_time_us: u64,
     /// Time spent scheduling transactions.
     pub schedule_time_us: u64,
-    /// Time spent clearing transactions from the container.
-    pub clear_time_us: u64,
-    /// Time spent cleaning expired or processed transactions from the container.
-    pub clean_time_us: u64,
+    /// Time spent forwarding transactions.
+    pub forward_time_us: u64,
     /// Time spent receiving completed transactions.
     pub receive_completed_time_us: u64,
 }
@@ -290,7 +295,7 @@ impl SlotSchedulerTimingMetrics {
             // Only report if there was an assigned slot.
             if self.slot.is_some() {
                 self.metrics
-                    .report("banking_stage_scheduler_slot_counts", self.slot);
+                    .report("banking_stage_scheduler_slot_timing", self.slot);
             }
             self.metrics.reset();
             self.slot = slot;
@@ -307,8 +312,7 @@ impl SchedulerTimingMetricsInner {
             ("buffer_time_us", self.buffer_time_us, i64),
             ("schedule_filter_time_us", self.schedule_filter_time_us, i64),
             ("schedule_time_us", self.schedule_time_us, i64),
-            ("clear_time_us", self.clear_time_us, i64),
-            ("clean_time_us", self.clean_time_us, i64),
+            ("forward_time_us", self.forward_time_us, i64),
             (
                 "receive_completed_time_us",
                 self.receive_completed_time_us,
@@ -327,8 +331,70 @@ impl SchedulerTimingMetricsInner {
         self.buffer_time_us = 0;
         self.schedule_filter_time_us = 0;
         self.schedule_time_us = 0;
-        self.clear_time_us = 0;
-        self.clean_time_us = 0;
+        self.forward_time_us = 0;
         self.receive_completed_time_us = 0;
+    }
+}
+
+#[derive(Default)]
+pub struct SchedulerLeaderDetectionMetrics {
+    inner: Option<SchedulerLeaderDetectionMetricsInner>,
+}
+
+struct SchedulerLeaderDetectionMetricsInner {
+    slot: Slot,
+    bank_creation_time: Instant,
+    bank_detected_time: Instant,
+}
+
+impl SchedulerLeaderDetectionMetrics {
+    pub fn update_and_maybe_report(&mut self, bank_start: Option<&BankStart>) {
+        match (&self.inner, bank_start) {
+            (None, Some(bank_start)) => self.initialize_inner(bank_start),
+            (Some(_inner), None) => self.report_and_reset(),
+            (Some(inner), Some(bank_start)) if inner.slot != bank_start.working_bank.slot() => {
+                self.report_and_reset();
+                self.initialize_inner(bank_start);
+            }
+            _ => {}
+        }
+    }
+
+    fn initialize_inner(&mut self, bank_start: &BankStart) {
+        let bank_detected_time = Instant::now();
+        self.inner = Some(SchedulerLeaderDetectionMetricsInner {
+            slot: bank_start.working_bank.slot(),
+            bank_creation_time: *bank_start.bank_creation_time,
+            bank_detected_time,
+        });
+    }
+
+    fn report_and_reset(&mut self) {
+        let SchedulerLeaderDetectionMetricsInner {
+            slot,
+            bank_creation_time,
+            bank_detected_time,
+        } = self.inner.take().expect("inner must be present");
+
+        let bank_detected_delay_us = bank_detected_time
+            .duration_since(bank_creation_time)
+            .as_micros()
+            .try_into()
+            .unwrap_or(i64::MAX);
+        let bank_detected_to_slot_end_detected_us = bank_detected_time
+            .elapsed()
+            .as_micros()
+            .try_into()
+            .unwrap_or(i64::MAX);
+        datapoint_info!(
+            "banking_stage_scheduler_leader_detection",
+            ("slot", slot, i64),
+            ("bank_detected_delay_us", bank_detected_delay_us, i64),
+            (
+                "bank_detected_to_slot_end_detected_us",
+                bank_detected_to_slot_end_detected_us,
+                i64
+            ),
+        );
     }
 }

@@ -20,6 +20,7 @@ use {
         signature::{Keypair, Signer},
         transaction::Transaction,
     },
+    solana_svm::transaction_processing_callback::TransactionProcessingCallback,
     std::{sync::Arc, thread::sleep, time::Duration},
     test::Bencher,
 };
@@ -132,7 +133,7 @@ fn do_bench_transactions(
 
     let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 1);
     bank.add_mockup_builtin(Pubkey::from(BUILTIN_PROGRAM_ID), MockBuiltin::vm);
-    bank.add_builtin_account("solana_noop_program", &Pubkey::from(NOOP_PROGRAM_ID), false);
+    bank.add_builtin_account("solana_noop_program", &Pubkey::from(NOOP_PROGRAM_ID));
     let bank = Arc::new(bank);
     let bank_client = BankClient::new_shared(bank.clone());
     let transactions = create_transactions(&bank_client, &mint_keypair);

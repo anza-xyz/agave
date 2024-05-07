@@ -1,23 +1,132 @@
 //! trait for abstracting underlying storage of pubkey and account pairs to be written
 use {
-    crate::{account_storage::meta::StoredAccountMeta, accounts_hash::AccountHash},
-    solana_sdk::{account::ReadableAccount, clock::Slot, pubkey::Pubkey},
+    crate::{
+        account_storage::meta::StoredAccountMeta,
+        accounts_db::{AccountFromStorage, AccountStorageEntry, AccountsDb},
+        accounts_index::ZeroLamport,
+    },
+    solana_sdk::{
+        account::{AccountSharedData, ReadableAccount},
+        clock::{Epoch, Slot},
+        pubkey::Pubkey,
+    },
+    std::sync::{Arc, RwLock},
 };
+
+/// hold a ref to an account to store. The account could be represented in memory a few different ways
+#[derive(Debug, Copy, Clone)]
+pub enum AccountForStorage<'a> {
+    AddressAndAccount((&'a Pubkey, &'a AccountSharedData)),
+    StoredAccountMeta(&'a StoredAccountMeta<'a>),
+}
+
+impl<'a> From<(&'a Pubkey, &'a AccountSharedData)> for AccountForStorage<'a> {
+    fn from(source: (&'a Pubkey, &'a AccountSharedData)) -> Self {
+        Self::AddressAndAccount(source)
+    }
+}
+
+impl<'a> From<&'a StoredAccountMeta<'a>> for AccountForStorage<'a> {
+    fn from(source: &'a StoredAccountMeta<'a>) -> Self {
+        Self::StoredAccountMeta(source)
+    }
+}
+
+impl<'a> ZeroLamport for AccountForStorage<'a> {
+    fn is_zero_lamport(&self) -> bool {
+        self.lamports() == 0
+    }
+}
+
+impl<'a> AccountForStorage<'a> {
+    pub fn pubkey(&self) -> &'a Pubkey {
+        match self {
+            AccountForStorage::AddressAndAccount((pubkey, _account)) => pubkey,
+            AccountForStorage::StoredAccountMeta(account) => account.pubkey(),
+        }
+    }
+}
+
+impl<'a> ReadableAccount for AccountForStorage<'a> {
+    fn lamports(&self) -> u64 {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => account.lamports(),
+            AccountForStorage::StoredAccountMeta(account) => account.lamports(),
+        }
+    }
+    fn data(&self) -> &[u8] {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => account.data(),
+            AccountForStorage::StoredAccountMeta(account) => account.data(),
+        }
+    }
+    fn owner(&self) -> &Pubkey {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => account.owner(),
+            AccountForStorage::StoredAccountMeta(account) => account.owner(),
+        }
+    }
+    fn executable(&self) -> bool {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => account.executable(),
+            AccountForStorage::StoredAccountMeta(account) => account.executable(),
+        }
+    }
+    fn rent_epoch(&self) -> Epoch {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => account.rent_epoch(),
+            AccountForStorage::StoredAccountMeta(account) => account.rent_epoch(),
+        }
+    }
+    fn to_account_shared_data(&self) -> AccountSharedData {
+        match self {
+            AccountForStorage::AddressAndAccount((_pubkey, account)) => {
+                account.to_account_shared_data()
+            }
+            AccountForStorage::StoredAccountMeta(account) => account.to_account_shared_data(),
+        }
+    }
+}
+
+lazy_static! {
+    static ref DEFAULT_ACCOUNT_SHARED_DATA: AccountSharedData = AccountSharedData::default();
+}
+
+#[derive(Default, Debug)]
+pub struct StorableAccountsCacher {
+    slot: Slot,
+    storage: Option<Arc<AccountStorageEntry>>,
+}
 
 /// abstract access to pubkey, account, slot, target_slot of either:
 /// a. (slot, &[&Pubkey, &ReadableAccount])
 /// b. (slot, &[&Pubkey, &ReadableAccount, Slot]) (we will use this later)
 /// This trait avoids having to allocate redundant data when there is a duplicated slot parameter.
 /// All legacy callers do not have a unique slot per account to store.
-pub trait StorableAccounts<'a, T: ReadableAccount + Sync>: Sync {
-    /// pubkey at 'index'
-    fn pubkey(&self, index: usize) -> &Pubkey;
+pub trait StorableAccounts<'a>: Sync {
     /// account at 'index'
-    fn account(&self, index: usize) -> &T;
+    fn account<Ret>(
+        &self,
+        index: usize,
+        callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret;
     /// None if account is zero lamports
-    fn account_default_if_zero_lamport(&self, index: usize) -> Option<&T> {
-        let account = self.account(index);
-        (account.lamports() != 0).then_some(account)
+    fn account_default_if_zero_lamport<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        self.account(index, |account| {
+            callback(if account.lamports() != 0 {
+                account
+            } else {
+                // preserve the pubkey, but use a default value for the account
+                AccountForStorage::AddressAndAccount((
+                    account.pubkey(),
+                    &DEFAULT_ACCOUNT_SHARED_DATA,
+                ))
+            })
+        })
     }
     // current slot for account at 'index'
     fn slot(&self, index: usize) -> Slot;
@@ -34,65 +143,15 @@ pub trait StorableAccounts<'a, T: ReadableAccount + Sync>: Sync {
     fn contains_multiple_slots(&self) -> bool {
         false
     }
-
-    /// true iff the impl can provide hash and write_version
-    /// Otherwise, hash and write_version have to be provided separately to store functions.
-    fn has_hash_and_write_version(&self) -> bool {
-        false
-    }
-
-    /// return hash for account at 'index'
-    /// Should only be called if 'has_hash_and_write_version' = true
-    fn hash(&self, _index: usize) -> &AccountHash {
-        // this should never be called if has_hash_and_write_version returns false
-        unimplemented!();
-    }
-
-    /// return write_version for account at 'index'
-    /// Should only be called if 'has_hash_and_write_version' = true
-    fn write_version(&self, _index: usize) -> u64 {
-        // this should never be called if has_hash_and_write_version returns false
-        unimplemented!();
-    }
 }
 
-/// accounts that are moving from 'old_slot' to 'target_slot'
-/// since all accounts are from the same old slot, we don't need to create a slice with per-account slot
-/// but, we need slot(_) to return 'old_slot' for all accounts
-/// Created a struct instead of a tuple to make the code easier to read.
-pub struct StorableAccountsMovingSlots<'a, T: ReadableAccount + Sync> {
-    pub accounts: &'a [(&'a Pubkey, &'a T)],
-    /// accounts will be written to this slot
-    pub target_slot: Slot,
-    /// slot where accounts are currently stored
-    pub old_slot: Slot,
-}
-
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a, T> for StorableAccountsMovingSlots<'a, T> {
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.accounts[index].0
-    }
-    fn account(&self, index: usize) -> &T {
-        self.accounts[index].1
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot, but it is different than 'target_slot'
-        self.old_slot
-    }
-    fn target_slot(&self) -> Slot {
-        self.target_slot
-    }
-    fn len(&self) -> usize {
-        self.accounts.len()
-    }
-}
-
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a, T> for (Slot, &'a [(&'a Pubkey, &'a T)]) {
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.1[index].0
-    }
-    fn account(&self, index: usize) -> &T {
-        self.1[index].1
+impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSharedData)]) {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        callback((self.1[index].0, self.1[index].1).into())
     }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
@@ -103,53 +162,6 @@ impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a, T> for (Slot, &'a [(&'a
     }
     fn len(&self) -> usize {
         self.1.len()
-    }
-}
-
-impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a, T> for (Slot, &'a [&'a (Pubkey, T)]) {
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        &self.1[index].0
-    }
-    fn account(&self, index: usize) -> &T {
-        &self.1[index].1
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot when per-account slot is not included in the source data
-        self.target_slot()
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-}
-
-impl<'a> StorableAccounts<'a, StoredAccountMeta<'a>> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.account(index).pubkey()
-    }
-    fn account(&self, index: usize) -> &StoredAccountMeta<'a> {
-        self.1[index]
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // per-index slot is not unique per slot when per-account slot is not included in the source data
-        self.0
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-    fn has_hash_and_write_version(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.account(index).hash()
-    }
-    fn write_version(&self, index: usize) -> u64 {
-        self.account(index).write_version()
     }
 }
 
@@ -157,7 +169,7 @@ impl<'a> StorableAccounts<'a, StoredAccountMeta<'a>> for (Slot, &'a [&'a StoredA
 pub struct StorableAccountsBySlot<'a> {
     target_slot: Slot,
     /// each element is (source slot, accounts moving FROM source slot)
-    slots_and_accounts: &'a [(Slot, &'a [&'a StoredAccountMeta<'a>])],
+    slots_and_accounts: &'a [(Slot, &'a [&'a AccountFromStorage])],
 
     /// This is calculated based off slots_and_accounts.
     /// cumulative offset of all account slices prior to this one
@@ -168,13 +180,17 @@ pub struct StorableAccountsBySlot<'a> {
     contains_multiple_slots: bool,
     /// total len of all accounts, across all slots_and_accounts
     len: usize,
+    db: &'a AccountsDb,
+    /// remember the last storage we looked up for a given slot
+    cached_storage: RwLock<StorableAccountsCacher>,
 }
 
 impl<'a> StorableAccountsBySlot<'a> {
     /// each element of slots_and_accounts is (source slot, accounts moving FROM source slot)
     pub fn new(
         target_slot: Slot,
-        slots_and_accounts: &'a [(Slot, &'a [&'a StoredAccountMeta<'a>])],
+        slots_and_accounts: &'a [(Slot, &'a [&'a AccountFromStorage])],
+        db: &'a AccountsDb,
     ) -> Self {
         let mut cumulative_len = 0usize;
         let mut starting_offsets = Vec::with_capacity(slots_and_accounts.len());
@@ -194,6 +210,8 @@ impl<'a> StorableAccountsBySlot<'a> {
             starting_offsets,
             contains_multiple_slots,
             len: cumulative_len,
+            db,
+            cached_storage: RwLock::default(),
         }
     }
     /// given an overall index for all accounts in self:
@@ -216,13 +234,44 @@ impl<'a> StorableAccountsBySlot<'a> {
     }
 }
 
-impl<'a> StorableAccounts<'a, StoredAccountMeta<'a>> for StorableAccountsBySlot<'a> {
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.account(index).pubkey()
-    }
-    fn account(&self, index: usize) -> &StoredAccountMeta<'a> {
+impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
         let indexes = self.find_internal_index(index);
-        self.slots_and_accounts[indexes.0].1[indexes.1]
+        let slot = self.slots_and_accounts[indexes.0].0;
+        let data = self.slots_and_accounts[indexes.0].1[indexes.1];
+        let offset = data.index_info.offset();
+        let mut call_callback = |storage: &AccountStorageEntry| {
+            storage
+                .accounts
+                .get_stored_account_meta_callback(offset, |account: StoredAccountMeta| {
+                    callback((&account).into())
+                })
+                .expect("account has to exist to be able to store it")
+        };
+        {
+            let reader = self.cached_storage.read().unwrap();
+            if reader.slot == slot {
+                if let Some(storage) = reader.storage.as_ref() {
+                    return call_callback(storage);
+                }
+            }
+        }
+        // cache doesn't contain a storage for this slot, so lookup storage in db.
+        // note we do not use file id here. We just want the normal unshrunk storage for this slot.
+        let storage = self
+            .db
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+            .expect("source slot has to have a storage to be able to store accounts");
+        let ret = call_callback(&storage);
+        let mut writer = self.cached_storage.write().unwrap();
+        writer.slot = slot;
+        writer.storage = Some(storage);
+        ret
     }
     fn slot(&self, index: usize) -> Slot {
         let indexes = self.find_internal_index(index);
@@ -237,47 +286,6 @@ impl<'a> StorableAccounts<'a, StoredAccountMeta<'a>> for StorableAccountsBySlot<
     fn contains_multiple_slots(&self) -> bool {
         self.contains_multiple_slots
     }
-    fn has_hash_and_write_version(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.account(index).hash()
-    }
-    fn write_version(&self, index: usize) -> u64 {
-        self.account(index).write_version()
-    }
-}
-
-/// this tuple contains a single different source slot that applies to all accounts
-/// accounts are StoredAccountMeta
-impl<'a> StorableAccounts<'a, StoredAccountMeta<'a>>
-    for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot)
-{
-    fn pubkey(&self, index: usize) -> &Pubkey {
-        self.account(index).pubkey()
-    }
-    fn account(&self, index: usize) -> &StoredAccountMeta<'a> {
-        self.1[index]
-    }
-    fn slot(&self, _index: usize) -> Slot {
-        // same other slot for all accounts
-        self.2
-    }
-    fn target_slot(&self) -> Slot {
-        self.0
-    }
-    fn len(&self) -> usize {
-        self.1.len()
-    }
-    fn has_hash_and_write_version(&self) -> bool {
-        true
-    }
-    fn hash(&self, index: usize) -> &AccountHash {
-        self.account(index).hash()
-    }
-    fn write_version(&self, index: usize) -> u64 {
-        self.account(index).write_version()
-    }
 }
 
 #[cfg(test)]
@@ -285,34 +293,107 @@ pub mod tests {
     use {
         super::*,
         crate::{
+            account_info::{AccountInfo, StorageLocation},
             account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
+            accounts_db::{get_temp_accounts_paths, AccountStorageEntry},
+            accounts_file::AccountsFileProvider,
+            accounts_hash::AccountHash,
             append_vec::AppendVecStoredAccountMeta,
         },
         solana_sdk::{
             account::{accounts_equal, AccountSharedData, WritableAccount},
             hash::Hash,
         },
+        std::sync::Arc,
     };
 
-    fn compare<
-        'a,
-        T: ReadableAccount + Sync + PartialEq + std::fmt::Debug,
-        U: ReadableAccount + Sync + PartialEq + std::fmt::Debug,
-    >(
-        a: &impl StorableAccounts<'a, T>,
-        b: &impl StorableAccounts<'a, U>,
-    ) {
+    /// this is used in the test for generation of storages
+    /// this is no longer used in the validator.
+    /// It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>]) {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback(self.1[index].into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // per-index slot is not unique per slot when per-account slot is not included in the source data
+            self.0
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
+
+    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    impl<'a, T: ReadableAccount + Sync> StorableAccounts<'a> for (Slot, &'a [&'a (Pubkey, T)])
+    where
+        AccountForStorage<'a>: From<(&'a Pubkey, &'a T)>,
+    {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback((&self.1[index].0, &self.1[index].1).into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // per-index slot is not unique per slot when per-account slot is not included in the source data
+            self.target_slot()
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
+
+    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
+    /// this tuple contains a single different source slot that applies to all accounts
+    /// accounts are StoredAccountMeta
+    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountMeta<'a>], Slot) {
+        fn account<Ret>(
+            &self,
+            index: usize,
+            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+        ) -> Ret {
+            callback(self.1[index].into())
+        }
+        fn slot(&self, _index: usize) -> Slot {
+            // same other slot for all accounts
+            self.2
+        }
+        fn target_slot(&self) -> Slot {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.len()
+        }
+    }
+
+    fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
         assert_eq!(a.len(), b.len());
         assert_eq!(a.is_empty(), b.is_empty());
         (0..a.len()).for_each(|i| {
-            assert_eq!(a.pubkey(i), b.pubkey(i));
-            assert!(accounts_equal(a.account(i), b.account(i)));
+            b.account(i, |account| {
+                a.account(i, |account_a| {
+                    assert_eq!(account_a.pubkey(), account.pubkey());
+                    assert!(accounts_equal(&account_a, &account));
+                });
+            });
         })
     }
 
     #[test]
     fn test_contains_multiple_slots() {
+        let db = AccountsDb::new_single_for_tests();
         let pk = Pubkey::from([1; 32]);
         let slot = 0;
         let lamports = 1;
@@ -331,7 +412,7 @@ pub mod tests {
             rent_epoch,
         };
         let data = Vec::default();
-        let offset = 99;
+        let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
         let stored_size = 101;
         let hash = AccountHash(Hash::new_unique());
         let stored_account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
@@ -343,8 +424,20 @@ pub mod tests {
             hash: &hash,
         });
 
-        let test3 = (slot, &vec![&stored_account, &stored_account][..], slot);
+        let account_from_storage = AccountFromStorage::new(&stored_account);
+
+        let accounts = [&account_from_storage, &account_from_storage];
+        let accounts2 = [(slot, &accounts[..])];
+        let test3 = StorableAccountsBySlot::new(slot, &accounts2[..], &db);
         assert!(!test3.contains_multiple_slots());
+    }
+
+    pub fn build_accounts_from_storage<'a>(
+        accounts: impl Iterator<Item = &'a StoredAccountMeta<'a>>,
+    ) -> Vec<AccountFromStorage> {
+        accounts
+            .map(|account| AccountFromStorage::new(account))
+            .collect()
     }
 
     #[test]
@@ -353,6 +446,7 @@ pub mod tests {
         for target_slot in 0..max_slots {
             for entries in 0..2 {
                 for starting_slot in 0..max_slots {
+                    let db = AccountsDb::new_single_for_tests();
                     let data = Vec::default();
                     let hash = AccountHash(Hash::new_unique());
                     let mut raw = Vec::new();
@@ -386,7 +480,7 @@ pub mod tests {
                         ));
                     }
                     for entry in 0..entries {
-                        let offset = 99;
+                        let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
                         let stored_size = 101;
                         let raw = &raw[entry as usize];
                         raw2.push(StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
@@ -399,41 +493,65 @@ pub mod tests {
                         }));
                         raw4.push((raw.0, raw.1.clone()));
                     }
+                    let raw2_accounts_from_storage = build_accounts_from_storage(raw2.iter());
 
                     let mut two = Vec::new();
                     let mut three = Vec::new();
+                    let mut three_accounts_from_storage_byval = Vec::new();
                     let mut four_pubkey_and_account_value = Vec::new();
                     raw.iter()
-                        .zip(raw2.iter().zip(raw4.iter()))
-                        .for_each(|(raw, (raw2, raw4))| {
+                        .zip(
+                            raw2.iter()
+                                .zip(raw4.iter().zip(raw2_accounts_from_storage.iter())),
+                        )
+                        .for_each(|(raw, (raw2, (raw4, raw2_accounts_from_storage)))| {
                             two.push((&raw.0, &raw.1)); // 2 item tuple
                             three.push(raw2);
+                            three_accounts_from_storage_byval.push(*raw2_accounts_from_storage);
                             four_pubkey_and_account_value.push(raw4);
                         });
                     let test2 = (target_slot, &two[..]);
                     let test4 = (target_slot, &four_pubkey_and_account_value[..]);
 
                     let source_slot = starting_slot % max_slots;
-                    let test3 = (target_slot, &three[..], source_slot);
+
+                    let storage = setup_sample_storage(&db, source_slot);
+                    // since we're no longer storing `StoredAccountMeta`, we have to actually store the
+                    // accounts so they can be looked up later in `db`
+                    if let Some(offsets) = storage
+                        .accounts
+                        .append_accounts(&(source_slot, &three[..]), 0)
+                    {
+                        three_accounts_from_storage_byval
+                            .iter_mut()
+                            .zip(offsets.offsets.iter())
+                            .for_each(|(account, offset)| {
+                                account.index_info = AccountInfo::new(
+                                    StorageLocation::AppendVec(0, *offset),
+                                    if account.is_zero_lamport() { 0 } else { 1 },
+                                )
+                            });
+                    }
+                    let three_accounts_from_storage =
+                        three_accounts_from_storage_byval.iter().collect::<Vec<_>>();
+
+                    let accounts_with_slots = vec![(source_slot, &three_accounts_from_storage[..])];
+                    let test3 = StorableAccountsBySlot::new(target_slot, &accounts_with_slots, &db);
                     let old_slot = starting_slot;
-                    let test_moving_slots = StorableAccountsMovingSlots {
-                        accounts: &two[..],
-                        target_slot,
-                        old_slot,
-                    };
-                    let for_slice = [(old_slot, &three[..])];
-                    let test_moving_slots2 = StorableAccountsBySlot::new(target_slot, &for_slice);
+                    let for_slice = [(old_slot, &three_accounts_from_storage[..])];
+                    let test_moving_slots2 =
+                        StorableAccountsBySlot::new(target_slot, &for_slice, &db);
                     compare(&test2, &test3);
                     compare(&test2, &test4);
-                    compare(&test2, &test_moving_slots);
                     compare(&test2, &test_moving_slots2);
                     for (i, raw) in raw.iter().enumerate() {
-                        assert_eq!(raw.0, *test3.pubkey(i));
-                        assert!(accounts_equal(&raw.1, test3.account(i)));
+                        test3.account(i, |account| {
+                            assert_eq!(raw.0, *account.pubkey());
+                            assert!(accounts_equal(&raw.1, &account));
+                        });
                         assert_eq!(raw.2, test3.slot(i));
                         assert_eq!(target_slot, test4.slot(i));
                         assert_eq!(target_slot, test2.slot(i));
-                        assert_eq!(old_slot, test_moving_slots.slot(i));
                         assert_eq!(old_slot, test_moving_slots2.slot(i));
                     }
                     assert_eq!(target_slot, test3.target_slot());
@@ -441,18 +559,30 @@ pub mod tests {
                     assert_eq!(target_slot, test_moving_slots2.target_slot());
                     assert!(!test2.contains_multiple_slots());
                     assert!(!test4.contains_multiple_slots());
-                    assert!(!test_moving_slots.contains_multiple_slots());
                     assert_eq!(test3.contains_multiple_slots(), entries > 1);
                 }
             }
         }
     }
 
+    fn setup_sample_storage(db: &AccountsDb, slot: Slot) -> Arc<AccountStorageEntry> {
+        let id = 2;
+        let file_size = 10_000;
+        let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
+        let data = AccountStorageEntry::new(
+            &paths[0],
+            slot,
+            id,
+            file_size,
+            AccountsFileProvider::AppendVec,
+        );
+        let storage = Arc::new(data);
+        db.storage.insert(slot, storage.clone());
+        storage
+    }
+
     #[test]
     fn test_storable_accounts_by_slot() {
-        solana_logger::setup();
-        // slots 0..4
-        // each one containing a subset of the overall # of entries (0..4)
         for entries in 0..6 {
             let data = Vec::default();
             let hashes = (0..entries)
@@ -485,8 +615,9 @@ pub mod tests {
                     },
                 ));
             }
+
             for entry in 0..entries {
-                let offset = 99;
+                let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
                 let stored_size = 101;
                 raw2.push(StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
                     meta: &raw[entry as usize].2,
@@ -497,6 +628,11 @@ pub mod tests {
                     hash: &hashes[entry as usize],
                 }));
             }
+
+            let raw2_account_from_storage = raw2
+                .iter()
+                .map(|account| AccountFromStorage::new(account))
+                .collect::<Vec<_>>();
             let raw2_refs = raw2.iter().collect::<Vec<_>>();
 
             // enumerate through permutations of # entries (ie. accounts) in each slot. Each one is 0..=entries.
@@ -505,11 +641,12 @@ pub mod tests {
                 for entries1 in 0..=remaining1 {
                     let remaining2 = entries.saturating_sub(entries0 + entries1);
                     for entries2 in 0..=remaining2 {
+                        let db = AccountsDb::new_single_for_tests();
                         let remaining3 = entries.saturating_sub(entries0 + entries1 + entries2);
                         let entries_by_level = [entries0, entries1, entries2, remaining3];
                         let mut overall_index = 0;
                         let mut expected_slots = Vec::default();
-                        let slots_and_accounts = entries_by_level
+                        let slots_and_accounts_byval = entries_by_level
                             .iter()
                             .enumerate()
                             .filter_map(|(slot, count)| {
@@ -517,24 +654,54 @@ pub mod tests {
                                 let count = *count as usize;
                                 (overall_index < raw2.len()).then(|| {
                                     let range = overall_index..(overall_index + count);
-                                    let result = &raw2_refs[range.clone()];
+                                    let mut result =
+                                        raw2_account_from_storage[range.clone()].to_vec();
+                                    // since we're no longer storing `StoredAccountMeta`, we have to actually store the
+                                    // accounts so they can be looked up later in `db`
+                                    let storage = setup_sample_storage(&db, slot);
+                                    if let Some(offsets) = storage
+                                        .accounts
+                                        .append_accounts(&(slot, &raw2_refs[range.clone()]), 0)
+                                    {
+                                        result.iter_mut().zip(offsets.offsets.iter()).for_each(
+                                            |(account, offset)| {
+                                                account.index_info = AccountInfo::new(
+                                                    StorageLocation::AppendVec(0, *offset),
+                                                    if account.is_zero_lamport() { 0 } else { 1 },
+                                                )
+                                            },
+                                        );
+                                    }
+
                                     range.for_each(|_| expected_slots.push(slot));
                                     overall_index += count;
                                     (slot, result)
                                 })
                             })
                             .collect::<Vec<_>>();
-                        let storable = StorableAccountsBySlot::new(99, &slots_and_accounts[..]);
-                        assert!(storable.has_hash_and_write_version());
+                        let slots_and_accounts_ref1 = slots_and_accounts_byval
+                            .iter()
+                            .map(|(slot, accounts)| (*slot, accounts.iter().collect::<Vec<_>>()))
+                            .collect::<Vec<_>>();
+                        let slots_and_accounts = slots_and_accounts_ref1
+                            .iter()
+                            .map(|(slot, accounts)| (*slot, &accounts[..]))
+                            .collect::<Vec<_>>();
+
+                        let storable =
+                            StorableAccountsBySlot::new(99, &slots_and_accounts[..], &db);
                         assert_eq!(99, storable.target_slot());
                         assert_eq!(entries0 != entries, storable.contains_multiple_slots());
                         (0..entries).for_each(|index| {
                             let index = index as usize;
-                            assert_eq!(storable.account(index), &raw2[index]);
-                            assert_eq!(storable.pubkey(index), raw2[index].pubkey());
-                            assert_eq!(storable.hash(index), raw2[index].hash());
+                            let mut called = false;
+                            storable.account(index, |account| {
+                                called = true;
+                                assert!(accounts_equal(&account, &raw2[index]));
+                                assert_eq!(account.pubkey(), raw2[index].pubkey());
+                            });
+                            assert!(called);
                             assert_eq!(storable.slot(index), expected_slots[index]);
-                            assert_eq!(storable.write_version(index), raw2[index].write_version());
                         })
                     }
                 }

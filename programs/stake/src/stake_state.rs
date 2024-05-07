@@ -64,7 +64,7 @@ pub(crate) fn new_warmup_cooldown_rate_epoch(invoke_context: &InvokeContext) -> 
         .get_epoch_schedule()
         .unwrap();
     invoke_context
-        .feature_set
+        .get_feature_set()
         .new_warmup_cooldown_rate_epoch(epoch_schedule.as_ref())
 }
 
@@ -94,7 +94,7 @@ fn redelegate_stake(
     // If stake is currently active:
     if stake.stake(clock.epoch, stake_history, new_rate_activation_epoch) != 0 {
         let stake_lamports_ok = if invoke_context
-            .feature_set
+            .get_feature_set()
             .is_active(&feature_set::stake_redelegate_instruction::id())
         {
             // When a stake account is redelegated, the delegated lamports from the source stake
@@ -301,7 +301,7 @@ fn deactivate_stake(
     epoch: Epoch,
 ) -> Result<(), InstructionError> {
     if invoke_context
-        .feature_set
+        .get_feature_set()
         .is_active(&feature_set::stake_redelegate_instruction::id())
     {
         if stake_flags.contains(StakeFlags::MUST_FULLY_ACTIVATE_BEFORE_DEACTIVATION_IS_PERMITTED) {
@@ -402,7 +402,12 @@ pub fn split(
     match stake_state {
         StakeStateV2::Stake(meta, mut stake, stake_flags) => {
             meta.authorized.check(signers, StakeAuthorize::Staker)?;
+<<<<<<< HEAD
             let minimum_delegation = crate::get_minimum_delegation(&invoke_context.feature_set);
+=======
+            let minimum_delegation =
+                crate::get_minimum_delegation(invoke_context.get_feature_set());
+>>>>>>> origin/patch-1
             let is_active = {
                 let clock = invoke_context.get_sysvar_cache().get_clock()?;
                 let status = get_stake_status(invoke_context, &stake, &clock)?;
@@ -688,7 +693,7 @@ pub fn redelegate(
     let ValidatedDelegatedInfo { stake_amount } = validate_delegated_amount(
         &uninitialized_stake_account,
         &uninitialized_stake_meta,
-        &invoke_context.feature_set,
+        invoke_context.get_feature_set(),
     )?;
     uninitialized_stake_account.set_state(&StakeStateV2::Stake(
         uninitialized_stake_meta,
@@ -1968,7 +1973,7 @@ mod tests {
         }];
         // give 2 epochs of cooldown
         let epochs = 7;
-        // make boostrap stake smaller than warmup so warmup/cooldownn
+        // make bootstrap stake smaller than warmup so warmup/cooldownn
         //  increment is always smaller than 1
         let bootstrap = (warmup_cooldown_rate(0, None) * 100.0 / 2.0) as u64;
         let stake_history =

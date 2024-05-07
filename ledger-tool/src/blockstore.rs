@@ -347,19 +347,13 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
             .about("Print all the duplicate slots in the ledger")
             .settings(&hidden)
             .arg(&starting_slot_arg),
-        SubCommand::with_name("json")
-            .about("Print the ledger in JSON format")
-            .settings(&hidden)
-            .arg(&starting_slot_arg)
-            .arg(&ending_slot_arg)
-            .arg(&allow_dead_slots_arg),
         SubCommand::with_name("latest-optimistic-slots")
             .about(
                 "Output up to the most recent <num-slots> optimistic slots with their hashes \
                  and timestamps.",
             )
             // This command is important in cluster restart scenarios, so do not hide it ever
-            // such that the subcommand will be visible as the top level of solana-ledger-tool
+            // such that the subcommand will be visible as the top level of agave-ledger-tool
             .arg(
                 Arg::with_name("num_slots")
                     .long("num-slots")
@@ -717,21 +711,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 println!("{slot}");
             }
         }
-        ("json", Some(arg_matches)) => {
-            let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
-            let ending_slot = value_t!(arg_matches, "ending_slot", Slot).unwrap_or(Slot::MAX);
-            let allow_dead_slots = arg_matches.is_present("allow_dead_slots");
-            output_ledger(
-                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary),
-                starting_slot,
-                ending_slot,
-                allow_dead_slots,
-                OutputFormat::Json,
-                None,
-                std::u64::MAX,
-                true,
-            );
-        }
         ("latest-optimistic-slots", Some(arg_matches)) => {
             let blockstore =
                 crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
@@ -858,12 +837,14 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let num_slots = value_t!(arg_matches, "num_slots", Slot).ok();
             let allow_dead_slots = arg_matches.is_present("allow_dead_slots");
             let only_rooted = arg_matches.is_present("only_rooted");
+            let output_format = OutputFormat::from_matches(arg_matches, "output_format", false);
+
             output_ledger(
                 crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary),
                 starting_slot,
                 ending_slot,
                 allow_dead_slots,
-                OutputFormat::Display,
+                output_format,
                 num_slots,
                 verbose_level,
                 only_rooted,
@@ -891,26 +872,24 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 AccessType::PrimaryForMaintenance,
             );
 
-            let end_slot = match end_slot {
-                Some(end_slot) => end_slot,
-                None => {
-                    let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
-                    let slots: Vec<_> = slot_meta_iterator.map(|(slot, _)| slot).collect();
-                    if slots.is_empty() {
-                        return Err(LedgerToolError::BadArgument(format!(
-                            "blockstore is empty beyond purge start slot {start_slot}"
-                        )));
-                    }
-                    *slots.last().unwrap()
-                }
+            let Some(highest_slot) = blockstore.highest_slot()? else {
+                return Err(LedgerToolError::BadArgument(
+                    "blockstore is empty".to_string(),
+                ));
             };
 
+            let end_slot = if let Some(slot) = end_slot {
+                std::cmp::min(slot, highest_slot)
+            } else {
+                highest_slot
+            };
             if end_slot < start_slot {
                 return Err(LedgerToolError::BadArgument(format!(
                     "starting slot {start_slot} should be less than or equal to \
                     ending slot {end_slot}"
                 )));
             }
+
             info!(
                 "Purging data from slots {} to {} ({} slots) (do compaction: {}) \
                 (dead slot only: {})",

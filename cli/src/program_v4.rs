@@ -51,6 +51,7 @@ use {
         fs::File,
         io::{Read, Write},
         mem::size_of,
+        num::Saturating,
         rc::Rc,
         sync::Arc,
     },
@@ -395,22 +396,18 @@ pub fn parse_program_v4_subcommand(
                         .pubkey()
                 };
 
-            CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Show {
-                    account_pubkey: pubkey_of(matches, "account"),
-                    authority,
-                    all: matches.is_present("all"),
-                }),
-                signers: vec![],
-            }
+            CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Show {
+                account_pubkey: pubkey_of(matches, "account"),
+                authority,
+                all: matches.is_present("all"),
+            }))
         }
-        ("dump", Some(matches)) => CliCommandInfo {
-            command: CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
+        ("dump", Some(matches)) => {
+            CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Dump {
                 account_pubkey: pubkey_of(matches, "account"),
                 output_location: matches.value_of("output_location").unwrap().to_string(),
-            }),
-            signers: vec![],
-        },
+            }))
+        }
         _ => unreachable!(),
     };
     Ok(response)
@@ -593,8 +590,17 @@ pub fn process_deploy_program(
 
     let mut write_messages = vec![];
     let chunk_size = calculate_max_chunk_size(&create_msg);
-    for (chunk, i) in program_data.chunks(chunk_size).zip(0..) {
-        write_messages.push(create_msg((i * chunk_size) as u32, chunk.to_vec()));
+    for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
+        write_messages.push(create_msg(
+            i.saturating_mul(chunk_size).try_into().map_err(|_| {
+                format!(
+                    "Program data size exceeds {}: {}",
+                    u32::MAX,
+                    program_data.len()
+                )
+            })?,
+            chunk.to_vec(),
+        ));
     }
 
     let final_messages = if *program_address != buffer_address {
@@ -803,24 +809,24 @@ fn check_payer(
     write_messages: &[Message],
     other_messages: &[Message],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut fee = 0;
+    let mut fee = Saturating(0);
     for message in initial_messages {
         fee += rpc_client.get_fee_for_message(message)?;
     }
     for message in other_messages {
         fee += rpc_client.get_fee_for_message(message)?;
     }
-    if !write_messages.is_empty() {
-        // Assume all write messages cost the same
-        if let Some(message) = write_messages.first() {
-            fee += rpc_client.get_fee_for_message(message)? * (write_messages.len() as u64);
-        }
+    // Assume all write messages cost the same
+    if let Some(message) = write_messages.first() {
+        fee += rpc_client
+            .get_fee_for_message(message)?
+            .saturating_mul(write_messages.len() as u64);
     }
     check_account_for_spend_and_fee_with_commitment(
         rpc_client,
         &config.payer.pubkey(),
         balance_needed,
-        fee,
+        fee.0,
         config.commitment,
     )?;
     Ok(())
