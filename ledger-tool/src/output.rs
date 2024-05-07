@@ -327,9 +327,9 @@ impl EncodedConfirmedBlockWithEntries {
     }
 }
 
-pub fn output_slot_rewards(blockstore: &Blockstore, slot: Slot, method: &OutputFormat) {
+pub fn output_slot_rewards(blockstore: &Blockstore, slot: Slot, output_format: &OutputFormat) {
     // Note: rewards are not output in JSON yet
-    if *method == OutputFormat::Display {
+    if *output_format == OutputFormat::Display {
         if let Ok(Some(rewards)) = blockstore.read_rewards(slot) {
             if !rewards.is_empty() {
                 println!("  Rewards:");
@@ -364,12 +364,12 @@ pub fn output_slot_rewards(blockstore: &Blockstore, slot: Slot, method: &OutputF
 
 pub fn output_entry(
     blockstore: &Blockstore,
-    method: &OutputFormat,
+    output_format: &OutputFormat,
     slot: Slot,
     entry_index: usize,
     entry: Entry,
 ) {
-    match method {
+    match output_format {
         OutputFormat::Display => {
             println!(
                 "  Entry {} - num_hashes: {}, hash: {}, transactions: {}",
@@ -414,13 +414,13 @@ pub fn output_slot(
     blockstore: &Blockstore,
     slot: Slot,
     allow_dead_slots: bool,
-    method: &OutputFormat,
+    output_format: &OutputFormat,
     verbose_level: u64,
     all_program_ids: &mut HashMap<Pubkey, u64>,
 ) -> Result<()> {
     if blockstore.is_dead(slot) {
         if allow_dead_slots {
-            if *method == OutputFormat::Display {
+            if *output_format == OutputFormat::Display {
                 println!(" Slot is dead");
             }
         } else {
@@ -431,7 +431,7 @@ pub fn output_slot(
     let (entries, num_shreds, is_full) =
         blockstore.get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)?;
 
-    if *method == OutputFormat::Display {
+    if *output_format == OutputFormat::Display {
         if let Some(meta) = blockstore.meta(slot)? {
             if verbose_level >= 1 {
                 println!("  {meta:?} is_full: {is_full}");
@@ -451,10 +451,10 @@ pub fn output_slot(
 
     if verbose_level >= 2 {
         for (entry_index, entry) in entries.into_iter().enumerate() {
-            output_entry(blockstore, method, slot, entry_index, entry);
+            output_entry(blockstore, output_format, slot, entry_index, entry);
         }
 
-        output_slot_rewards(blockstore, slot, method);
+        output_slot_rewards(blockstore, slot, output_format);
     } else if verbose_level >= 1 {
         let mut transactions = 0;
         let mut num_hashes = 0;
@@ -490,14 +490,14 @@ pub fn output_ledger(
     starting_slot: Slot,
     ending_slot: Slot,
     allow_dead_slots: bool,
-    method: OutputFormat,
+    output_format: OutputFormat,
     num_slots: Option<Slot>,
     verbose_level: u64,
     only_rooted: bool,
 ) -> Result<()> {
     let slot_iterator = blockstore.slot_meta_iterator(starting_slot)?;
 
-    if method == OutputFormat::Json {
+    if output_format == OutputFormat::Json {
         stdout().write_all(b"{\"ledger\":[\n")?;
     }
 
@@ -512,7 +512,7 @@ pub fn output_ledger(
             break;
         }
 
-        match method {
+        match output_format {
             OutputFormat::Display => {
                 println!("Slot {} root?: {}", slot, blockstore.is_root(slot))
             }
@@ -527,7 +527,7 @@ pub fn output_ledger(
             &blockstore,
             slot,
             allow_dead_slots,
-            &method,
+            &output_format,
             verbose_level,
             &mut all_program_ids,
         ) {
@@ -539,7 +539,7 @@ pub fn output_ledger(
         }
     }
 
-    if method == OutputFormat::Json {
+    if output_format == OutputFormat::Json {
         stdout().write_all(b"\n]}\n")?;
     } else {
         println!("Summary of Programs:");
