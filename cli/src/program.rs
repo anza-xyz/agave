@@ -242,6 +242,7 @@ impl ProgramSubCommands for App<'_, '_> {
                         .arg(
                             Arg::with_name("allow_excessive_balance")
                                 .long("allow-excessive-deploy-account-balance")
+                                .hidden(hidden_unless_forced())
                                 .takes_value(false)
                                 .help(
                                     "Use the designated program id even if the account already \
