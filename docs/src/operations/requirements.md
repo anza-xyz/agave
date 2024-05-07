@@ -19,8 +19,8 @@ transaction for each block the validator agrees with, which can cost up to
 The hardware recommendations below are provided as a guide.  Operators are encouraged to do their own performance testing.
 
 - CPU
-  - 12 cores / 24 threads, or more
-  - 2.8GHz base clock speed, or faster
+  - 16 cores / 24 threads, or more
+  - 3.0 GHz base clock speed, or faster
   - SHA extensions instruction support
     - AMD Gen 3 or newer
     - Intel Ice Lake or newer
@@ -35,6 +35,7 @@ The hardware recommendations below are provided as a guide.  Operators are encou
   - PCIe Gen3 x4 NVME SSD, or better
   - Accounts: 500GB, or larger. High TBW (Total Bytes Written)
   - Ledger: 1TB or larger. High TBW suggested
+  - Snapshots: 500GB or larger. High TBW suggested
   - OS: (Optional) 500GB, or larger. SATA OK
   - The OS may be installed on the ledger disk, though testing has shown better
     performance with the ledger on its own disk
@@ -55,7 +56,7 @@ made.
 - CPU
   - 16 cores / 32 threads, or more
 - RAM
-  - 512 GB or more if `account-index` is used
+  - 512 GB or more if `account-index` is used (1TB+ for all three [account indexes](https://docs.solanalabs.com/operations/setup-an-rpc-node#account-indexing)
 - Disk
   - Consider a larger ledger disk if longer transaction history is required
   - Accounts and ledger should not be stored on the same disk
