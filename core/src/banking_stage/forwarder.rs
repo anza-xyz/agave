@@ -102,8 +102,6 @@ impl Forwarder {
         // load all accounts from address loader;
         let current_bank = self.bank_forks.read().unwrap().working_bank();
 
-        self.clear_batches();
-
         // sanitize and filter packets that are no longer valid (could be too old, a duplicate of something
         // already processed), then add to forwarding buffer.
         let filter_forwarding_result = unprocessed_transaction_storage
@@ -165,6 +163,7 @@ impl Forwarder {
                     );
                 }
             });
+        self.clear_batches();
 
         if !hold {
             slot_metrics_tracker.increment_cleared_from_buffer_after_forward_count(

@@ -233,7 +233,6 @@ impl SchedulerController {
         let start = Instant::now();
         let bank = self.bank_forks.read().unwrap().working_bank();
         let feature_set = &bank.feature_set;
-        self.forwarder.clear_batches();
 
         // Pop from the container in chunks, filter using bank checks, then attempt to forward.
         // This doubles as a way to clean the queue as well as forwarding transactions.
@@ -302,6 +301,7 @@ impl SchedulerController {
         // Forward each batch of transactions
         self.forwarder
             .forward_batched_packets(&ForwardOption::ForwardTransaction);
+        self.forwarder.clear_batches();
 
         // If we hit the time limit. Drop everything that was not checked/processed.
         // If we cannot run these simple checks in time, then we cannot run them during
