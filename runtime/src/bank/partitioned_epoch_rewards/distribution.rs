@@ -45,8 +45,7 @@ impl Bank {
         };
 
         let height = self.block_height();
-        let start_block_height = status.start_block_height;
-        let credit_start = start_block_height + self.get_reward_calculation_num_blocks();
+        let credit_start = status.start_block_height;
         let credit_end_exclusive = credit_start + status.stake_rewards_by_partition.len() as u64;
         assert!(
             self.epoch_schedule.get_slots_in_epoch(self.epoch)
@@ -67,7 +66,7 @@ impl Bank {
                 ("slot", self.slot(), i64),
                 ("block_height", height, i64),
                 ("active", 0, i64),
-                ("start_block_height", start_block_height, i64),
+                ("start_block_height", credit_start, i64),
             );
 
             assert!(matches!(
@@ -267,7 +266,7 @@ mod tests {
 
         let stake_rewards = hash_rewards_into_partitions(stake_rewards, &Hash::new(&[1; 32]), 2);
 
-        bank.set_epoch_reward_status_active(bank.block_height(), stake_rewards);
+        bank.set_epoch_reward_status_active(bank.block_height() + 1, stake_rewards);
 
         bank.distribute_partitioned_epoch_rewards();
     }

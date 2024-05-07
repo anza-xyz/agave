@@ -63,7 +63,7 @@ impl Bank {
 
         let num_partitions = stake_rewards_by_partition.len() as u64;
 
-        self.set_epoch_reward_status_active(self.block_height(), stake_rewards_by_partition);
+        self.set_epoch_reward_status_active(credit_start, stake_rewards_by_partition);
 
         // create EpochRewards sysvar that holds the balance of undistributed rewards with
         // (total_rewards, distributed_rewards, credit_start), total capital will increase by (total_rewards - distributed_rewards)
@@ -530,10 +530,10 @@ impl Bank {
                 reward_calc_tracer,
                 thread_pool,
             );
-            let start_block_height = epoch_rewards_sysvar
-                .distribution_starting_block_height
-                .saturating_sub(self.get_reward_calculation_num_blocks());
-            self.set_epoch_reward_status_active(start_block_height, stake_rewards_by_partition);
+            self.set_epoch_reward_status_active(
+                epoch_rewards_sysvar.distribution_starting_block_height,
+                stake_rewards_by_partition,
+            );
         }
     }
 
@@ -1107,7 +1107,7 @@ mod tests {
         // mutable Bank methods require the bank not be Arc-wrapped.
         let new_slot = bank.slot() + 1;
         let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), new_slot);
-        let expected_starting_block_height = bank.block_height();
+        let expected_starting_block_height = bank.block_height() + 1;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
