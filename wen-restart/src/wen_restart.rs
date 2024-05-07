@@ -360,8 +360,11 @@ pub(crate) fn find_heaviest_fork(
     Ok((heaviest_fork_slot, heaviest_fork_bankhash))
 }
 
-// Given the agreed upon slot, make corresponding bank root and generate snapshot.
-fn generate_snapshot(
+// Given the agreed upon slot, add hard fork and rehash the corresponding bank, then
+// generate full snapshot. We don't actually do set_root here, because it may kick off
+// snapshot requests, we can't have multiple snapshot requests in progress. But when
+// restarting with generated snapshot, the slot will become the new root.
+pub(crate) fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
     snapshot_config: &SnapshotConfig,
     accounts_background_request_sender: &AbsRequestSender,
@@ -373,10 +376,21 @@ fn generate_snapshot(
     {
         let mut my_bank_forks = bank_forks.write().unwrap();
         let old_root_bank = my_bank_forks.root_bank();
-        old_root_bank.register_hard_fork(new_root_slot);
+        if !old_root_bank
+            .hard_forks()
+            .iter()
+            .any(|(slot, _)| slot == &new_root_slot)
+        {
+            old_root_bank.register_hard_fork(new_root_slot);
+        }
         // new_root_slot is guaranteed to have a bank in bank_forks, it's checked in
         // find_bankhash_of_heaviest_fork().
-        new_root_bank = my_bank_forks.get(new_root_slot).unwrap();
+        match my_bank_forks.get(new_root_slot) {
+            Some(bank) => new_root_bank = bank.clone(),
+            None => {
+                return Err(WenRestartError::BlockNotFound(new_root_slot).into());
+            }
+        }
         // Only root banks can have snapshots generated.
         let mut banks = vec![&new_root_bank];
         let parents = new_root_bank.parents();
@@ -420,8 +434,6 @@ fn generate_snapshot(
         snapshot_config.maximum_full_snapshot_archives_to_retain,
         snapshot_config.maximum_incremental_snapshot_archives_to_retain,
     )?;
-
-    let new_root_bank_hash = new_root_bank.hash();
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
     let snapshot_dir_str = snapshot_dir.display().to_string();
@@ -437,7 +449,7 @@ fn generate_snapshot(
                 return Ok(GenerateSnapshotRecord {
                     path: archive_info.path().display().to_string(),
                     slot: new_root_slot,
-                    bankhash: new_root_bank_hash.to_string(),
+                    bankhash: new_root_bank.hash().to_string(),
                     shred_version: new_shred_version as u32,
                 });
             }
@@ -447,7 +459,7 @@ fn generate_snapshot(
 }
 
 // Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
-fn find_bankhash_of_heaviest_fork(
+pub(crate) fn find_bankhash_of_heaviest_fork(
     heaviest_fork_slot: Slot,
     slots: Vec<Slot>,
     blockstore: Arc<Blockstore>,
@@ -1095,7 +1107,8 @@ mod tests {
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
-            snapshot_bank_utils::bank_to_full_snapshot_archive,
+            snapshot_hash::SnapshotHash,
+            snapshot_utils::build_full_snapshot_archive_path,
         },
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -1387,20 +1400,6 @@ mod tests {
             .set_snapshot_config(Some(snapshot_config.clone()));
 
         let exit = Arc::new(AtomicBool::new(false));
-        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
-
-        // Trigger full snapshot generation on the old root bank.
-        assert!(bank_to_full_snapshot_archive(
-            snapshot_config.bank_snapshots_dir.clone(),
-            &old_root_bank,
-            Some(snapshot_config.snapshot_version),
-            snapshot_config.full_snapshot_archives_dir.clone(),
-            snapshot_config.incremental_snapshot_archives_dir.clone(),
-            snapshot_config.archive_format,
-            snapshot_config.maximum_full_snapshot_archives_to_retain,
-            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
-        )
-        .is_ok(),);
         let wen_restart_config = WenRestartConfig {
             wen_restart_path: test_state.wen_restart_proto_path.clone(),
             last_vote: VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
@@ -2322,5 +2321,91 @@ mod tests {
             &mut progress.clone(),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn test_generate_snapshot() {
+        solana_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let test_state = wen_restart_test_init(&ledger_path);
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_config = SnapshotConfig {
+            bank_snapshots_dir: bank_snapshots_dir.as_ref().to_path_buf(),
+            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .as_ref()
+                .to_path_buf(),
+            ..Default::default()
+        };
+        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
+        let last_vote_slot = test_state.last_voted_fork_slots[0];
+        let exit = Arc::new(AtomicBool::new(false));
+        let mut slots = test_state.last_voted_fork_slots.clone();
+        slots.reverse();
+        let old_last_vote_bankhash = find_bankhash_of_heaviest_fork(
+            last_vote_slot,
+            slots,
+            test_state.blockstore.clone(),
+            test_state.bank_forks.clone(),
+            old_root_bank,
+            &exit,
+        )
+        .unwrap();
+        test_state
+            .bank_forks
+            .write()
+            .unwrap()
+            .set_snapshot_config(Some(snapshot_config.clone()));
+        let wen_restart_snapshot_path = snapshot_config
+            .full_snapshot_archives_dir
+            .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
+        let generated_record = generate_snapshot(
+            test_state.bank_forks.clone(),
+            &snapshot_config,
+            &AbsRequestSender::default(),
+            test_state.genesis_config_hash,
+            last_vote_slot,
+            &exit,
+        )
+        .unwrap();
+        let new_root_bankhash = test_state
+            .bank_forks
+            .read()
+            .unwrap()
+            .get(last_vote_slot)
+            .unwrap()
+            .hash();
+        assert_ne!(old_last_vote_bankhash, new_root_bankhash);
+        let new_shred_version = generated_record.shred_version;
+        assert_ne!(new_shred_version, SHRED_VERSION as u32);
+        let snapshot_hash = Hash::from_str(
+            generated_record
+                .path
+                .split('-')
+                .last()
+                .unwrap()
+                .split('.')
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            generated_record,
+            GenerateSnapshotRecord {
+                slot: last_vote_slot,
+                bankhash: new_root_bankhash.to_string(),
+                shred_version: new_shred_version,
+                path: build_full_snapshot_archive_path(
+                    wen_restart_snapshot_path.clone(),
+                    last_vote_slot,
+                    &SnapshotHash(snapshot_hash),
+                    snapshot_config.archive_format,
+                )
+                .display()
+                .to_string(),
+            },
+        );
     }
 }
