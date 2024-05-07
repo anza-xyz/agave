@@ -3719,7 +3719,7 @@ impl Blockstore {
             .map(|index| (slot, index))
             .collect();
 
-        let last_merkle_roots : Vec<Hash> = self
+        let last_merkle_roots: Vec<Hash> = self
             .data_shred_cf
             .multi_get_bytes(keys)
             .into_iter()
@@ -11899,7 +11899,7 @@ pub mod tests {
         assert!(meta.last_index.is_none());
         assert_matches!(
             blockstore.is_last_fec_set_full(slot),
-            Err(BlockstoreError::InvalidShredData(_))
+            Err(BlockstoreError::UnknownLastIndex(_))
         );
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -11911,7 +11911,7 @@ pub mod tests {
         assert_eq!(meta.last_index, Some(total_shreds - 1));
         assert_matches!(
             blockstore.is_last_fec_set_full(slot),
-            Err(BlockstoreError::InvalidShredData(_))
+            Err(BlockstoreError::MissingShred(_, _))
         );
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -11933,7 +11933,7 @@ pub mod tests {
             );
         let merkle_root = first_data_shreds[0].merkle_root().unwrap();
         fec_set_index += first_data_shreds.len() as u32;
-        let (mut last_data_shreds, _, _) =
+        let (last_data_shreds, _, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
                 slot,
                 parent_slot,
@@ -11942,7 +11942,7 @@ pub mod tests {
                 Some(merkle_root),
                 false, // No padding
             );
-        last_data_shreds.last_mut().unwrap().set_last_in_slot();
+        let last_index = last_data_shreds.last().unwrap().index();
         let total_shreds = first_data_shreds.len() + last_data_shreds.len();
         assert!(total_shreds < DATA_SHREDS_PER_FEC_BLOCK);
         blockstore
@@ -11951,6 +11951,10 @@ pub mod tests {
         blockstore
             .insert_shreds(last_data_shreds, None, false)
             .unwrap();
+        // Manually update last index flag
+        let mut slot_meta = blockstore.meta(slot).unwrap().unwrap();
+        slot_meta.last_index = Some(last_index as u64);
+        blockstore.put_meta(slot, &slot_meta).unwrap();
         assert!(!blockstore.is_last_fec_set_full(slot).unwrap());
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -11967,7 +11971,7 @@ pub mod tests {
             );
         let merkle_root = first_data_shreds[0].merkle_root().unwrap();
         fec_set_index += first_data_shreds.len() as u32;
-        let (mut last_data_shreds, _, _) =
+        let (last_data_shreds, _, _) =
             setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
                 slot,
                 parent_slot,
@@ -11976,7 +11980,7 @@ pub mod tests {
                 Some(merkle_root),
                 false, // No padding
             );
-        last_data_shreds.last_mut().unwrap().set_last_in_slot();
+        let last_index = last_data_shreds.last().unwrap().index();
         let total_shreds = first_data_shreds.len() + last_data_shreds.len();
         assert!(last_data_shreds.len() < DATA_SHREDS_PER_FEC_BLOCK);
         assert!(total_shreds > DATA_SHREDS_PER_FEC_BLOCK);
@@ -11986,6 +11990,10 @@ pub mod tests {
         blockstore
             .insert_shreds(last_data_shreds, None, false)
             .unwrap();
+        // Manually update last index flag
+        let mut slot_meta = blockstore.meta(slot).unwrap().unwrap();
+        slot_meta.last_index = Some(last_index as u64);
+        blockstore.put_meta(slot, &slot_meta).unwrap();
         assert!(!blockstore.is_last_fec_set_full(slot).unwrap());
     }
 }
