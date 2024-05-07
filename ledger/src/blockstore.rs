@@ -1417,22 +1417,23 @@ impl Blockstore {
         if !erasure_meta.check_coding_shred(&shred) {
             metrics.num_coding_shreds_invalid_erasure_config += 1;
             if !self.has_duplicate_shreds_in_slot(slot) {
-                let conflicting_shred = self
+                if let Some(conflicting_shred) = self
                     .find_conflicting_coding_shred(&shred, slot, erasure_meta, just_received_shreds)
-                    .expect("Shred indicated by erasure meta must exist")
-                    .into_owned();
-
-                if self
-                    .store_duplicate_slot(slot, conflicting_shred.clone(), shred.payload().clone())
-                    .is_err()
+                    .map(Cow::into_owned)
                 {
-                    warn!("bad duplicate store..");
-                }
+                    if let Err(e) = self.store_duplicate_slot(
+                        slot,
+                        conflicting_shred.clone(),
+                        shred.payload().clone(),
+                    ) {
+                        warn!("Unable to store conflicting erasure meta duplicate proof for {slot} {erasure_set:?} {e}");
+                    }
 
-                duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
-                    shred.clone(),
-                    conflicting_shred,
-                ));
+                    duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
+                        shred.clone(),
+                        conflicting_shred,
+                    ));
+                }
             }
 
             // ToDo: This is a potential slashing condition
