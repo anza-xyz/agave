@@ -7,10 +7,8 @@ const DEFAULT_PRIOR_VOTERS_OFFSET: usize = 82;
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(
-        digest = "CZTgLymuevXjAx6tM8X8T5J3MCx9AkEsFSmu4FJrEpkG",
-        derive(AbiExample)
-    )
+    frozen_abi(digest = "CZTgLymuevXjAx6tM8X8T5J3MCx9AkEsFSmu4FJrEpkG"),
+    derive(AbiExample)
 )]
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[cfg_attr(test, derive(Arbitrary))]
