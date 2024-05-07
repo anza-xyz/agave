@@ -3095,14 +3095,10 @@ impl ReplayStage {
                     epoch_slots_frozen_slots,
                 );
 
-                if bank
-                    .feature_set
-                    .is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
-                    // No reason to check our leader block
-                    && bank.collector_id() != my_pubkey
-                {
+                if bank.collector_id() != my_pubkey {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK shreds in the last FEC set,
                     // process it like a duplicate, which allows us to continue replaying the fork but not vote on it.
+                    // No reason to perform this check on our leader block
                     if !blockstore
                         .is_last_fec_set_full(bank.slot())
                         .inspect_err(|e| {
@@ -3115,7 +3111,18 @@ impl ReplayStage {
                         })
                         .unwrap_or(false)
                     {
-                        bank_frozen_state.mark_duplicate();
+                        // Update metric regardless of feature flag
+                        datapoint_warn!(
+                            "incomplete_final_fec_set",
+                            ("slot", bank_slot, i64),
+                            ("hash", bank.hash().to_string(), String)
+                        );
+                        if bank
+                            .feature_set
+                            .is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
+                        {
+                            bank_frozen_state.mark_duplicate();
+                        }
                     }
                 }
 
