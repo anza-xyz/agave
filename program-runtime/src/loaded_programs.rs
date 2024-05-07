@@ -818,6 +818,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             &entry.program,
             ProgramCacheEntryType::DelayVisibility
         ));
+        // This function always returns `true` during normal operation.
+        // Only during the recompilation phase this can return `false`
+        // for entries with `upcoming_environments`.
         fn is_current_env(
             environments: &ProgramRuntimeEnvironments,
             env_opt: Option<&ProgramRuntimeEnvironment>,
@@ -835,6 +838,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 .cmp(&entry.effective_slot)
                 .then(at.deployment_slot.cmp(&entry.deployment_slot))
                 .then(
+                    // This `.then()` has no effect during normal operation.
+                    // Only during the recompilation phase this does allow entries
+                    // which only differ in their environment to be interleaved in `slot_versions`.
                     is_current_env(&self.environments, at.program.get_environment()).cmp(
                         &is_current_env(&self.environments, entry.program.get_environment()),
                     ),
