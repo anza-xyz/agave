@@ -44,6 +44,7 @@ use {
         collections::{HashMap, HashSet},
         fs::{read, File},
         io::{Cursor, Write},
+        num::NonZeroUsize,
         path::PathBuf,
         str::FromStr,
         sync::{
@@ -425,14 +426,14 @@ pub(crate) fn generate_snapshot(
         .full_snapshot_archives_dir
         .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
     bank_to_full_snapshot_archive(
-        snapshot_config.bank_snapshots_dir.clone(),
+        &snapshot_config.bank_snapshots_dir,
         &new_root_bank,
         Some(snapshot_config.snapshot_version),
-        snapshot_dir.clone(),
-        snapshot_config.incremental_snapshot_archives_dir.clone(),
+        &snapshot_dir,
+        &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
-        snapshot_config.maximum_full_snapshot_archives_to_retain,
-        snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+        NonZeroUsize::MAX,
+        NonZeroUsize::MAX,
     )?;
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
@@ -443,7 +444,7 @@ pub(crate) fn generate_snapshot(
             return Err(WenRestartError::Exiting.into());
         }
         // Return the path of the snapshot archive matching new_root_slot.
-        for archive_info in get_full_snapshot_archives(snapshot_dir.clone()) {
+        for archive_info in get_full_snapshot_archives(&snapshot_dir) {
             if archive_info.slot() == new_root_slot {
                 info!("wen_restart snapshot generated on {new_root_slot}");
                 return Ok(GenerateSnapshotRecord {
