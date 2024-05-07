@@ -165,7 +165,7 @@ impl BankFrozenState {
         }
     }
 
-    pub fn mark_duplicate(&mut self) {
+    pub(crate) fn mark_duplicate(&mut self) {
         self.is_slot_duplicate = true;
     }
 }

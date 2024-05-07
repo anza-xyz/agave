@@ -3103,18 +3103,19 @@ impl ReplayStage {
                 {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK shreds in the last FEC set,
                     // process it like a duplicate, which allows us to continue replaying the fork but not vote on it.
-                    match blockstore.is_last_fec_set_full(bank.slot()) {
-                        Err(e) => {
+                    if !blockstore
+                        .is_last_fec_set_full(bank.slot())
+                        .inspect_err(|e| {
                             warn!(
                                 "Unable to determine if last fec set is full for slot {} {},
                                 marking as duplicate: {e:?}",
                                 bank.slot(),
                                 bank.hash()
-                            );
-                            bank_frozen_state.mark_duplicate();
-                        }
-                        Ok(false) => bank_frozen_state.mark_duplicate(),
-                        _ => (),
+                            )
+                        })
+                        .unwrap_or(false)
+                    {
+                        bank_frozen_state.mark_duplicate();
                     }
                 }
 
