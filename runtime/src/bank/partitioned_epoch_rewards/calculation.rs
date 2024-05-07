@@ -617,20 +617,29 @@ mod tests {
 
     const SLOTS_PER_EPOCH: u64 = 32;
 
+    struct RewardBank {
+        bank: Arc<Bank>,
+        voters: Vec<Pubkey>,
+        stakers: Vec<Pubkey>,
+    }
+
     /// Helper functions to create a bank that pays some rewards
     fn create_default_reward_bank(
         expected_num_delegations: usize,
-    ) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
+        advance_num_slots: u64,
+    ) -> RewardBank {
         create_reward_bank(
             expected_num_delegations,
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
+            advance_num_slots,
         )
     }
 
     fn create_reward_bank(
         expected_num_delegations: usize,
         stake_account_stores_per_block: u64,
-    ) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
+        advance_num_slots: u64,
+    ) -> RewardBank {
         let validator_keypairs = (0..expected_num_delegations)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
@@ -688,17 +697,28 @@ mod tests {
             }
             bank.store_account_and_update_capitalization(&vote_id, &vote_account);
         }
-        (
+
+        // Advance some num slots; usually to the next epoch boundary to update
+        // EpochStakes
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank = new_bank_from_parent_with_bank_forks(
+            &bank_forks,
             bank,
-            validator_keypairs
+            &Pubkey::default(),
+            advance_num_slots,
+        );
+
+        RewardBank {
+            bank,
+            voters: validator_keypairs
                 .iter()
                 .map(|k| k.vote_keypair.pubkey())
                 .collect(),
-            validator_keypairs
+            stakers: validator_keypairs
                 .iter()
                 .map(|k| k.stake_keypair.pubkey())
                 .collect(),
-        )
+        }
     }
 
     #[test]
@@ -763,16 +783,7 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 100;
-        let bank = create_default_reward_bank(expected_num_delegations).0;
-
-        // Advance to next epoch boundary to update EpochStakes
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH,
-        );
+        let bank = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).bank;
 
         // Calculate rewards
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -814,16 +825,8 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 100;
-        let (bank, _, _) = create_default_reward_bank(expected_num_delegations);
-
-        // Advance to next epoch boundary to update EpochStakes
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH,
-        );
+        let RewardBank { bank, .. } =
+            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH);
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let rewards_metrics = RewardsMetrics::default();
@@ -873,16 +876,11 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 1;
-        let (bank, voters, stakers) = create_default_reward_bank(expected_num_delegations);
-
-        // Advance to next epoch boundary to update EpochStakes
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
+        let RewardBank {
             bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH,
-        );
+            voters,
+            stakers,
+        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH);
 
         let vote_pubkey = voters.first().unwrap();
         let mut vote_account = bank
@@ -983,17 +981,12 @@ mod tests {
         let expected_num_delegations = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let (bank, _, _) = create_reward_bank(expected_num_delegations, num_rewards_per_block);
-        let rewarded_epoch = bank.epoch();
-
-        // Advance to next epoch boundary to update EpochStakes
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
+        let RewardBank { bank, .. } = create_reward_bank(
+            expected_num_delegations,
+            num_rewards_per_block,
             SLOTS_PER_EPOCH,
         );
+        let rewarded_epoch = bank.epoch();
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
@@ -1018,12 +1011,8 @@ mod tests {
         compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
         // Advance to first distribution slot
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 1,
-        );
+        let new_slot = bank.slot() + 1;
+        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let recalculated_rewards =
@@ -1041,12 +1030,8 @@ mod tests {
         );
 
         // Advance to last distribution slot
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 2,
-        );
+        let new_slot = bank.slot() + 1;
+        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         assert!(!epoch_rewards_sysvar.active);
@@ -1059,17 +1044,12 @@ mod tests {
         let expected_num_delegations = 2;
         let num_rewards_per_block = 2;
         // Distribute 2 rewards over 1 block
-        let (bank, _, _) = create_reward_bank(expected_num_delegations, num_rewards_per_block);
-        let rewarded_epoch = bank.epoch();
-
-        // Advance to next epoch boundary to update EpochStakes
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
+        let RewardBank { bank, .. } = create_reward_bank(
+            expected_num_delegations,
+            num_rewards_per_block,
             SLOTS_PER_EPOCH,
         );
+        let rewarded_epoch = bank.epoch();
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
@@ -1094,12 +1074,8 @@ mod tests {
         compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
         // Advance to first distribution slot
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH + 1,
-        );
+        let new_slot = bank.slot() + 1;
+        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         assert!(!epoch_rewards_sysvar.active);
@@ -1113,19 +1089,17 @@ mod tests {
         let expected_num_delegations = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let (bank, _, _) = create_reward_bank(expected_num_delegations, num_rewards_per_block);
+        let RewardBank { bank, .. } = create_reward_bank(
+            expected_num_delegations,
+            num_rewards_per_block,
+            SLOTS_PER_EPOCH - 1,
+        );
         let rewarded_epoch = bank.epoch();
 
         // Advance to next epoch boundary to update EpochStakes Kludgy because
         // mutable Bank methods require the bank not be Arc-wrapped.
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH - 1,
-        );
-        let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), SLOTS_PER_EPOCH);
+        let new_slot = bank.slot() + 1;
+        let mut bank = Bank::new_from_parent(bank, &Pubkey::default(), new_slot);
         let expected_starting_block_height = bank.block_height();
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
