@@ -559,12 +559,7 @@ impl Bank {
         let stakes = self.stakes_cache.stakes();
         let reward_calculate_param = self.get_epoch_reward_calculate_param_info(&stakes);
 
-        let (
-            _,
-            StakeRewardCalculation {
-                mut stake_rewards, ..
-            },
-        ) = self.calculate_stake_vote_rewards(
+        let (_, StakeRewardCalculation { stake_rewards, .. }) = self.calculate_stake_vote_rewards(
             &reward_calculate_param,
             rewarded_epoch,
             point_value,
@@ -574,7 +569,7 @@ impl Bank {
         );
         drop(stakes);
         hash_rewards_into_partitions(
-            std::mem::take(&mut stake_rewards),
+            stake_rewards,
             &epoch_rewards_sysvar.parent_blockhash,
             epoch_rewards_sysvar.num_partitions as usize,
         )
@@ -634,7 +629,7 @@ mod tests {
 
     fn create_reward_bank(
         expected_num_delegations: usize,
-        rewards_per_block: u64,
+        stake_account_stores_per_block: u64,
     ) -> (Bank, Vec<Pubkey>, Vec<Pubkey>) {
         let validator_keypairs = (0..expected_num_delegations)
             .map(|_| ValidatorVoteKeypairs::new_rand())
@@ -653,7 +648,7 @@ mod tests {
         accounts_db_config.test_partitioned_epoch_rewards =
             TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
                 reward_calculation_num_blocks: 1,
-                stake_account_stores_per_block: rewards_per_block,
+                stake_account_stores_per_block,
             };
 
         let bank = Bank::new_with_paths(
