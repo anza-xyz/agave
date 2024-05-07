@@ -1127,13 +1127,16 @@ mod tests {
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         let EpochRewardStatus::Active(StartBlockHeightAndRewards {
-            start_block_height,
+            distribution_starting_block_height,
             stake_rewards_by_partition: ref recalculated_rewards,
         }) = bank.epoch_reward_status
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
-        assert_eq!(expected_starting_block_height, start_block_height);
+        assert_eq!(
+            expected_starting_block_height,
+            distribution_starting_block_height
+        );
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         compare_stake_rewards(&expected_stake_rewards, recalculated_rewards);
 
@@ -1143,13 +1146,16 @@ mod tests {
 
         bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         let EpochRewardStatus::Active(StartBlockHeightAndRewards {
-            start_block_height,
+            distribution_starting_block_height,
             stake_rewards_by_partition: ref recalculated_rewards,
         }) = bank.epoch_reward_status
         else {
             panic!("{:?} not active", bank.epoch_reward_status);
         };
-        assert_eq!(expected_starting_block_height, start_block_height);
+        assert_eq!(
+            expected_starting_block_height,
+            distribution_starting_block_height
+        );
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         // First partition has already been distributed, so recalculation
         // returns 0 rewards
