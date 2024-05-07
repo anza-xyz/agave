@@ -538,8 +538,8 @@ impl Bank {
     }
 
     /// Returns a vector of partitioned stake rewards. StakeRewards are
-    /// recalculated active EpochRewards sysvar, vote accounts from EpochStakes,
-    /// and stake accounts from StakesCache.
+    /// recalculated from an active EpochRewards sysvar, vote accounts from
+    /// EpochStakes, and stake accounts from StakesCache.
     fn recalculate_stake_rewards(
         &self,
         epoch_rewards_sysvar: &EpochRewards,
@@ -559,6 +559,11 @@ impl Bank {
         let stakes = self.stakes_cache.stakes();
         let reward_calculate_param = self.get_epoch_reward_calculate_param_info(&stakes);
 
+        // On recalculation, only the `StakeRewardCalculation::stake_rewards`
+        // field is relevant. It is assumed that vote-account rewards have
+        // already been calculated and delivered, while
+        // `StakeRewardCalculation::total_rewards` only reflects rewards that
+        // have not yet been distributed.
         let (_, StakeRewardCalculation { stake_rewards, .. }) = self.calculate_stake_vote_rewards(
             &reward_calculate_param,
             rewarded_epoch,
