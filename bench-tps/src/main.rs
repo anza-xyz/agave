@@ -3,7 +3,10 @@ use {
     log::*,
     solana_bench_tps::{
         bench::{do_bench_tps, max_lamports_for_prioritization},
-        bench_tps_client::BenchTpsClient,
+        bench_tps_client::{
+            high_tps_client::{HighTpsClient, HighTpsClientConfig},
+            BenchTpsClient,
+        },
         cli::{self, ExternalClientType},
         keypairs::get_keypairs,
         send_batch::{generate_durable_nonce_accounts, generate_keypairs},
@@ -25,6 +28,7 @@ use {
         fs::File,
         io::prelude::*,
         net::IpAddr,
+        net::ToSocketAddrs,
         path::Path,
         process::exit,
         sync::{Arc, RwLock},
@@ -75,20 +79,20 @@ fn create_connection_cache(
     tpu_connection_pool_size: usize,
     use_quic: bool,
     bind_address: IpAddr,
-    client_node_id: Option<&Keypair>,
+    client_node_ids: Option<&Vec<Keypair>>,
     commitment_config: CommitmentConfig,
-) -> ConnectionCache {
+) -> Vec<ConnectionCache> {
     if !use_quic {
-        return ConnectionCache::with_udp(
+        return vec![ConnectionCache::with_udp(
             "bench-tps-connection_cache_udp",
             tpu_connection_pool_size,
-        );
+        )];
     }
-    if client_node_id.is_none() {
-        return ConnectionCache::new_quic(
+    if client_node_ids.is_none() {
+        return vec![ConnectionCache::new_quic(
             "bench-tps-connection_cache_quic",
             tpu_connection_pool_size,
-        );
+        )];
     }
 
     let rpc_client = Arc::new(RpcClient::new_with_commitment(
@@ -96,25 +100,32 @@ fn create_connection_cache(
         commitment_config,
     ));
 
-    let client_node_id = client_node_id.unwrap();
-    let (stake, total_stake) =
-        find_node_activated_stake(rpc_client, client_node_id.pubkey()).unwrap_or_default();
-    info!("Stake for specified client_node_id: {stake}, total stake: {total_stake}");
-    let stakes = HashMap::from([
-        (client_node_id.pubkey(), stake),
-        (Pubkey::new_unique(), total_stake - stake),
-    ]);
-    let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
-        Arc::new(stakes),
-        HashMap::<Pubkey, u64>::default(), // overrides
-    )));
-    ConnectionCache::new_with_client_options(
-        "bench-tps-connection_cache_quic",
-        tpu_connection_pool_size,
-        None,
-        Some((client_node_id, bind_address)),
-        Some((&staked_nodes, &client_node_id.pubkey())),
-    )
+    //TODO(klykov): can we use one HashMap for all the connections?
+    let client_node_ids = client_node_ids.unwrap();
+    let mut connection_caches = Vec::with_capacity(client_node_ids.len());
+    for client_node_id in client_node_ids {
+        let (stake, total_stake) =
+            find_node_activated_stake(rpc_client.clone(), client_node_id.pubkey())
+                .unwrap_or_default();
+        info!("Stake for specified client_node_id: {stake}, total stake: {total_stake}");
+        let stakes = HashMap::from([
+            (client_node_id.pubkey(), stake),
+            (Pubkey::new_unique(), total_stake - stake),
+        ]);
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
+            Arc::new(stakes),
+            HashMap::<Pubkey, u64>::default(), // overrides
+        )));
+        let cc = ConnectionCache::new_with_client_options(
+            "bench-tps-connection_cache_quic",
+            tpu_connection_pool_size,
+            None,
+            Some((client_node_id, bind_address)),
+            Some((&staked_nodes, &client_node_id.pubkey())),
+        );
+        connection_caches.push(cc);
+    }
+    connection_caches
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -122,8 +133,9 @@ fn create_client(
     external_client_type: &ExternalClientType,
     json_rpc_url: &str,
     websocket_url: &str,
-    connection_cache: ConnectionCache,
+    connection_caches: Vec<ConnectionCache>,
     commitment_config: CommitmentConfig,
+    pinned_tpu_address: Option<&str>,
 ) -> Arc<dyn BenchTpsClient + Send + Sync> {
     match external_client_type {
         ExternalClientType::RpcClient => Arc::new(RpcClient::new_with_commitment(
@@ -135,13 +147,13 @@ fn create_client(
                 json_rpc_url.to_string(),
                 commitment_config,
             ));
-            match connection_cache {
+            match &connection_caches[0] {
                 ConnectionCache::Udp(cache) => Arc::new(
                     TpuClient::new_with_connection_cache(
                         rpc_client,
                         websocket_url,
                         TpuClientConfig::default(),
-                        cache,
+                        cache.clone(),
                     )
                     .unwrap_or_else(|err| {
                         eprintln!("Could not create TpuClient {err:?}");
@@ -153,7 +165,7 @@ fn create_client(
                         rpc_client,
                         websocket_url,
                         TpuClientConfig::default(),
-                        cache,
+                        cache.clone(),
                     )
                     .unwrap_or_else(|err| {
                         eprintln!("Could not create TpuClient {err:?}");
@@ -161,6 +173,38 @@ fn create_client(
                     }),
                 ),
             }
+        }
+        ExternalClientType::HighTpsClient => {
+            let rpc_client = Arc::new(RpcClient::new_with_commitment(
+                json_rpc_url.to_string(),
+                commitment_config,
+            ));
+            let caches = connection_caches
+                .iter()
+                .map(|cache| match cache {
+                    ConnectionCache::Udp(_) => {
+                        unimplemented!("UDP protocol is not supported.");
+                    }
+                    ConnectionCache::Quic(cache) => cache.clone(),
+                })
+                .collect();
+            Arc::new(
+                HighTpsClient::new(
+                    rpc_client,
+                    websocket_url,
+                    HighTpsClientConfig {
+                        fanout_slots: 1,
+                        send_batch_size: 64,
+                        pinned_tpu_address: pinned_tpu_address
+                            .and_then(|s| s.to_socket_addrs().ok()?.next()),
+                    },
+                    caches,
+                )
+                .unwrap_or_else(|err| {
+                    eprintln!("Could not create HighTpsClient {err:?}");
+                    exit(1);
+                }),
+            )
         }
     }
 }
@@ -197,8 +241,9 @@ fn main() {
         use_durable_nonce,
         instruction_padding_config,
         bind_address,
-        client_node_id,
+        client_node_ids,
         commitment_config,
+        pinned_tpu_address,
         ..
     } = &cli_config;
 
@@ -235,20 +280,21 @@ fn main() {
         return;
     }
 
-    let connection_cache = create_connection_cache(
+    let connection_caches = create_connection_cache(
         json_rpc_url,
         *tpu_connection_pool_size,
         *use_quic,
         *bind_address,
-        client_node_id.as_ref(),
+        client_node_ids.as_ref(),
         *commitment_config,
     );
     let client = create_client(
         external_client_type,
         json_rpc_url,
         websocket_url,
-        connection_cache,
+        connection_caches,
         *commitment_config,
+        pinned_tpu_address.as_deref(),
     );
     if let Some(instruction_padding_config) = instruction_padding_config {
         info!(
