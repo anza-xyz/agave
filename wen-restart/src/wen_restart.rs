@@ -398,7 +398,7 @@ fn generate_snapshot(
     // a full snapshot, even if one already exists, because after adding a hard fork the
     // bankhash will change.
     if let Some(slot) =
-        get_highest_full_snapshot_archive_slot(snapshot_config.full_snapshot_archives_dir.clone())
+        get_highest_full_snapshot_archive_slot(&snapshot_config.full_snapshot_archives_dir)
     {
         if slot > new_root_slot {
             warn!(
