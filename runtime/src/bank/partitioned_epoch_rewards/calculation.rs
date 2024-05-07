@@ -69,8 +69,6 @@ impl Bank {
             stake_rewards_by_partition,
         );
 
-        // create EpochRewards sysvar that holds the balance of undistributed rewards with
-        // (total_rewards, distributed_rewards, distribution_starting_block_height), total capital will increase by (total_rewards - distributed_rewards)
         self.create_epoch_rewards_sysvar(
             total_rewards,
             distributed_rewards,
