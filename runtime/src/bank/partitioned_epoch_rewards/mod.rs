@@ -23,6 +23,10 @@ use {
     std::sync::Arc,
 };
 
+/// Number of blocks for reward calculation and storing vote accounts.
+/// Distributing rewards to stake accounts begins AFTER this many blocks.
+const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
+
 #[derive(AbiExample, Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct PartitionedStakeReward {
     /// Stake account address
