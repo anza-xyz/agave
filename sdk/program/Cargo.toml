@@ -81,7 +81,6 @@ anyhow = { workspace = true }
 array-bytes = { workspace = true }
 assert_matches = { workspace = true }
 serde_json = { workspace = true }
-solana-program = { path = ".", features = ["frozen-abi"] }
 static_assertions = { workspace = true }
 
 [build-dependencies]
