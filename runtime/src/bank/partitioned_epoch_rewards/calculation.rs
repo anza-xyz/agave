@@ -1010,8 +1010,10 @@ mod tests {
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         compare_stake_rewards(&expected_stake_rewards, &recalculated_rewards);
 
-        // Advance to first distribution slot
-        let new_slot = bank.slot() + 1;
+        // Advance to first distribution block, ie. child block of the epoch
+        // boundary; slot is advanced 2 to demonstrate that distribution works
+        // on block-height, not slot
+        let new_slot = bank.slot() + 2;
         let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), new_slot));
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
