@@ -28,7 +28,6 @@ use {
         fmt::{self, Display, Formatter},
         io::{stdout, Write},
         rc::Rc,
-        result::Result,
         sync::Arc,
     },
 };
@@ -292,7 +291,7 @@ impl EncodedConfirmedBlockWithEntries {
     pub fn try_from(
         block: EncodedConfirmedBlock,
         entries_iterator: impl Iterator<Item = EntrySummary>,
-    ) -> Result<Self, String> {
+    ) -> std::result::Result<Self, String> {
         let mut entries = vec![];
         for (i, entry) in entries_iterator.enumerate() {
             let ending_transaction_index = entry
@@ -415,7 +414,7 @@ pub fn output_slot(
     method: &OutputFormat,
     verbose_level: u64,
     all_program_ids: &mut HashMap<Pubkey, u64>,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     if blockstore.is_dead(slot) {
         if allow_dead_slots {
             if *method == OutputFormat::Display {
@@ -600,7 +599,7 @@ impl AccountsOutputStreamer {
         }
     }
 
-    pub fn output(&self) -> Result<(), String> {
+    pub fn output(&self) -> std::result::Result<(), String> {
         match self.output_format {
             OutputFormat::Json | OutputFormat::JsonCompact => {
                 let mut serializer = serde_json::Serializer::new(stdout());
@@ -741,7 +740,7 @@ impl AccountsScanner {
 }
 
 impl serde::Serialize for AccountsScanner {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
