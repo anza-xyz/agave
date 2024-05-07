@@ -819,6 +819,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
             34 => TransactionError::ResanitizationNeeded,
             36 => TransactionError::UnbalancedTransaction,
             37 => TransactionError::ProgramCacheHitMaxLimit,
+            38 => TransactionError::InvalidComputeUnitLimitRequested,
             _ => return Err("Invalid TransactionError"),
         })
     }
@@ -939,6 +940,9 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 }
                 TransactionError::ProgramCacheHitMaxLimit => {
                     tx_by_addr::TransactionErrorType::ProgramCacheHitMaxLimit
+                }
+                TransactionError::InvalidComputeUnitLimitRequested => {
+                    tx_by_addr::TransactionErrorType::InvalidComputeUnitLimitRequested
                 }
             } as i32,
             instruction_error: match transaction_error {
@@ -1849,6 +1853,14 @@ mod test {
         );
 
         let transaction_error = TransactionError::UnbalancedTransaction;
+        let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
+            transaction_error.clone().into();
+        assert_eq!(
+            transaction_error,
+            tx_by_addr_transaction_error.try_into().unwrap()
+        );
+
+        let transaction_error = TransactionError::InvalidComputeUnitLimitRequested;
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(

@@ -173,6 +173,11 @@ pub enum TransactionError {
     /// Program cache hit max limit.
     #[error("Program cache hit max limit")]
     ProgramCacheHitMaxLimit,
+
+    /// The requested compute-unit limit is either lesser than minimally required by the
+    /// transaction, or greater than maximal transaction compute-unit limit
+    #[error("Requested compute-unit limit is invalid")]
+    InvalidComputeUnitLimitRequested,
 }
 
 impl From<SanitizeError> for TransactionError {

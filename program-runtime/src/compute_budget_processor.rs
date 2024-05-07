@@ -120,6 +120,13 @@ pub fn process_compute_budget_instructions<'a>(
         }
     }
 
+    // fail transaction if requesting cu-limit more than max
+    if let Some(user_requested_compute_unit_limit) = updated_compute_unit_limit {
+        if user_requested_compute_unit_limit > MAX_COMPUTE_UNIT_LIMIT {
+            return Err(TransactionError::InvalidComputeUnitLimitRequested);
+        }
+    }
+
     // sanitize limits
     let updated_heap_bytes = requested_heap_size
         .unwrap_or(u32::try_from(MIN_HEAP_FRAME_BYTES).unwrap()) // loader's default heap_size
@@ -495,6 +502,18 @@ mod tests {
                 compute_unit_limit: 2 * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
                 ..ComputeBudgetLimits::default()
             })
+        );
+    }
+
+    #[test]
+    fn test_process_instructions_invalid_compute_unit_limit() {
+        // larger than MAX_COMPUTE_UNIT_LIMIT
+        test!(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(MAX_COMPUTE_UNIT_LIMIT + 1),
+                Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
+            ],
+            Err(TransactionError::InvalidComputeUnitLimitRequested)
         );
     }
 }
