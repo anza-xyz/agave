@@ -38,7 +38,7 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_utils::{
             get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
-            get_incremental_snapshot_archives,
+            get_incremental_snapshot_archives, purge_all_bank_snapshots,
         },
     },
     solana_sdk::{shred_version::compute_shred_version, timing::timestamp},
@@ -73,8 +73,6 @@ const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
 const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
 
 const WAIT_FOR_SNAPSHOT_LOOP_SLEEP: Duration = Duration::from_secs(10);
-
-const SNAPSHOT_ARCHIVE_WEN_RESTART_DIR: &str = "wen_restart";
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -466,44 +464,33 @@ pub(crate) fn generate_snapshot(
             .into());
         }
     }
-    let snapshot_dir = snapshot_config
-        .incremental_snapshot_archives_dir
-        .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
-    directory = &snapshot_dir;
-    if let Some(slot) = get_highest_incremental_snapshot_archive_slot(directory, full_snapshot_slot)
-    {
-        if slot >= new_root_slot {
-            return Err(WenRestartError::FutureSnapshotExists(
-                new_root_slot,
-                slot,
-                directory.to_string_lossy().to_string(),
-            )
-            .into());
-        }
-    }
     bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         &new_root_bank,
         full_snapshot_slot,
         Some(snapshot_config.snapshot_version),
         &snapshot_config.full_snapshot_archives_dir,
-        &snapshot_dir,
+        &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
         NonZeroUsize::MAX,
         NonZeroUsize::MAX,
     )?;
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
-    let snapshot_dir_str = snapshot_dir.display();
+    let snapshot_dir_str = snapshot_config.incremental_snapshot_archives_dir.display();
     info!("waiting for new snapshot to be generated on {new_root_slot} in {snapshot_dir_str} base slot {full_snapshot_slot}");
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
         // Return the path of the snapshot archive matching new_root_slot.
-        for archive_info in get_incremental_snapshot_archives(&snapshot_dir) {
+        for archive_info in
+            get_incremental_snapshot_archives(&snapshot_config.incremental_snapshot_archives_dir)
+        {
             if archive_info.slot() == new_root_slot {
                 info!("wen_restart incremental snapshot generated on {new_root_slot} base slot {full_snapshot_slot}");
+                // We might have bank snapshots past the new_root_slot, we need to purge them.
+                purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
                 return Ok(GenerateSnapshotRecord {
                     path: archive_info.path().display().to_string(),
                     slot: new_root_slot,
@@ -2444,27 +2431,6 @@ mod tests {
             snapshot_config.maximum_incremental_snapshot_archives_to_retain,
         )
         .is_ok());
-        // Trigger incremental snapshot generation on last_vote_slot - 10
-        assert!(bank_to_incremental_snapshot_archive(
-            snapshot_config.bank_snapshots_dir.clone(),
-            &test_state
-                .bank_forks
-                .read()
-                .unwrap()
-                .get(last_vote_slot - 10)
-                .unwrap(),
-            old_root_slot,
-            Some(snapshot_config.snapshot_version),
-            snapshot_config.full_snapshot_archives_dir.clone(),
-            snapshot_config.incremental_snapshot_archives_dir.clone(),
-            snapshot_config.archive_format,
-            snapshot_config.maximum_full_snapshot_archives_to_retain,
-            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
-        )
-        .is_ok());
-        let wen_restart_snapshot_path = snapshot_config
-            .incremental_snapshot_archives_dir
-            .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
             &snapshot_config,
@@ -2502,7 +2468,7 @@ mod tests {
                 bankhash: new_root_bankhash.to_string(),
                 shred_version: new_shred_version,
                 path: build_incremental_snapshot_archive_path(
-                    wen_restart_snapshot_path.clone(),
+                    &snapshot_config.incremental_snapshot_archives_dir,
                     old_root_slot,
                     last_vote_slot,
                     &SnapshotHash(snapshot_hash),
@@ -2535,29 +2501,7 @@ mod tests {
                     .to_string()
             ),
         );
-        // fails if we already have an older incremental snapshot (we have one at last_vote_slot-10).
-        assert_eq!(
-            generate_snapshot(
-                test_state.bank_forks.clone(),
-                &snapshot_config,
-                &AbsRequestSender::default(),
-                test_state.genesis_config_hash,
-                last_vote_slot - 11,
-                &exit,
-            )
-            .unwrap_err()
-            .downcast::<WenRestartError>()
-            .unwrap(),
-            WenRestartError::FutureSnapshotExists(
-                last_vote_slot - 11,
-                last_vote_slot - 10,
-                snapshot_config
-                    .incremental_snapshot_archives_dir
-                    .to_string_lossy()
-                    .to_string()
-            ),
-        );
-        // fails if we already have a snapshot in wen_restart snapshot path.
+        // fails if we already have an  incremental snapshot (we just generated one at last_vote_slot).
         let older_slot = last_vote_slot - 1;
         assert_eq!(
             generate_snapshot(
@@ -2574,7 +2518,10 @@ mod tests {
             WenRestartError::FutureSnapshotExists(
                 older_slot,
                 last_vote_slot,
-                wen_restart_snapshot_path.to_string_lossy().to_string()
+                snapshot_config
+                    .incremental_snapshot_archives_dir
+                    .to_string_lossy()
+                    .to_string()
             ),
         );
         // Generate snapshot for a slot without any block, it should fail.
