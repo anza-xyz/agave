@@ -2,9 +2,9 @@ use {
     super::{
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
-        EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, StakeRewardCalculation,
-        StakeRewardCalculationPartitioned, StakeRewards, VoteRewardsAccounts,
-        REWARD_CALCULATION_NUM_BLOCKS,
+        EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
+        StakeRewardCalculation, StakeRewardCalculationPartitioned, StakeRewards,
+        VoteRewardsAccounts, REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
@@ -70,10 +70,20 @@ impl Bank {
 
         let num_partitions = stake_rewards_by_partition.len() as u64;
 
-        self.set_epoch_reward_status_active(
-            distribution_starting_block_height,
-            stake_rewards_by_partition,
-        );
+        let converted_rewards: Vec<_> = stake_rewards_by_partition
+            .iter()
+            .map(|stake_reward_partition| {
+                stake_reward_partition
+                    .iter()
+                    .map(|stake_reward|
+                        PartitionedStakeReward::maybe_from(stake_reward)
+                        .expect("StakeRewards should only be deserializable accounts with state StakeStateV2::Stake")
+                    )
+                    .collect()
+            })
+            .collect();
+
+        self.set_epoch_reward_status_active(distribution_starting_block_height, converted_rewards);
 
         self.create_epoch_rewards_sysvar(
             total_rewards,
@@ -538,9 +548,21 @@ impl Bank {
                 reward_calc_tracer,
                 thread_pool,
             );
+            let converted_rewards: Vec<_> = stake_rewards_by_partition
+                .iter()
+                .map(|stake_reward_partition| {
+                    stake_reward_partition
+                        .iter()
+                        .map(|stake_reward|
+                            PartitionedStakeReward::maybe_from(stake_reward)
+                            .expect("StakeRewards should only be deserializable accounts with state StakeStateV2::Stake")
+                        )
+                        .collect()
+                })
+                .collect();
             self.set_epoch_reward_status_active(
                 epoch_rewards_sysvar.distribution_starting_block_height,
-                stake_rewards_by_partition,
+                converted_rewards,
             );
         }
     }

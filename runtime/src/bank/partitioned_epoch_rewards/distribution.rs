@@ -87,16 +87,11 @@ impl Bank {
     /// Store the rewards to AccountsDB, update reward history record and total capitalization.
     fn distribute_epoch_rewards_in_partition(
         &self,
-        all_stake_rewards: &[StakeRewards],
+        all_stake_rewards: &[PartitionedStakeRewards],
         partition_index: u64,
     ) {
         let pre_capitalization = self.capitalization();
         let this_partition_stake_rewards = &all_stake_rewards[partition_index as usize];
-        let converted_rewards: Vec<_> = this_partition_stake_rewards
-            .iter()
-            .map(|stake_reward| PartitionedStakeReward::maybe_from(stake_reward)
-                .expect("StakeRewards should only be deserializable accounts with state StakeStateV2::Stake"))
-            .collect();
 
         let (
             DistributionResults {
@@ -105,7 +100,7 @@ impl Bank {
                 updated_stake_rewards,
             },
             store_stake_accounts_us,
-        ) = measure_us!(self.store_stake_accounts_in_partition(converted_rewards));
+        ) = measure_us!(self.store_stake_accounts_in_partition(this_partition_stake_rewards));
 
         // increase total capitalization by the distributed rewards
         self.capitalization.fetch_add(lamports_distributed, Relaxed);
@@ -145,7 +140,7 @@ impl Bank {
 
     fn build_updated_stake_reward(
         stakes_cache_accounts: &im::HashMap<Pubkey, StakeAccount<Delegation>>,
-        partitioned_stake_reward: PartitionedStakeReward,
+        partitioned_stake_reward: &PartitionedStakeReward,
     ) -> Result<StakeReward, DistributionError> {
         let stake_account = stakes_cache_accounts
             .get(&partitioned_stake_reward.stake_pubkey)
@@ -194,14 +189,14 @@ impl Bank {
     /// stored because credits observed has changed
     fn store_stake_accounts_in_partition(
         &self,
-        stake_rewards: PartitionedStakeRewards,
+        stake_rewards: &[PartitionedStakeReward],
     ) -> DistributionResults {
         let mut lamports_distributed = 0;
         let mut lamports_burned = 0;
         let mut updated_stake_rewards = Vec::with_capacity(stake_rewards.len());
         let stakes_cache = self.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
-        for partitioned_stake_reward in stake_rewards.into_iter() {
+        for partitioned_stake_reward in stake_rewards {
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward_info.lamports as u64;
             match Self::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)

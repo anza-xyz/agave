@@ -59,7 +59,7 @@ pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
     pub(crate) distribution_starting_block_height: u64,
     /// calculated epoch rewards pending distribution, outer Vec is by partition (one partition per block)
-    pub(crate) stake_rewards_by_partition: Arc<Vec<StakeRewards>>,
+    pub(crate) stake_rewards_by_partition: Arc<Vec<PartitionedStakeRewards>>,
 }
 
 /// Represent whether bank is in the reward phase or not.
@@ -156,7 +156,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_active(
         &mut self,
         distribution_starting_block_height: u64,
-        stake_rewards_by_partition: Vec<StakeRewards>,
+        stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
     ) {
         self.epoch_reward_status = EpochRewardStatus::Active(StartBlockHeightAndRewards {
             distribution_starting_block_height,
