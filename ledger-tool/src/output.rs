@@ -23,7 +23,10 @@ use {
         pubkey::Pubkey,
     },
     solana_transaction_status::{
-        EncodedConfirmedBlock, EncodedTransactionWithStatusMeta, EntrySummary, Rewards,
+        BlockEncodingOptions, ConfirmedBlock, EncodeError, EncodedConfirmedBlock,
+        EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
+        UiTransactionEncoding, VersionedConfirmedBlockWithEntries,
+        VersionedTransactionWithStatusMeta,
     },
     std::{
         cell::RefCell,
@@ -293,20 +296,20 @@ pub struct EncodedConfirmedBlockWithEntries {
 impl EncodedConfirmedBlockWithEntries {
     pub fn try_from(
         block: EncodedConfirmedBlock,
-        entries_iterator: impl Iterator<Item = EntrySummary>,
-    ) -> std::result::Result<Self, String> {
+        entries_iterator: impl IntoIterator<Item = EntrySummary>,
+    ) -> Result<Self> {
         let mut entries = vec![];
-        for (i, entry) in entries_iterator.enumerate() {
+        for (i, entry) in entries_iterator.into_iter().enumerate() {
             let ending_transaction_index = entry
                 .starting_transaction_index
                 .saturating_add(entry.num_transactions as usize);
             let transactions = block
                 .transactions
                 .get(entry.starting_transaction_index..ending_transaction_index)
-                .ok_or(format!(
+                .ok_or(LedgerToolError::Generic(format!(
                     "Mismatched entry data and transactions: entry {:?}",
                     i
-                ))?;
+                )))?;
             entries.push(CliPopulatedEntry {
                 num_hashes: entry.num_hashes,
                 hash: entry.hash.to_string(),
@@ -431,41 +434,47 @@ pub fn output_slot(
     let Some(meta) = blockstore.meta(slot)? else {
         return Ok(());
     };
-    let (entries, num_shreds, is_full) =
-        blockstore.get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)?;
+    let VersionedConfirmedBlockWithEntries { block, entries } = blockstore
+        .get_complete_block_with_entries(
+            slot,
+            /*require_previous_blockhash:*/ false,
+            /*populate_entries:*/ true,
+            allow_dead_slots,
+        )?;
 
     if verbose_level == 0 {
         if *output_format == OutputFormat::Display {
             println!(
                 "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, \
                  is_full: {}",
-                num_shreds,
+                meta.consumed,
                 meta.parent_slot,
                 meta.next_slots,
                 entries.len(),
-                is_full,
+                meta.is_full(),
             );
         }
     } else if verbose_level == 1 {
         if *output_format == OutputFormat::Display {
-            println!("  {meta:?} is_full: {is_full}");
+            println!("  {meta:?} is_full: {}", meta.is_full());
 
-            let mut transactions = 0;
             let mut num_hashes = 0;
-            let mut program_ids = HashMap::new();
+            for entry in entries.iter() {
+                num_hashes += entry.num_hashes;
+            }
+
             let blockhash = if let Some(entry) = entries.last() {
                 entry.hash
             } else {
                 Hash::default()
             };
 
-            for entry in entries {
-                transactions += entry.transactions.len();
-                num_hashes += entry.num_hashes;
-                for transaction in entry.transactions {
-                    for program_id in get_program_ids(&transaction) {
-                        *program_ids.entry(*program_id).or_insert(0) += 1;
-                    }
+            let transactions = block.transactions.len();
+            let mut program_ids = HashMap::new();
+            for VersionedTransactionWithStatusMeta { transaction, .. } in block.transactions.iter()
+            {
+                for program_id in get_program_ids(transaction) {
+                    *program_ids.entry(*program_id).or_insert(0) += 1;
                 }
             }
 
@@ -479,11 +488,35 @@ pub fn output_slot(
             output_sorted_program_ids(program_ids);
         }
     } else {
-        for (entry_index, entry) in entries.into_iter().enumerate() {
-            output_entry(blockstore, output_format, slot, entry_index, entry);
-        }
+        let confirmed_block: ConfirmedBlock = ConfirmedBlock::from(block);
 
-        output_slot_rewards(blockstore, slot, output_format);
+        // TODO: this encoding logic copy/paste from bigtable block subcommand; unify ?
+        let encoded_block = confirmed_block
+            .encode_with_options(
+                UiTransactionEncoding::Base64,
+                BlockEncodingOptions {
+                    transaction_details: TransactionDetails::Full,
+                    show_rewards: true,
+                    max_supported_transaction_version: Some(0),
+                },
+            )
+            .map_err(|err| match err {
+                EncodeError::UnsupportedTransactionVersion(version) => {
+                    LedgerToolError::Generic(format!(
+                        "Failed to process unsupported transaction version ({version}) in block"
+                    ))
+                }
+            })?;
+        let encoded_block: EncodedConfirmedBlock = encoded_block.into();
+        let cli_block = CliBlockWithEntries {
+            encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
+                encoded_block,
+                entries,
+            )?,
+            slot,
+        };
+
+        println!("{}", output_format.formatted_string(&cli_block));
     }
 
     Ok(())
