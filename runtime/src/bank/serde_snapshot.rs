@@ -18,7 +18,6 @@ mod tests {
             },
             status_cache::StatusCache,
         },
-        assert_matches::assert_matches,
         solana_accounts_db::{
             account_storage::{AccountStorageMap, AccountStorageReference},
             accounts_db::{
