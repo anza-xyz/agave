@@ -329,6 +329,27 @@ impl EncodedConfirmedBlockWithEntries {
     }
 }
 
+pub(crate) fn encode_confirmed_block(
+    confirmed_block: ConfirmedBlock,
+) -> Result<EncodedConfirmedBlock> {
+    let encoded_block = confirmed_block
+        .encode_with_options(
+            UiTransactionEncoding::Base64,
+            BlockEncodingOptions {
+                transaction_details: TransactionDetails::Full,
+                show_rewards: true,
+                max_supported_transaction_version: Some(0),
+            },
+        )
+        .map_err(|err| match err {
+            EncodeError::UnsupportedTransactionVersion(version) => LedgerToolError::Generic(
+                format!("Failed to process unsupported transaction version ({version}) in block"),
+            ),
+        })?;
+    let encoded_block: EncodedConfirmedBlock = encoded_block.into();
+    Ok(encoded_block)
+}
+
 pub fn output_slot(
     blockstore: &Blockstore,
     slot: Slot,
@@ -404,26 +425,7 @@ pub fn output_slot(
             output_sorted_program_ids(program_ids);
         }
     } else {
-        let confirmed_block: ConfirmedBlock = ConfirmedBlock::from(block);
-
-        // TODO: this encoding logic copy/paste from bigtable block subcommand; unify ?
-        let encoded_block = confirmed_block
-            .encode_with_options(
-                UiTransactionEncoding::Base64,
-                BlockEncodingOptions {
-                    transaction_details: TransactionDetails::Full,
-                    show_rewards: true,
-                    max_supported_transaction_version: Some(0),
-                },
-            )
-            .map_err(|err| match err {
-                EncodeError::UnsupportedTransactionVersion(version) => {
-                    LedgerToolError::Generic(format!(
-                        "Failed to process unsupported transaction version ({version}) in block"
-                    ))
-                }
-            })?;
-        let encoded_block: EncodedConfirmedBlock = encoded_block.into();
+        let encoded_block = encode_confirmed_block(ConfirmedBlock::from(block))?;
         let cli_block = CliBlockWithEntries {
             encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
                 encoded_block,
