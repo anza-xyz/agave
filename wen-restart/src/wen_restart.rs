@@ -72,8 +72,6 @@ const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
 // We update HeaviestFork every 30 minutes or when we can exit.
 const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
 
-const WAIT_FOR_SNAPSHOT_LOOP_SLEEP: Duration = Duration::from_secs(10);
-
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
     BlockNotFound(Slot),
@@ -88,6 +86,7 @@ pub enum WenRestartError {
     MissingLastVotedForkSlots,
     MissingFullSnapshot(String),
     NotEnoughStakeAgreeingWithUs(Slot, Hash, HashMap<(Slot, Hash), u64>),
+    SnapshotGenerationFailed(Slot, String),
     UnexpectedState(wen_restart_proto::State),
 }
 
@@ -147,6 +146,9 @@ impl std::fmt::Display for WenRestartError {
                     "Not enough stake agreeing with our slot: {} hash: {}\n {:?}",
                     slot, hash, block_stake_map,
                 )
+            }
+            WenRestartError::SnapshotGenerationFailed(slot, directory) => {
+                write!(f, "Snapshot generation failed for slot: {slot} {directory}")
             }
             WenRestartError::UnexpectedState(state) => {
                 write!(f, "Unexpected state: {:?}", state)
@@ -388,7 +390,6 @@ pub(crate) fn generate_snapshot(
     accounts_background_request_sender: &AbsRequestSender,
     genesis_config_hash: Hash,
     new_root_slot: Slot,
-    exit: &AtomicBool,
 ) -> Result<GenerateSnapshotRecord> {
     let new_root_bank;
     {
@@ -477,30 +478,29 @@ pub(crate) fn generate_snapshot(
     )?;
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
-    let snapshot_dir_str = snapshot_config.incremental_snapshot_archives_dir.display();
-    info!("waiting for new snapshot to be generated on {new_root_slot} in {snapshot_dir_str} base slot {full_snapshot_slot}");
-    loop {
-        if exit.load(Ordering::Relaxed) {
-            return Err(WenRestartError::Exiting.into());
+    for archive_info in
+        get_incremental_snapshot_archives(&snapshot_config.incremental_snapshot_archives_dir)
+    {
+        if archive_info.slot() == new_root_slot {
+            info!("wen_restart incremental snapshot generated on {new_root_slot} base slot {full_snapshot_slot}");
+            // We might have bank snapshots past the new_root_slot, we need to purge them.
+            purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+            return Ok(GenerateSnapshotRecord {
+                path: archive_info.path().display().to_string(),
+                slot: new_root_slot,
+                bankhash: new_root_bank.hash().to_string(),
+                shred_version: new_shred_version as u32,
+            });
         }
-        // Return the path of the snapshot archive matching new_root_slot.
-        for archive_info in
-            get_incremental_snapshot_archives(&snapshot_config.incremental_snapshot_archives_dir)
-        {
-            if archive_info.slot() == new_root_slot {
-                info!("wen_restart incremental snapshot generated on {new_root_slot} base slot {full_snapshot_slot}");
-                // We might have bank snapshots past the new_root_slot, we need to purge them.
-                purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
-                return Ok(GenerateSnapshotRecord {
-                    path: archive_info.path().display().to_string(),
-                    slot: new_root_slot,
-                    bankhash: new_root_bank.hash().to_string(),
-                    shred_version: new_shred_version as u32,
-                });
-            }
-        }
-        sleep(WAIT_FOR_SNAPSHOT_LOOP_SLEEP);
     }
+    return Err(WenRestartError::SnapshotGenerationFailed(
+        new_root_slot,
+        snapshot_config
+            .incremental_snapshot_archives_dir
+            .to_string_lossy()
+            .to_string(),
+    )
+    .into());
 }
 
 // Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
@@ -896,7 +896,6 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                         &config.accounts_background_request_sender,
                         config.genesis_config_hash,
                         new_root_slot,
-                        &config.exit,
                     )?,
                 };
                 WenRestartProgressInternalState::GenerateSnapshot {
@@ -2437,7 +2436,6 @@ mod tests {
             &AbsRequestSender::default(),
             test_state.genesis_config_hash,
             last_vote_slot,
-            &exit,
         )
         .unwrap();
         let new_root_bankhash = test_state
@@ -2487,7 +2485,6 @@ mod tests {
                 &AbsRequestSender::default(),
                 test_state.genesis_config_hash,
                 old_root_slot,
-                &exit,
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
@@ -2510,7 +2507,6 @@ mod tests {
                 &AbsRequestSender::default(),
                 test_state.genesis_config_hash,
                 older_slot,
-                &exit,
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
@@ -2533,7 +2529,6 @@ mod tests {
                 &AbsRequestSender::default(),
                 test_state.genesis_config_hash,
                 empty_slot,
-                &exit,
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
