@@ -428,60 +428,64 @@ pub fn output_slot(
         }
     }
 
+    let Some(meta) = blockstore.meta(slot)? else {
+        return Ok(());
+    };
     let (entries, num_shreds, is_full) =
         blockstore.get_slot_entries_with_shred_info(slot, 0, allow_dead_slots)?;
 
-    if *output_format == OutputFormat::Display {
-        if let Some(meta) = blockstore.meta(slot)? {
-            if verbose_level >= 1 {
-                println!("  {meta:?} is_full: {is_full}");
-            } else {
-                println!(
-                    "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, \
-                     is_full: {}",
-                    num_shreds,
-                    meta.parent_slot,
-                    meta.next_slots,
-                    entries.len(),
-                    is_full,
-                );
-            }
+    if verbose_level == 0 {
+        if *output_format == OutputFormat::Display {
+            println!(
+                "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, \
+                 is_full: {}",
+                num_shreds,
+                meta.parent_slot,
+                meta.next_slots,
+                entries.len(),
+                is_full,
+            );
         }
-    }
+    } else if verbose_level == 1 {
+        if *output_format == OutputFormat::Display {
+            println!("  {meta:?} is_full: {is_full}");
 
-    if verbose_level >= 2 {
+            let mut transactions = 0;
+            let mut num_hashes = 0;
+            let mut program_ids = HashMap::new();
+            let blockhash = if let Some(entry) = entries.last() {
+                entry.hash
+            } else {
+                Hash::default()
+            };
+
+            for entry in entries {
+                transactions += entry.transactions.len();
+                num_hashes += entry.num_hashes;
+                for transaction in entry.transactions {
+                    for program_id in get_program_ids(&transaction) {
+                        *program_ids.entry(*program_id).or_insert(0) += 1;
+                    }
+                }
+            }
+
+            println!(
+                "  Transactions: {transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
+            );
+            for (pubkey, count) in program_ids.iter() {
+                *all_program_ids.entry(*pubkey).or_insert(0) += count;
+            }
+            println!("  Programs:");
+            output_sorted_program_ids(program_ids);
+        }
+    } else {
         for (entry_index, entry) in entries.into_iter().enumerate() {
             output_entry(blockstore, output_format, slot, entry_index, entry);
         }
 
         output_slot_rewards(blockstore, slot, output_format);
-    } else if verbose_level >= 1 {
-        let mut transactions = 0;
-        let mut num_hashes = 0;
-        let mut program_ids = HashMap::new();
-        let blockhash = if let Some(entry) = entries.last() {
-            entry.hash
-        } else {
-            Hash::default()
-        };
-
-        for entry in entries {
-            transactions += entry.transactions.len();
-            num_hashes += entry.num_hashes;
-            for transaction in entry.transactions {
-                for program_id in get_program_ids(&transaction) {
-                    *program_ids.entry(*program_id).or_insert(0) += 1;
-                }
-            }
-        }
-
-        println!("  Transactions: {transactions}, hashes: {num_hashes}, block_hash: {blockhash}",);
-        for (pubkey, count) in program_ids.iter() {
-            *all_program_ids.entry(*pubkey).or_insert(0) += count;
-        }
-        println!("  Programs:");
-        output_sorted_program_ids(program_ids);
     }
+
     Ok(())
 }
 
