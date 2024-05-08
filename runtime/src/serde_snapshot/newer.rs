@@ -201,7 +201,7 @@ impl<'a> TypeContext<'a> for Context {
         let ancestors = HashMap::from(&serializable_bank.bank.ancestors);
         let fields = serializable_bank.bank.get_fields_to_serialize(&ancestors);
         let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
-        match get_serialize_bank_fields(
+        let bank_fields_to_serialize = (
             SerializableVersionedBank::from(fields),
             SerializableAccountsDb::<'a, Self> {
                 accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
@@ -218,11 +218,8 @@ impl<'a> TypeContext<'a> for Context {
                 .bank
                 .get_epoch_accounts_hash_to_serialize()
                 .map(|epoch_accounts_hash| *epoch_accounts_hash.as_ref()),
-            None, // epoch_reward_status always unpopulated
-        ) {
-            BankFieldsToSerialize::WithoutEpochRewardStatus(data) => data.serialize(serializer),
-            BankFieldsToSerialize::WithEpochRewardStatus(data) => data.serialize(serializer),
-        }
+        );
+        bank_fields_to_serialize.serialize(serializer)
     }
 
     #[cfg(test)]
@@ -413,21 +410,14 @@ impl<'a> TypeContext<'a> for Context {
             is_delta: rhs.is_delta,
         };
 
-        match get_serialize_bank_fields(
+        let bank_fields_to_serialize = (
             bank,
             accounts_db_fields,
             lamports_per_signature,
             incremental_snapshot_persistence.cloned(),
             epoch_accounts_hash.copied(),
-            None, // epoch_reward_status always unpopulated
-        ) {
-            BankFieldsToSerialize::WithoutEpochRewardStatus(data) => {
-                bincode::serialize_into(stream_writer, &data)
-            }
-            BankFieldsToSerialize::WithEpochRewardStatus(data) => {
-                bincode::serialize_into(stream_writer, &data)
-            }
-        }
+        );
+        bincode::serialize_into(stream_writer, &bank_fields_to_serialize)
     }
 }
 
