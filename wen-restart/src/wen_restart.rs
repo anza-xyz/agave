@@ -48,7 +48,7 @@ use {
         fs::{read, File},
         io::{Cursor, Write},
         num::NonZeroUsize,
-        path::PathBuf,
+        path::{Path, PathBuf},
         str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -81,6 +81,7 @@ pub enum WenRestartError {
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
     Exiting,
     FutureSnapshotExists(Slot, Slot, String),
+    GenerateSnapshotWhenOneExists(Slot, String),
     InvalidLastVoteType(VoteTransaction),
     MalformedLastVotedForkSlotsProtobuf(Option<LastVotedForkSlotsRecord>),
     MissingLastVotedForkSlots,
@@ -126,6 +127,12 @@ impl std::fmt::Display for WenRestartError {
                 write!(
                     f,
                     "Future snapshot exists for slot: {slot} highest slot: {highest_slot} in directory: {directory}",
+                )
+            }
+            WenRestartError::GenerateSnapshotWhenOneExists(slot, directory) => {
+                write!(
+                    f,
+                    "Generate snapshot when one exists for slot: {slot} in directory: {directory}",
                 )
             }
             WenRestartError::InvalidLastVoteType(vote) => {
@@ -375,6 +382,27 @@ pub(crate) fn find_heaviest_fork(
     Ok((heaviest_fork_slot, heaviest_fork_bankhash))
 }
 
+fn check_slot_smaller_than_intended_snapshot_slot(
+    slot: Slot,
+    intended_snapshot_slot: Slot,
+    directory: &Path,
+) -> Result<()> {
+    match slot.cmp(&intended_snapshot_slot) {
+        std::cmp::Ordering::Greater => Err(WenRestartError::FutureSnapshotExists(
+            intended_snapshot_slot,
+            slot,
+            directory.to_string_lossy().to_string(),
+        )
+        .into()),
+        std::cmp::Ordering::Equal => Err(WenRestartError::GenerateSnapshotWhenOneExists(
+            slot,
+            directory.to_string_lossy().to_string(),
+        )
+        .into()),
+        std::cmp::Ordering::Less => Ok(()),
+    }
+}
+
 // Given the agreed upon slot, add hard fork and rehash the corresponding bank, then
 // generate incremental snapshot. When the new snapshot is ready, it removes any
 // incremental snapshot on the same slot, then moves the new snapshot into the
@@ -427,8 +455,7 @@ pub(crate) fn generate_snapshot(
     let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
     // Even though generating incremental snapshot is faster, it involves finding a full
     // snapshot to use as base, so the logic is more complicated. For now we always generate
-    // a full snapshot, even if one already exists, because after adding a hard fork the
-    // bankhash will change.
+    // an incremental snapshot.
     let mut directory = &snapshot_config.full_snapshot_archives_dir;
     let Some(full_snapshot_slot) = get_highest_full_snapshot_archive_slot(directory) else {
         return Err(WenRestartError::MissingFullSnapshot(
@@ -447,25 +474,16 @@ pub(crate) fn generate_snapshot(
     // In even rarer cases, the selected slot might be the last full snapshot slot. We could
     // just re-generate a new snapshot to make sure the snapshot is up to date after hard fork,
     // but for now we just return an error to keep the code simple.
-    if full_snapshot_slot >= new_root_slot {
-        return Err(WenRestartError::FutureSnapshotExists(
-            new_root_slot,
-            full_snapshot_slot,
-            directory.to_string_lossy().to_string(),
-        )
-        .into());
-    }
+    check_slot_smaller_than_intended_snapshot_slot(full_snapshot_slot, new_root_slot, directory)?;
     directory = &snapshot_config.incremental_snapshot_archives_dir;
-    if let Some(slot) = get_highest_incremental_snapshot_archive_slot(directory, full_snapshot_slot)
+    if let Some(incremental_snapshot_slot) =
+        get_highest_incremental_snapshot_archive_slot(directory, full_snapshot_slot)
     {
-        if slot >= new_root_slot {
-            return Err(WenRestartError::FutureSnapshotExists(
-                new_root_slot,
-                slot,
-                directory.to_string_lossy().to_string(),
-            )
-            .into());
-        }
+        check_slot_smaller_than_intended_snapshot_slot(
+            incremental_snapshot_slot,
+            new_root_slot,
+            directory,
+        )?;
     }
     bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
@@ -2491,8 +2509,7 @@ mod tests {
             .unwrap_err()
             .downcast::<WenRestartError>()
             .unwrap(),
-            WenRestartError::FutureSnapshotExists(
-                old_root_slot,
+            WenRestartError::GenerateSnapshotWhenOneExists(
                 old_root_slot,
                 snapshot_config
                     .full_snapshot_archives_dir
@@ -2500,7 +2517,7 @@ mod tests {
                     .to_string()
             ),
         );
-        // fails if we already have an  incremental snapshot (we just generated one at last_vote_slot).
+        // fails if we already have an incremental snapshot (we just generated one at last_vote_slot).
         let older_slot = last_vote_slot - 1;
         assert_eq!(
             generate_snapshot(
