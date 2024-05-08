@@ -26,6 +26,9 @@ solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
 
+# try ahash, if its faster?
+ahash = { workspace = true }
+
 [lib]
 crate-type = ["lib"]
 name = "solana_cost_model"
@@ -42,3 +45,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [build-dependencies]
 rustc_version = { workspace = true }
+
+[[bench]]
+name = "cost_tracker"
