@@ -271,7 +271,7 @@ mod tests {
         }
 
         /// Return the total number of blocks in reward interval (including both calculation and crediting).
-        pub(in crate::bank) fn get_reward_total_num_blocks(&self, rewards: &StakeRewards) -> u64 {
+        fn get_reward_total_num_blocks(&self, rewards: &StakeRewards) -> u64 {
             REWARD_CALCULATION_NUM_BLOCKS + self.get_reward_distribution_num_blocks(rewards)
         }
     }
