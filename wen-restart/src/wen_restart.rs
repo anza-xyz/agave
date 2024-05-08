@@ -376,9 +376,14 @@ pub(crate) fn find_heaviest_fork(
 }
 
 // Given the agreed upon slot, add hard fork and rehash the corresponding bank, then
-// generate incremental snapshot. We don't actually do set_root here, because it may kick off
-// snapshot requests, we can't have multiple snapshot requests in progress. But when
-// restarting with generated snapshot, the slot will become the new root.
+// generate incremental snapshot. When the new snapshot is ready, it removes any
+// incremental snapshot on the same slot, then moves the new snapshot into the
+// incremental snapshot directory.
+//
+// We don't use set_root() explicitly, because it may kick off snapshot requests, we
+// can't have multiple snapshot requests in progress. In bank_to_snapshot_archive()
+// everything set_root() does will be done (without bank_forks setting root). So
+// when we restart from the snapshot bank on new_root_slot will become root.
 pub(crate) fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
     snapshot_config: &SnapshotConfig,
@@ -406,7 +411,6 @@ pub(crate) fn generate_snapshot(
                 return Err(WenRestartError::BlockNotFound(new_root_slot).into());
             }
         }
-        // Only root banks can have snapshots generated.
         let mut banks = vec![&new_root_bank];
         let parents = new_root_bank.parents();
         banks.extend(parents.iter());
