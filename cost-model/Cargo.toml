@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+ahash = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
@@ -25,9 +26,6 @@ solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
-
-# try ahash, if its faster?
-ahash = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
