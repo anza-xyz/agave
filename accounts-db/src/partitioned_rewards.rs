@@ -1,6 +1,4 @@
 //! Code related to partitioned rewards distribution
-//!
-use solana_sdk::clock::Slot;
 
 #[derive(Debug)]
 /// Configuration options for partitioned epoch rewards.
@@ -9,7 +7,7 @@ pub struct PartitionedEpochRewardsConfig {
     /// number of stake accounts to store in one block during partitioned reward interval
     /// normally, this is a number tuned for reasonable performance, such as 4096 accounts/block
     /// if force_one_slot_partitioned_rewards, this will usually be u64::MAX so that all stake accounts are written in the first block
-    pub stake_account_stores_per_block: Slot,
+    pub stake_account_stores_per_block: u64,
     /// if true, end of epoch bank rewards will force using partitioned rewards distribution.
     /// see `set_test_enable_partitioned_rewards`
     pub test_enable_partitioned_rewards: bool,
