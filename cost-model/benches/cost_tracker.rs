@@ -27,7 +27,7 @@ fn setup(num_transactions: usize, contentious_transactions: bool) -> BenchSetup 
             let mut usage_cost_details = UsageCostDetails::default();
             (0..max_accounts_per_tx).for_each(|_| {
                 let writable_account_key = if contentious_transactions {
-                    pubkey.clone()
+                    pubkey
                 } else {
                     Pubkey::new_unique()
                 };
@@ -55,10 +55,10 @@ fn bench_cost_tracker_non_contentious_transaction(bencher: &mut Bencher) {
 
     bencher.iter(|| {
         for tx_cost in tx_costs.iter() {
-            if cost_tracker.try_add(&tx_cost).is_err() {
+            if cost_tracker.try_add(tx_cost).is_err() {
                 break;
             } // stop when hit limits
-            cost_tracker.update_execution_cost(&tx_cost, 0); // update execution cost down to zero
+            cost_tracker.update_execution_cost(tx_cost, 0); // update execution cost down to zero
         }
     });
 }
@@ -72,10 +72,10 @@ fn bench_cost_tracker_contentious_transaction(bencher: &mut Bencher) {
 
     bencher.iter(|| {
         for tx_cost in tx_costs.iter() {
-            if cost_tracker.try_add(&tx_cost).is_err() {
+            if cost_tracker.try_add(tx_cost).is_err() {
                 break;
             } // stop when hit limits
-            cost_tracker.update_execution_cost(&tx_cost, 0); // update execution cost down to zero
+            cost_tracker.update_execution_cost(tx_cost, 0); // update execution cost down to zero
         }
     });
 }
