@@ -531,11 +531,9 @@ mod tests {
         // Defaults to 0
         assert_eq!(0, dbank.fee_rate_governor.lamports_per_signature);
 
-        // epoch_reward status should default to `Inactive`
-        let epoch_reward_status = dbank
-            .get_epoch_reward_status_to_serialize()
-            .unwrap_or(&EpochRewardStatus::Inactive);
-        assert_matches!(epoch_reward_status, EpochRewardStatus::Inactive);
+        // The snapshot epoch_reward_status always equals `None`, so the bank
+        // field should default to `Inactive`
+        assert_eq!(dbank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 
     #[cfg(RUSTC_WITH_SPECIALIZATION)]
