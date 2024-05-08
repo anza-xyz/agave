@@ -172,6 +172,7 @@ impl Default for GraphVoteAccountMode {
     }
 }
 
+#[allow(dead_code)]
 struct GraphVoteAccountModeError(String);
 
 impl FromStr for GraphVoteAccountMode {
