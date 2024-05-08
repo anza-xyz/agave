@@ -164,10 +164,6 @@ impl BankFrozenState {
             is_slot_duplicate,
         }
     }
-
-    pub(crate) fn mark_duplicate(&mut self) {
-        self.is_slot_duplicate = true;
-    }
 }
 
 #[derive(PartialEq, Eq, Debug)]
