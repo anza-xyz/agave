@@ -12,7 +12,6 @@ use {
         display::writeln_transaction, CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay,
         VerboseDisplay,
     },
-    solana_entry::entry::Entry,
     solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::bank::{Bank, TotalAccountsStats},
     solana_sdk::{
@@ -327,89 +326,6 @@ impl EncodedConfirmedBlockWithEntries {
             block_time: block.block_time,
             block_height: block.block_height,
         })
-    }
-}
-
-pub fn output_slot_rewards(blockstore: &Blockstore, slot: Slot, output_format: &OutputFormat) {
-    // Note: rewards are not output in JSON yet
-    if *output_format == OutputFormat::Display {
-        if let Ok(Some(rewards)) = blockstore.read_rewards(slot) {
-            if !rewards.is_empty() {
-                println!("  Rewards:");
-                println!(
-                    "    {:<44}  {:^15}  {:<15}  {:<20}  {:>10}",
-                    "Address", "Type", "Amount", "New Balance", "Commission",
-                );
-
-                for reward in rewards {
-                    let sign = if reward.lamports < 0 { "-" } else { "" };
-                    println!(
-                        "    {:<44}  {:^15}  {}◎{:<14.9}  ◎{:<18.9}   {}",
-                        reward.pubkey,
-                        if let Some(reward_type) = reward.reward_type {
-                            format!("{reward_type}")
-                        } else {
-                            "-".to_string()
-                        },
-                        sign,
-                        lamports_to_sol(reward.lamports.unsigned_abs()),
-                        lamports_to_sol(reward.post_balance),
-                        reward
-                            .commission
-                            .map(|commission| format!("{commission:>9}%"))
-                            .unwrap_or_else(|| "    -".to_string())
-                    );
-                }
-            }
-        }
-    }
-}
-
-pub fn output_entry(
-    blockstore: &Blockstore,
-    output_format: &OutputFormat,
-    slot: Slot,
-    entry_index: usize,
-    entry: Entry,
-) {
-    match output_format {
-        OutputFormat::Display => {
-            println!(
-                "  Entry {} - num_hashes: {}, hash: {}, transactions: {}",
-                entry_index,
-                entry.num_hashes,
-                entry.hash,
-                entry.transactions.len()
-            );
-            for (transactions_index, transaction) in entry.transactions.into_iter().enumerate() {
-                println!("    Transaction {transactions_index}");
-                let tx_signature = transaction.signatures[0];
-                let tx_status_meta = blockstore
-                    .read_transaction_status((tx_signature, slot))
-                    .unwrap_or_else(|err| {
-                        eprintln!(
-                            "Failed to read transaction status for {} at slot {}: {}",
-                            transaction.signatures[0], slot, err
-                        );
-                        None
-                    })
-                    .map(|meta| meta.into());
-
-                solana_cli_output::display::println_transaction(
-                    &transaction,
-                    tx_status_meta.as_ref(),
-                    "      ",
-                    None,
-                    None,
-                );
-            }
-        }
-        OutputFormat::Json => {
-            // Note: transaction status is not output in JSON yet
-            serde_json::to_writer(stdout(), &entry).expect("serialize entry");
-            stdout().write_all(b",\n").expect("newline");
-        }
-        _ => unreachable!(),
     }
 }
 
