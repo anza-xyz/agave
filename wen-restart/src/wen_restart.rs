@@ -34,9 +34,12 @@ use {
         bank::Bank,
         bank_forks::BankForks,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils::bank_to_full_snapshot_archive,
+        snapshot_bank_utils::bank_to_incremental_snapshot_archive,
         snapshot_config::SnapshotConfig,
-        snapshot_utils::{get_full_snapshot_archives, get_highest_full_snapshot_archive_slot},
+        snapshot_utils::{
+            get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
+            get_incremental_snapshot_archives,
+        },
     },
     solana_sdk::{shred_version::compute_shred_version, timing::timestamp},
     solana_vote_program::vote_state::VoteTransaction,
@@ -81,9 +84,11 @@ pub enum WenRestartError {
     BlockNotLinkedToExpectedParent(Slot, Option<Slot>, Slot),
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
     Exiting,
+    FutureSnapshotExists(Slot, Slot, bool),
     InvalidLastVoteType(VoteTransaction),
     MalformedLastVotedForkSlotsProtobuf(Option<LastVotedForkSlotsRecord>),
     MissingLastVotedForkSlots,
+    MissingFullSnapshot(String),
     NotEnoughStakeAgreeingWithUs(Slot, Hash, HashMap<(Slot, Hash), u64>),
     UnexpectedState(wen_restart_proto::State),
 }
@@ -120,6 +125,12 @@ impl std::fmt::Display for WenRestartError {
                 )
             }
             WenRestartError::Exiting => write!(f, "Exiting"),
+            WenRestartError::FutureSnapshotExists(slot, highest_slot, is_incremental) => {
+                write!(
+                    f,
+                    "Future snapshot exists for slot: {slot} highest slot: {highest_slot} is_incremental: {is_incremental}",
+                )
+            }
             WenRestartError::InvalidLastVoteType(vote) => {
                 write!(f, "Invalid last vote type: {:?}", vote)
             }
@@ -128,6 +139,9 @@ impl std::fmt::Display for WenRestartError {
             }
             WenRestartError::MissingLastVotedForkSlots => {
                 write!(f, "Missing last voted fork slots")
+            }
+            WenRestartError::MissingFullSnapshot(directory) => {
+                write!(f, "Missing full snapshot, please check whether correct directory is supplied {directory}")
             }
             WenRestartError::NotEnoughStakeAgreeingWithUs(slot, hash, block_stake_map) => {
                 write!(
@@ -362,7 +376,7 @@ pub(crate) fn find_heaviest_fork(
 }
 
 // Given the agreed upon slot, add hard fork and rehash the corresponding bank, then
-// generate full snapshot. We don't actually do set_root here, because it may kick off
+// generate incremental snapshot. We don't actually do set_root here, because it may kick off
 // snapshot requests, we can't have multiple snapshot requests in progress. But when
 // restarting with generated snapshot, the slot will become the new root.
 pub(crate) fn generate_snapshot(
@@ -412,25 +426,49 @@ pub(crate) fn generate_snapshot(
     // snapshot to use as base, so the logic is more complicated. For now we always generate
     // a full snapshot, even if one already exists, because after adding a hard fork the
     // bankhash will change.
-    if let Some(slot) =
+    let Some(full_snapshot_slot) =
         get_highest_full_snapshot_archive_slot(&snapshot_config.full_snapshot_archives_dir)
-    {
-        if slot > new_root_slot {
-            warn!(
-                "The new root slot {new_root_slot} should be no smaller than all previous
-                  roots, but the highest full snapshot archive slot is {slot}"
-            );
+    else {
+        return Err(WenRestartError::MissingFullSnapshot(
+            snapshot_config
+                .full_snapshot_archives_dir
+                .to_string_lossy()
+                .to_string(),
+        )
+        .into());
+    };
+    // In very rare cases it's possible that the local root is not on the heaviest fork, so the
+    // validator generated snapshot for slots > local root. In this case, we don't proceed with
+    // wen_restart, since this needs human inspection.
+    // In even rarer cases, the selected slot might be the last full snapshot slot. We could
+    // just re-generate a new snapshot to make sure the snapshot is up to date after hard fork,
+    // but for now we just return an error to keep the code simple.
+    if full_snapshot_slot >= new_root_slot {
+        return Err(WenRestartError::FutureSnapshotExists(
+            new_root_slot,
+            full_snapshot_slot,
+            false,
+        )
+        .into());
+    }
+    if let Some(slot) = get_highest_incremental_snapshot_archive_slot(
+        &snapshot_config.incremental_snapshot_archives_dir,
+        full_snapshot_slot,
+    ) {
+        if slot >= new_root_slot {
+            return Err(WenRestartError::FutureSnapshotExists(new_root_slot, slot, true).into());
         }
     }
     let snapshot_dir = snapshot_config
-        .full_snapshot_archives_dir
+        .incremental_snapshot_archives_dir
         .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
-    bank_to_full_snapshot_archive(
+    bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         &new_root_bank,
+        full_snapshot_slot,
         Some(snapshot_config.snapshot_version),
+        &snapshot_config.full_snapshot_archives_dir,
         &snapshot_dir,
-        &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
         NonZeroUsize::MAX,
         NonZeroUsize::MAX,
@@ -438,15 +476,16 @@ pub(crate) fn generate_snapshot(
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
     let snapshot_dir_str = snapshot_dir.display().to_string();
-    info!("waiting for new snapshot to be generated on {new_root_slot} in {snapshot_dir_str}");
+    info!("waiting for new snapshot to be generated on {new_root_slot} in {snapshot_dir_str} base slot {full_snapshot_slot}");
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
         // Return the path of the snapshot archive matching new_root_slot.
-        for archive_info in get_full_snapshot_archives(&snapshot_dir) {
+        for archive_info in get_incremental_snapshot_archives(&snapshot_dir) {
+            warn!("{:?} ", archive_info);
             if archive_info.slot() == new_root_slot {
-                info!("wen_restart snapshot generated on {new_root_slot}");
+                info!("wen_restart incremental snapshot generated on {new_root_slot} base slot {full_snapshot_slot}");
                 return Ok(GenerateSnapshotRecord {
                     path: archive_info.path().display().to_string(),
                     slot: new_root_slot,
@@ -1108,8 +1147,9 @@ mod tests {
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
+            snapshot_bank_utils::bank_to_full_snapshot_archive,
             snapshot_hash::SnapshotHash,
-            snapshot_utils::build_full_snapshot_archive_path,
+            snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -1399,6 +1439,19 @@ mod tests {
             .write()
             .unwrap()
             .set_snapshot_config(Some(snapshot_config.clone()));
+        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
+        // Trigger full snapshot generation on the old root bank.
+        assert!(bank_to_full_snapshot_archive(
+            snapshot_config.bank_snapshots_dir.clone(),
+            &old_root_bank,
+            Some(snapshot_config.snapshot_version),
+            snapshot_config.full_snapshot_archives_dir.clone(),
+            snapshot_config.incremental_snapshot_archives_dir.clone(),
+            snapshot_config.archive_format,
+            snapshot_config.maximum_full_snapshot_archives_to_retain,
+            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+        )
+        .is_ok());
 
         let exit = Arc::new(AtomicBool::new(false));
         let wen_restart_config = WenRestartConfig {
@@ -2341,6 +2394,7 @@ mod tests {
             ..Default::default()
         };
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
+        let old_root_slot = old_root_bank.slot();
         let last_vote_slot = test_state.last_voted_fork_slots[0];
         let exit = Arc::new(AtomicBool::new(false));
         let mut slots = test_state.last_voted_fork_slots.clone();
@@ -2359,8 +2413,21 @@ mod tests {
             .write()
             .unwrap()
             .set_snapshot_config(Some(snapshot_config.clone()));
+        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
+        // Trigger full snapshot generation on the old root bank.
+        assert!(bank_to_full_snapshot_archive(
+            snapshot_config.bank_snapshots_dir.clone(),
+            &old_root_bank,
+            Some(snapshot_config.snapshot_version),
+            snapshot_config.full_snapshot_archives_dir.clone(),
+            snapshot_config.incremental_snapshot_archives_dir.clone(),
+            snapshot_config.archive_format,
+            snapshot_config.maximum_full_snapshot_archives_to_retain,
+            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+        )
+        .is_ok());
         let wen_restart_snapshot_path = snapshot_config
-            .full_snapshot_archives_dir
+            .incremental_snapshot_archives_dir
             .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
@@ -2398,8 +2465,9 @@ mod tests {
                 slot: last_vote_slot,
                 bankhash: new_root_bankhash.to_string(),
                 shred_version: new_shred_version,
-                path: build_full_snapshot_archive_path(
+                path: build_incremental_snapshot_archive_path(
                     wen_restart_snapshot_path.clone(),
+                    old_root_slot,
                     last_vote_slot,
                     &SnapshotHash(snapshot_hash),
                     snapshot_config.archive_format,
