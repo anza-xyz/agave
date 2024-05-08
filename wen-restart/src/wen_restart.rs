@@ -84,7 +84,7 @@ pub enum WenRestartError {
     BlockNotLinkedToExpectedParent(Slot, Option<Slot>, Slot),
     ChildStakeLargerThanParent(Slot, u64, Slot, u64),
     Exiting,
-    FutureSnapshotExists(Slot, Slot, bool),
+    FutureSnapshotExists(Slot, Slot, String),
     InvalidLastVoteType(VoteTransaction),
     MalformedLastVotedForkSlotsProtobuf(Option<LastVotedForkSlotsRecord>),
     MissingLastVotedForkSlots,
@@ -125,10 +125,10 @@ impl std::fmt::Display for WenRestartError {
                 )
             }
             WenRestartError::Exiting => write!(f, "Exiting"),
-            WenRestartError::FutureSnapshotExists(slot, highest_slot, is_incremental) => {
+            WenRestartError::FutureSnapshotExists(slot, highest_slot, directory) => {
                 write!(
                     f,
-                    "Future snapshot exists for slot: {slot} highest slot: {highest_slot} is_incremental: {is_incremental}",
+                    "Future snapshot exists for slot: {slot} highest slot: {highest_slot} in directory: {directory}",
                 )
             }
             WenRestartError::InvalidLastVoteType(vote) => {
@@ -426,9 +426,8 @@ pub(crate) fn generate_snapshot(
     // snapshot to use as base, so the logic is more complicated. For now we always generate
     // a full snapshot, even if one already exists, because after adding a hard fork the
     // bankhash will change.
-    let Some(full_snapshot_slot) =
-        get_highest_full_snapshot_archive_slot(&snapshot_config.full_snapshot_archives_dir)
-    else {
+    let mut directory = &snapshot_config.full_snapshot_archives_dir;
+    let Some(full_snapshot_slot) = get_highest_full_snapshot_archive_slot(directory) else {
         return Err(WenRestartError::MissingFullSnapshot(
             snapshot_config
                 .full_snapshot_archives_dir
@@ -447,21 +446,37 @@ pub(crate) fn generate_snapshot(
         return Err(WenRestartError::FutureSnapshotExists(
             new_root_slot,
             full_snapshot_slot,
-            false,
+            directory.to_string_lossy().to_string(),
         )
         .into());
     }
-    if let Some(slot) = get_highest_incremental_snapshot_archive_slot(
-        &snapshot_config.incremental_snapshot_archives_dir,
-        full_snapshot_slot,
-    ) {
+    directory = &snapshot_config.incremental_snapshot_archives_dir;
+    if let Some(slot) = get_highest_incremental_snapshot_archive_slot(directory, full_snapshot_slot)
+    {
         if slot >= new_root_slot {
-            return Err(WenRestartError::FutureSnapshotExists(new_root_slot, slot, true).into());
+            return Err(WenRestartError::FutureSnapshotExists(
+                new_root_slot,
+                slot,
+                directory.to_string_lossy().to_string(),
+            )
+            .into());
         }
     }
     let snapshot_dir = snapshot_config
         .incremental_snapshot_archives_dir
         .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
+    directory = &snapshot_dir;
+    if let Some(slot) = get_highest_incremental_snapshot_archive_slot(directory, full_snapshot_slot)
+    {
+        if slot >= new_root_slot {
+            return Err(WenRestartError::FutureSnapshotExists(
+                new_root_slot,
+                slot,
+                directory.to_string_lossy().to_string(),
+            )
+            .into());
+        }
+    }
     bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         &new_root_bank,
@@ -483,7 +498,6 @@ pub(crate) fn generate_snapshot(
         }
         // Return the path of the snapshot archive matching new_root_slot.
         for archive_info in get_incremental_snapshot_archives(&snapshot_dir) {
-            warn!("{:?} ", archive_info);
             if archive_info.slot() == new_root_slot {
                 info!("wen_restart incremental snapshot generated on {new_root_slot} base slot {full_snapshot_slot}");
                 return Ok(GenerateSnapshotRecord {
@@ -2426,6 +2440,24 @@ mod tests {
             snapshot_config.maximum_incremental_snapshot_archives_to_retain,
         )
         .is_ok());
+        // Trigger incremental snapshot generation on last_vote_slot - 10
+        assert!(bank_to_incremental_snapshot_archive(
+            snapshot_config.bank_snapshots_dir.clone(),
+            &test_state
+                .bank_forks
+                .read()
+                .unwrap()
+                .get(last_vote_slot - 10)
+                .unwrap(),
+            old_root_slot,
+            Some(snapshot_config.snapshot_version),
+            snapshot_config.full_snapshot_archives_dir.clone(),
+            snapshot_config.incremental_snapshot_archives_dir.clone(),
+            snapshot_config.archive_format,
+            snapshot_config.maximum_full_snapshot_archives_to_retain,
+            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+        )
+        .is_ok());
         let wen_restart_snapshot_path = snapshot_config
             .incremental_snapshot_archives_dir
             .join(SNAPSHOT_ARCHIVE_WEN_RESTART_DIR);
@@ -2475,6 +2507,87 @@ mod tests {
                 .display()
                 .to_string(),
             },
+        );
+        // Now generate a snapshot for older slot, it should fail because we already
+        // have a full snapshot.
+        assert_eq!(
+            generate_snapshot(
+                test_state.bank_forks.clone(),
+                &snapshot_config,
+                &AbsRequestSender::default(),
+                test_state.genesis_config_hash,
+                old_root_slot,
+                &exit,
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::FutureSnapshotExists(
+                old_root_slot,
+                old_root_slot,
+                snapshot_config
+                    .full_snapshot_archives_dir
+                    .to_string_lossy()
+                    .to_string()
+            ),
+        );
+        // fails if we already have an older incremental snapshot (we have one at last_vote_slot-10).
+        assert_eq!(
+            generate_snapshot(
+                test_state.bank_forks.clone(),
+                &snapshot_config,
+                &AbsRequestSender::default(),
+                test_state.genesis_config_hash,
+                last_vote_slot - 11,
+                &exit,
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::FutureSnapshotExists(
+                last_vote_slot - 11,
+                last_vote_slot - 10,
+                snapshot_config
+                    .incremental_snapshot_archives_dir
+                    .to_string_lossy()
+                    .to_string()
+            ),
+        );
+        // fails if we already have a snapshot in wen_restart snapshot path.
+        let older_slot = last_vote_slot - 1;
+        assert_eq!(
+            generate_snapshot(
+                test_state.bank_forks.clone(),
+                &snapshot_config,
+                &AbsRequestSender::default(),
+                test_state.genesis_config_hash,
+                older_slot,
+                &exit,
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::FutureSnapshotExists(
+                older_slot,
+                last_vote_slot,
+                wen_restart_snapshot_path.to_string_lossy().to_string()
+            ),
+        );
+        // Generate snapshot for a slot without any block, it should fail.
+        let empty_slot = last_vote_slot + 1;
+        assert_eq!(
+            generate_snapshot(
+                test_state.bank_forks.clone(),
+                &snapshot_config,
+                &AbsRequestSender::default(),
+                test_state.genesis_config_hash,
+                empty_slot,
+                &exit,
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::BlockNotFound(empty_slot),
         );
     }
 }
