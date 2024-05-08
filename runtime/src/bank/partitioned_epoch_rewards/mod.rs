@@ -27,7 +27,7 @@ use {
 const REWARD_CALCULATION_NUM_BLOCKS: u64 = 1;
 
 #[derive(AbiExample, Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct PartitionedStakeReward {
+pub(crate) struct PartitionedStakeReward {
     /// Stake account address
     pub stake_pubkey: Pubkey,
     /// `Stake` state to be stored in account
