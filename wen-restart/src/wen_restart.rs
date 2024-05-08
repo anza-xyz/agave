@@ -490,7 +490,7 @@ pub(crate) fn generate_snapshot(
     )?;
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
-    let snapshot_dir_str = snapshot_dir.display().to_string();
+    let snapshot_dir_str = snapshot_dir.display();
     info!("waiting for new snapshot to be generated on {new_root_slot} in {snapshot_dir_str} base slot {full_snapshot_slot}");
     loop {
         if exit.load(Ordering::Relaxed) {
