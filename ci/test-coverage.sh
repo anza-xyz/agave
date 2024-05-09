@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
+
 set -e
-cd "$(dirname "$0")/.."
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+if [[ -z $CI ]]; then
+  echo "This script is used by CI environment. Use scripts/coverage.sh directly if you only want to obtain the coverage report"
+  exit 1
+fi
 
 annotate() {
   ${BUILDKITE:-false} && {
@@ -8,21 +14,20 @@ annotate() {
   }
 }
 
-source ci/upload-ci-artifact.sh
-source scripts/ulimit-n.sh
+# run coverage for all
+"$here/../scripts/coverage.sh"
 
-scripts/coverage.sh "$@"
+# compress coverage reports
+HTML_REPORT_TAR_NAME="coverage-${CI_COMMIT:0:9}.tar.gz"
+HTML_REPORT_TAR_PATH="$here/../$HTML_REPORT_TAR_NAME"
+tar zcf "$HTML_REPORT_TAR_PATH" "$here/../coverage/"
 
-if [[ -z $CI ]]; then
-  exit
-fi
-
-report=coverage-"${CI_COMMIT:0:9}".tar.gz
-mv target/cov/report.tar.gz "$report"
-upload-ci-artifact "$report"
-
+# upload reports to buildkite
+# shellcheck source=ci/upload-ci-artifact.sh
+source "$here/upload-ci-artifact.sh"
+upload-ci-artifact "$HTML_REPORT_TAR_PATH"
 annotate --style success --context lcov-report \
-  "lcov report: <a href=\"artifact://$report\">$report</a>"
+  "lcov report: <a href=\"artifact://$HTML_REPORT_TAR_NAME\">$HTML_REPORT_TAR_NAME</a>"
 
 echo "--- codecov.io report"
 if [[ -z "$CODECOV_TOKEN" ]]; then
@@ -32,5 +37,5 @@ else
   codecov -t "${CODECOV_TOKEN}"
 
   annotate --style success --context codecov.io \
-    "CodeCov report: https://codecov.io/github/anza-xyz/agave/commit/${CI_COMMIT:0:9}"
+    "CodeCov report: https://codecov.io/github/anza-xyz/agave/commit/$CI_COMMIT"
 fi
