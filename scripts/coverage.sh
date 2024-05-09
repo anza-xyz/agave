@@ -6,7 +6,7 @@
 #   $ ./script/coverage.sh
 #
 # Run for specific packages
-#   $ ./script/coverage.sh -p solana-account-decoder 
+#   $ ./script/coverage.sh -p solana-account-decoder
 #   $ ./script/coverage.sh -p solana-account-decoder -p solana-accounts-db [-p ...]
 
 set -e
