@@ -3,6 +3,9 @@
 set -e
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
+# shellcheck source=ci/upload-ci-artifact.sh
+source "$here/upload-ci-artifact.sh"
+
 if [[ -z $CI ]]; then
   echo "This script is used by CI environment. \
 Use \`scripts/coverage.sh\` directly if you only want to obtain the coverage report"
@@ -24,8 +27,6 @@ HTML_REPORT_TAR_PATH="$here/../$HTML_REPORT_TAR_NAME"
 tar zcf "$HTML_REPORT_TAR_PATH" "$here/../coverage/"
 
 # upload reports to buildkite
-# shellcheck source=ci/upload-ci-artifact.sh
-source "$here/upload-ci-artifact.sh"
 upload-ci-artifact "$HTML_REPORT_TAR_PATH"
 annotate --style success --context lcov-report \
   "lcov report: <a href=\"artifact://$HTML_REPORT_TAR_NAME\">$HTML_REPORT_TAR_NAME</a>"
