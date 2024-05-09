@@ -287,7 +287,10 @@ mod tests {
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
 
-        bank.set_epoch_reward_status_active(bank.block_height() + 1, vec![stake_rewards]);
+        bank.set_epoch_reward_status_active(
+            bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            vec![stake_rewards],
+        );
         assert!(bank.get_reward_interval() == RewardInterval::InsideInterval);
 
         bank.force_reward_interval_end_for_tests();
