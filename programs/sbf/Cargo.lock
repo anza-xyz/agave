@@ -5013,6 +5013,7 @@ dependencies = [
 name = "solana-cost-model"
 version = "2.0.0"
 dependencies = [
+ "ahash 0.8.10",
  "lazy_static",
  "log",
  "rustc_version",
@@ -5097,7 +5098,6 @@ dependencies = [
  "memmap2",
  "rustc_version",
  "serde",
- "serde_bytes",
  "serde_derive",
  "sha2 0.10.8",
  "solana-frozen-abi-macro",
@@ -5437,8 +5437,6 @@ dependencies = [
  "serde_derive",
  "sha2 0.10.8",
  "sha3 0.10.8",
- "solana-frozen-abi",
- "solana-frozen-abi-macro",
  "solana-sdk-macro",
  "thiserror",
  "wasm-bindgen",
