@@ -60,6 +60,7 @@ use {
         TransactionStatusMeta, TransactionWithStatusMeta, VersionedConfirmedBlock,
         VersionedConfirmedBlockWithEntries, VersionedTransactionWithStatusMeta,
     },
+    static_assertions::const_assert_eq,
     std::{
         borrow::Cow,
         cell::RefCell,
@@ -3694,30 +3695,22 @@ impl Blockstore {
         // We compare the merkle roots of the last `DATA_SHREDS_PER_FEC_BLOCK` shreds in this block.
         // Since the merkle root contains the fec_set_index, if all of them match, we know that the last fec set has
         // at least `DATA_SHREDS_PER_FEC_BLOCK` shreds.
-        let slot_meta = self
-            .meta_cf
-            .get(slot)?
-            .ok_or(BlockstoreError::SlotUnavailable)?;
+        let slot_meta = self.meta(slot)?.ok_or(BlockstoreError::SlotUnavailable)?;
         let last_shred_index = slot_meta
             .last_index
             .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
 
-        let expected_num_shreds = u64::try_from(DATA_SHREDS_PER_FEC_BLOCK)
-            .expect("DATA_SHREDS_PER_FEC_BLOCK should fit in u64");
-        let minimum_index = expected_num_shreds
-            .checked_sub(1)
-            .expect("DATA_SHREDS_PER_FEC_BLOCK should be non-zero");
-        if last_shred_index < minimum_index {
+        const MINIMUM_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64 - 1;
+        const_assert_eq!(MINIMUM_INDEX, 31);
+        if last_shred_index < MINIMUM_INDEX {
             warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
             return Ok(false);
         }
 
         let start_index = last_shred_index
-            .checked_sub(minimum_index)
+            .checked_sub(MINIMUM_INDEX)
             .expect("last shred index must be >= minimum index");
-        let keys: Vec<(Slot, u64)> = (start_index..=last_shred_index)
-            .map(|index| (slot, index))
-            .collect();
+        let keys = (start_index..=last_shred_index).map(|index| (slot, index));
 
         let last_merkle_roots: Vec<Hash> = self
             .data_shred_cf
