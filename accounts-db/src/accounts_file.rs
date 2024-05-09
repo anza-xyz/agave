@@ -11,6 +11,7 @@ use {
     },
     solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
     std::{
+        fs,
         io::Read,
         mem,
         path::{Path, PathBuf},
@@ -289,6 +290,18 @@ impl AccountsFile {
                 .data_for_archive(),
         }
     }
+
+    /// brooks TODO: doc
+    pub fn internals_for_archive(&self) -> InternalsForArchive {
+        match self {
+            Self::AppendVec(av) => InternalsForArchive::Mmap(av.data_for_archive()),
+            Self::TieredStorage(ts) => InternalsForArchive::Mmap(
+                ts.reader()
+                    .expect("must be a reader when archiving")
+                    .data_for_archive(),
+            ),
+        }
+    }
 }
 
 /// An enum that creates AccountsFile instance with the specified format.
@@ -308,6 +321,13 @@ impl AccountsFileProvider {
             Self::HotStorage => AccountsFile::TieredStorage(TieredStorage::new_writable(path)),
         }
     }
+}
+
+/// brooks TODO: doc
+#[derive(Debug)]
+pub enum InternalsForArchive<'a> {
+    Mmap(&'a [u8]),
+    File(fs::File),
 }
 
 /// Information after storing accounts
