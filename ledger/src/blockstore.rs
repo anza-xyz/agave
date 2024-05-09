@@ -1433,6 +1433,12 @@ impl Blockstore {
                         shred.clone(),
                         conflicting_shred,
                     ));
+                } else {
+                    error!(
+                        "Unable to find the conflicting coding shred that set {erasure_meta:?}.
+                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        Skipping the erasure meta duplicate shred check"
+                    );
                 }
             }
 
