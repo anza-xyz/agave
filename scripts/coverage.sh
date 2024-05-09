@@ -27,7 +27,7 @@ rm -rf "$here/../target" "$here/../coverage"
 find "$here/.." -type f -name '*.prof*' -exec rm {} +
 find "$here/.." -type f -name '*lcov*' -exec rm {} +
 
-export RUSTFLAGS="-C instrument-coverage"
+export RUSTFLAGS="-C instrument-coverage $RUSTFLAGS"
 export LLVM_PROFILE_FILE="default-%p-%m.profraw"
 
 if [[ -z $1 ]]; then
