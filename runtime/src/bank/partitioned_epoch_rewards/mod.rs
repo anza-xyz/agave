@@ -255,6 +255,21 @@ mod tests {
         solana_vote_program::{vote_state, vote_transaction},
     };
 
+    impl PartitionedStakeReward {
+        pub fn new_random() -> Self {
+            Self::maybe_from(&StakeReward::new_random()).unwrap()
+        }
+    }
+
+    pub fn convert_rewards(
+        stake_rewards: impl IntoIterator<Item = StakeReward>,
+    ) -> PartitionedStakeRewards {
+        stake_rewards
+            .into_iter()
+            .map(|stake_reward| PartitionedStakeReward::maybe_from(&stake_reward).unwrap())
+            .collect()
+    }
+
     #[derive(Debug, PartialEq, Eq, Copy, Clone)]
     enum RewardInterval {
         /// the slot within the epoch is INSIDE the reward distribution interval
@@ -282,7 +297,7 @@ mod tests {
         let expected_num = 100;
 
         let stake_rewards = (0..expected_num)
-            .map(|_| StakeReward::new_random())
+            .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
         bank.set_epoch_reward_status_active(
@@ -343,7 +358,7 @@ mod tests {
             |num_stakes: u64, expected_num_reward_distribution_blocks: u64| {
                 // Given the short epoch, i.e. 32 slots, we should cap the number of reward distribution blocks to 32/10 = 3.
                 let stake_rewards = (0..num_stakes)
-                    .map(|_| StakeReward::new_random())
+                    .map(|_| PartitionedStakeReward::new_random())
                     .collect::<Vec<_>>();
 
                 assert_eq!(
@@ -381,7 +396,7 @@ mod tests {
         // Given 8k rewards, it will take 2 blocks to credit all the rewards
         let expected_num = 8192;
         let stake_rewards = (0..expected_num)
-            .map(|_| StakeReward::new_random())
+            .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
         assert_eq!(bank.get_reward_distribution_num_blocks(&stake_rewards), 2);

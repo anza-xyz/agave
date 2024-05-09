@@ -984,8 +984,8 @@ mod tests {
     }
 
     fn compare_stake_rewards(
-        expected_stake_rewards: &[StakeRewards],
-        received_stake_rewards: &[StakeRewards],
+        expected_stake_rewards: &[PartitionedStakeRewards],
+        received_stake_rewards: &[PartitionedStakeRewards],
     ) {
         for (i, partition) in received_stake_rewards.iter().enumerate() {
             let expected_partition = &expected_stake_rewards[i];
