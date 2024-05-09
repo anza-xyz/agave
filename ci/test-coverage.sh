@@ -4,7 +4,8 @@ set -e
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 if [[ -z $CI ]]; then
-  echo "This script is used by CI environment. Use scripts/coverage.sh directly if you only want to obtain the coverage report"
+  echo "This script is used by CI environment. \
+Use \`scripts/coverage.sh\` directly if you only want to obtain the coverage report"
   exit 1
 fi
 
