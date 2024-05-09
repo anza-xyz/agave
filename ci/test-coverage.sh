@@ -16,7 +16,7 @@ annotate() {
 }
 
 # run coverage for all
-"$here/../scripts/coverage.sh"
+"$here/../scripts/coverage.sh" "$@"
 
 # compress coverage reports
 HTML_REPORT_TAR_NAME="coverage-${CI_COMMIT:0:9}.tar.gz"
