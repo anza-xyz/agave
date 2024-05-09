@@ -38,7 +38,7 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_utils::{
             get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
-            get_incremental_snapshot_archives, purge_all_bank_snapshots,
+            purge_all_bank_snapshots,
         },
     },
     solana_sdk::{shred_version::compute_shred_version, timing::timestamp},
@@ -86,7 +86,6 @@ pub enum WenRestartError {
     MissingLastVotedForkSlots,
     MissingFullSnapshot(String),
     NotEnoughStakeAgreeingWithUs(Slot, Hash, HashMap<(Slot, Hash), u64>),
-    SnapshotGenerationFailed(Slot, String),
     UnexpectedState(wen_restart_proto::State),
 }
 
@@ -152,9 +151,6 @@ impl std::fmt::Display for WenRestartError {
                     "Not enough stake agreeing with our slot: {} hash: {}\n {:?}",
                     slot, hash, block_stake_map,
                 )
-            }
-            WenRestartError::SnapshotGenerationFailed(slot, directory) => {
-                write!(f, "Snapshot generation failed for slot: {slot} {directory}")
             }
             WenRestartError::UnexpectedState(state) => {
                 write!(f, "Unexpected state: {:?}", state)
@@ -484,7 +480,7 @@ pub(crate) fn generate_snapshot(
             directory,
         )?;
     }
-    bank_to_incremental_snapshot_archive(
+    let archive_info = bank_to_incremental_snapshot_archive(
         &snapshot_config.bank_snapshots_dir,
         &new_root_bank,
         full_snapshot_slot,
@@ -495,29 +491,16 @@ pub(crate) fn generate_snapshot(
     )?;
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
-    for archive_info in
-        get_incremental_snapshot_archives(&snapshot_config.incremental_snapshot_archives_dir)
-    {
-        if archive_info.slot() == new_root_slot {
-            info!("wen_restart incremental snapshot generated on {new_root_slot} base slot {full_snapshot_slot}");
-            // We might have bank snapshots past the new_root_slot, we need to purge them.
-            purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
-            return Ok(GenerateSnapshotRecord {
-                path: archive_info.path().display().to_string(),
-                slot: new_root_slot,
-                bankhash: new_root_bank.hash().to_string(),
-                shred_version: new_shred_version as u32,
-            });
-        }
-    }
-    return Err(WenRestartError::SnapshotGenerationFailed(
-        new_root_slot,
-        snapshot_config
-            .incremental_snapshot_archives_dir
-            .to_string_lossy()
-            .to_string(),
-    )
-    .into());
+    let new_snapshot_path = archive_info.path().display().to_string();
+    info!("wen_restart incremental snapshot generated on {new_snapshot_path} base slot {full_snapshot_slot}");
+    // We might have bank snapshots past the new_root_slot, we need to purge them.
+    purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+    Ok(GenerateSnapshotRecord {
+        path: new_snapshot_path,
+        slot: new_root_slot,
+        bankhash: new_root_bank.hash().to_string(),
+        shred_version: new_shred_version as u32,
+    })
 }
 
 // Find the hash of the heaviest fork, if block hasn't been replayed, replay to get the hash.
