@@ -18,6 +18,7 @@ if ! command -v grcov >/dev/null 2>&1; then
   exit 1
 fi
 
+# Use nightly as we have some nightly-only tests (frozen-abi)
 # shellcheck source=ci/rust-version.sh
 source "$here/../ci/rust-version.sh" nightly
 
