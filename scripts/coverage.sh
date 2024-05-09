@@ -47,7 +47,8 @@ cargo +"$rust_nightly" test "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
 # Generate test reports
 echo "--- grcov"
 grcov_common_args=(
-  .
+  "$here/.."
+  --source-dir "$here/.."
   --binary-path "$here/../target/debug/"
   --llvm
   --ignore \*.cargo\*
@@ -56,8 +57,7 @@ grcov_common_args=(
   --ignore upload-perf\*
   --ignore bench-streamer\*
   --ignore local-cluster\*
-  -s .
-  --branch --ignore-not-existing
+  --ignore-not-existing
 )
 
 grcov "${grcov_common_args[@]}" -t html -o "$here/../coverage/"
