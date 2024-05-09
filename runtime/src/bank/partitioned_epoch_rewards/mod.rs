@@ -90,7 +90,7 @@ pub(super) struct VoteRewardsAccounts {
 /// result of calculating the stake rewards at end of epoch
 struct StakeRewardCalculation {
     /// each individual stake account to reward
-    stake_rewards: StakeRewards,
+    stake_rewards: PartitionedStakeRewards,
     /// total lamports across all `stake_rewards`
     total_stake_rewards_lamports: u64,
 }
@@ -127,7 +127,7 @@ pub(super) struct PartitionedRewardsCalculation {
 /// result of calculating the stake rewards at beginning of new epoch
 pub(super) struct StakeRewardCalculationPartitioned {
     /// each individual stake account to reward, grouped by partition
-    pub(super) stake_rewards_by_partition: Vec<StakeRewards>,
+    pub(super) stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
     /// total lamports across all `stake_rewards`
     pub(super) total_stake_rewards_lamports: u64,
 }
@@ -142,7 +142,7 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     /// delegations
     pub(super) total_points: u128,
     /// stake rewards that still need to be distributed, grouped by partition
-    pub(super) stake_rewards_by_partition: Vec<StakeRewards>,
+    pub(super) stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -179,7 +179,10 @@ impl Bank {
     }
 
     /// Calculate the number of blocks required to distribute rewards to all stake accounts.
-    pub(super) fn get_reward_distribution_num_blocks(&self, rewards: &StakeRewards) -> u64 {
+    pub(super) fn get_reward_distribution_num_blocks(
+        &self,
+        rewards: &PartitionedStakeRewards,
+    ) -> u64 {
         let total_stake_accounts = rewards.len();
         if self.epoch_schedule.warmup && self.epoch < self.first_normal_epoch() {
             1

@@ -3,7 +3,7 @@ use {
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        StakeRewardCalculation, StakeRewardCalculationPartitioned, StakeRewards,
+        PartitionedStakeRewards, StakeRewardCalculation, StakeRewardCalculationPartitioned,
         VoteRewardsAccounts, REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
@@ -20,10 +20,10 @@ use {
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool,
     },
-    solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
+        account_utils::StateMut,
         clock::{Epoch, Slot},
         pubkey::Pubkey,
         reward_info::RewardInfo,
@@ -70,20 +70,10 @@ impl Bank {
 
         let num_partitions = stake_rewards_by_partition.len() as u64;
 
-        let converted_rewards: Vec<_> = stake_rewards_by_partition
-            .iter()
-            .map(|stake_reward_partition| {
-                stake_reward_partition
-                    .iter()
-                    .map(|stake_reward|
-                        PartitionedStakeReward::maybe_from(stake_reward)
-                        .expect("StakeRewards should only be deserializable accounts with state StakeStateV2::Stake")
-                    )
-                    .collect()
-            })
-            .collect();
-
-        self.set_epoch_reward_status_active(distribution_starting_block_height, converted_rewards);
+        self.set_epoch_reward_status_active(
+            distribution_starting_block_height,
+            stake_rewards_by_partition,
+        );
 
         self.create_epoch_rewards_sysvar(
             total_rewards,
@@ -436,7 +426,15 @@ impl Bank {
 
                         let post_balance = stake_account.lamports();
                         total_stake_rewards.fetch_add(stakers_reward, Relaxed);
-                        return Some(StakeReward {
+                        let assert_msg = "solana_stake_program::rewards::redeem_rewards output \
+                                          is_ok only when a stake account has state \
+                                          StakeStateV2::Stake";
+                        let StakeStateV2::Stake(_meta, stake, _stake_flags) =
+                            stake_account.state().expect(assert_msg)
+                        else {
+                            panic!("{assert_msg}");
+                        };
+                        return Some(PartitionedStakeReward {
                             stake_pubkey,
                             stake_reward_info: RewardInfo {
                                 reward_type: RewardType::Staking,
@@ -444,7 +442,7 @@ impl Bank {
                                 post_balance,
                                 commission: Some(vote_state.commission),
                             },
-                            stake_account,
+                            stake,
                         });
                     } else {
                         debug!(
@@ -548,21 +546,9 @@ impl Bank {
                 reward_calc_tracer,
                 thread_pool,
             );
-            let converted_rewards: Vec<_> = stake_rewards_by_partition
-                .iter()
-                .map(|stake_reward_partition| {
-                    stake_reward_partition
-                        .iter()
-                        .map(|stake_reward|
-                            PartitionedStakeReward::maybe_from(stake_reward)
-                            .expect("StakeRewards should only be deserializable accounts with state StakeStateV2::Stake")
-                        )
-                        .collect()
-                })
-                .collect();
             self.set_epoch_reward_status_active(
                 epoch_rewards_sysvar.distribution_starting_block_height,
-                converted_rewards,
+                stake_rewards_by_partition,
             );
         }
     }
@@ -575,7 +561,7 @@ impl Bank {
         epoch_rewards_sysvar: &EpochRewards,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
-    ) -> Vec<StakeRewards> {
+    ) -> Vec<PartitionedStakeRewards> {
         assert!(epoch_rewards_sysvar.active);
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.

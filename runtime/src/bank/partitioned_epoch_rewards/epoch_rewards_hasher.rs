@@ -1,13 +1,13 @@
 use {
-    crate::bank::partitioned_epoch_rewards::StakeRewards,
+    crate::bank::partitioned_epoch_rewards::PartitionedStakeRewards,
     solana_sdk::{epoch_rewards_hasher::EpochRewardsHasher, hash::Hash},
 };
 
 pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
-    stake_rewards: StakeRewards,
+    stake_rewards: PartitionedStakeRewards,
     parent_blockhash: &Hash,
     num_partitions: usize,
-) -> Vec<StakeRewards> {
+) -> Vec<PartitionedStakeRewards> {
     let hasher = EpochRewardsHasher::new(num_partitions, parent_blockhash);
     let mut result = vec![vec![]; num_partitions];
 
