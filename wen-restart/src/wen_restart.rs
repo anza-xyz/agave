@@ -47,7 +47,6 @@ use {
         collections::{HashMap, HashSet},
         fs::{read, File},
         io::{Cursor, Write},
-        num::NonZeroUsize,
         path::{Path, PathBuf},
         str::FromStr,
         sync::{
@@ -493,8 +492,6 @@ pub(crate) fn generate_snapshot(
         &snapshot_config.full_snapshot_archives_dir,
         &snapshot_config.incremental_snapshot_archives_dir,
         snapshot_config.archive_format,
-        NonZeroUsize::MAX,
-        NonZeroUsize::MAX,
     )?;
     let new_shred_version =
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
@@ -1472,8 +1469,6 @@ mod tests {
             snapshot_config.full_snapshot_archives_dir.clone(),
             snapshot_config.incremental_snapshot_archives_dir.clone(),
             snapshot_config.archive_format,
-            snapshot_config.maximum_full_snapshot_archives_to_retain,
-            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
         )
         .is_ok());
 
@@ -2446,8 +2441,6 @@ mod tests {
             snapshot_config.full_snapshot_archives_dir.clone(),
             snapshot_config.incremental_snapshot_archives_dir.clone(),
             snapshot_config.archive_format,
-            snapshot_config.maximum_full_snapshot_archives_to_retain,
-            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
         )
         .is_ok());
         let generated_record = generate_snapshot(
