@@ -426,14 +426,13 @@ impl Bank {
 
                         let post_balance = stake_account.lamports();
                         total_stake_rewards.fetch_add(stakers_reward, Relaxed);
-                        let assert_msg = "solana_stake_program::rewards::redeem_rewards output \
-                                          is_ok only when a stake account has state \
-                                          StakeStateV2::Stake";
-                        let StakeStateV2::Stake(_meta, stake, _stake_flags) =
-                            stake_account.state().expect(assert_msg)
-                        else {
-                            panic!("{assert_msg}");
-                        };
+
+                        // Safe to unwrap on the following lines because all
+                        // stake_delegations are type StakeAccount<Delegation>,
+                        // which will always only wrap a `StakeStateV2::Stake`
+                        // variant.
+                        let updated_stake_state: StakeStateV2 = stake_account.state().unwrap();
+                        let stake = updated_stake_state.stake().unwrap();
                         return Some(PartitionedStakeReward {
                             stake_pubkey,
                             stake_reward_info: RewardInfo {
