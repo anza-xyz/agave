@@ -23,7 +23,7 @@ fi
 source "$here/../ci/rust-version.sh" nightly
 
 # Clean up
-rm -rf "$here/../target" "$here/../coverage"
+rm -rf "$here/../target/cov"
 find "$here/.." -type f -name '*.prof*' -exec rm {} +
 find "$here/.." -type f -name '*lcov*' -exec rm {} +
 
@@ -63,8 +63,8 @@ grcov_common_args=(
   --ignore-not-existing
 )
 
-grcov "${grcov_common_args[@]}" -t html -o "$here/../coverage/"
-echo "html: $here/../coverage/"
+grcov "${grcov_common_args[@]}" -t html -o "$here/../target/cov"
+echo "html: $here/../target/cov"
 
 grcov "${grcov_common_args[@]}" -t lcov -o "$here/../lcov.info"
 echo "lcov: $here/../lcov.info"

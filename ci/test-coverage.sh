@@ -24,7 +24,7 @@ annotate() {
 # compress coverage reports
 HTML_REPORT_TAR_NAME="coverage-${CI_COMMIT:0:9}.tar.gz"
 HTML_REPORT_TAR_PATH="$here/../$HTML_REPORT_TAR_NAME"
-tar zcf "$HTML_REPORT_TAR_PATH" "$here/../coverage/"
+tar zcf "$HTML_REPORT_TAR_PATH" "$here/../target/cov/"
 
 # upload reports to buildkite
 upload-ci-artifact "$HTML_REPORT_TAR_PATH"
