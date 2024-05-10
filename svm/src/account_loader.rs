@@ -2253,6 +2253,15 @@ mod tests {
     #[test]
     fn test_load_transaction_accounts_filter_executable_program_account() {
         let mut mock_bank = TestCallbacks::default();
+
+        let fee_keypair = Keypair::new();
+        let mut fee_payer_account_data = AccountSharedData::default();
+        fee_payer_account_data.set_lamports(200);
+        mock_bank
+            .accounts_map
+            .insert(fee_keypair.pubkey(), fee_payer_account_data.clone());
+        let fee_key = fee_keypair.pubkey();
+
         let key1 = Pubkey::new_unique();
         let owner1 = Pubkey::new_unique();
 
@@ -2262,7 +2271,7 @@ mod tests {
         mock_bank.accounts_map.insert(key1, data);
 
         let message = Message {
-            account_keys: vec![key1],
+            account_keys: vec![fee_key, key1],
             header: MessageHeader::default(),
             instructions: vec![CompiledInstruction {
                 program_id_index: 0,
@@ -2285,11 +2294,11 @@ mod tests {
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(owner2);
-        account_data.set_lamports(90);
+        account_data.set_lamports(250);
         mock_bank.accounts_map.insert(key2, account_data);
 
         let message = Message {
-            account_keys: vec![key1, key2],
+            account_keys: vec![fee_key, key1, key2],
             header: MessageHeader::default(),
             instructions: vec![CompiledInstruction {
                 program_id_index: 0,
