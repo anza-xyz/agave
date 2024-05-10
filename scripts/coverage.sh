@@ -54,10 +54,7 @@ TEST_ARGS=(
   --skip shred::merkle::test::test_recover_merkle_shreds::
 )
 
-# most verbose log level (trace) is enabled for all solana code to make log!
-# macro code green always
-RUST_LOG="solana=trace,agave=trace,$RUST_LOG" ci/intercept.sh \
-  cargo +"$rust_nightly" test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
+cargo +"$rust_nightly" test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
 
 # Generate test reports
 echo "--- grcov"
