@@ -37,7 +37,7 @@ if [[ -z "$CODECOV_TOKEN" ]]; then
   echo "^^^ +++"
   echo CODECOV_TOKEN undefined, codecov.io upload skipped
 else
-  codecov -t "${CODECOV_TOKEN}"
+  codecov -t "${CODECOV_TOKEN}" --dir "$here/../target/cov/${SHORT_CI_COMMIT}"
 
   annotate --style success --context codecov.io \
     "CodeCov report: https://codecov.io/github/anza-xyz/agave/commit/$CI_COMMIT"
