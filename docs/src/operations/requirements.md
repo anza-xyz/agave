@@ -18,12 +18,19 @@ transaction for each block the validator agrees with, which can cost up to
 
 The hardware recommendations below are provided as a guide.  Operators are encouraged to do their own performance testing.
 
+**NOTE**: These recommendations may be out of date as the network grows and resource requirements increase.
+
 - CPU
-  - 16 cores / 24 threads, or more
+  - 12 cores / 24 threads, or more
   - 3.0 GHz base clock speed, or faster
   - SHA extensions instruction support
     - AMD Gen 3 or newer
+      - Known to work:
+        - **Bare minimum**: Epyc Gen 2: 7402
+        - **Current baseline**: Epyc Gen 3: 7443p, 7313, 74F3
+        - **Recommended for Futureproofing**: Epyc Gen 4: 9554, 9354, 9274, 9174. TR: 7965wx
     - Intel Ice Lake or newer
+      - Should work: Xeon Gold 6[45]xx
   - AVX2 instruction support (to use official release binaries, self-compile
     otherwise)
   - Support for AVX512f is helpful
@@ -35,7 +42,7 @@ The hardware recommendations below are provided as a guide.  Operators are encou
   - PCIe Gen3 x4 NVME SSD, or better
   - Accounts: 500GB, or larger. High TBW (Total Bytes Written)
   - Ledger: 1TB or larger. High TBW suggested
-  - Snapshots: 500GB or larger. High TBW suggested
+  - Snapshots: 250GB or larger. High TBW suggested
   - OS: (Optional) 500GB, or larger. SATA OK
   - The OS may be installed on the ledger disk, though testing has shown better
     performance with the ledger on its own disk
@@ -56,12 +63,16 @@ made.
 - CPU
   - 16 cores / 32 threads, or more
 - RAM
-  - 512 GB or more if `account-index` is used (1TB+ for all three [account indexes](https://docs.solanalabs.com/operations/setup-an-rpc-node#account-indexing)
+  - 512 GB or more if an `account-index` is used, 1TB+ for all three [account indexes](https://docs.solanalabs.com/operations/setup-an-rpc-node#account-indexing)
 - Disk
   - Consider a larger ledger disk if longer transaction history is required
   - Accounts and ledger should not be stored on the same disk
 
 ## Virtual machines on Cloud Platforms
+
+**NOTE**: Running on cloud platforms is **not recommended** (especially on
+mainnet) due to excessive egress costs and bad co-tenants starving your node of
+resources necessary to stay in sync. The info in this section is outdated.
 
 While you can run a validator on a cloud computing platform, it may not
 be cost-efficient over the long term.
@@ -98,7 +109,7 @@ Prebuilt binaries are available for Linux x86_64 on CPUs supporting AVX2 \(Ubunt
 MacOS or WSL users may build from source.
 
 ## Networking
-Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred.
+Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred (especially for mainnet).
 
 ### Port Forwarding
 The following ports need to be open to the internet for both inbound and outbound
