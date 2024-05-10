@@ -1007,7 +1007,14 @@ struct DroppableTask<T>(Arc<AtomicBool>, JoinHandle<T>);
 impl<T> Drop for DroppableTask<T> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
-        self.1.abort();
+        trace!(
+            "stopping task, which is currently {}",
+            if self.1.is_finished() {
+                "finished"
+            } else {
+                "running"
+            }
+        );
     }
 }
 
