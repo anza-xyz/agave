@@ -1126,7 +1126,7 @@ impl Blockstore {
                 slot,
                 erasure_meta
                     .first_received_coding_shred_index()
-                    .expect("First received coding index must exist for all erasure metas"),
+                    .expect("First received coding index must fit in u32"),
                 ShredType::Code,
             );
             let shred = just_inserted_shreds
@@ -1416,32 +1416,30 @@ impl Blockstore {
 
         if !erasure_meta.check_coding_shred(&shred) {
             metrics.num_coding_shreds_invalid_erasure_config += 1;
-            let conflicting_shred = self.find_conflicting_coding_shred(
-                &shred,
-                slot,
-                erasure_meta,
-                just_received_shreds,
-            );
-            if let Some(conflicting_shred) = conflicting_shred {
-                if !self.has_duplicate_shreds_in_slot(slot) {
-                    if self
-                        .store_duplicate_slot(
-                            slot,
-                            conflicting_shred.clone(),
-                            shred.payload().clone(),
-                        )
-                        .is_err()
-                    {
-                        warn!("bad duplicate store..");
+            if !self.has_duplicate_shreds_in_slot(slot) {
+                if let Some(conflicting_shred) = self
+                    .find_conflicting_coding_shred(&shred, slot, erasure_meta, just_received_shreds)
+                    .map(Cow::into_owned)
+                {
+                    if let Err(e) = self.store_duplicate_slot(
+                        slot,
+                        conflicting_shred.clone(),
+                        shred.payload().clone(),
+                    ) {
+                        warn!("Unable to store conflicting erasure meta duplicate proof for {slot} {erasure_set:?} {e}");
                     }
 
                     duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
                         shred.clone(),
                         conflicting_shred,
                     ));
+                } else {
+                    error!(
+                        "Unable to find the conflicting coding shred that set {erasure_meta:?}.
+                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        Skipping the erasure meta duplicate shred check"
+                    );
                 }
-            } else {
-                datapoint_info!("bad-conflict-shred", ("slot", slot, i64));
             }
 
             // ToDo: This is a potential slashing condition
@@ -1484,28 +1482,39 @@ impl Blockstore {
         result
     }
 
-    fn find_conflicting_coding_shred(
-        &self,
+    fn find_conflicting_coding_shred<'a>(
+        &'a self,
         shred: &Shred,
         slot: Slot,
         erasure_meta: &ErasureMeta,
-        just_received_shreds: &HashMap<ShredId, Shred>,
-    ) -> Option<Vec<u8>> {
+        just_received_shreds: &'a HashMap<ShredId, Shred>,
+    ) -> Option<Cow<Vec<u8>>> {
         // Search for the shred which set the initial erasure config, either inserted,
         // or in the current batch in just_received_shreds.
+        let index = erasure_meta.first_received_coding_shred_index()?;
+        let shred_id = ShredId::new(slot, index, ShredType::Code);
+        let maybe_shred = self.get_shred_from_just_inserted_or_db(just_received_shreds, shred_id);
+
+        if index != 0 || maybe_shred.is_some() {
+            return maybe_shred;
+        }
+
+        // If we are using a blockstore created from an earlier version than 1.18.12,
+        // `index` will be 0 as it was not yet populated, revert to a scan until  we no longer support
+        // those blockstore versions.
         for coding_index in erasure_meta.coding_shreds_indices() {
             let maybe_shred = self.get_coding_shred(slot, coding_index);
             if let Ok(Some(shred_data)) = maybe_shred {
                 let potential_shred = Shred::new_from_serialized_shred(shred_data).unwrap();
                 if shred.erasure_mismatch(&potential_shred).unwrap() {
-                    return Some(potential_shred.into_payload());
+                    return Some(Cow::Owned(potential_shred.into_payload()));
                 }
             } else if let Some(potential_shred) = {
                 let key = ShredId::new(slot, u32::try_from(coding_index).unwrap(), ShredType::Code);
                 just_received_shreds.get(&key)
             } {
                 if shred.erasure_mismatch(potential_shred).unwrap() {
-                    return Some(potential_shred.payload().clone());
+                    return Some(Cow::Borrowed(potential_shred.payload()));
                 }
             }
         }
@@ -1753,12 +1762,17 @@ impl Blockstore {
                 merkle_root_meta.first_received_shred_index(),
                 merkle_root_meta.first_received_shred_type(),
             );
-            let conflicting_shred = self
+            let Some(conflicting_shred) = self
                 .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id)
-                .unwrap_or_else(|| {
-                    panic!("First received shred indicated by merkle root meta {:?} is missing from blockstore. This inconsistency may cause duplicate block detection to fail", merkle_root_meta);
-                })
-                .into_owned();
+                .map(Cow::into_owned)
+            else {
+                error!(
+                    "Shred {shred_id:?} indiciated by merkle root meta {merkle_root_meta:?} is missing from blockstore.
+                    This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                    Skipping the merkle root consistency check"
+                );
+                return true;
+            };
             duplicate_shreds.push(PossibleDuplicateShred::MerkleRootConflict(
                 shred.clone(),
                 conflicting_shred,
@@ -1812,10 +1826,17 @@ impl Blockstore {
             next_merkle_root_meta.first_received_shred_index(),
             next_merkle_root_meta.first_received_shred_type(),
         );
-        let next_shred =
+        let Some(next_shred) =
             Self::get_shred_from_just_inserted_or_db(self, just_inserted_shreds, next_shred_id)
-                .expect("Shred indicated by merkle root meta must exist")
-                .into_owned();
+                .map(Cow::into_owned)
+        else {
+            error!(
+                "Shred {next_shred_id:?} indicated by merkle root meta {next_merkle_root_meta:?} is missing from blockstore.
+                 This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                 Skipping the forward chained merkle root consistency check"
+            );
+            return true;
+        };
         let merkle_root = shred.merkle_root().ok();
         let chained_merkle_root = shred::layout::get_chained_merkle_root(&next_shred);
 
@@ -1905,10 +1926,17 @@ impl Blockstore {
             prev_merkle_root_meta.first_received_shred_index(),
             prev_merkle_root_meta.first_received_shred_type(),
         );
-        let prev_shred =
+        let Some(prev_shred) =
             Self::get_shred_from_just_inserted_or_db(self, just_inserted_shreds, prev_shred_id)
-                .expect("Shred indicated by merkle root meta must exist")
-                .into_owned();
+                .map(Cow::into_owned)
+        else {
+            error!(
+                "Shred {prev_shred_id:?} indicated by merkle root meta {prev_merkle_root_meta:?} is missing from blockstore.
+                 This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                 Skipping the backwards chained merkle root consistency check"
+            );
+            return true;
+        };
         let merkle_root = shred::layout::get_merkle_root(&prev_shred);
         let chained_merkle_root = shred.chained_merkle_root().ok();
 
@@ -1975,12 +2003,17 @@ impl Blockstore {
                     u32::try_from(last_index.unwrap()).unwrap(),
                     ShredType::Data,
                 );
-                let ending_shred: Vec<u8> = self
+                let Some(ending_shred) = self
                     .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id)
-                    .unwrap_or_else(|| {
-                        panic!("Last index data shred indicated by slot meta {:?} is missing from blockstore. This inconsistency may cause duplicate block detection to fail", slot_meta)
-                    })
-                    .into_owned();
+                    .map(Cow::into_owned)
+                else {
+                    error!(
+                        "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} is missing from blockstore.
+                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        Skipping data shred insertion"
+                    );
+                    return false;
+                };
 
                 if self
                     .store_duplicate_slot(slot, ending_shred.clone(), shred.payload().clone())
@@ -2018,12 +2051,17 @@ impl Blockstore {
                     u32::try_from(slot_meta.received - 1).unwrap(),
                     ShredType::Data,
                 );
-                let ending_shred: Vec<u8> = self
+                let Some(ending_shred) = self
                     .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id)
-                    .unwrap_or_else(|| {
-                        panic!("Last received data shred indicated by slot meta {:?} is missing from blockstore. This inconsistency may cause duplicate block detection to fail", slot_meta)
-                    })
-                    .into_owned();
+                    .map(Cow::into_owned)
+                else {
+                    error!(
+                        "Last received data shred {shred_id:?} indiciated by slot meta {slot_meta:?} is missing from blockstore.
+                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        Skipping data shred insertion"
+                    );
+                    return false;
+                };
 
                 if self
                     .store_duplicate_slot(slot, ending_shred.clone(), shred.payload().clone())
@@ -3515,10 +3553,12 @@ impl Blockstore {
         completed_ranges: CompletedRanges,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        assert!(!completed_ranges.is_empty());
-
-        let (all_ranges_start_index, _) = *completed_ranges.first().unwrap();
-        let (_, all_ranges_end_index) = *completed_ranges.last().unwrap();
+        let Some((all_ranges_start_index, _)) = completed_ranges.first().copied() else {
+            return Ok(vec![]);
+        };
+        let Some((_, all_ranges_end_index)) = completed_ranges.last().copied() else {
+            return Ok(vec![]);
+        };
         let keys =
             (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index)));
 

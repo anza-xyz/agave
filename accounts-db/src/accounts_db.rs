@@ -142,9 +142,9 @@ const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAncientStorage {
     /// ancient storages are created by appending
-    #[default]
     Append,
     /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
+    #[default]
     Pack,
 }
 
@@ -2386,7 +2386,7 @@ impl AccountsDb {
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
 
         AccountsDb {
-            create_ancient_storage: CreateAncientStorage::Pack,
+            create_ancient_storage: CreateAncientStorage::default(),
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
             skip_initial_hash_calc: false,
@@ -2520,7 +2520,7 @@ impl AccountsDb {
         let create_ancient_storage = accounts_db_config
             .as_ref()
             .map(|config| config.create_ancient_storage)
-            .unwrap_or(CreateAncientStorage::Append);
+            .unwrap_or_default();
 
         let test_partitioned_epoch_rewards = accounts_db_config
             .as_ref()
@@ -4420,7 +4420,9 @@ impl AccountsDb {
             .slots_considered
             .fetch_add(1, Ordering::Relaxed);
 
-        if is_ancient(accounts) {
+        // if an append vec is at least 80% of the ideal capacity of an ancient append vec, that's close enough.
+        // If we packed, then we end up allocating exact size ancient append vecs. Those will likely never be exactly the ideal ancient capacity.
+        if accounts.capacity() * 100 / get_ancient_append_vec_capacity() > 80 {
             self.shrink_ancient_stats
                 .ancient_scanned
                 .fetch_add(1, Ordering::Relaxed);
@@ -5400,12 +5402,6 @@ impl AccountsDb {
             false,
             load_zero_lamports,
         )
-    }
-
-    /// remove all entries from the read only accounts cache
-    /// useful for benches/tests
-    pub fn flush_read_only_cache_for_tests(&self) {
-        self.read_only_accounts_cache.reset_for_tests();
     }
 
     /// if 'load_into_read_cache_only', then return value is meaningless.
@@ -7875,20 +7871,12 @@ impl AccountsDb {
         true
     }
 
-    fn is_candidate_for_shrink(
-        &self,
-        store: &AccountStorageEntry,
-        allow_shrink_ancient: bool,
-    ) -> bool {
+    fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
         // appended ancient append vecs should not be shrunk by the normal shrink codepath.
         // It is not possible to identify ancient append vecs when we pack, so no check for ancient when we are not appending.
         let total_bytes = if self.create_ancient_storage == CreateAncientStorage::Append
             && is_ancient(&store.accounts)
         {
-            if !allow_shrink_ancient {
-                return false;
-            }
-
             store.written_bytes()
         } else {
             store.capacity()
@@ -7956,7 +7944,7 @@ impl AccountsDb {
                     let dead_bytes = store.accounts.get_account_sizes(&offsets).iter().sum();
                     store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
                     if Self::is_shrinking_productive(*slot, &store)
-                        && self.is_candidate_for_shrink(&store, false)
+                        && self.is_candidate_for_shrink(&store)
                     {
                         // Checking that this single storage entry is ready for shrinking,
                         // should be a sufficient indication that the slot is ready to be shrunk
@@ -8274,16 +8262,7 @@ impl AccountsDb {
 
     fn report_store_timings(&self) {
         if self.stats.last_store_report.should_update(1000) {
-            let (
-                read_only_cache_hits,
-                read_only_cache_misses,
-                read_only_cache_evicts,
-                read_only_cache_load_us,
-                read_only_cache_store_us,
-                read_only_cache_evict_us,
-                read_only_cache_evictor_wakeup_count_all,
-                read_only_cache_evictor_wakeup_count_productive,
-            ) = self.read_only_accounts_cache.get_and_reset_stats();
+            let read_cache_stats = self.read_only_accounts_cache.get_and_reset_stats();
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
@@ -8338,40 +8317,40 @@ impl AccountsDb {
                     self.read_only_accounts_cache.data_size(),
                     i64
                 ),
-                ("read_only_accounts_cache_hits", read_only_cache_hits, i64),
+                ("read_only_accounts_cache_hits", read_cache_stats.hits, i64),
                 (
                     "read_only_accounts_cache_misses",
-                    read_only_cache_misses,
+                    read_cache_stats.misses,
                     i64
                 ),
                 (
                     "read_only_accounts_cache_evicts",
-                    read_only_cache_evicts,
+                    read_cache_stats.evicts,
                     i64
                 ),
                 (
                     "read_only_accounts_cache_load_us",
-                    read_only_cache_load_us,
+                    read_cache_stats.load_us,
                     i64
                 ),
                 (
                     "read_only_accounts_cache_store_us",
-                    read_only_cache_store_us,
+                    read_cache_stats.store_us,
                     i64
                 ),
                 (
                     "read_only_accounts_cache_evict_us",
-                    read_only_cache_evict_us,
+                    read_cache_stats.evict_us,
                     i64
                 ),
                 (
                     "read_only_accounts_cache_evictor_wakeup_count_all",
-                    read_only_cache_evictor_wakeup_count_all,
+                    read_cache_stats.evictor_wakeup_count_all,
                     i64
                 ),
                 (
                     "read_only_accounts_cache_evictor_wakeup_count_productive",
-                    read_only_cache_evictor_wakeup_count_productive,
+                    read_cache_stats.evictor_wakeup_count_productive,
                     i64
                 ),
                 (
@@ -15139,14 +15118,14 @@ pub mod tests {
             }
         }
         entry.alive_bytes.store(3000, Ordering::Release);
-        assert!(accounts.is_candidate_for_shrink(&entry, false));
+        assert!(accounts.is_candidate_for_shrink(&entry));
         entry.alive_bytes.store(5000, Ordering::Release);
-        assert!(!accounts.is_candidate_for_shrink(&entry, false));
+        assert!(!accounts.is_candidate_for_shrink(&entry));
         accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio: 0.3 };
         entry.alive_bytes.store(3000, Ordering::Release);
-        assert!(accounts.is_candidate_for_shrink(&entry, false));
+        assert!(accounts.is_candidate_for_shrink(&entry));
         accounts.shrink_ratio = AccountShrinkThreshold::IndividualStore { shrink_ratio: 0.3 };
-        assert!(!accounts.is_candidate_for_shrink(&entry, false));
+        assert!(!accounts.is_candidate_for_shrink(&entry));
     }
 
     define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts| {
