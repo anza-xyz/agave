@@ -69,6 +69,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {
+    // load program account by `pubkey` and don't insert the program account into read cache.
     let (program_account, _slot) = callbacks.load_account_with(pubkey, |_| false)?;
     if loader_v4::check_id(program_account.owner()) {
         return Some(
@@ -126,8 +127,6 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
-///
-/// 'accounts_map' contains a cache of the accounts that has been loaded before during transaction accounts filtering.
 pub fn load_program_with_pubkey<CB: TransactionProcessingCallback, FG: ForkGraph>(
     callbacks: &CB,
     program_cache: &ProgramCache<FG>,
