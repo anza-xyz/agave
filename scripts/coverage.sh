@@ -2,12 +2,18 @@
 #
 # Run tests and collect code coverage
 #
+# == Usage:
+#
 # Run all:
 #   $ ./script/coverage.sh
 #
 # Run for specific packages
 #   $ ./script/coverage.sh -p solana-account-decoder
 #   $ ./script/coverage.sh -p solana-account-decoder -p solana-accounts-db [-p ...]
+#
+# Custom folder name. (default: $(git rev-parse --short=9 HEAD))
+#   $ COMMIT_HASH=xxx ./script/coverage.sh -p solana-account-decoder
+#
 
 set -e
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
@@ -22,14 +28,19 @@ fi
 # shellcheck source=ci/rust-version.sh
 source "$here/../ci/rust-version.sh" nightly
 
+# get commit hash. it will be used to name output folder
+if [ -z "$COMMIT_HASH" ]; then
+  COMMIT_HASH=$(git rev-parse --short=9 HEAD)
+fi
+
 # Clean up
-rm -rf "$here/../target/cov"
+rm -rf "$here/../target/cov/$COMMIT_HASH"
 find "$here/.." -type f -name '*.prof*' -exec rm {} +
 find "$here/.." -type f -name '*lcov*' -exec rm {} +
 
 # https://doc.rust-lang.org/rustc/instrument-coverage.html
 export RUSTFLAGS="-C instrument-coverage $RUSTFLAGS"
-export LLVM_PROFILE_FILE="default-%p-%m.profraw"
+export LLVM_PROFILE_FILE="$here/../target/cov/${COMMIT_HASH}/profraw/default-%p-%m.profraw"
 
 if [[ -z $1 ]]; then
   PACKAGES=(--lib --all --exclude solana-local-cluster)
@@ -45,14 +56,15 @@ TEST_ARGS=(
 
 # most verbose log level (trace) is enabled for all solana code to make log!
 # macro code green always
-RUST_LOG="solana=trace,agave=trace,$RUST_LOG" ci/intercept.sh cargo +"$rust_nightly" test "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
+RUST_LOG="solana=trace,agave=trace,$RUST_LOG" ci/intercept.sh \
+  cargo +"$rust_nightly" test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
 
 # Generate test reports
 echo "--- grcov"
 grcov_common_args=(
   "$here/.."
   --source-dir "$here/.."
-  --binary-path "$here/../target/debug/"
+  --binary-path "$here/../target/cov/debug"
   --llvm
   --ignore \*.cargo\*
   --ignore \*build.rs
@@ -63,8 +75,10 @@ grcov_common_args=(
   --ignore-not-existing
 )
 
-grcov "${grcov_common_args[@]}" -t html -o "$here/../target/cov"
-echo "html: $here/../target/cov"
+grcov "${grcov_common_args[@]}" -t html -o "$here/../target/cov/${COMMIT_HASH}/coverage/html"
+echo "html: $here/../target/cov/${COMMIT_HASH}/coverage/html"
 
-grcov "${grcov_common_args[@]}" -t lcov -o "$here/../lcov.info"
-echo "lcov: $here/../lcov.info"
+grcov "${grcov_common_args[@]}" -t lcov -o "$here/../target/cov/${COMMIT_HASH}/coverage/lcov.info"
+echo "lcov: $here/../target/cov/${COMMIT_HASH}/coverage/lcov.info"
+
+ln -sfT "$here/../target/cov/${COMMIT_HASH}" "$here/../target/cov/LATEST"

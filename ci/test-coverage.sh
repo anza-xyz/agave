@@ -19,12 +19,13 @@ annotate() {
 }
 
 # run coverage for all
-"$here/../scripts/coverage.sh" "$@"
+SHORT_CI_COMMIT=${CI_COMMIT:0:9}
+COMMIT_HASH=$SHORT_CI_COMMIT "$here/../scripts/coverage.sh" "$@"
 
 # compress coverage reports
-HTML_REPORT_TAR_NAME="coverage-${CI_COMMIT:0:9}.tar.gz"
-HTML_REPORT_TAR_PATH="$here/../$HTML_REPORT_TAR_NAME"
-tar zcf "$HTML_REPORT_TAR_PATH" "$here/../target/cov/"
+HTML_REPORT_TAR_NAME="coverage.tar.gz"
+HTML_REPORT_TAR_PATH="$here/../target/cov/${SHORT_CI_COMMIT}/$HTML_REPORT_TAR_NAME"
+tar zcf "$HTML_REPORT_TAR_PATH" "$here/../target/cov/${SHORT_CI_COMMIT}/coverage"
 
 # upload reports to buildkite
 upload-ci-artifact "$HTML_REPORT_TAR_PATH"
