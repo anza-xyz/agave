@@ -423,6 +423,14 @@ mod tests {
             let target_data_size = self._max_data_size_lo;
             Self::evict(target_data_size, &self.data_size, &self.cache, &self.queue);
         }
+
+        /// reset the read only accounts cache
+        /// useful for benches/tests
+        pub(crate) fn reset_for_tests(&self) {
+            self.cache.clear();
+            self.queue.lock().unwrap().clear();
+            self.data_size.store(0, Ordering::Relaxed);
+        }
     }
 
     #[test]
