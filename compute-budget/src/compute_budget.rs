@@ -13,13 +13,15 @@ impl ::solana_frozen_abi::abi_example::AbiExample for ComputeBudget {
     }
 }
 
-/// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
-/// default heap page cost = 0.5 * 15 ~= 8CU/page
-pub const DEFAULT_HEAP_COST: u64 = 8;
-
 /// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
 /// a transaction.
 pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;
+
+/// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
+pub const MAX_CALL_DEPTH: usize = 64;
+
+/// The size of one SBF stack frame.
+pub const STACK_FRAME_SIZE: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {
@@ -146,8 +148,8 @@ impl ComputeBudget {
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
             sha256_max_slices: 20_000,
-            max_call_depth: 64,
-            stack_frame_size: 4_096,
+            max_call_depth: MAX_CALL_DEPTH,
+            stack_frame_size: STACK_FRAME_SIZE,
             log_pubkey_units: 100,
             max_cpi_instruction_size: 1280, // IPv6 Min MTU size
             cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
