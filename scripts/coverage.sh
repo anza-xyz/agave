@@ -44,7 +44,7 @@ TEST_ARGS=(
 
 # most verbose log level (trace) is enabled for all solana code to make log!
 # macro code green always
-RUST_LOG="solana=trace agave=trace $RUST_LOG" ci/intercept.sh cargo +"$rust_nightly" test "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
+RUST_LOG="solana=trace,agave=trace,$RUST_LOG" ci/intercept.sh cargo +"$rust_nightly" test "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
 
 # Generate test reports
 echo "--- grcov"
