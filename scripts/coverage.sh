@@ -27,6 +27,7 @@ rm -rf "$here/../target" "$here/../coverage"
 find "$here/.." -type f -name '*.prof*' -exec rm {} +
 find "$here/.." -type f -name '*lcov*' -exec rm {} +
 
+# https://doc.rust-lang.org/rustc/instrument-coverage.html
 export RUSTFLAGS="-C instrument-coverage $RUSTFLAGS"
 export LLVM_PROFILE_FILE="default-%p-%m.profraw"
 
