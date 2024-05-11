@@ -2,7 +2,7 @@
 
 use {
     super::{
-        broadcast_utils::{self, ReceiveResults},
+        broadcast_utils::{self, get_chained_merkle_root_from_parent, ReceiveResults},
         *,
     },
     crate::cluster_nodes::ClusterNodesCache,
@@ -207,8 +207,9 @@ impl StandardBroadcastRun {
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
         let cluster_type = bank.cluster_type();
 
+        // 1) Finish previous slot.
         if self.slot != bank.slot() {
-            // Finish previous slot if it was interrupted.
+            // Was it interrupted?
             if !self.completed {
                 let shreds = self.finish_prev_slot(
                     keypair,
@@ -242,29 +243,30 @@ impl StandardBroadcastRun {
                 // Refrain from generating shreds for the slot.
                 return Err(Error::DuplicateSlotBroadcast(bank.slot()));
             }
+
             // Reinitialize state for this slot.
-            let chained_merkle_root = (self.slot == bank.parent_slot())
-                .then_some(self.chained_merkle_root)
-                .ok_or_else(|| {
-                    broadcast_utils::get_chained_merkle_root_from_parent(
-                        bank.slot(),
-                        bank.parent_slot(),
-                        blockstore,
-                    )
-                })
+
+            if self.slot != bank.parent_slot() {
+                self.chained_merkle_root = get_chained_merkle_root_from_parent(
+                    bank.slot(),
+                    bank.parent_slot(),
+                    blockstore,
+                )
                 .unwrap_or_else(|err| {
                     error!("Unknown chained Merkle root: {err:?}");
                     process_stats.err_unknown_chained_merkle_root += 1;
                     Hash::default()
                 });
+            }
+
             self.slot = bank.slot();
             self.parent = bank.parent_slot();
-            self.chained_merkle_root = chained_merkle_root;
             self.next_shred_index = 0u32;
             self.next_code_index = 0u32;
             self.completed = false;
             self.slot_broadcast_start = Instant::now();
             self.num_batches = 0;
+
             receive_elapsed = Duration::ZERO;
             coalesce_elapsed = Duration::ZERO;
         }
