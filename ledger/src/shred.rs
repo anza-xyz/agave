@@ -312,33 +312,15 @@ impl ErasureSetId {
 }
 
 macro_rules! dispatch {
-    ($vis:vis fn $name:ident(&self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
+    ($vis:vis fn $name:ident($self:ty $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
         #[inline]
-        $vis fn $name(&self $(, $arg:$ty)?) $(-> $out)? {
+        $vis fn $name($self $(, $arg:$ty)?) $(-> $out)? {
             match self {
                 Self::ShredCode(shred) => shred.$name($($arg, )?),
                 Self::ShredData(shred) => shred.$name($($arg, )?),
             }
         }
     };
-    ($vis:vis fn $name:ident(self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(self $(, $arg:$ty)?) $(-> $out)? {
-            match self {
-                Self::ShredCode(shred) => shred.$name($($arg, )?),
-                Self::ShredData(shred) => shred.$name($($arg, )?),
-            }
-        }
-    };
-    ($vis:vis fn $name:ident(&mut self $(, $arg:ident : $ty:ty)?) $(-> $out:ty)?) => {
-        #[inline]
-        $vis fn $name(&mut self $(, $arg:$ty)?) $(-> $out)? {
-            match self {
-                Self::ShredCode(shred) => shred.$name($($arg, )?),
-                Self::ShredData(shred) => shred.$name($($arg, )?),
-            }
-        }
-    }
 }
 
 use dispatch;
