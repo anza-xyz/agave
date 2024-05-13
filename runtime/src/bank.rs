@@ -2583,6 +2583,7 @@ impl Bank {
                                 lamports: i64::try_from(stakers_reward).unwrap(),
                                 post_balance,
                                 commission: Some(vote_state.commission),
+                                num_partitions: None,
                             },
                             stake_account,
                         });
@@ -2659,6 +2660,7 @@ impl Bank {
                             lamports: vote_rewards as i64,
                             post_balance: vote_account.lamports(),
                             commission: Some(commission),
+                            num_partitions: None,
                         },
                     ))
                 },
@@ -2709,6 +2711,7 @@ impl Bank {
                         lamports: vote_rewards as i64,
                         post_balance: vote_account.lamports(),
                         commission: Some(commission),
+                        num_partitions: None,
                     },
                 ));
                 result

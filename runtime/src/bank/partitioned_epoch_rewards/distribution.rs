@@ -521,6 +521,7 @@ mod tests {
             lamports: reward_amount,
             post_balance: 0,
             commission: None,
+            num_partitions: None,
         };
 
         let nonexistent_account = Pubkey::new_unique();

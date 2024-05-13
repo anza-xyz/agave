@@ -10,4 +10,7 @@ pub struct RewardInfo {
     pub post_balance: u64,
     /// Vote account commission when the reward was credited, only present for voting and staking rewards
     pub commission: Option<u8>,
+    /// Number of partitions calculated for epoch rewards, only present for
+    /// RewardType::PartitionData
+    pub num_partitions: Option<usize>,
 }
