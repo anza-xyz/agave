@@ -631,7 +631,9 @@ impl JsonRpcRequestProcessor {
             .map(|slot| slot <= first_confirmed_block_in_epoch)
             .unwrap_or(false);
 
-        let Ok(Some(first_confirmed_block)) = self
+        // Collect rewards from first block in the epoch if partitioned epoch
+        // rewards not enabled, or address is a vote account
+        let Ok(Some(epoch_boundary_block)) = self
             .get_block(
                 first_confirmed_block_in_epoch,
                 Some(RpcBlockConfig::rewards_with_commitment(config.commitment).into()),
@@ -644,30 +646,27 @@ impl JsonRpcRequestProcessor {
             .into());
         };
 
-        let addresses: Vec<String> = addresses
-            .into_iter()
-            .map(|pubkey| pubkey.to_string())
-            .collect();
-
-        let reward_hash: HashMap<String, Reward> = first_confirmed_block
-            .rewards
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|reward| match reward.reward_type? {
-                RewardType::Staking | RewardType::Voting => addresses
-                    .contains(&reward.pubkey)
-                    .then(|| (reward.clone().pubkey, reward)),
-                _ => None,
-            })
-            .collect();
+        let reward_map: HashMap<String, (Reward, Slot)> = {
+            let addresses: Vec<String> =
+                addresses.iter().map(|pubkey| pubkey.to_string()).collect();
+            Self::filter_map_rewards(
+                &epoch_boundary_block.rewards,
+                first_confirmed_block_in_epoch,
+                &addresses,
+                &|reward_type| -> bool {
+                    reward_type == RewardType::Voting
+                        || (!partitioned_epoch_reward_enabled && reward_type == RewardType::Staking)
+                },
+            )
+        };
 
         let rewards = addresses
             .iter()
             .map(|address| {
-                if let Some(reward) = reward_hash.get(address) {
+                if let Some((reward, slot)) = reward_map.get(&address.to_string()) {
                     return Some(RpcInflationReward {
                         epoch,
-                        effective_slot: first_confirmed_block_in_epoch,
+                        effective_slot: *slot,
                         amount: reward.lamports.unsigned_abs(),
                         post_balance: reward.post_balance,
                         commission: reward.commission,
