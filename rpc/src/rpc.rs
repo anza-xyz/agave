@@ -93,8 +93,9 @@ use {
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta,
-        EncodedConfirmedTransactionWithStatusMeta, Reward, RewardType, TransactionBinaryEncoding,
-        TransactionConfirmationStatus, TransactionStatus, UiConfirmedBlock, UiTransactionEncoding,
+        EncodedConfirmedTransactionWithStatusMeta, Reward, RewardType, Rewards,
+        TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
+        UiConfirmedBlock, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY},
     spl_token_2022::{
@@ -546,6 +547,34 @@ impl JsonRpcRequestProcessor {
             true => OptionalContext::Context(new_response(&bank, accounts)),
             false => OptionalContext::NoContext(accounts),
         })
+    }
+
+    fn filter_map_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        slot: Slot,
+        addresses: &'a [String],
+        reward_type_filter: &'a F,
+    ) -> HashMap<String, (Reward, Slot)>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        Self::filter_rewards(rewards, reward_type_filter)
+            .filter(|reward| addresses.contains(&reward.pubkey))
+            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
+            .collect()
+    }
+
+    fn filter_rewards<'a, F>(
+        rewards: &'a Option<Rewards>,
+        reward_type_filter: &'a F,
+    ) -> impl Iterator<Item = &'a Reward>
+    where
+        F: Fn(RewardType) -> bool,
+    {
+        rewards
+            .iter()
+            .flatten()
+            .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
     }
 
     pub async fn get_inflation_reward(
