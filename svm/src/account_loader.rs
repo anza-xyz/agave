@@ -1549,8 +1549,6 @@ mod tests {
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
         let mut error_counter = TransactionErrorMetrics::default();
-        // let mut loaded_programs = ProgramCacheForTxBatch::default();
-        // loaded_programs.replenish(key2.pubkey(), Arc::new(ProgramCacheEntry::default()));
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
