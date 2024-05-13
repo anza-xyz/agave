@@ -68,7 +68,7 @@ impl Bank {
                 self.block_height() + REWARD_CALCULATION_NUM_BLOCKS
             };
 
-        let num_partitions = stake_rewards_by_partition.len() as u64;
+        let num_partitions = stake_rewards_by_partition.len();
 
         self.set_epoch_reward_status_active(
             distribution_starting_block_height,
@@ -79,9 +79,11 @@ impl Bank {
             total_rewards,
             distributed_rewards,
             distribution_starting_block_height,
-            num_partitions,
+            num_partitions as u64,
             total_points,
         );
+
+        self.record_partition_data_reward(num_partitions);
 
         datapoint_info!(
             "epoch-rewards-status-update",
