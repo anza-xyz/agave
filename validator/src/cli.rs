@@ -2080,7 +2080,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .value_name("NUMBER")
         .takes_value(true)
         .validator(is_parsable::<usize>)
-        .hidden(hidden_unless_forced())
         .help(
             "The maximum number of connections that RPC PubSub will support. This is a \
              hard limit and no new connections beyond this limit can be made until an old \
@@ -2091,7 +2090,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .value_name("BYTES")
         .takes_value(true)
         .validator(is_parsable::<usize>)
-        .hidden(hidden_unless_forced())
         .help(
             "The maximum length in bytes of acceptable incoming frames. Messages longer \
              than this will be rejected"
@@ -2101,14 +2099,12 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .value_name("BYTES")
         .takes_value(true)
         .validator(is_parsable::<usize>)
-        .hidden(hidden_unless_forced())
         .help("The maximum size in bytes to which the incoming websocket buffer can grow."));
     add_arg!(Arg::with_name("rpc_pubsub_max_out_buffer_capacity")
         .long("rpc-pubsub-max-out-buffer-capacity")
         .value_name("BYTES")
         .takes_value(true)
         .validator(is_parsable::<usize>)
-        .hidden(hidden_unless_forced())
         .help("The maximum size in bytes to which the outgoing websocket buffer can grow."));
     add_arg!(
         Arg::with_name("skip_poh_verify")
