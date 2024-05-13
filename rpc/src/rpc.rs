@@ -621,6 +621,16 @@ impl JsonRpcRequestProcessor {
                 slot: first_slot_in_epoch,
             })?;
 
+        // Determine if partitioned epoch rewards were enabled for the desired
+        // epoch
+        let bank = self.get_bank_with_config(context_config)?;
+        let partitioned_epoch_reward_enabled_slot = bank
+            .feature_set
+            .activated_slot(&feature_set::enable_partitioned_epoch_reward::id());
+        let partitioned_epoch_reward_enabled = partitioned_epoch_reward_enabled_slot
+            .map(|slot| slot <= first_confirmed_block_in_epoch)
+            .unwrap_or(false);
+
         let Ok(Some(first_confirmed_block)) = self
             .get_block(
                 first_confirmed_block_in_epoch,
