@@ -19,6 +19,7 @@ use {
 /// Developers can implement their own heap by defining their own
 /// `#[global_allocator]`.  The following implements a dummy for test purposes
 /// but can be flushed out with whatever the developer sees fit.
+#[allow(dead_code)]
 struct BumpAllocator;
 unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
     #[inline]
