@@ -13,7 +13,6 @@ use {
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_clap_utils::{
         self,
@@ -64,6 +63,7 @@ use {
         system_instruction::{SystemError, MAX_PERMITTED_DATA_LENGTH},
         transaction::{Transaction, TransactionError},
     },
+    solana_ui_account::{UiAccountEncoding, UiDataSliceConfig},
     std::{
         fs::File,
         io::{Read, Write},

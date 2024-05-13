@@ -24,6 +24,7 @@ solana-account-decoder = { workspace = true }
 solana-inline-spl = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-ui-account = { workspace = true }
 solana-version = { workspace = true }
 thiserror = { workspace = true }
 

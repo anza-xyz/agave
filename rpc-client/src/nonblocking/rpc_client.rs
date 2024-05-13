@@ -29,8 +29,8 @@ use {
     log::*,
     serde_json::{json, Value},
     solana_account_decoder::{
+        encode_ui_account,
         parse_token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
-        UiAccount, UiAccountData, UiAccountEncoding,
     },
     solana_rpc_client_api::{
         client_error::{
@@ -57,6 +57,7 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_ui_account::{UiAccount, UiAccountData, UiAccountEncoding},
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
         net::SocketAddr,
@@ -5447,7 +5448,7 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
                 executable: false,
                 rent_epoch: 0,
             };
-            UiAccount::encode(&pubkey, &account, UiAccountEncoding::Base64, None, None)
+            encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None)
         },
     })
     .unwrap();

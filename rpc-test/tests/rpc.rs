@@ -5,7 +5,6 @@ use {
     log::*,
     reqwest::{self, header::CONTENT_TYPE},
     serde_json::{json, Value},
-    solana_account_decoder::UiAccount,
     solana_client::{
         connection_cache::ConnectionCache,
         tpu_client::{TpuClient, TpuClientConfig},
@@ -31,6 +30,7 @@ use {
     solana_test_validator::TestValidator,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_transaction_status::TransactionStatus,
+    solana_ui_account::UiAccount,
     std::{
         collections::HashSet,
         net::UdpSocket,
@@ -122,8 +122,7 @@ fn test_rpc_send_tx() {
     assert!(confirmed_tx);
 
     use {
-        solana_account_decoder::UiAccountEncoding,
-        solana_rpc_client_api::config::RpcAccountInfoConfig,
+        solana_rpc_client_api::config::RpcAccountInfoConfig, solana_ui_account::UiAccountEncoding,
     };
     let config = RpcAccountInfoConfig {
         encoding: Some(UiAccountEncoding::Base64),

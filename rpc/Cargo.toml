@@ -52,6 +52,7 @@ solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-ui-account = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }

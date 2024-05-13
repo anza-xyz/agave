@@ -27,6 +27,7 @@ solana-cli-config = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-ui-account = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
 

@@ -18,7 +18,6 @@ use {
     dashmap::DashMap,
     log::*,
     serde::Serialize,
-    solana_account_decoder::UiAccountEncoding,
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource, accounts_index::ScanConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -73,6 +72,7 @@ use {
         transaction::{MessageHash, SanitizedTransaction, SimpleAddressLoader},
     },
     solana_stake_program::{points::PointValue, stake_state},
+    solana_ui_account::UiAccountEncoding,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::{
         self,

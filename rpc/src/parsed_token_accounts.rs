@@ -2,8 +2,8 @@ use {
     crate::rpc::account_resolver,
     jsonrpc_core::{Error, Result},
     solana_account_decoder::{
-        parse_account_data::AccountAdditionalData, parse_token::get_token_account_mint, UiAccount,
-        UiAccountData, UiAccountEncoding,
+        encode_ui_account, parse_account_data::AccountAdditionalData,
+        parse_token::get_token_account_mint,
     },
     solana_rpc_client_api::response::RpcKeyedAccount,
     solana_runtime::bank::Bank,
@@ -11,6 +11,7 @@ use {
         account::{AccountSharedData, ReadableAccount},
         pubkey::Pubkey,
     },
+    solana_ui_account::{UiAccount, UiAccountData, UiAccountEncoding},
     spl_token_2022::{extension::StateWithExtensions, state::Mint},
     std::{collections::HashMap, sync::Arc},
 };
@@ -34,7 +35,7 @@ pub fn get_parsed_token_account(
             spl_token_decimals: get_mint_decimals(mint_account.data()).ok(),
         });
 
-    UiAccount::encode(
+    encode_ui_account(
         pubkey,
         &account,
         UiAccountEncoding::JsonParsed,
@@ -61,7 +62,7 @@ where
             AccountAdditionalData { spl_token_decimals }
         });
 
-        let maybe_encoded_account = UiAccount::encode(
+        let maybe_encoded_account = encode_ui_account(
             &pubkey,
             &account,
             UiAccountEncoding::JsonParsed,

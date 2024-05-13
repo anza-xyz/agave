@@ -1,9 +1,6 @@
 use {
     serde::{Deserialize, Serialize},
-    solana_account_decoder::{
-        parse_token::{real_number_string_trimmed, UiTokenAmount},
-        StringAmount,
-    },
+    solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
     solana_sdk::{
         deserialize_utils::default_on_eof, message::v0::LoadedAddresses, transaction::Result,
         transaction_context::TransactionReturnData,
@@ -11,6 +8,7 @@ use {
     solana_transaction_status::{
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },
+    solana_ui_account::StringAmount,
     std::str::FromStr,
 };
 

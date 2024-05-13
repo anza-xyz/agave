@@ -1,9 +1,10 @@
 use {
-    crate::{parse_account_data::ParseAccountError, UiFeeCalculator},
+    crate::parse_account_data::ParseAccountError,
     solana_sdk::{
         instruction::InstructionError,
         nonce::{state::Versions, State},
     },
+    solana_ui_account::UiFeeCalculator,
 };
 
 pub fn parse_nonce(data: &[u8]) -> Result<UiNonceState, ParseAccountError> {

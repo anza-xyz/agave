@@ -1,10 +1,7 @@
 #[allow(deprecated)]
 use solana_sdk::sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
-    crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
-        StringAmount, UiFeeCalculator,
-    },
+    crate::parse_account_data::{ParsableAccount, ParseAccountError},
     bincode::deserialize,
     bv::BitVec,
     solana_sdk::{
@@ -19,6 +16,7 @@ use {
             self, epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot, rewards::Rewards,
         },
     },
+    solana_ui_account::{StringAmount, UiFeeCalculator},
 };
 
 pub fn parse_sysvar(data: &[u8], pubkey: &Pubkey) -> Result<SysvarAccountType, ParseAccountError> {

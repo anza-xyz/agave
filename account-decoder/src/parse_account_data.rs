@@ -6,11 +6,11 @@ use {
         parse_token::parse_token, parse_vote::parse_vote,
     },
     inflector::Inflector,
-    serde_json::Value,
     solana_sdk::{
         address_lookup_table, instruction::InstructionError, pubkey::Pubkey, stake, system_program,
         sysvar, vote,
     },
+    solana_ui_account::ParsedAccount,
     std::collections::HashMap,
     thiserror::Error,
 };
@@ -60,14 +60,6 @@ pub enum ParseAccountError {
 
     #[error("Serde json error")]
     SerdeJsonError(#[from] serde_json::error::Error),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ParsedAccount {
-    pub program: String,
-    pub parsed: Value,
-    pub space: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

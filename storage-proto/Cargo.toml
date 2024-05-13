@@ -17,6 +17,7 @@ serde = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-ui-account = { workspace = true }
 
 [dev-dependencies]
 enum-iterator = { workspace = true }

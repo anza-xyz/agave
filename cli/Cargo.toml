@@ -47,6 +47,7 @@ solana-rpc-client-nonce-utils = { workspace = true }
 solana-sdk = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction-status = { workspace = true }
+solana-ui-account = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 solana_rbpf = { workspace = true }

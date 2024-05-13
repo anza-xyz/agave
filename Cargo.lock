@@ -179,6 +179,7 @@ dependencies = [
  "solana-storage-bigtable",
  "solana-streamer",
  "solana-transaction-status",
+ "solana-ui-account",
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote-program",
@@ -5335,6 +5336,7 @@ dependencies = [
  "serde_json",
  "solana-config-program",
  "solana-sdk",
+ "solana-ui-account",
  "spl-pod",
  "spl-token",
  "spl-token-2022",
@@ -5795,6 +5797,7 @@ dependencies = [
  "solana-test-validator",
  "solana-tpu-client",
  "solana-transaction-status",
+ "solana-ui-account",
  "solana-version",
  "solana-vote-program",
  "solana_rbpf",
@@ -5842,6 +5845,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-sdk",
  "solana-transaction-status",
+ "solana-ui-account",
  "solana-vote-program",
  "spl-memo",
 ]
@@ -6774,9 +6778,9 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "solana-account-decoder",
  "solana-rpc-client-api",
  "solana-sdk",
+ "solana-ui-account",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -6887,6 +6891,7 @@ dependencies = [
  "solana-svm",
  "solana-tpu-client",
  "solana-transaction-status",
+ "solana-ui-account",
  "solana-version",
  "solana-vote",
  "solana-vote-program",
@@ -6925,6 +6930,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-sdk",
  "solana-transaction-status",
+ "solana-ui-account",
  "solana-version",
  "solana-vote-program",
  "tokio",
@@ -6948,6 +6954,7 @@ dependencies = [
  "solana-inline-spl",
  "solana-sdk",
  "solana-transaction-status",
+ "solana-ui-account",
  "solana-version",
  "thiserror",
 ]
@@ -6965,6 +6972,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-sdk",
+ "solana-ui-account",
  "thiserror",
  "tokio",
 ]
@@ -6981,7 +6989,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "solana-account-decoder",
  "solana-client",
  "solana-logger",
  "solana-pubsub-client",
@@ -6993,6 +7000,7 @@ dependencies = [
  "solana-test-validator",
  "solana-tpu-client",
  "solana-transaction-status",
+ "solana-ui-account",
  "tokio",
 ]
 
@@ -7264,6 +7272,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-sdk",
  "solana-transaction-status",
+ "solana-ui-account",
  "tonic-build",
 ]
 
@@ -7563,6 +7572,20 @@ dependencies = [
  "solana-streamer",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "solana-ui-account"
+version = "0.0.1"
+dependencies = [
+ "base64 0.22.0",
+ "bs58",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "solana-sdk",
+ "spl-pod",
+ "zstd",
 ]
 
 [[package]]

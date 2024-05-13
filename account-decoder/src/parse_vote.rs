@@ -1,10 +1,11 @@
 use {
-    crate::{parse_account_data::ParseAccountError, StringAmount},
+    crate::parse_account_data::ParseAccountError,
     solana_sdk::{
         clock::{Epoch, Slot},
         pubkey::Pubkey,
         vote::state::{BlockTimestamp, Lockout, VoteState},
     },
+    solana_ui_account::StringAmount,
 };
 
 pub fn parse_vote(data: &[u8]) -> Result<VoteAccountType, ParseAccountError> {

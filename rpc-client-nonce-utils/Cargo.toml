@@ -22,6 +22,7 @@ futures = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-rpc-client-api = { workspace = true }
+solana-ui-account = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]

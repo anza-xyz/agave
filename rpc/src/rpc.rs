@@ -11,8 +11,8 @@ use {
     jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
     jsonrpc_derive::rpc,
     solana_account_decoder::{
+        encode_ui_account,
         parse_token::{is_known_spl_token_id, token_amount_to_ui_amount, UiTokenAmount},
-        UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
@@ -95,6 +95,7 @@ use {
         EncodedConfirmedTransactionWithStatusMeta, Reward, RewardType, TransactionBinaryEncoding,
         TransactionConfirmationStatus, TransactionStatus, UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_ui_account::{UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES},
     solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY},
     spl_token_2022::{
         extension::StateWithExtensions,
@@ -2363,7 +2364,7 @@ fn encode_account<T: ReadableAccount>(
             data: None,
         })
     } else {
-        Ok(UiAccount::encode(
+        Ok(encode_ui_account(
             pubkey, account, encoding, None, data_slice,
         ))
     }
@@ -5831,7 +5832,7 @@ pub mod tests {
         let result: Vec<RpcKeyedAccount> = parse_success_result(rpc.handle_request_sync(request));
         let expected_value = vec![RpcKeyedAccount {
             pubkey: new_program_account_key.to_string(),
-            account: UiAccount::encode(
+            account: encode_ui_account(
                 &new_program_account_key,
                 &new_program_account,
                 UiAccountEncoding::Binary,

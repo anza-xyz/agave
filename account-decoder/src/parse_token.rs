@@ -2,9 +2,9 @@ use {
     crate::{
         parse_account_data::{ParsableAccount, ParseAccountError},
         parse_token_extension::{parse_extension, UiExtension},
-        StringAmount, StringDecimals,
     },
     solana_sdk::pubkey::Pubkey,
+    solana_ui_account::{StringAmount, StringDecimals},
     spl_token_2022::{
         extension::{BaseStateWithExtensions, StateWithExtensions},
         generic_token_account::GenericTokenAccount,

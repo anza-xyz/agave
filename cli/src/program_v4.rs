@@ -9,7 +9,6 @@ use {
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkey_of_signer, signer_of},
         input_validators::{is_valid_pubkey, is_valid_signer},
@@ -46,6 +45,7 @@ use {
         system_instruction::{self, SystemError},
         transaction::Transaction,
     },
+    solana_ui_account::{UiAccountEncoding, UiDataSliceConfig},
     std::{
         cmp::Ordering,
         fs::File,

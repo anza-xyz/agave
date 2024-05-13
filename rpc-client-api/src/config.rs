@@ -1,11 +1,11 @@
 use {
     crate::filter::RpcFilterType,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_sdk::{
         clock::{Epoch, Slot},
         commitment_config::{CommitmentConfig, CommitmentLevel},
     },
     solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
+    solana_ui_account::{UiAccountEncoding, UiDataSliceConfig},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

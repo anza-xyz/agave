@@ -1,0 +1,25 @@
+[package]
+name = "solana-ui-account"
+description = "Solana UI Account"
+documentation = "https://docs.rs/solana-ui-account"
+version = "0.0.1"
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+base64 = { workspace = true }
+bs58 = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
+solana-sdk = { workspace = true }
+zstd = { workspace = true }
+
+[dev-dependencies]
+spl-pod = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

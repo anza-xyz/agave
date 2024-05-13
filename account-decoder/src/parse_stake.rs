@@ -1,13 +1,11 @@
 use {
-    crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
-        StringAmount,
-    },
+    crate::parse_account_data::{ParsableAccount, ParseAccountError},
     bincode::deserialize,
     solana_sdk::{
         clock::{Epoch, UnixTimestamp},
         stake::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
     },
+    solana_ui_account::StringAmount,
 };
 
 pub fn parse_stake(data: &[u8]) -> Result<StakeAccountType, ParseAccountError> {

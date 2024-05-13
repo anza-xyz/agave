@@ -17,8 +17,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
     solana_account_decoder::{
-        parse_account_data::AccountAdditionalData, parse_token::UiTokenAccount, UiAccount,
-        UiAccountEncoding, UiDataSliceConfig,
+        encode_ui_account, parse_account_data::AccountAdditionalData, parse_token::UiTokenAccount,
     },
     solana_clap_utils::keypair::SignOnly,
     solana_rpc_client_api::response::{
@@ -41,6 +40,7 @@ use {
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
     },
+    solana_ui_account::{UiAccountEncoding, UiDataSliceConfig},
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
         vote_state::{BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
@@ -201,7 +201,7 @@ impl CliAccount {
         Self {
             keyed_account: RpcKeyedAccount {
                 pubkey: address.to_string(),
-                account: UiAccount::encode(
+                account: encode_ui_account(
                     address,
                     account,
                     data_encoding,

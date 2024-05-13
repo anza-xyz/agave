@@ -175,7 +175,6 @@ use {
     log::*,
     serde::de::DeserializeOwned,
     serde_json::{json, Map, Value},
-    solana_account_decoder::UiAccount,
     solana_rpc_client_api::{
         config::{
             RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
@@ -190,6 +189,7 @@ use {
         },
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Signature},
+    solana_ui_account::UiAccount,
     std::collections::BTreeMap,
     thiserror::Error,
     tokio::{
