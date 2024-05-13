@@ -66,6 +66,7 @@ use {
         clock::{Slot, UnixTimestamp, MAX_PROCESSING_AGE},
         commitment_config::{CommitmentConfig, CommitmentLevel},
         epoch_info::EpochInfo,
+        epoch_rewards_hasher::EpochRewardsHasher,
         epoch_schedule::EpochSchedule,
         exit::Exit,
         feature_set,
@@ -646,7 +647,7 @@ impl JsonRpcRequestProcessor {
             .into());
         };
 
-        let reward_map: HashMap<String, (Reward, Slot)> = {
+        let mut reward_map: HashMap<String, (Reward, Slot)> = {
             let addresses: Vec<String> =
                 addresses.iter().map(|pubkey| pubkey.to_string()).collect();
             Self::filter_map_rewards(
@@ -659,6 +660,66 @@ impl JsonRpcRequestProcessor {
                 },
             )
         };
+
+        if partitioned_epoch_reward_enabled {
+            let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
+                "epoch-boundary block should have num_reward_partitions after partitioned epoch \
+                 rewards enabled",
+            );
+
+            let num_partitions = usize::try_from(num_partitions)
+                .expect("num_partitions should never exceed usize::MAX");
+            let hasher = EpochRewardsHasher::new(
+                num_partitions,
+                &Hash::from_str(&epoch_boundary_block.previous_blockhash)
+                    .expect("UiConfirmedBlock::previous_blockhash should be properly formed"),
+            );
+            let mut partition_index_addresses: HashMap<usize, Vec<String>> = HashMap::new();
+            for address in addresses.iter() {
+                let address_string = address.to_string();
+                // Skip this address if (Voting) rewards were already found in
+                // the first block of the epoch
+                if !reward_map.contains_key(&address_string) {
+                    let partition_index = hasher.clone().hash_address_to_partition(address);
+                    partition_index_addresses
+                        .entry(partition_index)
+                        .and_modify(|list| list.push(address_string.clone()))
+                        .or_insert(vec![address_string]);
+                }
+            }
+
+            let block_list = self
+                .get_blocks_with_limit(
+                    first_confirmed_block_in_epoch + 1,
+                    num_partitions,
+                    Some(context_config),
+                )
+                .await?;
+
+            for (partition_index, addresses) in partition_index_addresses.iter() {
+                let slot = *block_list
+                    .get(*partition_index)
+                    .ok_or_else(Error::internal_error)?;
+
+                let Ok(Some(block)) = self
+                    .get_block(
+                        slot,
+                        Some(RpcBlockConfig::rewards_with_commitment(config.commitment).into()),
+                    )
+                    .await
+                else {
+                    return Err(RpcCustomError::BlockNotAvailable { slot }.into());
+                };
+
+                let index_reward_map = Self::filter_map_rewards(
+                    &block.rewards,
+                    slot,
+                    addresses,
+                    &|reward_type| -> bool { reward_type == RewardType::Staking },
+                );
+                reward_map.extend(index_reward_map);
+            }
+        }
 
         let rewards = addresses
             .iter()
