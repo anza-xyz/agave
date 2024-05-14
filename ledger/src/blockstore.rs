@@ -1168,7 +1168,6 @@ impl Blockstore {
                 shred,
                 &just_inserted_shreds,
                 &erasure_metas,
-                &merkle_root_metas,
                 &mut duplicate_shreds,
             );
         }
@@ -1887,7 +1886,6 @@ impl Blockstore {
         shred: &Shred,
         just_inserted_shreds: &HashMap<ShredId, Shred>,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        merkle_root_metas: &HashMap<ErasureSetId, WorkingEntry<MerkleRootMeta>>,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) -> bool {
         let slot = shred.slot();
@@ -1915,37 +1913,34 @@ impl Blockstore {
             return true;
         };
 
-        let Some(prev_merkle_root_meta) = merkle_root_metas
+        let Some(prev_erasure_meta) = erasure_metas
             .get(&prev_erasure_set)
             .map(WorkingEntry::as_ref)
             .map(Cow::Borrowed)
-            .or_else(|| {
-                self.merkle_root_meta(prev_erasure_set)
-                    .unwrap()
-                    .map(Cow::Owned)
-            })
+            .or_else(|| self.erasure_meta(prev_erasure_set).unwrap().map(Cow::Owned))
         else {
-            warn!(
-                "The merkle root meta for the previous erasure set {prev_erasure_set:?} does not \
-                 exist. This should only happen if you have recently upgraded from a version < \
-                 v1.18.13. Skipping the backwards chained merkle root for {erasure_set:?}"
+            error!(
+                "The erasure meta for the previous erasure set {prev_erasure_set:?} does not exist.
+                 This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                 Skipping the backwards chained merkle root consistency check for {erasure_set:?}"
             );
             return true;
         };
         let prev_shred_id = ShredId::new(
             slot,
-            prev_merkle_root_meta.first_received_shred_index(),
-            prev_merkle_root_meta.first_received_shred_type(),
+            prev_erasure_meta
+                .first_received_coding_shred_index()
+                .expect("First received coding index must fit in u32"),
+            ShredType::Code,
         );
         let Some(prev_shred) =
             Self::get_shred_from_just_inserted_or_db(self, just_inserted_shreds, prev_shred_id)
                 .map(Cow::into_owned)
         else {
-            error!(
-                "Shred {prev_shred_id:?} indicated by merkle root meta {prev_merkle_root_meta:?} \
-                 is missing from blockstore. This should only happen in extreme cases where \
-                 blockstore cleanup has caught up to the root. Skipping the backwards chained \
-                 merkle root consistency check"
+            warn!(
+                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} is missing from blockstore.
+                 This can happen if you have recently upgraded from a version < v1.18.13, or if blockstore cleanup has caught up to the root.
+                 Skipping the backwards chained merkle root consistency check"
             );
             return true;
         };
@@ -1954,13 +1949,12 @@ impl Blockstore {
 
         if !self.check_chaining(merkle_root, chained_merkle_root) {
             warn!(
-                "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
-                 chains to merkle root {chained_merkle_root:?}, however previous fec set shred \
-                 {prev_erasure_set:?} type {:?} has merkle root {merkle_root:?}. Reporting as \
-                 duplicate",
+                "Received conflicting chained merkle roots for slot: {slot},
+                shred {:?} type {:?} chains to merkle root {chained_merkle_root:?}, however
+                previous fec set coding shred {prev_erasure_set:?} has merkle root {merkle_root:?}.
+                Reporting as duplicate",
                 shred.erasure_set(),
                 shred.shred_type(),
-                prev_merkle_root_meta.first_received_shred_type(),
             );
 
             if !self.has_duplicate_shreds_in_slot(shred.slot()) {
@@ -11764,7 +11758,7 @@ pub mod tests {
 
     #[test]
     fn test_chained_merkle_root_upgrade_inconsistency_backwards() {
-        // Insert a coding shred (without a merkle meta) then inconsistent shreds from the next FEC set
+        // Insert a coding shred (with an old erasure meta and no merkle root meta) then inconsistent shreds from the next FEC set
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -11773,15 +11767,23 @@ pub mod tests {
         let fec_set_index = 0;
         let (data_shreds, coding_shreds, leader_schedule) =
             setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
-        let coding_shred_previous = coding_shreds[0].clone();
+        let coding_shred_previous = coding_shreds[1].clone();
         let next_fec_set_index = fec_set_index + data_shreds.len() as u32;
 
         assert!(blockstore
             .insert_shred_return_duplicate(coding_shred_previous.clone(), &leader_schedule,)
             .is_empty());
 
-        // Remove the merkle root meta in order to simulate this blockstore originating from
-        // an older version.
+        // Set the first received coding shred index to 0 and remove merkle root meta to simulate this insertion coming from an
+        // older version.
+        let mut erasure_meta = blockstore
+            .erasure_meta(coding_shred_previous.erasure_set())
+            .unwrap()
+            .unwrap();
+        erasure_meta.clear_first_received_coding_shred_index();
+        blockstore
+            .put_erasure_meta(coding_shred_previous.erasure_set(), &erasure_meta)
+            .unwrap();
         let mut write_batch = blockstore.db.batch().unwrap();
         blockstore
             .db
@@ -11794,7 +11796,7 @@ pub mod tests {
             .is_none());
 
         // Add an incorrectly chained merkle from the next set. Although incorrectly chained
-        // we skip the duplicate check as the merkle root meta is missing.
+        // we skip the duplicate check as the first received coding shred index shred is missing
         let merkle_root = Hash::new_unique();
         assert!(merkle_root != coding_shred_previous.merkle_root().unwrap());
         let (data_shreds, coding_shreds, leader_schedule) =
