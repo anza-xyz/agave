@@ -18,7 +18,7 @@ use {
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
-    log::debug,
+    log::{debug, warn},
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
@@ -36,7 +36,7 @@ use {
     },
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
+        account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
         feature_set::{self, remove_rounding_in_fee_calculation, FeatureSet},
         fee::{FeeBudgetLimits, FeeStructure},
@@ -60,6 +60,8 @@ use {
         rc::Rc,
     },
 };
+
+const MAX_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
@@ -293,8 +295,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
-            &program_cache_for_tx_batch,
-        ));
+            &program_cache_for_tx_batch.borrow(),
+        );
+        load_time.stop();
 
         let enable_transaction_loading_failure_fees = environment
             .feature_set
@@ -719,8 +722,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
-    ) -> ExecutedTransaction {
-        let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
+    ) -> TransactionExecutionResult {
+        let mut transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
+
+        // get latest value of acct struct from unique_loaded_accounts
+        for (key, acct) in transaction_accounts.iter_mut() {
+            if let Some(unique_acct_data) = unique_loaded_accounts.get(key) {
+                if *unique_acct_data != *acct {
+                    *acct = unique_acct_data.clone();
+                }
+            }
+        }
 
         fn transaction_accounts_lamports_sum(
             accounts: &[(Pubkey, AccountSharedData)],
@@ -801,6 +813,44 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         process_message_time.stop();
 
         drop(invoke_context);
+
+        // update latest value of acct struct in unique_loaded_accounts
+        let feature_set = callback.get_feature_set();
+        if process_result.is_ok() {
+            let account_keys: Vec<Pubkey> = transaction_accounts
+                .iter()
+                .map(|(pubkey, _)| *pubkey)
+                .collect();
+            let accounts = transaction_context
+                .accounts()
+                .as_ref()
+                .clone()
+                .into_accounts();
+
+            for acct_index in 0..account_keys.len() {
+                let key = account_keys[acct_index];
+                let acct_data_from_lookup = unique_loaded_accounts
+                    .entry(key)
+                    .or_insert_with(|| accounts[acct_index].clone());
+
+                if acct_data_from_lookup != &accounts[acct_index] {
+                    if accounts[acct_index].lamports() == 0 {
+                        let mut account = AccountSharedData::default();
+                        let set_exempt_rent_epoch_max = feature_set
+                            .is_active(&solana_sdk::feature_set::set_exempt_rent_epoch_max::id());
+                        if set_exempt_rent_epoch_max {
+                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                            // with this field already set would allow us to skip rent collection for these accounts.
+                            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                        }
+                        *acct_data_from_lookup = account;
+                    } else {
+                        *acct_data_from_lookup = accounts[acct_index].clone();
+                    }
+                }
+            }
+        }
 
         saturating_add_assign!(
             execute_timings.execute_accessories.process_message_us,
@@ -1184,7 +1234,12 @@ mod tests {
         let mut processing_config = TransactionProcessingConfig::default();
         processing_config.recording_config.enable_log_recording = true;
 
-        let executed_tx = batch_processor.execute_loaded_transaction(
+        let mut unique_loaded_accounts: HashMap<Pubkey, AccountSharedData> = HashMap::default();
+        for acct in loaded_transaction.accounts.iter() {
+            unique_loaded_accounts.insert(acct.0, acct.1.clone());
+        }
+
+        let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
@@ -1276,6 +1331,11 @@ mod tests {
             ..Default::default()
         };
         let mut error_metrics = TransactionErrorMetrics::new();
+
+        let mut unique_loaded_accounts: HashMap<Pubkey, AccountSharedData> = HashMap::default();
+        for acct in loaded_transaction.accounts.iter() {
+            unique_loaded_accounts.insert(acct.0, acct.1.clone());
+        }
 
         let _ = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,

@@ -653,7 +653,6 @@ mod tests {
         error_metrics: &mut TransactionErrorMetrics,
         feature_set: &mut FeatureSet,
     ) -> Vec<TransactionLoadResult> {
-        feature_set.deactivate(&feature_set::disable_rent_fees_collection::id());
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let fee_payer_account = accounts[0].1.clone();
         let mut accounts_map = HashMap::new();
