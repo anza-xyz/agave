@@ -60,7 +60,6 @@ use {
         TransactionStatusMeta, TransactionWithStatusMeta, VersionedConfirmedBlock,
         VersionedConfirmedBlockWithEntries, VersionedTransactionWithStatusMeta,
     },
-    static_assertions::const_assert_eq,
     std::{
         borrow::Cow,
         cell::RefCell,
@@ -86,6 +85,8 @@ use {
     trees::{Tree, TreeWalk},
 };
 pub mod blockstore_purge;
+#[cfg(test)]
+use static_assertions::const_assert_eq;
 pub use {
     crate::{
         blockstore_db::BlockstoreError,
@@ -3701,18 +3702,15 @@ impl Blockstore {
             .ok_or(BlockstoreError::UnknownLastIndex(slot))?;
 
         const MINIMUM_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64 - 1;
+        #[cfg(test)]
         const_assert_eq!(MINIMUM_INDEX, 31);
-        if last_shred_index < MINIMUM_INDEX {
+        let Some(start_index) = last_shred_index.checked_sub(MINIMUM_INDEX) else {
             warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
             return Ok(false);
-        }
-
-        let start_index = last_shred_index
-            .checked_sub(MINIMUM_INDEX)
-            .expect("last shred index must be >= minimum index");
+        };
         let keys = (start_index..=last_shred_index).map(|index| (slot, index));
 
-        let last_merkle_roots: Vec<Hash> = self
+        let mut last_merkle_roots = self
             .data_shred_cf
             .multi_get_bytes(keys)
             .into_iter()
@@ -3729,11 +3727,10 @@ impl Blockstore {
                     BlockstoreError::LegacyShred(slot, shred_index)
                 })
             })
-            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok())
-            .collect::<Result<Vec<Hash>>>()?;
+            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok());
 
         // After the dedup there should be exactly one Hash left if the shreds were part of the same FEC set.
-        Ok(last_merkle_roots.len() == 1)
+        Ok(matches!(last_merkle_roots.next(), Some(Ok(_))) && last_merkle_roots.next().is_none())
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
