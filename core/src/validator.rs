@@ -1032,9 +1032,7 @@ impl Validator {
                 prioritization_fee_cache.clone(),
             )?;
 
-            (
-                Some(json_rpc_service),
-                if !config.rpc_config.full_api {
+                let pubsub_service = if !config.rpc_config.full_api {
                     None
                 } else {
                     let (trigger, pubsub_service) = PubSubService::new(
@@ -1049,7 +1047,8 @@ impl Validator {
                         .register_exit(Box::new(move || trigger.cancel()));
 
                     Some(pubsub_service)
-                },
+                };
+                let optimistically_confirmed_bank_tracker =
                 Some(OptimisticallyConfirmedBankTracker::new(
                     bank_notification_receiver,
                     exit.clone(),
@@ -1058,11 +1057,16 @@ impl Validator {
                     rpc_subscriptions.clone(),
                     confirmed_bank_subscribers,
                     prioritization_fee_cache.clone(),
-                )),
-                Some(BankNotificationSenderConfig {
+                ));
+                let bank_notification_sender_config = Some(BankNotificationSenderConfig {
                     sender: bank_notification_sender,
                     should_send_parents: geyser_plugin_service.is_some(),
-                }),
+                });
+            (
+                Some(json_rpc_service),
+                pubsub_service,
+                optimistically_confirmed_bank_tracker,
+                bank_notification_sender_config
             )
         } else {
             (None, None, None, None)
