@@ -405,17 +405,6 @@ fn get_requested_loaded_accounts_data_size_limit(
     )
 }
 
-#[allow(dead_code)]
-fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {
-    // It's an executable program account. The program is already loaded in the cache.
-    // So the account data is not needed. Return a dummy AccountSharedData with meta
-    // information.
-    let mut program_account = AccountSharedData::default();
-    program_account.set_owner(loaded_program.account_owner());
-    program_account.set_executable(true);
-    program_account
-}
-
 /// Accumulate loaded account data size into `accumulated_accounts_data_size`.
 /// Returns TransactionErr::MaxLoadedAccountsDataSizeExceeded if
 /// `requested_loaded_accounts_data_size_limit` is specified and
