@@ -221,8 +221,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     let is_account_writable = message.is_writable(i);
                     callbacks
                         .load_account_with(key, |account| {
-                            // only cache account that is not writable and not having program owners.
-                            !is_account_writable && !program_owners.contains(account.owner())
+                            // only cache non program accounts
+                            !program_owners.contains(account.owner())
                         })
                         .map(|(mut account, _slot)| {
                             if program_owners.contains(account.owner()) {
