@@ -9,8 +9,7 @@ use {
         snapshot_utils::{
             self, SnapshotError, StorageAndNextAccountsFileId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
         },
-        stakes::Stakes,
-        stakes::{serde_stakes_enum_compat, StakesEnum},
+        stakes::{serde_stakes_enum_compat, Stakes, StakesEnum},
     },
     bincode::{self, config::Options, Error},
     log::*,
@@ -33,7 +32,7 @@ use {
     solana_measure::measure::Measure,
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
-        deserialize_utils::default_on_eof,
+        deserialize_utils::{default_on_eof, ignore_eof_error},
         epoch_schedule::EpochSchedule,
         fee_calculator::{FeeCalculator, FeeRateGovernor},
         genesis_config::GenesisConfig,
@@ -42,8 +41,8 @@ use {
         inflation::Inflation,
         pubkey::Pubkey,
         rent_collector::RentCollector,
+        stake::state::Delegation,
     },
-    solana_sdk::{deserialize_utils::ignore_eof_error, stake::state::Delegation},
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
