@@ -1,6 +1,7 @@
 pub use crate::nonblocking::tpu_client::TpuSenderError;
 use {
     crate::nonblocking::tpu_client::TpuClient as NonblockingTpuClient,
+    log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_connection_cache::{
         client_connection::ClientConnection,
@@ -107,23 +108,23 @@ where
 
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
     /// size
-    /// Attempts to send and confirm tx "tries" times
-    /// Waits for signature confirmation before returning
-    /// Returns the transaction signature
+    /// Attempt to send and confirm tx "attempts" times
+    /// Wait for signature confirmation before returning
+    /// Return the transaction signature
     pub fn send_and_confirm_transaction_with_retries<T: Signers + ?Sized>(
         &self,
         keypairs: &T,
         transaction: &mut Transaction,
-        tries: usize,
+        attempts: usize,
         pending_confirmations: usize,
     ) -> TransportResult<Signature> {
-        for x in 0..tries {
+        for attempt in 0..attempts {
             let now = Instant::now();
             let mut num_confirmed = 0;
             let mut wait_time = MAX_PROCESSING_AGE;
             // resend the same transaction until the transaction has no chance of succeeding
             let wire_transaction =
-                bincode::serialize(&transaction).expect("transaction serialization failed");
+                bincode::serialize(&transaction).expect("should serialize transaction");
 
             while now.elapsed().as_secs() < wait_time as u64 {
                 let leaders = self
@@ -154,7 +155,7 @@ where
                     );
                 }
             }
-            log::info!("{x} tries failed transfer");
+            info!("{attempt} tries failed transfer");
             let blockhash = self.rpc_client().get_latest_blockhash()?;
             transaction.sign(keypairs, blockhash);
         }
@@ -267,6 +268,8 @@ where
     }
 }
 
+// Methods below are required for calls to client.async_transfer()
+// where client is of type TpuClient<P, M, C>
 impl<P, M, C> AsyncClient for TpuClient<P, M, C>
 where
     P: ConnectionPool<NewConnectionConfig = C>,
