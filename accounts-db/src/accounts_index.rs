@@ -28,8 +28,7 @@ use {
         collections::{btree_map::BTreeMap, HashSet},
         fmt::Debug,
         ops::{
-            Bound,
-            Bound::{Excluded, Included, Unbounded},
+            Bound::{self, Excluded, Included, Unbounded},
             Range, RangeBounds,
         },
         path::PathBuf,
@@ -1647,8 +1646,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut binned = (0..bins)
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
-        let mut count = 0;
-        let mut dirty_pubkeys = items
+        let count = AtomicUsize::new(0);
+        let dirty_pubkeys = items
             .filter_map(|(pubkey, account_info)| {
                 let pubkey_bin = self.bin_calculator.bin_from_pubkey(&pubkey);
                 // this value is equivalent to what update() below would have created if we inserted a new item
@@ -1660,29 +1659,30 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             })
             .collect::<Vec<_>>();
 
-        let insertion_time = AtomicU64::new(0);
-
+        let binned = Mutex::new(binned);
+        let dirty_pubkeys = Mutex::new(dirty_pubkeys);
+        let mut insert_time = Measure::start("insert_into_primary_index");
         // offset bin processing in the 'binned' array by a random amount.
         // This results in calls to insert_new_entry_if_missing_with_lock from different threads starting at different bins to avoid
         // lock contention.
         let random_offset = thread_rng().gen_range(0..bins);
-        let mut duplicates = Vec::default();
-        (0..bins).for_each(|pubkey_bin| {
+        let duplicates = Mutex::new(Vec::default());
+        (0..bins).into_par_iter().for_each(|pubkey_bin| {
             let pubkey_bin = (pubkey_bin + random_offset) % bins;
-            let mut items = std::mem::take(&mut binned[pubkey_bin]);
+            let mut items: Vec<_> = std::mem::take(binned.lock().unwrap()[pubkey_bin].as_mut());
             if items.is_empty() {
                 return;
             }
 
             let these_duplicates = Self::remove_older_duplicate_pubkeys(&mut items);
             if let Some(mut these_duplicates) = these_duplicates {
-                duplicates.append(&mut these_duplicates);
+                duplicates.lock().unwrap().append(&mut these_duplicates);
             }
 
             let r_account_maps = &self.account_maps[pubkey_bin];
-            let mut insert_time = Measure::start("insert_into_primary_index");
+
             // count only considers non-duplicate accounts
-            count += items.len();
+            count.fetch_add(items.len(), Ordering::SeqCst);
             if use_disk {
                 r_account_maps.startup_insert_only(items.into_iter());
             } else {
@@ -1703,21 +1703,27 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             InsertNewEntryResults::DidNotExist => {}
                             InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
                             InsertNewEntryResults::ExistedNewEntryNonZeroLamports => {
-                                dirty_pubkeys.push(pubkey);
+                                dirty_pubkeys.lock().unwrap().push(pubkey);
                             }
                         }
                     });
             }
-            insert_time.stop();
-            insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
         });
+        insert_time.stop();
 
+        let mut dups_inner = duplicates.lock().unwrap();
+        let dups = if dups_inner.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(dups_inner.as_mut()))
+        };
+        let dirty_pubkeys = std::mem::take(dirty_pubkeys.lock().unwrap().as_mut());
         (
             dirty_pubkeys,
-            insertion_time.load(Ordering::Relaxed),
+            insert_time.as_us(),
             GenerateIndexResult {
-                count,
-                duplicates: (!duplicates.is_empty()).then_some(duplicates),
+                count: count.load(Ordering::SeqCst),
+                duplicates: dups,
             },
         )
     }
