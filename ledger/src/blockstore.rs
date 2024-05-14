@@ -3710,7 +3710,7 @@ impl Blockstore {
         };
         let keys = (start_index..=last_shred_index).map(|index| (slot, index));
 
-        let mut last_merkle_roots = self
+        let last_merkle_roots: Vec<Hash> = self
             .data_shred_cf
             .multi_get_bytes(keys)
             .into_iter()
@@ -3727,10 +3727,11 @@ impl Blockstore {
                     BlockstoreError::LegacyShred(slot, shred_index)
                 })
             })
-            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok());
+            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok())
+            .collect::<Result<Vec<Hash>>>()?;
 
         // After the dedup there should be exactly one Hash left if the shreds were part of the same FEC set.
-        Ok(matches!(last_merkle_roots.next(), Some(Ok(_))) && last_merkle_roots.next().is_none())
+        Ok(last_merkle_roots.len() == 1)
     }
 
     /// Returns a mapping from each elements of `slots` to a list of the
