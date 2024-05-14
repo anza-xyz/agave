@@ -459,7 +459,7 @@ pub struct Validator {
     validator_exit: Arc<RwLock<Exit>>,
     json_rpc_service: Option<JsonRpcService>,
     pubsub_service: Option<PubSubService>,
-    rpc_completed_slots_service: JoinHandle<()>,
+    rpc_completed_slots_service: Option<JoinHandle<()>>,
     optimistically_confirmed_bank_tracker: Option<OptimisticallyConfirmedBankTracker>,
     transaction_status_service: Option<TransactionStatusService>,
     rewards_recorder_service: Option<RewardsRecorderService>,
@@ -980,6 +980,7 @@ impl Validator {
             pubsub_service,
             completed_data_sets_sender,
             completed_data_sets_service,
+            rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
@@ -1061,6 +1062,16 @@ impl Validator {
                     )
                 };
 
+            let rpc_completed_slots_service = if !config.rpc_config.full_api {
+                None
+            } else {
+                Some(RpcCompletedSlotsService::spawn(
+                    completed_slots_receiver,
+                    rpc_subscriptions.clone(),
+                    exit.clone(),
+                ))
+            };
+
             let optimistically_confirmed_bank_tracker =
                 Some(OptimisticallyConfirmedBankTracker::new(
                     bank_notification_receiver,
@@ -1075,16 +1086,18 @@ impl Validator {
                 sender: bank_notification_sender,
                 should_send_parents: geyser_plugin_service.is_some(),
             });
+
             (
                 Some(json_rpc_service),
                 pubsub_service,
                 completed_data_sets_sender,
                 completed_data_sets_service,
+                rpc_completed_slots_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None)
+            (None, None, None, None, None, None, None)
         };
 
         if config.halt_at_slot.is_some() {
@@ -1179,12 +1192,6 @@ impl Validator {
         let (verified_vote_sender, verified_vote_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
-
-        let rpc_completed_slots_service = RpcCompletedSlotsService::spawn(
-            completed_slots_receiver,
-            rpc_subscriptions.clone(),
-            exit.clone(),
-        );
 
         let (banking_tracer, tracer_thread) =
             BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
@@ -1539,9 +1546,11 @@ impl Validator {
             pubsub_service.join().expect("pubsub_service");
         }
 
-        self.rpc_completed_slots_service
-            .join()
-            .expect("rpc_completed_slots_service");
+        if let Some(rpc_completed_slots_service) = self.rpc_completed_slots_service {
+            rpc_completed_slots_service
+                .join()
+                .expect("rpc_completed_slots_service");
+        }
 
         if let Some(optimistically_confirmed_bank_tracker) =
             self.optimistically_confirmed_bank_tracker
