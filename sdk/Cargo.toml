@@ -38,9 +38,8 @@ dev-context-only-utils = [
 ]
 
 [dependencies]
-base64 = { workspace = true }
 bincode = { workspace = true }
-bitflags = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
 borsh = { workspace = true }
 bs58 = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
@@ -55,11 +54,9 @@ generic-array = { workspace = true, features = ["serde", "more_lengths"], option
 hmac = { workspace = true }
 itertools =  { workspace = true }
 lazy_static = { workspace = true }
-libsecp256k1 = { workspace = true, optional = true }
+libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
 log = { workspace = true }
 memmap2 = { workspace = true, optional = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
 num_enum = { workspace = true }
 pbkdf2 = { workspace = true }
 qstring = { workspace = true }

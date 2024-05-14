@@ -836,9 +836,13 @@ impl<'a> AccountsHasher<'a> {
                 accum
             })
             .reduce(
-                || DedupResult {
-                    hashes_files: Vec::with_capacity(max_bin),
-                    ..Default::default()
+                || {
+                    DedupResult {
+                        // Allocate with Vec::new() so that no allocation actually happens. See
+                        // https://github.com/anza-xyz/agave/pull/1308.
+                        hashes_files: Vec::new(),
+                        ..Default::default()
+                    }
                 },
                 |mut a, mut b| {
                     a.lamports_sum = a
@@ -1643,7 +1647,7 @@ mod tests {
         let (hashes, lamports) =
             accounts_hash.de_dup_accounts(vec, &mut HashStats::default(), one_range());
         assert_eq!(
-            vec![Hash::default(); 0],
+            Vec::<Hash>::new(),
             get_vec_vec(hashes)
                 .into_iter()
                 .flatten()
@@ -1659,12 +1663,12 @@ mod tests {
 
         let (hashes, lamports) =
             accounts_hash.de_dup_accounts_in_parallel(&[], 1, 1, &HashStats::default());
-        assert_eq!(vec![Hash::default(); 0], get_vec(hashes));
+        assert_eq!(Vec::<Hash>::new(), get_vec(hashes));
         assert_eq!(lamports, 0);
 
         let (hashes, lamports) =
             accounts_hash.de_dup_accounts_in_parallel(&[], 2, 1, &HashStats::default());
-        assert_eq!(vec![Hash::default(); 0], get_vec(hashes));
+        assert_eq!(Vec::<Hash>::new(), get_vec(hashes));
         assert_eq!(lamports, 0);
     }
 

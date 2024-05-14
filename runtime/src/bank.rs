@@ -491,7 +491,7 @@ pub struct BankFieldsToDeserialize {
 #[derive(Debug)]
 pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) blockhash_queue: &'a RwLock<BlockhashQueue>,
-    pub(crate) ancestors: &'a AncestorsForSerialization,
+    pub(crate) ancestors: AncestorsForSerialization,
     pub(crate) hash: Hash,
     pub(crate) parent_hash: Hash,
     pub(crate) parent_slot: Slot,
@@ -1716,13 +1716,10 @@ impl Bank {
     }
 
     /// Return subset of bank fields representing serializable state
-    pub(crate) fn get_fields_to_serialize<'a>(
-        &'a self,
-        ancestors: &'a HashMap<Slot, usize>,
-    ) -> BankFieldsToSerialize<'a> {
+    pub(crate) fn get_fields_to_serialize(&self) -> BankFieldsToSerialize {
         BankFieldsToSerialize {
             blockhash_queue: &self.blockhash_queue,
-            ancestors,
+            ancestors: AncestorsForSerialization::from(&self.ancestors),
             hash: *self.hash.read().unwrap(),
             parent_hash: self.parent_hash,
             parent_slot: self.parent_slot,
@@ -1812,7 +1809,11 @@ impl Bank {
 
     /// computed unix_timestamp at this slot height
     pub fn unix_timestamp_from_genesis(&self) -> i64 {
-        self.genesis_creation_time + ((self.slot as u128 * self.ns_per_slot) / 1_000_000_000) as i64
+        self.genesis_creation_time.saturating_add(
+            (self.slot as u128)
+                .saturating_mul(self.ns_per_slot)
+                .saturating_div(1_000_000_000) as i64,
+        )
     }
 
     fn update_sysvar_account<F>(&self, pubkey: &Pubkey, updater: F)
