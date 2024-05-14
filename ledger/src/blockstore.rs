@@ -10979,6 +10979,7 @@ pub mod tests {
                             let slot = shreds[0].slot();
                             // Grab this lock to block `get_slot_entries` before it fetches completed datasets
                             // and then mark the slot as dead, but full, by inserting carefully crafted shreds.
+                            #[allow(clippy::readonly_write_lock)]
                             let _lowest_cleanup_slot =
                                 blockstore.lowest_cleanup_slot.write().unwrap();
                             blockstore.insert_shreds(shreds, None, false).unwrap();
