@@ -42,11 +42,6 @@ pub struct StandardBroadcastRun {
     reed_solomon_cache: Arc<ReedSolomonCache>,
 }
 
-#[derive(Debug)]
-enum BroadcastError {
-    TooManyShreds,
-}
-
 impl StandardBroadcastRun {
     pub(super) fn new(shred_version: u16) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
@@ -122,15 +117,10 @@ impl StandardBroadcastRun {
         is_slot_end: bool,
         cluster_type: ClusterType,
         process_stats: &mut ProcessShredsStats,
-        max_data_shreds_per_slot: u32,
-        max_code_shreds_per_slot: u32,
-    ) -> std::result::Result<
-        (
-            Vec<Shred>, // data shreds
-            Vec<Shred>, // coding shreds
-        ),
-        BroadcastError,
-    > {
+    ) -> (
+        Vec<Shred>, // data shreds
+        Vec<Shred>, // coding shreds
+    ) {
         let (data_shreds, coding_shreds) =
             Shredder::new(self.slot, self.parent, reference_tick, self.shred_version)
                 .unwrap()
@@ -148,20 +138,33 @@ impl StandardBroadcastRun {
                 );
         process_stats.num_merkle_data_shreds += data_shreds.len();
         process_stats.num_merkle_coding_shreds += coding_shreds.len();
+
         if let Some(shred) = data_shreds.iter().max_by_key(|shred| shred.index()) {
             self.chained_merkle_root = shred.merkle_root().unwrap();
             self.next_shred_index = shred.index() + 1;
         };
-        if self.next_shred_index > max_data_shreds_per_slot {
-            return Err(BroadcastError::TooManyShreds);
-        }
         if let Some(index) = coding_shreds.iter().map(Shred::index).max() {
             self.next_code_index = index + 1;
         };
-        if self.next_code_index > max_code_shreds_per_slot {
-            return Err(BroadcastError::TooManyShreds);
-        }
-        Ok((data_shreds, coding_shreds))
+
+        assert!(
+            self.next_shred_index <= blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
+            "StandardBroadcastRun: `next_shred_index` is above `MAX_DATA_SHREDS_PER_SLOT`.\n\
+               next_shred_index: {}\n\
+               blockstore::MAX_DATA_SHREDS_PER_SLOT: {}",
+            self.next_shred_index,
+            blockstore::MAX_DATA_SHREDS_PER_SLOT,
+        );
+        assert!(
+            self.next_code_index <= shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
+            "StandardBroadcastRun: `next_code_index` is above `MAX_CODE_SHREDS_PER_SLOT`.\n\
+               next_code_index: {}\n\
+               shred_code::MAX_CODE_SHREDS_PER_SLOT: {}",
+            self.next_code_index,
+            shred_code::MAX_CODE_SHREDS_PER_SLOT,
+        );
+
+        (data_shreds, coding_shreds)
     }
 
     #[cfg(test)]
@@ -272,18 +275,14 @@ impl StandardBroadcastRun {
         // 2) Convert entries to shreds and coding shreds
         let is_last_in_slot = last_tick_height == bank.max_tick_height();
         let reference_tick = bank.tick_height() % bank.ticks_per_slot();
-        let (data_shreds, coding_shreds) = self
-            .entries_to_shreds(
-                keypair,
-                &receive_results.entries,
-                reference_tick as u8,
-                is_last_in_slot,
-                cluster_type,
-                &mut process_stats,
-                blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
-                shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
-            )
-            .unwrap();
+        let (data_shreds, coding_shreds) = self.entries_to_shreds(
+            keypair,
+            &receive_results.entries,
+            reference_tick as u8,
+            is_last_in_slot,
+            cluster_type,
+            &mut process_stats,
+        );
         // Insert the first data shred synchronously so that blockstore stores
         // that the leader started this block. This must be done before the
         // blocks are sent out over the wire, so that the slots we have already
@@ -827,46 +826,5 @@ mod test {
             )
             .unwrap();
         assert!(standard_broadcast_run.completed)
-    }
-
-    #[test]
-    fn entries_to_shreds_max() {
-        solana_logger::setup();
-        let keypair = Keypair::new();
-        let mut bs = StandardBroadcastRun::new(0);
-        bs.slot = 1;
-        bs.parent = 0;
-        let entries = create_ticks(10_000, 1, solana_sdk::hash::Hash::default());
-
-        let mut stats = ProcessShredsStats::default();
-
-        let (data, coding) = bs
-            .entries_to_shreds(
-                &keypair,
-                &entries[0..entries.len() - 2],
-                0,
-                false,
-                ClusterType::Development,
-                &mut stats,
-                1000,
-                1000,
-            )
-            .unwrap();
-        info!("{} {}", data.len(), coding.len());
-        assert!(!data.is_empty());
-        assert!(!coding.is_empty());
-
-        let r = bs.entries_to_shreds(
-            &keypair,
-            &entries,
-            0,
-            false,
-            ClusterType::Development,
-            &mut stats,
-            10,
-            10,
-        );
-        info!("{:?}", r);
-        assert_matches!(r, Err(BroadcastError::TooManyShreds));
     }
 }
