@@ -160,6 +160,7 @@ impl AccountsPackage {
 
     /// Create a new Accounts Package where basically every field is defaulted.
     /// Only use for tests; many of the fields are invalid!
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
