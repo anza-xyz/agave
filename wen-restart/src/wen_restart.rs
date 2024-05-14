@@ -784,6 +784,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     }
 }
 
+#[derive(Clone)]
 pub struct WenRestartConfig {
     pub wen_restart_path: PathBuf,
     pub last_vote: VoteTransaction,
@@ -1493,7 +1494,6 @@ mod tests {
 
     #[test]
     fn test_wen_restart_normal_flow() {
-        solana_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let wen_restart_repair_slots = Some(Arc::new(RwLock::new(Vec::new())));
         let test_state = wen_restart_test_init(&ledger_path);
@@ -2212,6 +2212,17 @@ mod tests {
         assert_eq!(
             increment_and_write_wen_restart_records(
                 &wen_restart_proto_path,
+                WenRestartProgressInternalState::WaitingForSupermajority,
+                &mut progress
+            )
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::UnexpectedState(RestartState::WaitingForSupermajority),
+        );
+        assert_eq!(
+            increment_and_write_wen_restart_records(
+                &wen_restart_proto_path,
                 WenRestartProgressInternalState::Done,
                 &mut progress
             )
@@ -2696,5 +2707,56 @@ mod tests {
         assert!(wen_restart_mark_done(&proto_path).is_ok());
         let progress = read_wen_restart_records(&proto_path).unwrap();
         assert_eq!(progress.state(), RestartState::Done);
+    }
+
+    #[test]
+    fn test_second_phase_states_rejected_in_wait_for_phase_one() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let test_state = wen_restart_test_init(&ledger_path);
+        let last_vote_slot = test_state.last_voted_fork_slots[0];
+        let last_vote_bankhash = Hash::new_unique();
+        let config = WenRestartConfig {
+            wen_restart_path: test_state.wen_restart_proto_path.clone(),
+            last_vote: VoteTransaction::from(Vote::new(vec![last_vote_slot], last_vote_bankhash)),
+            blockstore: test_state.blockstore.clone(),
+            cluster_info: test_state.cluster_info.clone(),
+            bank_forks: test_state.bank_forks.clone(),
+            wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
+            wait_for_supermajority_threshold_percent: 80,
+            snapshot_config: SnapshotConfig::default(),
+            accounts_background_request_sender: AbsRequestSender::default(),
+            genesis_config_hash: test_state.genesis_config_hash,
+            exit: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(write_wen_restart_records(
+            &test_state.wen_restart_proto_path,
+            &WenRestartProgress {
+                state: RestartState::WaitingForSupermajority.into(),
+                ..Default::default()
+            }
+        )
+        .is_ok());
+        assert_eq!(
+            wait_for_wen_restart_phase_one(config.clone())
+                .unwrap_err()
+                .downcast::<WenRestartError>()
+                .unwrap(),
+            WenRestartError::UnexpectedState(RestartState::WaitingForSupermajority)
+        );
+        assert!(write_wen_restart_records(
+            &test_state.wen_restart_proto_path,
+            &WenRestartProgress {
+                state: RestartState::Done.into(),
+                ..Default::default()
+            }
+        )
+        .is_ok());
+        assert_eq!(
+            wait_for_wen_restart_phase_one(config)
+                .unwrap_err()
+                .downcast::<WenRestartError>()
+                .unwrap(),
+            WenRestartError::UnexpectedState(RestartState::Done)
+        );
     }
 }
