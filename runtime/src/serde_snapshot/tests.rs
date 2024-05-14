@@ -3,8 +3,8 @@ mod serde_snapshot_tests {
     use {
         crate::{
             serde_snapshot::{
-                newer, reconstruct_accountsdb_from_fields, remap_append_vec_file,
-                SerializableAccountsDb, SnapshotAccountsDbFields,
+                deserialize_accounts_db_fields, reconstruct_accountsdb_from_fields,
+                remap_append_vec_file, SerializableAccountsDb, SnapshotAccountsDbFields,
             },
             snapshot_utils::{get_storages_to_serialize, StorageAndNextAccountsFileId},
         },
@@ -64,7 +64,7 @@ mod serde_snapshot_tests {
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields = newer::deserialize_accounts_db_fields(stream)?;
+        let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
@@ -215,7 +215,8 @@ mod serde_snapshot_tests {
         }
     }
 
-    fn test_accounts_serialize_style(storage_access: StorageAccess) {
+    #[test_case(StorageAccess::Mmap)]
+    fn test_accounts_serialize(storage_access: StorageAccess) {
         solana_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
         let accounts_db = AccountsDb::new_for_tests(paths, &ClusterType::Development);
@@ -267,11 +268,6 @@ mod serde_snapshot_tests {
         assert_eq!(accounts_delta_hash, daccounts_delta_hash);
         let daccounts_hash = daccounts.accounts_db.get_accounts_hash(slot).unwrap().0;
         assert_eq!(accounts_hash, daccounts_hash);
-    }
-
-    #[test_case(StorageAccess::Mmap)]
-    fn test_accounts_serialize_newer(storage_access: StorageAccess) {
-        test_accounts_serialize_style(storage_access)
     }
 
     #[test_case(StorageAccess::Mmap)]
