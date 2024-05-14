@@ -64,7 +64,8 @@ mod target_arch {
         type Error = ElGamalError;
 
         fn try_from(pod: PodScalar) -> Result<Self, Self::Error> {
-            Scalar::from_canonical_bytes(pod.0).ok_or(ElGamalError::CiphertextDeserialization)
+            Option::from(Scalar::from_canonical_bytes(pod.0))
+                .ok_or(ElGamalError::CiphertextDeserialization)
         }
     }
 
