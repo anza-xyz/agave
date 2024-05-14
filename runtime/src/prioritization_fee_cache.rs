@@ -293,6 +293,10 @@ impl PrioritizationFeeCache {
         bank_id: BankId,
         metrics: &PrioritizationFeeCacheMetrics,
     ) {
+        if unfinalized.is_empty() {
+            return;
+        }
+
         // prune cache by evicting write account entry from prioritization fee if its fee is less
         // or equal to block's minimum transaction fee, because they are irrelevant in calculating
         // block minimum fee.
