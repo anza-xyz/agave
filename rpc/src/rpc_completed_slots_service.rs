@@ -25,7 +25,9 @@ impl RpcCompletedSlotsService {
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solRpcComplSlot".to_string())
-            .spawn(move || loop {
+            .spawn(move || {
+                info!("RpcCompletedSlotService has started");
+                loop {
                 // received exit signal, shutdown the service
                 if exit.load(Ordering::Relaxed) {
                     break;
@@ -48,6 +50,8 @@ impl RpcCompletedSlotsService {
                         }
                     }
                 }
+            };
+            info!("RpcCompletedSlotService has stopped");
             })
             .unwrap()
     }
