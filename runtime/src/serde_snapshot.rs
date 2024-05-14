@@ -217,8 +217,8 @@ pub(crate) fn compare_two_serialized_banks(
     let file2 = File::open(path2)?;
     let mut stream2 = BufReader::new(file2);
 
-    let fields1 = newer::Context::deserialize_bank_fields(&mut stream1)?;
-    let fields2 = newer::Context::deserialize_bank_fields(&mut stream2)?;
+    let fields1 = newer::deserialize_bank_fields(&mut stream1)?;
+    let fields2 = newer::deserialize_bank_fields(&mut stream2)?;
     Ok(fields1 == fields2)
 }
 
@@ -252,7 +252,7 @@ pub(crate) fn fields_from_stream<R: Read>(
     Error,
 > {
     match serde_style {
-        SerdeStyle::Newer => newer::Context::deserialize_bank_fields(snapshot_stream),
+        SerdeStyle::Newer => newer::deserialize_bank_fields(snapshot_stream),
     }
 }
 
@@ -382,7 +382,7 @@ where
     W: Write,
     R: Read,
 {
-    newer::Context::reserialize_bank_fields_with_hash(
+    newer::reserialize_bank_fields_with_hash(
         stream_reader,
         stream_writer,
         accounts_hash,
@@ -438,7 +438,7 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
     where
         S: serde::ser::Serializer,
     {
-        newer::Context::serialize_bank_and_storage(serializer, self)
+        newer::serialize_bank_and_storage(serializer, self)
     }
 }
 
@@ -470,7 +470,7 @@ impl<'a> Serialize for SerializableBankAndStorageNoExtra<'a> {
     where
         S: serde::ser::Serializer,
     {
-        newer::Context::serialize_bank_and_storage_without_extra_fields(serializer, self)
+        newer::serialize_bank_and_storage_without_extra_fields(serializer, self)
     }
 }
 
@@ -499,7 +499,7 @@ impl<'a> Serialize for SerializableAccountsDb<'a> {
     where
         S: serde::ser::Serializer,
     {
-        newer::Context::serialize_accounts_db_fields(serializer, self)
+        newer::serialize_accounts_db_fields(serializer, self)
     }
 }
 

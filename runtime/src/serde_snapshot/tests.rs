@@ -64,7 +64,7 @@ mod serde_snapshot_tests {
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields = newer::Context::deserialize_accounts_db_fields(stream)?;
+        let accounts_db_fields = newer::deserialize_accounts_db_fields(stream)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,

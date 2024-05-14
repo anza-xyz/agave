@@ -181,230 +181,222 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl<'a> solana_frozen_abi::abi_example::IgnoreAsHelper for SerializableVersionedBank<'a> {}
 
-#[derive(PartialEq, Eq)]
-pub(super) struct Context {}
+pub fn serialize_bank_and_storage<S>(
+    serializer: S,
+    serializable_bank: &SerializableBankAndStorage<'_>,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::ser::Serializer,
+{
+    let fields = serializable_bank.bank.get_fields_to_serialize();
+    let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
+    let bank_fields_to_serialize = (
+        SerializableVersionedBank::from(fields),
+        SerializableAccountsDb::<'_> {
+            accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
+            slot: serializable_bank.bank.rc.slot,
+            account_storage_entries: serializable_bank.snapshot_storages,
+        },
+        // Additional fields, we manually store the lamps per signature here so that
+        // we can grab it on restart.
+        // TODO: if we do a snapshot version bump, consider moving this out.
+        lamports_per_signature,
+        None::<BankIncrementalSnapshotPersistence>,
+        serializable_bank
+            .bank
+            .get_epoch_accounts_hash_to_serialize()
+            .map(|epoch_accounts_hash| *epoch_accounts_hash.as_ref()),
+    );
+    bank_fields_to_serialize.serialize(serializer)
+}
 
-//impl<'a> TypeContext<'a> for Context {
-impl<'a> Context {
-    pub fn serialize_bank_and_storage<S>(
-        serializer: S,
-        serializable_bank: &SerializableBankAndStorage<'a>,
-    ) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        let fields = serializable_bank.bank.get_fields_to_serialize();
-        let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
-        let bank_fields_to_serialize = (
-            SerializableVersionedBank::from(fields),
-            SerializableAccountsDb::<'a> {
-                accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
-                slot: serializable_bank.bank.rc.slot,
-                account_storage_entries: serializable_bank.snapshot_storages,
-            },
-            // Additional fields, we manually store the lamps per signature here so that
-            // we can grab it on restart.
-            // TODO: if we do a snapshot version bump, consider moving this out.
-            lamports_per_signature,
-            None::<BankIncrementalSnapshotPersistence>,
-            serializable_bank
-                .bank
-                .get_epoch_accounts_hash_to_serialize()
-                .map(|epoch_accounts_hash| *epoch_accounts_hash.as_ref()),
-        );
-        bank_fields_to_serialize.serialize(serializer)
-    }
+#[cfg(test)]
+pub fn serialize_bank_and_storage_without_extra_fields<S>(
+    serializer: S,
+    serializable_bank: &SerializableBankAndStorageNoExtra<'_>,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::ser::Serializer,
+{
+    let fields = serializable_bank.bank.get_fields_to_serialize();
+    (
+        SerializableVersionedBank::from(fields),
+        SerializableAccountsDb::<'_> {
+            accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
+            slot: serializable_bank.bank.rc.slot,
+            account_storage_entries: serializable_bank.snapshot_storages,
+        },
+    )
+        .serialize(serializer)
+}
 
-    #[cfg(test)]
-    pub fn serialize_bank_and_storage_without_extra_fields<S>(
-        serializer: S,
-        serializable_bank: &SerializableBankAndStorageNoExtra<'a>,
-    ) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        let fields = serializable_bank.bank.get_fields_to_serialize();
+pub fn serialize_accounts_db_fields<S>(
+    serializer: S,
+    serializable_db: &SerializableAccountsDb<'_>,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::ser::Serializer,
+{
+    // sample write version before serializing storage entries
+    let version = serializable_db
+        .accounts_db
+        .write_version
+        .load(Ordering::Acquire);
+
+    // (1st of 3 elements) write the list of account storage entry lists out as a map
+    let entry_count = RefCell::<usize>::new(0);
+    let entries = serialize_iter_as_map(serializable_db.account_storage_entries.iter().map(|x| {
+        *entry_count.borrow_mut() += x.len();
         (
-            SerializableVersionedBank::from(fields),
-            SerializableAccountsDb::<'a> {
-                accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
-                slot: serializable_bank.bank.rc.slot,
-                account_storage_entries: serializable_bank.snapshot_storages,
-            },
+            x.first().unwrap().slot(),
+            serialize_iter_as_seq(
+                x.iter()
+                    .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
+            ),
         )
-            .serialize(serializer)
-    }
+    }));
+    let slot = serializable_db.slot;
+    let accounts_delta_hash = serializable_db
+        .accounts_db
+        .get_accounts_delta_hash(slot)
+        .map(Into::into)
+        .unwrap_or_else(|| panic!("Missing accounts delta hash entry for slot {slot}"));
+    // NOTE: The accounts hash is calculated in AHV, which is *after* a bank snapshot is taken
+    // (and serialized here).  Thus it is expected that an accounts hash is *not* found for
+    // this slot, and a placeholder value will be used instead.  The real accounts hash will be
+    // set by `reserialize_bank_with_new_accounts_hash` from AHV.
+    let accounts_hash = serializable_db
+        .accounts_db
+        .get_accounts_hash(slot)
+        .map(|(accounts_hash, _)| accounts_hash.into())
+        .unwrap_or_default();
+    let stats = serializable_db
+        .accounts_db
+        .get_bank_hash_stats(slot)
+        .unwrap_or_else(|| panic!("Missing bank hash stats entry for slot {slot}"));
+    let bank_hash_info = BankHashInfo {
+        accounts_delta_hash,
+        accounts_hash,
+        stats,
+    };
 
-    pub fn serialize_accounts_db_fields<S>(
-        serializer: S,
-        serializable_db: &SerializableAccountsDb<'a>,
-    ) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        // sample write version before serializing storage entries
-        let version = serializable_db
-            .accounts_db
-            .write_version
-            .load(Ordering::Acquire);
+    let historical_roots = Vec::<Slot>::default();
+    let historical_roots_with_hash = Vec::<(Slot, Hash)>::default();
 
-        // (1st of 3 elements) write the list of account storage entry lists out as a map
-        let entry_count = RefCell::<usize>::new(0);
-        let entries =
-            serialize_iter_as_map(serializable_db.account_storage_entries.iter().map(|x| {
-                *entry_count.borrow_mut() += x.len();
-                (
-                    x.first().unwrap().slot(),
-                    serialize_iter_as_seq(
-                        x.iter()
-                            .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
-                    ),
-                )
-            }));
-        let slot = serializable_db.slot;
-        let accounts_delta_hash = serializable_db
-            .accounts_db
-            .get_accounts_delta_hash(slot)
-            .map(Into::into)
-            .unwrap_or_else(|| panic!("Missing accounts delta hash entry for slot {slot}"));
-        // NOTE: The accounts hash is calculated in AHV, which is *after* a bank snapshot is taken
-        // (and serialized here).  Thus it is expected that an accounts hash is *not* found for
-        // this slot, and a placeholder value will be used instead.  The real accounts hash will be
-        // set by `reserialize_bank_with_new_accounts_hash` from AHV.
-        let accounts_hash = serializable_db
-            .accounts_db
-            .get_accounts_hash(slot)
-            .map(|(accounts_hash, _)| accounts_hash.into())
-            .unwrap_or_default();
-        let stats = serializable_db
-            .accounts_db
-            .get_bank_hash_stats(slot)
-            .unwrap_or_else(|| panic!("Missing bank hash stats entry for slot {slot}"));
-        let bank_hash_info = BankHashInfo {
-            accounts_delta_hash,
-            accounts_hash,
-            stats,
-        };
+    let mut serialize_account_storage_timer = Measure::start("serialize_account_storage_ms");
+    let result = (
+        entries,
+        version,
+        slot,
+        bank_hash_info,
+        historical_roots,
+        historical_roots_with_hash,
+    )
+        .serialize(serializer);
+    serialize_account_storage_timer.stop();
+    datapoint_info!(
+        "serialize_account_storage_ms",
+        ("duration", serialize_account_storage_timer.as_ms(), i64),
+        ("num_entries", *entry_count.borrow(), i64),
+    );
+    result
+}
 
-        let historical_roots = Vec::<Slot>::default();
-        let historical_roots_with_hash = Vec::<(Slot, Hash)>::default();
+pub fn deserialize_bank_fields<R>(
+    mut stream: &mut BufReader<R>,
+) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error>
+where
+    R: Read,
+{
+    let mut bank_fields: BankFieldsToDeserialize =
+        deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
+    let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
+    // Process extra fields
+    let lamports_per_signature = ignore_eof_error(deserialize_from(&mut stream))?;
+    bank_fields.fee_rate_governor = bank_fields
+        .fee_rate_governor
+        .clone_with_lamports_per_signature(lamports_per_signature);
 
-        let mut serialize_account_storage_timer = Measure::start("serialize_account_storage_ms");
-        let result = (
-            entries,
-            version,
-            slot,
-            bank_hash_info,
-            historical_roots,
-            historical_roots_with_hash,
-        )
-            .serialize(serializer);
-        serialize_account_storage_timer.stop();
-        datapoint_info!(
-            "serialize_account_storage_ms",
-            ("duration", serialize_account_storage_timer.as_ms(), i64),
-            ("num_entries", *entry_count.borrow(), i64),
-        );
-        result
-    }
+    let incremental_snapshot_persistence = ignore_eof_error(deserialize_from(&mut stream))?;
+    bank_fields.incremental_snapshot_persistence = incremental_snapshot_persistence;
 
-    pub fn deserialize_bank_fields<R>(
-        mut stream: &mut BufReader<R>,
-    ) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error>
-    where
-        R: Read,
-    {
-        let mut bank_fields: BankFieldsToDeserialize =
-            deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
-        let accounts_db_fields = Self::deserialize_accounts_db_fields(stream)?;
-        // Process extra fields
-        let lamports_per_signature = ignore_eof_error(deserialize_from(&mut stream))?;
-        bank_fields.fee_rate_governor = bank_fields
-            .fee_rate_governor
-            .clone_with_lamports_per_signature(lamports_per_signature);
+    let epoch_accounts_hash = ignore_eof_error(deserialize_from(&mut stream))?;
+    bank_fields.epoch_accounts_hash = epoch_accounts_hash;
 
-        let incremental_snapshot_persistence = ignore_eof_error(deserialize_from(&mut stream))?;
-        bank_fields.incremental_snapshot_persistence = incremental_snapshot_persistence;
+    Ok((bank_fields, accounts_db_fields))
+}
 
-        let epoch_accounts_hash = ignore_eof_error(deserialize_from(&mut stream))?;
-        bank_fields.epoch_accounts_hash = epoch_accounts_hash;
+pub fn deserialize_accounts_db_fields<R>(
+    stream: &mut BufReader<R>,
+) -> Result<AccountsDbFields, Error>
+where
+    R: Read,
+{
+    deserialize_from(stream)
+}
 
-        Ok((bank_fields, accounts_db_fields))
-    }
+/// deserialize the bank from 'stream_reader'
+/// modify the accounts_hash and incremental_snapshot_persistence
+/// reserialize the bank to 'stream_writer'
+pub fn reserialize_bank_fields_with_hash<R, W>(
+    stream_reader: &mut BufReader<R>,
+    stream_writer: &mut BufWriter<W>,
+    accounts_hash: &AccountsHash,
+    incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
+) -> std::result::Result<(), Box<bincode::ErrorKind>>
+where
+    R: Read,
+    W: Write,
+{
+    let (bank_fields, mut accounts_db_fields) = deserialize_bank_fields(stream_reader).unwrap();
+    accounts_db_fields.3.accounts_hash = (*accounts_hash).into();
+    let mut rhs = bank_fields;
+    let blockhash_queue = RwLock::new(std::mem::take(&mut rhs.blockhash_queue));
+    let hard_forks = RwLock::new(std::mem::take(&mut rhs.hard_forks));
+    let lamports_per_signature = rhs.fee_rate_governor.lamports_per_signature;
+    let epoch_accounts_hash = rhs.epoch_accounts_hash.as_ref();
 
-    pub fn deserialize_accounts_db_fields<R>(
-        stream: &mut BufReader<R>,
-    ) -> Result<AccountsDbFields, Error>
-    where
-        R: Read,
-    {
-        deserialize_from(stream)
-    }
+    let bank = SerializableVersionedBank {
+        blockhash_queue: &blockhash_queue,
+        ancestors: rhs.ancestors,
+        hash: rhs.hash,
+        parent_hash: rhs.parent_hash,
+        parent_slot: rhs.parent_slot,
+        hard_forks: &hard_forks,
+        transaction_count: rhs.transaction_count,
+        tick_height: rhs.tick_height,
+        signature_count: rhs.signature_count,
+        capitalization: rhs.capitalization,
+        max_tick_height: rhs.max_tick_height,
+        hashes_per_tick: rhs.hashes_per_tick,
+        ticks_per_slot: rhs.ticks_per_slot,
+        ns_per_slot: rhs.ns_per_slot,
+        genesis_creation_time: rhs.genesis_creation_time,
+        slots_per_year: rhs.slots_per_year,
+        accounts_data_len: rhs.accounts_data_len,
+        slot: rhs.slot,
+        epoch: rhs.epoch,
+        block_height: rhs.block_height,
+        collector_id: rhs.collector_id,
+        collector_fees: rhs.collector_fees,
+        fee_calculator: rhs.fee_calculator,
+        fee_rate_governor: rhs.fee_rate_governor,
+        collected_rent: rhs.collected_rent,
+        rent_collector: rhs.rent_collector,
+        epoch_schedule: rhs.epoch_schedule,
+        inflation: rhs.inflation,
+        stakes: StakesEnum::from(rhs.stakes),
+        unused_accounts: UnusedAccounts::default(),
+        epoch_stakes: &rhs.epoch_stakes,
+        is_delta: rhs.is_delta,
+    };
 
-    /// deserialize the bank from 'stream_reader'
-    /// modify the accounts_hash and incremental_snapshot_persistence
-    /// reserialize the bank to 'stream_writer'
-    pub fn reserialize_bank_fields_with_hash<R, W>(
-        stream_reader: &mut BufReader<R>,
-        stream_writer: &mut BufWriter<W>,
-        accounts_hash: &AccountsHash,
-        incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
-    ) -> std::result::Result<(), Box<bincode::ErrorKind>>
-    where
-        R: Read,
-        W: Write,
-    {
-        let (bank_fields, mut accounts_db_fields) =
-            Self::deserialize_bank_fields(stream_reader).unwrap();
-        accounts_db_fields.3.accounts_hash = (*accounts_hash).into();
-        let mut rhs = bank_fields;
-        let blockhash_queue = RwLock::new(std::mem::take(&mut rhs.blockhash_queue));
-        let hard_forks = RwLock::new(std::mem::take(&mut rhs.hard_forks));
-        let lamports_per_signature = rhs.fee_rate_governor.lamports_per_signature;
-        let epoch_accounts_hash = rhs.epoch_accounts_hash.as_ref();
-
-        let bank = SerializableVersionedBank {
-            blockhash_queue: &blockhash_queue,
-            ancestors: rhs.ancestors,
-            hash: rhs.hash,
-            parent_hash: rhs.parent_hash,
-            parent_slot: rhs.parent_slot,
-            hard_forks: &hard_forks,
-            transaction_count: rhs.transaction_count,
-            tick_height: rhs.tick_height,
-            signature_count: rhs.signature_count,
-            capitalization: rhs.capitalization,
-            max_tick_height: rhs.max_tick_height,
-            hashes_per_tick: rhs.hashes_per_tick,
-            ticks_per_slot: rhs.ticks_per_slot,
-            ns_per_slot: rhs.ns_per_slot,
-            genesis_creation_time: rhs.genesis_creation_time,
-            slots_per_year: rhs.slots_per_year,
-            accounts_data_len: rhs.accounts_data_len,
-            slot: rhs.slot,
-            epoch: rhs.epoch,
-            block_height: rhs.block_height,
-            collector_id: rhs.collector_id,
-            collector_fees: rhs.collector_fees,
-            fee_calculator: rhs.fee_calculator,
-            fee_rate_governor: rhs.fee_rate_governor,
-            collected_rent: rhs.collected_rent,
-            rent_collector: rhs.rent_collector,
-            epoch_schedule: rhs.epoch_schedule,
-            inflation: rhs.inflation,
-            stakes: StakesEnum::from(rhs.stakes),
-            unused_accounts: UnusedAccounts::default(),
-            epoch_stakes: &rhs.epoch_stakes,
-            is_delta: rhs.is_delta,
-        };
-
-        let bank_fields_to_serialize = (
-            bank,
-            accounts_db_fields,
-            lamports_per_signature,
-            incremental_snapshot_persistence.cloned(),
-            epoch_accounts_hash.copied(),
-        );
-        bincode::serialize_into(stream_writer, &bank_fields_to_serialize)
-    }
+    let bank_fields_to_serialize = (
+        bank,
+        accounts_db_fields,
+        lamports_per_signature,
+        incremental_snapshot_persistence.cloned(),
+        epoch_accounts_hash.copied(),
+    );
+    bincode::serialize_into(stream_writer, &bank_fields_to_serialize)
 }
