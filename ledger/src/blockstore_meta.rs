@@ -338,7 +338,7 @@ impl SlotMeta {
 }
 
 impl ErasureMeta {
-    pub(crate) fn from_coding_shred(shred: &Shred) -> Option<Self> {
+    pub fn from_coding_shred(shred: &Shred) -> Option<Self> {
         match shred.shred_type() {
             ShredType::Data => None,
             ShredType::Code => {
@@ -396,7 +396,7 @@ impl ErasureMeta {
         u32::try_from(self.first_received_coding_index).ok()
     }
 
-    pub(crate) fn next_fec_set_index(&self) -> Option<u32> {
+    pub fn next_fec_set_index(&self) -> Option<u32> {
         let num_data = u64::try_from(self.config.num_data).ok()?;
         self.fec_set_index
             .checked_add(num_data)

@@ -9,7 +9,8 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         clock::{Epoch, Slot},
-        feature_set,
+        epoch_schedule::EpochSchedule,
+        feature_set::{self, FeatureSet},
         pubkey::Pubkey,
     },
     std::{
@@ -46,6 +47,8 @@ pub struct DuplicateShredHandler {
     cached_on_epoch: Epoch,
     cached_staked_nodes: Arc<HashMap<Pubkey, u64>>,
     cached_slots_in_epoch: u64,
+    cached_epoch_schedule: EpochSchedule,
+    cached_feature_set: FeatureSet,
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
 }
@@ -76,6 +79,8 @@ impl DuplicateShredHandler {
             cached_on_epoch: 0,
             cached_staked_nodes: Arc::new(HashMap::new()),
             cached_slots_in_epoch: 0,
+            cached_epoch_schedule: EpochSchedule::default(),
+            cached_feature_set: FeatureSet::default(),
             blockstore,
             leader_schedule_cache,
             bank_forks,
@@ -98,6 +103,8 @@ impl DuplicateShredHandler {
                     self.cached_staked_nodes = cached_staked_nodes;
                 }
                 self.cached_slots_in_epoch = epoch_info.slots_in_epoch;
+                self.cached_epoch_schedule = root_bank.epoch_schedule().clone();
+                self.cached_feature_set = (*root_bank.feature_set).clone();
             }
         }
     }
@@ -130,7 +137,17 @@ impl DuplicateShredHandler {
                 .leader_schedule_cache
                 .slot_leader_at(slot, /*bank:*/ None)
                 .ok_or(Error::UnknownSlotLeader(slot))?;
-            let (shred1, shred2) = duplicate_shred::into_shreds(&pubkey, chunks)?;
+            let allow_chained_duplicate_proofs = if let Some(activated_slot) = self
+                .cached_feature_set
+                .activated_slot(&feature_set::chained_merkle_conflict_duplicate_proofs::id())
+            {
+                self.cached_epoch_schedule.get_epoch(slot)
+                    > self.cached_epoch_schedule.get_epoch(activated_slot)
+            } else {
+                false
+            };
+            let (shred1, shred2) =
+                duplicate_shred::into_shreds(&pubkey, chunks, allow_chained_duplicate_proofs)?;
             if !self.blockstore.has_duplicate_shreds_in_slot(slot) {
                 self.blockstore.store_duplicate_slot(
                     slot,
