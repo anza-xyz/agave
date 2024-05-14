@@ -3,7 +3,7 @@ mod serde_snapshot_tests {
     use {
         crate::{
             serde_snapshot::{
-                newer, reconstruct_accountsdb_from_fields, remap_append_vec_file, SerdeStyle,
+                newer, reconstruct_accountsdb_from_fields, remap_append_vec_file,
                 SerializableAccountsDb, SnapshotAccountsDbFields,
             },
             snapshot_utils::{get_storages_to_serialize, StorageAndNextAccountsFileId},
@@ -92,7 +92,6 @@ mod serde_snapshot_tests {
     }
 
     fn accountsdb_from_stream<R>(
-        serde_style: SerdeStyle,
         stream: &mut BufReader<R>,
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
@@ -100,17 +99,10 @@ mod serde_snapshot_tests {
     where
         R: Read,
     {
-        match serde_style {
-            SerdeStyle::Newer => context_accountsdb_from_stream::<R>(
-                stream,
-                account_paths,
-                storage_and_next_append_vec_id,
-            ),
-        }
+        context_accountsdb_from_stream::<R>(stream, account_paths, storage_and_next_append_vec_id)
     }
 
     fn accountsdb_to_stream<W>(
-        serde_style: SerdeStyle,
         stream: &mut W,
         accounts_db: &AccountsDb,
         slot: Slot,
@@ -119,16 +111,14 @@ mod serde_snapshot_tests {
     where
         W: Write,
     {
-        match serde_style {
-            SerdeStyle::Newer => serialize_into(
-                stream,
-                &SerializableAccountsDb {
-                    accounts_db,
-                    slot,
-                    account_storage_entries,
-                },
-            ),
-        }
+        serialize_into(
+            stream,
+            &SerializableAccountsDb {
+                accounts_db,
+                slot,
+                account_storage_entries,
+            },
+        )
     }
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
@@ -184,7 +174,6 @@ mod serde_snapshot_tests {
         let mut writer = Cursor::new(vec![]);
         let snapshot_storages = accounts.get_snapshot_storages(..=slot).0;
         accountsdb_to_stream(
-            SerdeStyle::Newer,
             &mut writer,
             accounts,
             slot,
@@ -199,13 +188,8 @@ mod serde_snapshot_tests {
         // Simulate obtaining a copy of the AppendVecs from a tarball
         let storage_and_next_append_vec_id =
             copy_append_vecs(accounts, copied_accounts.path(), storage_access).unwrap();
-        let mut accounts_db = accountsdb_from_stream(
-            SerdeStyle::Newer,
-            &mut reader,
-            &[],
-            storage_and_next_append_vec_id,
-        )
-        .unwrap();
+        let mut accounts_db =
+            accountsdb_from_stream(&mut reader, &[], storage_and_next_append_vec_id).unwrap();
 
         // The append vecs will be used from `copied_accounts` directly by the new AccountsDb so keep
         // its TempDir alive
@@ -231,7 +215,7 @@ mod serde_snapshot_tests {
         }
     }
 
-    fn test_accounts_serialize_style(serde_style: SerdeStyle, storage_access: StorageAccess) {
+    fn test_accounts_serialize_style(storage_access: StorageAccess) {
         solana_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
         let accounts_db = AccountsDb::new_for_tests(paths, &ClusterType::Development);
@@ -250,7 +234,6 @@ mod serde_snapshot_tests {
 
         let mut writer = Cursor::new(vec![]);
         accountsdb_to_stream(
-            serde_style,
             &mut writer,
             &accounts.accounts_db,
             slot,
@@ -273,7 +256,6 @@ mod serde_snapshot_tests {
         let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
         let daccounts = Accounts::new(Arc::new(
             accountsdb_from_stream(
-                serde_style,
                 &mut reader,
                 &daccounts_paths,
                 storage_and_next_append_vec_id,
@@ -289,7 +271,7 @@ mod serde_snapshot_tests {
 
     #[test_case(StorageAccess::Mmap)]
     fn test_accounts_serialize_newer(storage_access: StorageAccess) {
-        test_accounts_serialize_style(SerdeStyle::Newer, storage_access)
+        test_accounts_serialize_style(storage_access)
     }
 
     #[test_case(StorageAccess::Mmap)]

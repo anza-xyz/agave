@@ -67,6 +67,7 @@ pub(crate) use {
     storage::SerializedAccountsFileId,
 };
 
+// brooks TODO: remove me
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum SerdeStyle {
     Newer,
@@ -242,7 +243,7 @@ pub(crate) fn snapshot_storage_lengths_from_fields(
 }
 
 pub(crate) fn fields_from_stream<R: Read>(
-    serde_style: SerdeStyle,
+    _serde_style: SerdeStyle,
     snapshot_stream: &mut BufReader<R>,
 ) -> std::result::Result<
     (
@@ -251,9 +252,7 @@ pub(crate) fn fields_from_stream<R: Read>(
     ),
     Error,
 > {
-    match serde_style {
-        SerdeStyle::Newer => newer::deserialize_bank_fields(snapshot_stream),
-    }
+    newer::deserialize_bank_fields(snapshot_stream)
 }
 
 pub(crate) fn fields_from_streams(
@@ -329,7 +328,7 @@ where
 }
 
 pub(crate) fn bank_to_stream<W>(
-    serde_style: SerdeStyle,
+    _serde_style: SerdeStyle,
     stream: &mut BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
@@ -337,20 +336,18 @@ pub(crate) fn bank_to_stream<W>(
 where
     W: Write,
 {
-    match serde_style {
-        SerdeStyle::Newer => bincode::serialize_into(
-            stream,
-            &SerializableBankAndStorage {
-                bank,
-                snapshot_storages,
-            },
-        ),
-    }
+    bincode::serialize_into(
+        stream,
+        &SerializableBankAndStorage {
+            bank,
+            snapshot_storages,
+        },
+    )
 }
 
 #[cfg(test)]
 pub(crate) fn bank_to_stream_no_extra_fields<W>(
-    serde_style: SerdeStyle,
+    _serde_style: SerdeStyle,
     stream: &mut BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
@@ -358,15 +355,13 @@ pub(crate) fn bank_to_stream_no_extra_fields<W>(
 where
     W: Write,
 {
-    match serde_style {
-        SerdeStyle::Newer => bincode::serialize_into(
-            stream,
-            &SerializableBankAndStorageNoExtra {
-                bank,
-                snapshot_storages,
-            },
-        ),
-    }
+    bincode::serialize_into(
+        stream,
+        &SerializableBankAndStorageNoExtra {
+            bank,
+            snapshot_storages,
+        },
+    )
 }
 
 /// deserialize the bank from 'stream_reader'
