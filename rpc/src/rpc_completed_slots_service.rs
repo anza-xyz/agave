@@ -28,30 +28,30 @@ impl RpcCompletedSlotsService {
             .spawn(move || {
                 info!("RpcCompletedSlotService has started");
                 loop {
-                // received exit signal, shutdown the service
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                match completed_slots_receiver
-                    .recv_timeout(Duration::from_millis(COMPLETE_SLOT_REPORT_SLEEP_MS))
-                {
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => {
-                        info!("RpcCompletedSlotService channel disconnected, exiting.");
+                    // received exit signal, shutdown the service
+                    if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    Ok(slots) => {
-                        for slot in slots {
-                            rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
-                                slot,
-                                timestamp: timestamp(),
-                            });
+
+                    match completed_slots_receiver
+                        .recv_timeout(Duration::from_millis(COMPLETE_SLOT_REPORT_SLEEP_MS))
+                    {
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => {
+                            info!("RpcCompletedSlotService channel disconnected, exiting.");
+                            break;
+                        }
+                        Ok(slots) => {
+                            for slot in slots {
+                                rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
+                                    slot,
+                                    timestamp: timestamp(),
+                                });
+                            }
                         }
                     }
                 }
-            };
-            info!("RpcCompletedSlotService has stopped");
+                info!("RpcCompletedSlotService has stopped");
             })
             .unwrap()
     }
