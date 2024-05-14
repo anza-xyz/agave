@@ -191,8 +191,6 @@ impl<'a> Context {
         serializable_bank: &SerializableBankAndStorage<'a>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
-        // brooks TODO: can this Sized bound be removed?
-        Self: std::marker::Sized,
         S: serde::ser::Serializer,
     {
         let fields = serializable_bank.bank.get_fields_to_serialize();
@@ -223,8 +221,6 @@ impl<'a> Context {
         serializable_bank: &SerializableBankAndStorageNoExtra<'a>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
-        // brooks TODO: can this Sized bound be removed?
-        Self: std::marker::Sized,
         S: serde::ser::Serializer,
     {
         let fields = serializable_bank.bank.get_fields_to_serialize();
@@ -244,8 +240,6 @@ impl<'a> Context {
         serializable_db: &SerializableAccountsDb<'a>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
-        // brooks TODO: can this Sized bound be removed?
-        Self: std::marker::Sized,
         S: serde::ser::Serializer,
     {
         // sample write version before serializing storage entries
@@ -338,7 +332,6 @@ impl<'a> Context {
         Ok((bank_fields, accounts_db_fields))
     }
 
-    // brooks TODO: is this only used for tests?
     pub fn deserialize_accounts_db_fields<R>(
         stream: &mut BufReader<R>,
     ) -> Result<AccountsDbFields, Error>
