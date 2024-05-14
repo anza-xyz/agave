@@ -451,11 +451,10 @@ pub fn serialize_test_bank_and_storage<S>(
 where
     S: serde::Serializer,
 {
-    // brooks TODO: why is this in a tuple?
-    (SerializableBankAndStorage {
+    SerializableBankAndStorage {
         bank,
         snapshot_storages: storage,
-    })
+    }
     .serialize(s)
 }
 
