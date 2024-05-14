@@ -184,25 +184,25 @@ impl<'a> solana_frozen_abi::abi_example::IgnoreAsHelper for SerializableVersione
 #[derive(PartialEq, Eq)]
 pub(super) struct Context {}
 
-impl<'a> TypeContext<'a> for Context {
-    type SerializableAccountStorageEntry = SerializableAccountStorageEntry;
-
-    fn serialize_bank_and_storage<S: serde::ser::Serializer>(
+//impl<'a> TypeContext<'a> for Context {
+impl<'a> Context {
+    pub fn serialize_bank_and_storage<S>(
         serializer: S,
-        serializable_bank: &SerializableBankAndStorage<'a, Self>,
+        serializable_bank: &SerializableBankAndStorage<'a>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
+        // brooks TODO: can this Sized bound be removed?
         Self: std::marker::Sized,
+        S: serde::ser::Serializer,
     {
         let fields = serializable_bank.bank.get_fields_to_serialize();
         let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
         let bank_fields_to_serialize = (
             SerializableVersionedBank::from(fields),
-            SerializableAccountsDb::<'a, Self> {
+            SerializableAccountsDb::<'a> {
                 accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
                 slot: serializable_bank.bank.rc.slot,
                 account_storage_entries: serializable_bank.snapshot_storages,
-                phantom: std::marker::PhantomData,
             },
             // Additional fields, we manually store the lamps per signature here so that
             // we can grab it on restart.
@@ -218,32 +218,35 @@ impl<'a> TypeContext<'a> for Context {
     }
 
     #[cfg(test)]
-    fn serialize_bank_and_storage_without_extra_fields<S: serde::ser::Serializer>(
+    pub fn serialize_bank_and_storage_without_extra_fields<S>(
         serializer: S,
-        serializable_bank: &SerializableBankAndStorageNoExtra<'a, Self>,
+        serializable_bank: &SerializableBankAndStorageNoExtra<'a>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
+        // brooks TODO: can this Sized bound be removed?
         Self: std::marker::Sized,
+        S: serde::ser::Serializer,
     {
         let fields = serializable_bank.bank.get_fields_to_serialize();
         (
             SerializableVersionedBank::from(fields),
-            SerializableAccountsDb::<'a, Self> {
+            SerializableAccountsDb::<'a> {
                 accounts_db: &serializable_bank.bank.rc.accounts.accounts_db,
                 slot: serializable_bank.bank.rc.slot,
                 account_storage_entries: serializable_bank.snapshot_storages,
-                phantom: std::marker::PhantomData,
             },
         )
             .serialize(serializer)
     }
 
-    fn serialize_accounts_db_fields<S: serde::ser::Serializer>(
+    pub fn serialize_accounts_db_fields<S>(
         serializer: S,
-        serializable_db: &SerializableAccountsDb<'a, Self>,
+        serializable_db: &SerializableAccountsDb<'a>,
     ) -> std::result::Result<S::Ok, S::Error>
     where
+        // brooks TODO: can this Sized bound be removed?
         Self: std::marker::Sized,
+        S: serde::ser::Serializer,
     {
         // sample write version before serializing storage entries
         let version = serializable_db
@@ -260,7 +263,7 @@ impl<'a> TypeContext<'a> for Context {
                     x.first().unwrap().slot(),
                     serialize_iter_as_seq(
                         x.iter()
-                            .map(|x| Self::SerializableAccountStorageEntry::from(x.as_ref())),
+                            .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
                     ),
                 )
             }));
@@ -311,7 +314,7 @@ impl<'a> TypeContext<'a> for Context {
         result
     }
 
-    fn deserialize_bank_fields<R>(
+    pub fn deserialize_bank_fields<R>(
         mut stream: &mut BufReader<R>,
     ) -> Result<(BankFieldsToDeserialize, AccountsDbFields), Error>
     where
@@ -335,7 +338,8 @@ impl<'a> TypeContext<'a> for Context {
         Ok((bank_fields, accounts_db_fields))
     }
 
-    fn deserialize_accounts_db_fields<R>(
+    // brooks TODO: is this only used for tests?
+    pub fn deserialize_accounts_db_fields<R>(
         stream: &mut BufReader<R>,
     ) -> Result<AccountsDbFields, Error>
     where
@@ -347,7 +351,7 @@ impl<'a> TypeContext<'a> for Context {
     /// deserialize the bank from 'stream_reader'
     /// modify the accounts_hash and incremental_snapshot_persistence
     /// reserialize the bank to 'stream_writer'
-    fn reserialize_bank_fields_with_hash<R, W>(
+    pub fn reserialize_bank_fields_with_hash<R, W>(
         stream_reader: &mut BufReader<R>,
         stream_writer: &mut BufWriter<W>,
         accounts_hash: &AccountsHash,

@@ -4,7 +4,7 @@ mod serde_snapshot_tests {
         crate::{
             serde_snapshot::{
                 newer, reconstruct_accountsdb_from_fields, remap_append_vec_file, SerdeStyle,
-                SerializableAccountsDb, SnapshotAccountsDbFields, TypeContext,
+                SerializableAccountsDb, SnapshotAccountsDbFields,
             },
             snapshot_utils::{get_storages_to_serialize, StorageAndNextAccountsFileId},
         },
@@ -55,17 +55,16 @@ mod serde_snapshot_tests {
         ancestors
     }
 
-    fn context_accountsdb_from_stream<'a, C, R>(
+    fn context_accountsdb_from_stream<R>(
         stream: &mut BufReader<R>,
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     ) -> Result<AccountsDb, Error>
     where
-        C: TypeContext<'a>,
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields = C::deserialize_accounts_db_fields(stream)?;
+        let accounts_db_fields = newer::Context::deserialize_accounts_db_fields(stream)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
@@ -102,7 +101,7 @@ mod serde_snapshot_tests {
         R: Read,
     {
         match serde_style {
-            SerdeStyle::Newer => context_accountsdb_from_stream::<newer::Context, R>(
+            SerdeStyle::Newer => context_accountsdb_from_stream::<R>(
                 stream,
                 account_paths,
                 storage_and_next_append_vec_id,
@@ -123,20 +122,19 @@ mod serde_snapshot_tests {
         match serde_style {
             SerdeStyle::Newer => serialize_into(
                 stream,
-                &SerializableAccountsDb::<newer::Context> {
+                &SerializableAccountsDb {
                     accounts_db,
                     slot,
                     account_storage_entries,
-                    phantom: std::marker::PhantomData,
                 },
             ),
         }
     }
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
-    fn copy_append_vecs<P: AsRef<Path>>(
+    fn copy_append_vecs(
         accounts_db: &AccountsDb,
-        output_dir: P,
+        output_dir: impl AsRef<Path>,
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
         let storage_entries = accounts_db.get_snapshot_storages(RangeFull).0;

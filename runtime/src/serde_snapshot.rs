@@ -192,67 +192,6 @@ impl<T> SnapshotAccountsDbFields<T> {
     }
 }
 
-trait TypeContext<'a>: PartialEq {
-    type SerializableAccountStorageEntry: Serialize
-        + DeserializeOwned
-        + From<&'a AccountStorageEntry>
-        + SerializableStorage
-        + Sync;
-
-    fn serialize_bank_and_storage<S: serde::ser::Serializer>(
-        serializer: S,
-        serializable_bank: &SerializableBankAndStorage<'a, Self>,
-    ) -> std::result::Result<S::Ok, S::Error>
-    where
-        Self: std::marker::Sized;
-
-    #[cfg(test)]
-    fn serialize_bank_and_storage_without_extra_fields<S: serde::ser::Serializer>(
-        serializer: S,
-        serializable_bank: &SerializableBankAndStorageNoExtra<'a, Self>,
-    ) -> std::result::Result<S::Ok, S::Error>
-    where
-        Self: std::marker::Sized;
-
-    fn serialize_accounts_db_fields<S: serde::ser::Serializer>(
-        serializer: S,
-        serializable_db: &SerializableAccountsDb<'a, Self>,
-    ) -> std::result::Result<S::Ok, S::Error>
-    where
-        Self: std::marker::Sized;
-
-    fn deserialize_bank_fields<R>(
-        stream: &mut BufReader<R>,
-    ) -> Result<
-        (
-            BankFieldsToDeserialize,
-            AccountsDbFields<Self::SerializableAccountStorageEntry>,
-        ),
-        Error,
-    >
-    where
-        R: Read;
-
-    fn deserialize_accounts_db_fields<R>(
-        stream: &mut BufReader<R>,
-    ) -> Result<AccountsDbFields<Self::SerializableAccountStorageEntry>, Error>
-    where
-        R: Read;
-
-    /// deserialize the bank from 'stream_reader'
-    /// modify the accounts_hash
-    /// reserialize the bank to 'stream_writer'
-    fn reserialize_bank_fields_with_hash<R, W>(
-        stream_reader: &mut BufReader<R>,
-        stream_writer: &mut BufWriter<W>,
-        accounts_hash: &AccountsHash,
-        incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
-    ) -> std::result::Result<(), Box<bincode::ErrorKind>>
-    where
-        R: Read,
-        W: Write;
-}
-
 fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
 where
     R: Read,
@@ -401,10 +340,9 @@ where
     match serde_style {
         SerdeStyle::Newer => bincode::serialize_into(
             stream,
-            &SerializableBankAndStorage::<newer::Context> {
+            &SerializableBankAndStorage {
                 bank,
                 snapshot_storages,
-                phantom: std::marker::PhantomData,
             },
         ),
     }
@@ -423,10 +361,9 @@ where
     match serde_style {
         SerdeStyle::Newer => bincode::serialize_into(
             stream,
-            &SerializableBankAndStorageNoExtra::<newer::Context> {
+            &SerializableBankAndStorageNoExtra {
                 bank,
                 snapshot_storages,
-                phantom: std::marker::PhantomData,
             },
         ),
     }
@@ -491,18 +428,17 @@ pub fn reserialize_bank_with_new_accounts_hash(
     found
 }
 
-struct SerializableBankAndStorage<'a, C> {
+struct SerializableBankAndStorage<'a> {
     bank: &'a Bank,
     snapshot_storages: &'a [Vec<Arc<AccountStorageEntry>>],
-    phantom: std::marker::PhantomData<C>,
 }
 
-impl<'a, C: TypeContext<'a>> Serialize for SerializableBankAndStorage<'a, C> {
+impl<'a> Serialize for SerializableBankAndStorage<'a> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
     {
-        C::serialize_bank_and_storage(serializer, self)
+        newer::Context::serialize_bank_and_storage(serializer, self)
     }
 }
 
@@ -515,65 +451,61 @@ pub fn serialize_test_bank_and_storage<S>(
 where
     S: serde::Serializer,
 {
-    (SerializableBankAndStorage::<newer::Context> {
+    // brooks TODO: why is this in a tuple?
+    (SerializableBankAndStorage {
         bank,
         snapshot_storages: storage,
-        phantom: std::marker::PhantomData,
     })
     .serialize(s)
 }
 
 #[cfg(test)]
-struct SerializableBankAndStorageNoExtra<'a, C> {
+struct SerializableBankAndStorageNoExtra<'a> {
     bank: &'a Bank,
     snapshot_storages: &'a [Vec<Arc<AccountStorageEntry>>],
-    phantom: std::marker::PhantomData<C>,
 }
 
 #[cfg(test)]
-impl<'a, C: TypeContext<'a>> Serialize for SerializableBankAndStorageNoExtra<'a, C> {
+impl<'a> Serialize for SerializableBankAndStorageNoExtra<'a> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
     {
-        C::serialize_bank_and_storage_without_extra_fields(serializer, self)
+        newer::Context::serialize_bank_and_storage_without_extra_fields(serializer, self)
     }
 }
 
 #[cfg(test)]
-impl<'a, C> From<SerializableBankAndStorageNoExtra<'a, C>> for SerializableBankAndStorage<'a, C> {
-    fn from(s: SerializableBankAndStorageNoExtra<'a, C>) -> SerializableBankAndStorage<'a, C> {
+impl<'a> From<SerializableBankAndStorageNoExtra<'a>> for SerializableBankAndStorage<'a> {
+    fn from(s: SerializableBankAndStorageNoExtra<'a>) -> SerializableBankAndStorage<'a> {
         let SerializableBankAndStorageNoExtra {
             bank,
             snapshot_storages,
-            phantom,
         } = s;
         SerializableBankAndStorage {
             bank,
             snapshot_storages,
-            phantom,
         }
     }
 }
 
-struct SerializableAccountsDb<'a, C> {
+struct SerializableAccountsDb<'a> {
     accounts_db: &'a AccountsDb,
     slot: Slot,
     account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
-    phantom: std::marker::PhantomData<C>,
 }
 
-impl<'a, C: TypeContext<'a>> Serialize for SerializableAccountsDb<'a, C> {
+impl<'a> Serialize for SerializableAccountsDb<'a> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
     {
-        C::serialize_accounts_db_fields(serializer, self)
+        newer::Context::serialize_accounts_db_fields(serializer, self)
     }
 }
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
-impl<'a, C> solana_frozen_abi::abi_example::IgnoreAsHelper for SerializableAccountsDb<'a, C> {}
+impl<'a> solana_frozen_abi::abi_example::IgnoreAsHelper for SerializableAccountsDb<'a> {}
 
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_bank_from_fields<E>(
