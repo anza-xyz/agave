@@ -67,12 +67,6 @@ pub(crate) use {
     storage::SerializedAccountsFileId,
 };
 
-// brooks TODO: remove me
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum SerdeStyle {
-    Newer,
-}
-
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, AbiExample, PartialEq, Eq)]
@@ -243,7 +237,6 @@ pub(crate) fn snapshot_storage_lengths_from_fields(
 }
 
 pub(crate) fn fields_from_stream<R: Read>(
-    _serde_style: SerdeStyle,
     snapshot_stream: &mut BufReader<R>,
 ) -> std::result::Result<
     (
@@ -256,7 +249,6 @@ pub(crate) fn fields_from_stream<R: Read>(
 }
 
 pub(crate) fn fields_from_streams(
-    serde_style: SerdeStyle,
     snapshot_streams: &mut SnapshotStreams<impl Read>,
 ) -> std::result::Result<
     (
@@ -266,12 +258,12 @@ pub(crate) fn fields_from_streams(
     Error,
 > {
     let (full_snapshot_bank_fields, full_snapshot_accounts_db_fields) =
-        fields_from_stream(serde_style, snapshot_streams.full_snapshot_stream)?;
+        fields_from_stream(snapshot_streams.full_snapshot_stream)?;
     let (incremental_snapshot_bank_fields, incremental_snapshot_accounts_db_fields) =
         snapshot_streams
             .incremental_snapshot_stream
             .as_mut()
-            .map(|stream| fields_from_stream(serde_style, stream))
+            .map(|stream| fields_from_stream(stream))
             .transpose()?
             .unzip();
 
@@ -288,7 +280,6 @@ pub(crate) fn fields_from_streams(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bank_from_streams<R>(
-    serde_style: SerdeStyle,
     snapshot_streams: &mut SnapshotStreams<R>,
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
@@ -307,7 +298,7 @@ pub(crate) fn bank_from_streams<R>(
 where
     R: Read,
 {
-    let (bank_fields, accounts_db_fields) = fields_from_streams(serde_style, snapshot_streams)?;
+    let (bank_fields, accounts_db_fields) = fields_from_streams(snapshot_streams)?;
     reconstruct_bank_from_fields(
         bank_fields,
         accounts_db_fields,
@@ -328,7 +319,6 @@ where
 }
 
 pub(crate) fn bank_to_stream<W>(
-    _serde_style: SerdeStyle,
     stream: &mut BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
@@ -347,7 +337,6 @@ where
 
 #[cfg(test)]
 pub(crate) fn bank_to_stream_no_extra_fields<W>(
-    _serde_style: SerdeStyle,
     stream: &mut BufWriter<W>,
     bank: &Bank,
     snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
