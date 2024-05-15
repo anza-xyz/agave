@@ -1335,16 +1335,7 @@ fn execute<'a, 'b: 'a>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
-    let executable = unsafe {
-        mem::transmute::<
-            &solana_rbpf::elf::Executable<
-                solana_program_runtime::invoke_context::InvokeContext<'_>,
-            >,
-            &solana_rbpf::elf::Executable<
-                solana_program_runtime::invoke_context::InvokeContext<'_>,
-            >,
-        >(executable)
-    };
+    let executable = unsafe { mem::transmute::<_, &'a Executable<InvokeContext<'b>>>(executable) };
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;

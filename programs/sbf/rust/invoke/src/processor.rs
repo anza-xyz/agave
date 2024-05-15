@@ -1158,7 +1158,7 @@ fn process_instruction(
             let mut lamports = account.lamports();
             account
                 .lamports
-                .replace(unsafe { mem::transmute::<&mut u64, &mut u64>(&mut lamports) });
+                .replace(unsafe { mem::transmute(&mut lamports) });
             let callee_program_id = accounts[CALLEE_PROGRAM_INDEX].key;
 
             invoke(
