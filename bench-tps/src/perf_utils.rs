@@ -12,7 +12,6 @@ use {
     },
 };
 
-#[allow(dead_code)]
 #[derive(Default)]
 pub struct SampleStats {
     /// Maximum TPS reported by this node
