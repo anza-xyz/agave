@@ -2613,7 +2613,7 @@ impl Blockstore {
         allow_dead_slots: bool,
     ) -> Result<VersionedConfirmedBlockWithEntries> {
         let Some(slot_meta) = self.meta_cf.get(slot)? else {
-            info!("SlotMeta not found for slot {}", slot);
+            trace!("do_get_complete_block_with_entries() failing for {slot} (missing SlotMeta)");
             return Err(BlockstoreError::SlotUnavailable);
         };
         if slot_meta.is_full() {
@@ -2706,6 +2706,7 @@ impl Blockstore {
                 return Ok(VersionedConfirmedBlockWithEntries { block, entries });
             }
         }
+        trace!("do_get_complete_block_with_entries() failing for {slot} (slot not full)");
         Err(BlockstoreError::SlotUnavailable)
     }
 
