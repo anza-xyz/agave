@@ -40,19 +40,19 @@ impl CompletedDataSetsService {
             .spawn(move || {
                 info!("CompletedDataSetsService has started");
                 loop {
-                if exit.load(Ordering::Relaxed) {
-                    break;
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if let Err(RecvTimeoutError::Disconnected) = Self::recv_completed_data_sets(
+                        &completed_sets_receiver,
+                        &blockstore,
+                        &rpc_subscriptions,
+                        &max_slots,
+                    ) {
+                        break;
+                    }
                 }
-                if let Err(RecvTimeoutError::Disconnected) = Self::recv_completed_data_sets(
-                    &completed_sets_receiver,
-                    &blockstore,
-                    &rpc_subscriptions,
-                    &max_slots,
-                ) {
-                    break;
-                }
-            }
-            info!("CompletedDataSetsService has stopped");
+                info!("CompletedDataSetsService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
