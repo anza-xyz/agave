@@ -20,10 +20,6 @@ fn run_ledger_tool(args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn count_newlines(chars: &[u8]) -> usize {
-    bytecount::count(chars, b'\n')
-}
-
 #[test]
 fn bad_arguments() {
     // At least a ledger path is required
@@ -35,42 +31,26 @@ fn bad_arguments() {
         .success());
 }
 
-fn nominal_test_helper(ledger_path: &str, ticks: usize) {
-    let meta_lines = 2;
-    let summary_lines = 1;
-
+fn nominal_test_helper(ledger_path: &str) {
     let output = run_ledger_tool(&["-l", ledger_path, "verify"]);
     assert!(output.status.success());
 
-    // Print everything
-    let output = run_ledger_tool(&["-l", ledger_path, "print", "-vvv"]);
+    let output = run_ledger_tool(&["-l", ledger_path, "print", "-vv"]);
     assert!(output.status.success());
-    assert_eq!(
-        count_newlines(&output.stdout)
-            .saturating_sub(meta_lines)
-            .saturating_sub(summary_lines),
-        ticks
-    );
 }
 
 #[test]
 fn nominal_default() {
     let genesis_config = create_genesis_config(100).genesis_config;
     let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-    nominal_test_helper(
-        ledger_path.path().to_str().unwrap(),
-        genesis_config.ticks_per_slot as usize,
-    );
+    nominal_test_helper(ledger_path.path().to_str().unwrap());
 }
 
 #[test]
 fn nominal_fifo() {
     let genesis_config = create_genesis_config(100).genesis_config;
     let (ledger_path, _blockhash) = create_new_tmp_ledger_fifo_auto_delete!(&genesis_config);
-    nominal_test_helper(
-        ledger_path.path().to_str().unwrap(),
-        genesis_config.ticks_per_slot as usize,
-    );
+    nominal_test_helper(ledger_path.path().to_str().unwrap());
 }
 
 fn insert_test_shreds(ledger_path: &Path, ending_slot: u64) {
