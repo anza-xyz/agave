@@ -3072,10 +3072,11 @@ impl ReplayStage {
                             .feature_set
                             .is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
                         {
+                            let root = bank_forks.read().unwrap().root();
                             Self::mark_dead_slot(
                                 blockstore,
                                 bank,
-                                bank_forks.read().unwrap().root(),
+                                root,
                                 &BlockstoreProcessorError::IncompleteFinalFecSet,
                                 rpc_subscriptions,
                                 duplicate_slots_tracker,
