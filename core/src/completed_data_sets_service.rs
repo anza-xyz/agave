@@ -37,7 +37,9 @@ impl CompletedDataSetsService {
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solComplDataSet".to_string())
-            .spawn(move || loop {
+            .spawn(move || {
+                info!("CompletedDataSetsService has started");
+                loop {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
@@ -49,6 +51,8 @@ impl CompletedDataSetsService {
                 ) {
                     break;
                 }
+            }
+            info!("CompletedDataSetsService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
