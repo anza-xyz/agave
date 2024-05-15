@@ -1,3 +1,4 @@
+#![cfg(test)]
 #[allow(deprecated)]
 use solana_sdk::sysvar::fees::Fees;
 use {
