@@ -296,8 +296,12 @@ pub struct RpcContactInfo {
     pub gossip: Option<SocketAddr>,
     /// Tpu UDP port
     pub tpu: Option<SocketAddr>,
+    /// Tpu UDP forwards port
+    pub tpu_forwards: Option<SocketAddr>,
     /// Tpu QUIC port
     pub tpu_quic: Option<SocketAddr>,
+    /// Tpu QUIC forwards port
+    pub tpu_forwards_quic: Option<SocketAddr>,
     /// JSON RPC port
     pub rpc: Option<SocketAddr>,
     /// WebSocket PubSub port

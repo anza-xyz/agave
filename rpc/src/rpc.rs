@@ -3556,8 +3556,16 @@ pub mod rpc_full {
                                 .tpu(Protocol::UDP)
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_forwards: contact_info
+                                .tpu_forwards(Protocol::UDP)
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_forwards_quic: contact_info
+                                .tpu_forwards(Protocol::QUIC)
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info
@@ -5322,7 +5330,9 @@ pub mod tests {
             "gossip": "127.0.0.1:8000",
             "shredVersion": 0u16,
             "tpu": "127.0.0.1:8003",
+            "tpuForwards": "127.0.0.1:8004",
             "tpuQuic": "127.0.0.1:8009",
+            "tpuForwardsQuic": "127.0.0.1:8010",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
             "version": format!("{version}"),
@@ -5332,7 +5342,9 @@ pub mod tests {
             "gossip": "127.0.0.1:1235",
             "shredVersion": 0u16,
             "tpu": "127.0.0.1:1234",
+            "tpuForwards": "127.0.0.1:1239",
             "tpuQuic": "127.0.0.1:1240",
+            "tpuForwardsQuic": "127.0.0.1:1245",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
             "version": format!("{version}"),
