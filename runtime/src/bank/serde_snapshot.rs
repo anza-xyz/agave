@@ -549,14 +549,14 @@ mod tests {
 
         // This some what long test harness is required to freeze the ABI of
         // Bank's serialization due to versioned nature
-        #[frozen_abi(digest = "8pZwgyMdvxExLgN9GMKnCdofb5CQJgsZ8Dt88hfVd9bf")]
+        #[frozen_abi(digest = "7Cze6NqwQMsqcEjtkMSQhLPykCW8dYffwkHpNuysjwTN")]
         #[derive(Serialize, AbiExample)]
         pub struct BankAbiTestWrapperNewer {
-            #[serde(serialize_with = "wrapper_newer")]
+            #[serde(serialize_with = "wrapper")]
             bank: Bank,
         }
 
-        pub fn wrapper_newer<S>(bank: &Bank, s: S) -> std::result::Result<S::Ok, S::Error>
+        pub fn wrapper<S>(bank: &Bank, s: S) -> std::result::Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
