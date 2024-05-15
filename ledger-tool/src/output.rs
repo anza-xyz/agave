@@ -381,7 +381,7 @@ pub fn output_slot(
 
     if verbose_level == 0 {
         if *output_format == OutputFormat::Display {
-            // Given that Blockstore::get_complete_block_with_entries() returning Ok(_), we know
+            // Given that Blockstore::get_complete_block_with_entries() returned Ok(_), we know
             // that we have a full block so meta.consumed is the number of shreds in the block
             println!(
                 "  num_shreds: {}, parent_slot: {:?}, next_slots: {:?}, num_entries: {}, \
