@@ -1,12 +1,10 @@
 use {
     assert_cmd::prelude::*,
-    solana_entry::entry,
     solana_ledger::{
         blockstore, blockstore::Blockstore, blockstore_options::ShredStorageType,
         create_new_tmp_ledger, create_new_tmp_ledger_fifo, genesis_utils::create_genesis_config,
         get_tmp_ledger_path_auto_delete,
     },
-    solana_sdk::hash::Hash,
     std::{
         fs,
         path::Path,
@@ -77,13 +75,12 @@ fn nominal_fifo() {
 
 fn insert_test_shreds(ledger_path: &Path, ending_slot: u64) {
     let blockstore = Blockstore::open(ledger_path).unwrap();
-    for i in 1..ending_slot {
-        let entries = entry::create_ticks(1, 0, Hash::default());
-        let shreds = blockstore::entries_to_test_shreds(
-            &entries, i, 0, false, 0, /*merkle_variant:*/ true,
-        );
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-    }
+    let (shreds, _) = blockstore::make_many_slot_entries(
+        /*start_slot:*/ 0,
+        ending_slot,
+        /*entries_per_slot:*/ 10,
+    );
+    blockstore.insert_shreds(shreds, None, false).unwrap();
 }
 
 fn ledger_tool_copy_test(src_shred_compaction: &str, dst_shred_compaction: &str) {
