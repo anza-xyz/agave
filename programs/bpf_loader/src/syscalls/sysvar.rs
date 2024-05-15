@@ -187,14 +187,13 @@ declare_builtin_function!(
         } = *invoke_context.get_compute_budget();
 
         // Abort: "Compute budget is exceeded."
+        let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);
+        let sysvar_buf_cost = length.checked_div(cpi_bytes_per_unit).unwrap_or(0);
         consume_compute_meter(
             invoke_context,
             sysvar_base_cost
-                .saturating_add(32_u64.div_ceil(cpi_bytes_per_unit))
-                .saturating_add(std::cmp::max(
-                    length.div_ceil(cpi_bytes_per_unit),
-                    mem_op_base_cost,
-                )),
+                .saturating_add(sysvar_id_cost)
+                .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
         )?;
 
         // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
