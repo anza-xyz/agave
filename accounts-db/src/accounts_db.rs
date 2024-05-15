@@ -5404,8 +5404,10 @@ impl AccountsDb {
         )
     }
 
-    /// Load account with `pubkey`. `callback` is used to decide whether to
-    /// store the account into read cache after loading.
+    /// Load account with `pubkey` and maybe put into read cache.
+    ///
+    /// If the account is not already cached, invoke `should_put_in_read_cache_fn`.
+    /// The caller can inspect the account and indicate if it should be put into the read cache or not.
     ///
     /// Return the account and the slot when the account was last stored.
     /// Return None for ZeroLamport accounts.
@@ -5413,7 +5415,7 @@ impl AccountsDb {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-        callback: impl Fn(&AccountSharedData) -> bool,
+        should_put_in_read_cache_fn: impl Fn(&AccountSharedData) -> bool,
     ) -> Option<(AccountSharedData, Slot)> {
         let (slot, storage_location, _maybe_account_accesor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, None, false)?;
@@ -5447,7 +5449,7 @@ impl AccountsDb {
             return None;
         }
 
-        if !in_write_cache && callback(&account) {
+        if !in_write_cache && should_put_in_read_cache_fn(&account) {
             /*
             We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
             safe/reflect 'A''s latest state on this fork.
@@ -13708,6 +13710,25 @@ pub mod tests {
         let account = db.load_account_with(&Ancestors::default(), &account_key, |_| true);
         assert!(account.is_none());
         assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+
+        let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+        db.store_cached((2, &[(&account_key, &slot2_account)][..]), None);
+        let (account, slot) = db
+            .load_account_with(&Ancestors::default(), &account_key, |_| false)
+            .unwrap();
+        assert_eq!(account.lamports(), 2);
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        assert_eq!(slot, 2);
+
+        let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+        db.store_cached((2, &[(&account_key, &slot2_account)][..]), None);
+        let (account, slot) = db
+            .load_account_with(&Ancestors::default(), &account_key, |_| true)
+            .unwrap();
+        assert_eq!(account.lamports(), 2);
+        // The account shouldn't be added to read_only_cache becasue it is in write_cache.
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        assert_eq!(slot, 2);
     }
 
     #[test]

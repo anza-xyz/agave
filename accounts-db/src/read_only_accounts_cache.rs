@@ -425,8 +425,8 @@ mod tests {
         }
 
         /// reset the read only accounts cache
-        /// useful for benches/tests
-        pub(crate) fn reset_for_tests(&self) {
+        #[cfg(feature = "dev-context-only-utils")]
+        pub fn reset_for_tests(&self) {
             self.cache.clear();
             self.queue.lock().unwrap().clear();
             self.data_size.store(0, Ordering::Relaxed);
