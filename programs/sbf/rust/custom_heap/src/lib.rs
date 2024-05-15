@@ -51,7 +51,7 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
         // I'm a bump allocator, I don't free
     }
 }
-#[cfg(all(not(test), target_os = "solana"))]
+#[cfg(target_os = "solana")]
 #[global_allocator]
 static A: BumpAllocator = BumpAllocator;
 
