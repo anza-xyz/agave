@@ -2,8 +2,8 @@ use {
     assert_cmd::prelude::*,
     solana_ledger::{
         blockstore, blockstore::Blockstore, blockstore_options::ShredStorageType,
-        create_new_tmp_ledger, create_new_tmp_ledger_fifo, genesis_utils::create_genesis_config,
-        get_tmp_ledger_path_auto_delete,
+        create_new_tmp_ledger_auto_delete, create_new_tmp_ledger_fifo_auto_delete,
+        genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete,
     },
     std::{
         fs,
@@ -56,9 +56,9 @@ fn nominal_test_helper(ledger_path: &str, ticks: usize) {
 #[test]
 fn nominal_default() {
     let genesis_config = create_genesis_config(100).genesis_config;
-    let (ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
+    let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
     nominal_test_helper(
-        ledger_path.to_str().unwrap(),
+        ledger_path.path().to_str().unwrap(),
         genesis_config.ticks_per_slot as usize,
     );
 }
@@ -66,9 +66,9 @@ fn nominal_default() {
 #[test]
 fn nominal_fifo() {
     let genesis_config = create_genesis_config(100).genesis_config;
-    let (ledger_path, _blockhash) = create_new_tmp_ledger_fifo!(&genesis_config);
+    let (ledger_path, _blockhash) = create_new_tmp_ledger_fifo_auto_delete!(&genesis_config);
     nominal_test_helper(
-        ledger_path.to_str().unwrap(),
+        ledger_path.path().to_str().unwrap(),
         genesis_config.ticks_per_slot as usize,
     );
 }
@@ -87,13 +87,13 @@ fn ledger_tool_copy_test(src_shred_compaction: &str, dst_shred_compaction: &str)
     let genesis_config = create_genesis_config(100).genesis_config;
 
     let (ledger_path, _blockhash) = match src_shred_compaction {
-        "fifo" => create_new_tmp_ledger_fifo!(&genesis_config),
-        _ => create_new_tmp_ledger!(&genesis_config),
+        "fifo" => create_new_tmp_ledger_fifo_auto_delete!(&genesis_config),
+        _ => create_new_tmp_ledger_auto_delete!(&genesis_config),
     };
     const LEDGER_TOOL_COPY_TEST_SHRED_COUNT: u64 = 25;
     const LEDGER_TOOL_COPY_TEST_ENDING_SLOT: u64 = LEDGER_TOOL_COPY_TEST_SHRED_COUNT + 1;
-    insert_test_shreds(&ledger_path, LEDGER_TOOL_COPY_TEST_ENDING_SLOT);
-    let ledger_path = ledger_path.to_str().unwrap();
+    insert_test_shreds(ledger_path.path(), LEDGER_TOOL_COPY_TEST_ENDING_SLOT);
+    let ledger_path = ledger_path.path().to_str().unwrap();
 
     let target_ledger_path = get_tmp_ledger_path_auto_delete!();
     if dst_shred_compaction == "fifo" {
