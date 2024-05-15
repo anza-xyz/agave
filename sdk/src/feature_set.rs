@@ -861,6 +861,10 @@ pub mod deprecate_legacy_vote_ixs {
     solana_sdk::declare_id!("depVvnQ2UysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
 
+pub mod allow_self_conflicting_entries {
+    solana_sdk::declare_id!("ENTRYnPAoT5Swwx73YDGzMp3XnNH1kxacyvLosRHza1i");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1071,6 +1075,7 @@ lazy_static! {
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
+        (allow_self_conflicting_entries::id(), "Allow entries with conflicting transactions"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
