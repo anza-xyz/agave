@@ -1438,10 +1438,9 @@ impl Blockstore {
                     ));
                 } else {
                     error!(
-                        "Unable to find the conflicting coding shred that set {erasure_meta:?}.
-                        This should only happen in extreme cases where blockstore cleanup has \
-                         caught up to the root.
-                        Skipping the erasure meta duplicate shred check"
+                        "Unable to find the conflicting coding shred that set {erasure_meta:?}. \
+                         This should only happen in extreme cases where blockstore cleanup has \
+                         caught up to the root. Skipping the erasure meta duplicate shred check"
                     );
                 }
             }
@@ -1753,9 +1752,9 @@ impl Blockstore {
         }
 
         warn!(
-            "Received conflicting merkle roots for slot: {}, erasure_set: {:?}
-                original merkle root meta {:?} vs
-                conflicting merkle root {:?} shred index {} type {:?}. Reporting as duplicate",
+            "Received conflicting merkle roots for slot: {}, erasure_set: {:?} original merkle \
+             root meta {:?} vs conflicting merkle root {:?} shred index {} type {:?}. Reporting \
+             as duplicate",
             slot,
             shred.erasure_set(),
             merkle_root_meta,
@@ -1776,10 +1775,9 @@ impl Blockstore {
             else {
                 error!(
                     "Shred {shred_id:?} indiciated by merkle root meta {merkle_root_meta:?} is \
-                     missing from blockstore.
-                    This should only happen in extreme cases where blockstore cleanup has caught \
-                     up to the root.
-                    Skipping the merkle root consistency check"
+                     missing from blockstore. This should only happen in extreme cases where \
+                     blockstore cleanup has caught up to the root. Skipping the merkle root \
+                     consistency check"
                 );
                 return true;
             };
@@ -1842,10 +1840,9 @@ impl Blockstore {
         else {
             error!(
                 "Shred {next_shred_id:?} indicated by merkle root meta {next_merkle_root_meta:?} \
-                 is missing from blockstore.
-                 This should only happen in extreme cases where blockstore cleanup has caught up \
-                 to the root.
-                 Skipping the forward chained merkle root consistency check"
+                 is missing from blockstore. This should only happen in extreme cases where \
+                 blockstore cleanup has caught up to the root. Skipping the forward chained \
+                 merkle root consistency check"
             );
             return true;
         };
@@ -1854,11 +1851,10 @@ impl Blockstore {
 
         if !self.check_chaining(merkle_root, chained_merkle_root) {
             warn!(
-                "Received conflicting chained merkle roots for slot: {slot},
-                shred {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however
-                next fec set shred {next_erasure_set:?} type {:?} chains to merkle root \
-                 {chained_merkle_root:?}.
-                Reporting as duplicate",
+                "Received conflicting chained merkle roots for slot: {slot}, shred \
+                 {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however next fec set \
+                 shred {next_erasure_set:?} type {:?} chains to merkle root \
+                 {chained_merkle_root:?}. Reporting as duplicate",
                 shred.shred_type(),
                 next_merkle_root_meta.first_received_shred_type(),
             );
@@ -1929,9 +1925,8 @@ impl Blockstore {
         else {
             warn!(
                 "The merkle root meta for the previous erasure set {prev_erasure_set:?} does not \
-                 exist.
-                This should only happen if you have recently upgraded from a version < v1.18.13.
-                Skipping the backwards chained merkle root for {erasure_set:?}"
+                 exist. This should only happen if you have recently upgraded from a version < \
+                 v1.18.13. Skipping the backwards chained merkle root for {erasure_set:?}"
             );
             return true;
         };
@@ -1946,10 +1941,9 @@ impl Blockstore {
         else {
             error!(
                 "Shred {prev_shred_id:?} indicated by merkle root meta {prev_merkle_root_meta:?} \
-                 is missing from blockstore.
-                 This should only happen in extreme cases where blockstore cleanup has caught up \
-                 to the root.
-                 Skipping the backwards chained merkle root consistency check"
+                 is missing from blockstore. This should only happen in extreme cases where \
+                 blockstore cleanup has caught up to the root. Skipping the backwards chained \
+                 merkle root consistency check"
             );
             return true;
         };
@@ -1958,11 +1952,10 @@ impl Blockstore {
 
         if !self.check_chaining(merkle_root, chained_merkle_root) {
             warn!(
-                "Received conflicting chained merkle roots for slot: {slot},
-                    shred {:?} type {:?} chains to merkle root {chained_merkle_root:?}, however
-                    previous fec set shred {prev_erasure_set:?} type {:?} has merkle root \
-                 {merkle_root:?}.
-                    Reporting as duplicate",
+                "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
+                 chains to merkle root {chained_merkle_root:?}, however previous fec set shred \
+                 {prev_erasure_set:?} type {:?} has merkle root {merkle_root:?}. Reporting as \
+                 duplicate",
                 shred.erasure_set(),
                 shred.shred_type(),
                 prev_merkle_root_meta.first_received_shred_type(),
@@ -2026,10 +2019,9 @@ impl Blockstore {
                 else {
                     error!(
                         "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} \
-                         is missing from blockstore.
-                        This should only happen in extreme cases where blockstore cleanup has \
-                         caught up to the root.
-                        Skipping data shred insertion"
+                         is missing from blockstore. This should only happen in extreme cases \
+                         where blockstore cleanup has caught up to the root. Skipping data shred \
+                         insertion"
                     );
                     return false;
                 };
@@ -2077,10 +2069,9 @@ impl Blockstore {
                 else {
                     error!(
                         "Last received data shred {shred_id:?} indiciated by slot meta \
-                         {slot_meta:?} is missing from blockstore.
-                        This should only happen in extreme cases where blockstore cleanup has \
-                         caught up to the root.
-                        Skipping data shred insertion"
+                         {slot_meta:?} is missing from blockstore. This should only happen in \
+                         extreme cases where blockstore cleanup has caught up to the root. \
+                         Skipping data shred insertion"
                     );
                     return false;
                 };
