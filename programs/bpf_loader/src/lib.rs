@@ -1336,7 +1336,7 @@ fn execute<'a, 'b: 'a>(
     // We dropped the lifetime tracking in the Executor by setting it to 'static,
     // thus we need to reintroduce the correct lifetime of InvokeContext here again.
     let executable = unsafe {
-        mem::transmute::<&'a Executable<InvokeContext<'static>>, &'a Executable<InvokeContext<'b>>>(
+        mem::transmute::<&Executable<InvokeContext<'static>>, &'a Executable<InvokeContext<'b>>>(
             executable,
         )
     };
