@@ -243,8 +243,7 @@ impl fmt::Display for RpcResponseErrorData {
                 if logs.is_empty() {
                     Ok(())
                 } else {
-                    // Give the user a hint that there is more useful logging information available...
-                    write!(f, "[{} log messages]", logs.len())
+                    write!(f, "[{} log messages: {logs:?}]", logs.len())
                 }
             }
             _ => Ok(()),
