@@ -243,7 +243,11 @@ impl fmt::Display for RpcResponseErrorData {
                 if logs.is_empty() {
                     Ok(())
                 } else {
-                    write!(f, "[{} log messages: {logs:?}]", logs.len())
+                    writeln!(f, "{} log messages:", logs.len())?;
+                    for log in logs {
+                        writeln!(f, "  {log}")?;
+                    }
+                    Ok(())
                 }
             }
             _ => Ok(()),
