@@ -13726,7 +13726,7 @@ pub mod tests {
             .load_account_with(&Ancestors::default(), &account_key, |_| true)
             .unwrap();
         assert_eq!(account.lamports(), 2);
-        // The account shouldn't be added to read_only_cache becasue it is in write_cache.
+        // The account shouldn't be added to read_only_cache because it is in write_cache.
         assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
         assert_eq!(slot, 2);
     }
