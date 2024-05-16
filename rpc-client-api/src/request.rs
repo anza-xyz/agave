@@ -259,7 +259,7 @@ impl fmt::Display for RpcResponseErrorData {
 pub enum RpcError {
     #[error("RPC request error: {0}")]
     RpcRequestError(String),
-    #[error("RPC response error {code}: {message} {data}")]
+    #[error("RPC response error {code}: {message}; {data}")]
     RpcResponseError {
         code: i64,
         message: String,
