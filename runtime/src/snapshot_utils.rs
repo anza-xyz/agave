@@ -835,9 +835,9 @@ pub fn archive_snapshot_package(
                             E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
                         })?;
                     }
-                    InternalsForArchive::File(mut file) => {
+                    InternalsForArchive::FileIo(path) => {
                         archive
-                            .append_file(path_in_archive, &mut file)
+                            .append_path_with_name(path, path_in_archive)
                             .map_err(|err| {
                                 E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
                             })?;

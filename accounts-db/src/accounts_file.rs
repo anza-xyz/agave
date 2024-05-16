@@ -11,7 +11,6 @@ use {
     },
     solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
     std::{
-        fs,
         io::Read,
         mem,
         path::{Path, PathBuf},
@@ -291,15 +290,21 @@ impl AccountsFile {
         }
     }
 
-    /// brooks TODO: doc
+    /// Returns the way to access this accounts file when archiving
     pub fn internals_for_archive(&self) -> InternalsForArchive {
-        match self {
-            Self::AppendVec(av) => InternalsForArchive::Mmap(av.data_for_archive()),
-            Self::TieredStorage(ts) => InternalsForArchive::Mmap(
-                ts.reader()
-                    .expect("must be a reader when archiving")
-                    .data_for_archive(),
-            ),
+        // Figure out if the backing access to this accounts file is Mmap or File I/O.
+        // For now, let `can_append()` fill the gap.
+        if self.can_append() {
+            match self {
+                Self::AppendVec(av) => InternalsForArchive::Mmap(av.data_for_archive()),
+                Self::TieredStorage(ts) => InternalsForArchive::Mmap(
+                    ts.reader()
+                        .expect("must be a reader when archiving")
+                        .data_for_archive(),
+                ),
+            }
+        } else {
+            InternalsForArchive::FileIo(self.path())
         }
     }
 }
@@ -323,11 +328,13 @@ impl AccountsFileProvider {
     }
 }
 
-/// brooks TODO: doc
+/// The access method to use when archiving an AccountsFile
 #[derive(Debug)]
 pub enum InternalsForArchive<'a> {
+    /// Accessing the internals is done via Mmap
     Mmap(&'a [u8]),
-    File(fs::File),
+    /// Accessing the internals is done via File I/O
+    FileIo(&'a Path),
 }
 
 /// Information after storing accounts
