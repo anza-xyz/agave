@@ -3574,15 +3574,14 @@ mod tests {
             );
             result.unwrap();
 
-            // clone is to zero the alignment padding
             let epochschedule_from_buf =
-                bincode::deserialize::<EpochSchedule>(&got_epochschedule_buf)
-                    .unwrap()
-                    .clone();
+                bincode::deserialize::<EpochSchedule>(&got_epochschedule_buf).unwrap();
 
             assert_eq!(epochschedule_from_buf, src_epochschedule);
+
+            // clone is to zero the alignment padding
             assert!(are_bytes_equal(
-                &epochschedule_from_buf,
+                &epochschedule_from_buf.clone(),
                 &clean_epochschedule
             ));
         }
@@ -3670,11 +3669,12 @@ mod tests {
             );
             result.unwrap();
 
-            // clone is to zero the alignment padding
-            let rent_from_buf = bincode::deserialize::<Rent>(&got_rent_buf).unwrap().clone();
+            let rent_from_buf = bincode::deserialize::<Rent>(&got_rent_buf).unwrap();
 
             assert_eq!(rent_from_buf, src_rent);
-            assert!(are_bytes_equal(&rent_from_buf, &clean_rent));
+
+            // clone is to zero the alignment padding
+            assert!(are_bytes_equal(&rent_from_buf.clone(), &clean_rent));
         }
 
         // Test epoch rewards sysvar
@@ -3734,13 +3734,12 @@ mod tests {
             );
             result.unwrap();
 
-            // clone is to zero the alignment padding
-            let rewards_from_buf = bincode::deserialize::<EpochRewards>(&got_rewards_buf)
-                .unwrap()
-                .clone();
+            let rewards_from_buf = bincode::deserialize::<EpochRewards>(&got_rewards_buf).unwrap();
 
             assert_eq!(rewards_from_buf, src_rewards);
-            assert!(are_bytes_equal(&rewards_from_buf, &clean_rewards));
+
+            // clone is to zero the alignment padding
+            assert!(are_bytes_equal(&rewards_from_buf.clone(), &clean_rewards));
         }
 
         // Test last restart slot sysvar
