@@ -8917,9 +8917,7 @@ impl AccountsDb {
             let mut populate_duplicate_keys_us = 0;
             // outer vec is accounts index bin (determined by pubkey value)
             // inner vec is the pubkeys within that bin that are present in > 1 slot
-            //let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
-            let unique_pubkeys_by_bin = DashMap::new(); //Mutex::new(Vec::<Vec<Pubkey>>::default());
-
+            let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
             if pass == 0 {
                 // tell accounts index we are done adding the initial accounts at startup
                 let mut m = Measure::start("accounts_index_idle_us");
@@ -8931,32 +8929,26 @@ impl AccountsDb {
                     // this has to happen before visit_duplicate_pubkeys_during_startup below
                     // get duplicate keys from acct idx. We have to wait until we've finished flushing.
                     self.accounts_index
-                        .populate_and_retrieve_duplicate_keys_from_startup2(
-                            |(pubkey_bin, slot_keys)| {
-                                total_duplicate_slot_keys
-                                    .fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
-                                let unique_keys = HashSet::<Pubkey>::from_iter(
-                                    slot_keys.iter().map(|(_, key)| *key),
-                                );
-                                for (slot, key) in slot_keys {
-                                    self.uncleaned_pubkeys.entry(slot).or_default().push(key);
-                                }
-                                let unique_pubkeys_by_bin_inner =
-                                    unique_keys.into_iter().collect::<Vec<_>>();
-                                unique_pubkeys_by_bin
-                                    .insert(pubkey_bin, unique_pubkeys_by_bin_inner);
-                                // does not matter that this is not ordered by slot
-                                // unique_pubkeys_by_bin
-                                //     .lock()
-                                //     .unwrap()
-                                //     .push(unique_pubkeys_by_bin_inner);
-                            },
-                        );
+                        .populate_and_retrieve_duplicate_keys_from_startup(|slot_keys| {
+                            total_duplicate_slot_keys
+                                .fetch_add(slot_keys.len() as u64, Ordering::Relaxed);
+                            let unique_keys =
+                                HashSet::<Pubkey>::from_iter(slot_keys.iter().map(|(_, key)| *key));
+                            for (slot, key) in slot_keys {
+                                self.uncleaned_pubkeys.entry(slot).or_default().push(key);
+                            }
+                            let unique_pubkeys_by_bin_inner =
+                                unique_keys.into_iter().collect::<Vec<_>>();
+                            // does not matter that this is not ordered by slot
+                            unique_pubkeys_by_bin
+                                .lock()
+                                .unwrap()
+                                .push(unique_pubkeys_by_bin_inner);
+                        });
                 })
                 .1;
             }
-            //let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
-            //let unique_pubkeys_by_bin = unique_pubkeys_by_bin.
+            let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
 
             let mut timings = GenerateIndexTimings {
                 index_flush_us,
@@ -9010,7 +9002,6 @@ impl AccountsDb {
                         DuplicatePubkeysVisitedInfo::default,
                         |accum, pubkeys_by_bin| {
                             let intermediate = pubkeys_by_bin
-                                .value()
                                 .par_chunks(4096)
                                 .fold(DuplicatePubkeysVisitedInfo::default, |accum, pubkeys| {
                                     let (accounts_data_len_from_duplicates, uncleaned_roots) = self

@@ -1736,23 +1736,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .for_each(f);
     }
 
-    /// use Vec<> because the internal vecs are already allocated per bin
-    pub(crate) fn populate_and_retrieve_duplicate_keys_from_startup2(
-        &self,
-        f: impl Fn((usize, Vec<(Slot, Pubkey)>)) + Sync + Send,
-    ) {
-        (0..self.bins())
-            .into_par_iter()
-            .map(|pubkey_bin| {
-                let r_account_maps = &self.account_maps[pubkey_bin];
-                (
-                    pubkey_bin,
-                    r_account_maps.populate_and_retrieve_duplicate_keys_from_startup(),
-                )
-            })
-            .for_each(f);
-    }
-
     /// Updates the given pubkey at the given slot with the new account information.
     /// on return, the index's previous account info may be returned in 'reclaims' depending on 'previous_slot_entry_was_cached'
     pub fn upsert(
