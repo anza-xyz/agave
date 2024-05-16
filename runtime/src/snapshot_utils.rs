@@ -831,18 +831,13 @@ pub fn archive_snapshot_package(
                         })?;
                         header.set_size(storage.capacity());
                         header.set_cksum();
-                        archive.append(&header, data).map_err(|err| {
-                            E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                        })?;
+                        archive.append(&header, data)
                     }
                     InternalsForArchive::FileIo(path) => {
-                        archive
-                            .append_path_with_name(path, path_in_archive)
-                            .map_err(|err| {
-                                E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                            })?;
+                        archive.append_path_with_name(path, path_in_archive)
                     }
                 }
+                .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;
