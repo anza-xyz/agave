@@ -1426,7 +1426,10 @@ impl Blockstore {
                         conflicting_shred.clone(),
                         shred.payload().clone(),
                     ) {
-                        warn!("Unable to store conflicting erasure meta duplicate proof for {slot} {erasure_set:?} {e}");
+                        warn!(
+                            "Unable to store conflicting erasure meta duplicate proof for {slot} \
+                             {erasure_set:?} {e}"
+                        );
                     }
 
                     duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
@@ -1436,7 +1439,8 @@ impl Blockstore {
                 } else {
                     error!(
                         "Unable to find the conflicting coding shred that set {erasure_meta:?}.
-                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        This should only happen in extreme cases where blockstore cleanup has \
+                         caught up to the root.
                         Skipping the erasure meta duplicate shred check"
                     );
                 }
@@ -1445,8 +1449,8 @@ impl Blockstore {
             // ToDo: This is a potential slashing condition
             warn!("Received multiple erasure configs for the same erasure set!!!");
             warn!(
-                "Slot: {}, shred index: {}, erasure_set: {:?}, \
-                is_duplicate: {}, stored config: {:#?}, new shred: {:#?}",
+                "Slot: {}, shred index: {}, erasure_set: {:?}, is_duplicate: {}, stored config: \
+                 {:#?}, new shred: {:#?}",
                 slot,
                 shred.index(),
                 erasure_set,
@@ -1615,7 +1619,11 @@ impl Blockstore {
                 // just purge all shreds > the new last index slot, but because replay may have already
                 // replayed entries past the newly detected "last" shred, then mark the slot as dead
                 // and wait for replay to dump and repair the correct version.
-                warn!("Received *last* shred index {} less than previous shred index {}, and slot {} is not full, marking slot dead", shred_index, slot_meta.received, slot);
+                warn!(
+                    "Received *last* shred index {} less than previous shred index {}, and slot \
+                     {} is not full, marking slot dead",
+                    shred_index, slot_meta.received, slot
+                );
                 write_batch.put::<cf::DeadSlots>(slot, &true).unwrap();
             }
 
@@ -1767,8 +1775,10 @@ impl Blockstore {
                 .map(Cow::into_owned)
             else {
                 error!(
-                    "Shred {shred_id:?} indiciated by merkle root meta {merkle_root_meta:?} is missing from blockstore.
-                    This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                    "Shred {shred_id:?} indiciated by merkle root meta {merkle_root_meta:?} is \
+                     missing from blockstore.
+                    This should only happen in extreme cases where blockstore cleanup has caught \
+                     up to the root.
                     Skipping the merkle root consistency check"
                 );
                 return true;
@@ -1831,8 +1841,10 @@ impl Blockstore {
                 .map(Cow::into_owned)
         else {
             error!(
-                "Shred {next_shred_id:?} indicated by merkle root meta {next_merkle_root_meta:?} is missing from blockstore.
-                 This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                "Shred {next_shred_id:?} indicated by merkle root meta {next_merkle_root_meta:?} \
+                 is missing from blockstore.
+                 This should only happen in extreme cases where blockstore cleanup has caught up \
+                 to the root.
                  Skipping the forward chained merkle root consistency check"
             );
             return true;
@@ -1844,7 +1856,8 @@ impl Blockstore {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot},
                 shred {erasure_set:?} type {:?} has merkle root {merkle_root:?}, however
-                next fec set shred {next_erasure_set:?} type {:?} chains to merkle root {chained_merkle_root:?}.
+                next fec set shred {next_erasure_set:?} type {:?} chains to merkle root \
+                 {chained_merkle_root:?}.
                 Reporting as duplicate",
                 shred.shred_type(),
                 next_merkle_root_meta.first_received_shred_type(),
@@ -1915,7 +1928,8 @@ impl Blockstore {
             })
         else {
             warn!(
-                "The merkle root meta for the previous erasure set {prev_erasure_set:?} does not exist.
+                "The merkle root meta for the previous erasure set {prev_erasure_set:?} does not \
+                 exist.
                 This should only happen if you have recently upgraded from a version < v1.18.13.
                 Skipping the backwards chained merkle root for {erasure_set:?}"
             );
@@ -1931,8 +1945,10 @@ impl Blockstore {
                 .map(Cow::into_owned)
         else {
             error!(
-                "Shred {prev_shred_id:?} indicated by merkle root meta {prev_merkle_root_meta:?} is missing from blockstore.
-                 This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                "Shred {prev_shred_id:?} indicated by merkle root meta {prev_merkle_root_meta:?} \
+                 is missing from blockstore.
+                 This should only happen in extreme cases where blockstore cleanup has caught up \
+                 to the root.
                  Skipping the backwards chained merkle root consistency check"
             );
             return true;
@@ -1942,14 +1958,15 @@ impl Blockstore {
 
         if !self.check_chaining(merkle_root, chained_merkle_root) {
             warn!(
-                    "Received conflicting chained merkle roots for slot: {slot},
+                "Received conflicting chained merkle roots for slot: {slot},
                     shred {:?} type {:?} chains to merkle root {chained_merkle_root:?}, however
-                    previous fec set shred {prev_erasure_set:?} type {:?} has merkle root {merkle_root:?}.
+                    previous fec set shred {prev_erasure_set:?} type {:?} has merkle root \
+                 {merkle_root:?}.
                     Reporting as duplicate",
-                    shred.erasure_set(),
-                    shred.shred_type(),
-                    prev_merkle_root_meta.first_received_shred_type(),
-                );
+                shred.erasure_set(),
+                shred.shred_type(),
+                prev_merkle_root_meta.first_received_shred_type(),
+            );
 
             if !self.has_duplicate_shreds_in_slot(shred.slot()) {
                 duplicate_shreds.push(PossibleDuplicateShred::ChainedMerkleRootConflict(
@@ -2008,8 +2025,10 @@ impl Blockstore {
                     .map(Cow::into_owned)
                 else {
                     error!(
-                        "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} is missing from blockstore.
-                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} \
+                         is missing from blockstore.
+                        This should only happen in extreme cases where blockstore cleanup has \
+                         caught up to the root.
                         Skipping data shred insertion"
                     );
                     return false;
@@ -2032,7 +2051,8 @@ impl Blockstore {
                 (
                     "error",
                     format!(
-                        "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= slot.last_index {last_index:?}, shred_source: {shred_source:?}"
+                        "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= \
+                         slot.last_index {last_index:?}, shred_source: {shred_source:?}"
                     ),
                     String
                 )
@@ -2056,8 +2076,10 @@ impl Blockstore {
                     .map(Cow::into_owned)
                 else {
                     error!(
-                        "Last received data shred {shred_id:?} indiciated by slot meta {slot_meta:?} is missing from blockstore.
-                        This should only happen in extreme cases where blockstore cleanup has caught up to the root.
+                        "Last received data shred {shred_id:?} indiciated by slot meta \
+                         {slot_meta:?} is missing from blockstore.
+                        This should only happen in extreme cases where blockstore cleanup has \
+                         caught up to the root.
                         Skipping data shred insertion"
                     );
                     return false;
@@ -2080,7 +2102,8 @@ impl Blockstore {
                 (
                     "error",
                     format!(
-                        "Leader {:?}, slot {}: received shred_index {} < slot.received {}, shred_source: {:?}",
+                        "Leader {:?}, slot {}: received shred_index {} < slot.received {}, \
+                         shred_source: {:?}",
                         leader_pubkey, slot, shred_index, slot_meta.received, shred_source
                     ),
                     String
@@ -2650,9 +2673,7 @@ impl Blockstore {
                     .map(|transaction| {
                         if let Err(err) = transaction.sanitize() {
                             warn!(
-                                "Blockstore::get_block sanitize failed: {:?}, \
-                                slot: {:?}, \
-                                {:?}",
+                                "Blockstore::get_block sanitize failed: {:?}, slot: {:?}, {:?}",
                                 err, slot, transaction,
                             );
                         }
@@ -3097,9 +3118,8 @@ impl Blockstore {
             .map(|transaction| {
                 if let Err(err) = transaction.sanitize() {
                     warn!(
-                        "Blockstore::find_transaction_in_slot sanitize failed: {:?}, \
-                        slot: {:?}, \
-                        {:?}",
+                        "Blockstore::find_transaction_in_slot sanitize failed: {:?}, slot: {:?}, \
+                         {:?}",
                         err, slot, transaction,
                     );
                 }
@@ -3605,39 +3625,38 @@ impl Blockstore {
             .into_iter()
             .collect();
         let data_shreds = data_shreds?;
-        let data_shreds: Result<Vec<Shred>> =
-            data_shreds
-                .into_iter()
-                .enumerate()
-                .map(|(idx, shred_bytes)| {
-                    if shred_bytes.is_none() {
-                        if let Some(slot_meta) = slot_meta {
-                            if slot > self.lowest_cleanup_slot() {
-                                panic!(
-                                    "Shred with slot: {}, index: {}, consumed: {}, completed_indexes: {:?} \
-                                    must exist if shred index was included in a range: {} {}",
-                                    slot,
-                                    idx,
-                                    slot_meta.consumed,
-                                    slot_meta.completed_data_indexes,
-                                    all_ranges_start_index,
-                                    all_ranges_end_index
-                                );
-                            }
+        let data_shreds: Result<Vec<Shred>> = data_shreds
+            .into_iter()
+            .enumerate()
+            .map(|(idx, shred_bytes)| {
+                if shred_bytes.is_none() {
+                    if let Some(slot_meta) = slot_meta {
+                        if slot > self.lowest_cleanup_slot() {
+                            panic!(
+                                "Shred with slot: {}, index: {}, consumed: {}, completed_indexes: \
+                                 {:?} must exist if shred index was included in a range: {} {}",
+                                slot,
+                                idx,
+                                slot_meta.consumed,
+                                slot_meta.completed_data_indexes,
+                                all_ranges_start_index,
+                                all_ranges_end_index
+                            );
                         }
-                        return Err(BlockstoreError::InvalidShredData(Box::new(
-                            bincode::ErrorKind::Custom(format!(
-                                "Missing shred for slot {slot}, index {idx}"
-                            )),
-                        )));
                     }
-                    Shred::new_from_serialized_shred(shred_bytes.unwrap()).map_err(|err| {
-                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                            format!("Could not reconstruct shred from shred payload: {err:?}"),
-                        )))
-                    })
+                    return Err(BlockstoreError::InvalidShredData(Box::new(
+                        bincode::ErrorKind::Custom(format!(
+                            "Missing shred for slot {slot}, index {idx}"
+                        )),
+                    )));
+                }
+                Shred::new_from_serialized_shred(shred_bytes.unwrap()).map_err(|err| {
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("Could not reconstruct shred from shred payload: {err:?}"),
+                    )))
                 })
-                .collect();
+            })
+            .collect();
         let data_shreds = data_shreds?;
 
         completed_ranges
