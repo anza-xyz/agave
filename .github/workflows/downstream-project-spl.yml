@@ -58,7 +58,6 @@ jobs:
           cargo check
 
   test:
-    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -71,6 +70,7 @@ jobs:
                   "token/program",
                   "token/program-2022",
                   "associated-token-account/program",
+                  "instruction-padding/program",
                 ],
             },
             {
