@@ -297,6 +297,7 @@ pub fn parse_stake(
                 }),
             })
         }
+        StakeInstruction::MoveStake(_) | StakeInstruction::MoveLamports(_) => todo!(),
     }
 }
 
