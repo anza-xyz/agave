@@ -1155,13 +1155,7 @@ fn package_and_archive_full_snapshot(
     );
 
     let snapshot_package = SnapshotPackage::new(accounts_package, accounts_hash.into());
-    archive_snapshot_package(
-        &snapshot_package,
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-    )?;
+    archive_snapshot_package(&snapshot_package)?;
 
     Ok(FullSnapshotArchiveInfo::new(
         snapshot_package.snapshot_archive_info,
@@ -1224,13 +1218,7 @@ fn package_and_archive_incremental_snapshot(
     );
 
     let snapshot_package = SnapshotPackage::new(accounts_package, incremental_accounts_hash.into());
-    archive_snapshot_package(
-        &snapshot_package,
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-    )?;
+    archive_snapshot_package(&snapshot_package)?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
         incremental_snapshot_base_slot,
