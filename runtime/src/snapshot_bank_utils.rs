@@ -52,7 +52,6 @@ use {
         collections::{HashMap, HashSet},
         fs,
         io::{BufWriter, Write},
-        num::NonZeroUsize,
         ops::RangeInclusive,
         path::{Path, PathBuf},
         sync::{atomic::AtomicBool, Arc},
@@ -1058,10 +1057,6 @@ pub fn bank_to_full_snapshot_archive(
         snapshot_storages,
         archive_format,
         snapshot_version,
-        // Since bank_to_snapshot_archive() is not called as part of normal validator operation,
-        // do *not* purge any snapshot archives; leave that up to the node operator.
-        NonZeroUsize::MAX,
-        NonZeroUsize::MAX,
     )
 }
 
@@ -1111,10 +1106,6 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_storages,
         archive_format,
         snapshot_version,
-        // Since bank_to_snapshot_archive() is not called as part of normal validator operation,
-        // do *not* purge any snapshot archives; leave that up to the node operator.
-        NonZeroUsize::MAX,
-        NonZeroUsize::MAX,
     )
 }
 
@@ -1129,8 +1120,6 @@ fn package_and_archive_full_snapshot(
     snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     archive_format: ArchiveFormat,
     snapshot_version: SnapshotVersion,
-    maximum_full_snapshot_archives_to_retain: NonZeroUsize,
-    maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
 ) -> snapshot_utils::Result<FullSnapshotArchiveInfo> {
     let accounts_package = AccountsPackage::new_for_snapshot(
         AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
@@ -1174,8 +1163,6 @@ fn package_and_archive_incremental_snapshot(
     snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     archive_format: ArchiveFormat,
     snapshot_version: SnapshotVersion,
-    maximum_full_snapshot_archives_to_retain: NonZeroUsize,
-    maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
 ) -> snapshot_utils::Result<IncrementalSnapshotArchiveInfo> {
     let accounts_package = AccountsPackage::new_for_snapshot(
         AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(
@@ -2761,8 +2748,6 @@ mod tests {
                 snapshot_storages,
                 snapshot_config.archive_format,
                 snapshot_config.snapshot_version,
-                snapshot_config.maximum_full_snapshot_archives_to_retain,
-                snapshot_config.maximum_incremental_snapshot_archives_to_retain,
             )
             .unwrap();
         }

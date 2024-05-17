@@ -858,8 +858,6 @@ fn make_full_snapshot_archive(
         bank.get_snapshot_storages(None),
         snapshot_config.archive_format,
         snapshot_config.snapshot_version,
-        snapshot_config.maximum_full_snapshot_archives_to_retain,
-        snapshot_config.maximum_incremental_snapshot_archives_to_retain,
     )?;
 
     Ok(())
@@ -897,8 +895,6 @@ fn make_incremental_snapshot_archive(
         storages,
         snapshot_config.archive_format,
         snapshot_config.snapshot_version,
-        snapshot_config.maximum_full_snapshot_archives_to_retain,
-        snapshot_config.maximum_incremental_snapshot_archives_to_retain,
     )?;
 
     Ok(())
