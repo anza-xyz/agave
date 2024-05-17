@@ -1465,6 +1465,10 @@ pub struct AccountsDb {
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
 
+    /// method to use for accessing storages
+    #[allow(dead_code)]
+    storage_access: StorageAccess,
+
     /// this will live here until the feature for partitioned epoch rewards is activated.
     /// At that point, this and other code can be deleted.
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
@@ -2446,6 +2450,7 @@ impl AccountsDb {
             log_dead_slots: AtomicBool::new(true),
             exhaustively_verify_refcounts: false,
             accounts_file_provider: AccountsFileProvider::default(),
+            storage_access: StorageAccess::default(),
             partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
             epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             test_skip_rewrites_but_include_in_bank_hash: false,
@@ -2546,6 +2551,11 @@ impl AccountsDb {
                 Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
             ));
 
+        let storage_access = accounts_db_config
+            .as_ref()
+            .map(|config| config.storage_access)
+            .unwrap_or_default();
+
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
             paths,
@@ -2567,6 +2577,7 @@ impl AccountsDb {
             partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts,
             test_skip_rewrites_but_include_in_bank_hash,
+            storage_access,
             ..Self::default_with_accounts_index(
                 accounts_index,
                 base_working_path,
