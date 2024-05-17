@@ -103,7 +103,9 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
         programdata_address,
     }) = program_account.state()
     {
-        if let Some(programdata_account) = callbacks.get_account_shared_data(&programdata_address) {
+        if let Some((programdata_account, _slot)) =
+            callbacks.load_account_with(&programdata_address, |_| false)
+        {
             if let Ok(UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: _,
