@@ -1574,25 +1574,21 @@ mod tests {
         ];
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
 
-        let loaded0 = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts0,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            None,
-        );
+        let loaded0 = Ok(LoadedTransaction {
+            accounts: transaction_accounts0,
+            program_indices: vec![],
+            nonce: None,
+            rent: 0,
+            rent_debits: RentDebits::default(),
+        });
 
-        let loaded1 = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts1,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            None,
-        );
+        let loaded1 = Ok(LoadedTransaction {
+            accounts: transaction_accounts1,
+            program_indices: vec![],
+            nonce: None,
+            rent: 0,
+            rent_debits: RentDebits::default(),
+        });
 
         let mut loaded = vec![loaded0, loaded1];
 
@@ -1962,15 +1958,13 @@ mod tests {
             Some(from_account_pre.clone()),
         ));
 
-        let loaded = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            nonce.clone(),
-        );
+        let loaded = Ok(LoadedTransaction {
+            accounts: transaction_accounts,
+            program_indices: vec![],
+            nonce: nonce.clone(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+        });
 
         let mut loaded = vec![loaded];
 
@@ -2068,15 +2062,13 @@ mod tests {
             None,
         ));
 
-        let loaded = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            nonce.clone(),
-        );
+        let loaded = Ok(LoadedTransaction {
+            accounts: transaction_accounts,
+            program_indices: vec![],
+            nonce: nonce.clone(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+        });
 
         let mut loaded = vec![loaded];
 

@@ -986,6 +986,7 @@ mod tests {
         let mut loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
             program_indices: vec![vec![0]],
+            nonce: None,
             rent: 0,
             rent_debits: RentDebits::default(),
         };
@@ -1001,7 +1002,6 @@ mod tests {
             &sanitized_transaction,
             &mut loaded_transaction,
             ComputeBudget::default(),
-            None,
             record_config,
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
@@ -1023,7 +1023,6 @@ mod tests {
             &sanitized_transaction,
             &mut loaded_transaction,
             ComputeBudget::default(),
-            None,
             record_config,
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
@@ -1054,7 +1053,6 @@ mod tests {
             &sanitized_transaction,
             &mut loaded_transaction,
             ComputeBudget::default(),
-            None,
             record_config,
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
@@ -1115,6 +1113,7 @@ mod tests {
                 (key2, AccountSharedData::default()),
             ],
             program_indices: vec![vec![0]],
+            nonce: None,
             rent: 0,
             rent_debits: RentDebits::default(),
         };
@@ -1127,7 +1126,6 @@ mod tests {
             &sanitized_transaction,
             &mut loaded_transaction,
             ComputeBudget::default(),
-            None,
             record_config,
             &mut ExecuteTimings::default(),
             &mut error_metrics,
