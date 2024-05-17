@@ -668,7 +668,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) {
         let mut sysvar_cache = self.sysvar_cache.write().unwrap();
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
+            if let Some((account, _slot)) = callbacks.load_account_with(pubkey, |_| false) {
                 set_sysvar(account.data());
             }
         });

@@ -356,7 +356,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity checking, and can be removed once
             // the cache is deemed to be reliable.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            let account = self.get_account_with_fixed_root_no_cache(vote_pubkey)?;
             VoteAccount::try_from(account).ok()
         };
 
@@ -485,7 +485,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity checking, and can be removed once
             // the cache is deemed to be reliable.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            let account = self.get_account_with_fixed_root_no_cache(vote_pubkey)?;
             VoteAccount::try_from(account).ok()
         };
 

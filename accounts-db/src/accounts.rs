@@ -172,7 +172,11 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(ancestors, pubkey, LoadHint::FixedMaxRoot)
+        self.load_slow(
+            ancestors,
+            pubkey,
+            LoadHint::FixedMaxRootDoNotPopulateReadCache,
+        )
     }
 
     /// same as `load_with_fixed_root` except:
@@ -194,7 +198,11 @@ impl Accounts {
         ancestors: &Ancestors,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(ancestors, pubkey, LoadHint::Unspecified)
+        self.load_slow(
+            ancestors,
+            pubkey,
+            LoadHint::FixedMaxRootDoNotPopulateReadCache,
+        )
     }
 
     /// scans underlying accounts_db for this delta (slot) with a map function

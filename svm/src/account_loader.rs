@@ -6,10 +6,7 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
     },
-    solana_program_runtime::{
-        compute_budget_processor::process_compute_budget_instructions,
-        loaded_programs::ProgramCacheEntry,
-    },
+    solana_program_runtime::compute_budget_processor::process_compute_budget_instructions,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         feature_set::{
@@ -222,7 +219,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     callbacks
                         .load_account_with(key, |account| {
                             // only cache non program accounts
-                            !program_owners.contains(account.owner())
+                            // !program_owners.contains(account.owner())
+                            false
                         })
                         .map(|(mut account, _slot)| {
                             if program_owners.contains(account.owner()) {
@@ -350,7 +348,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 builtins_start_index.saturating_add(owner_index)
             } else {
                 let owner_index = accounts.len();
-                if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                if let Some((owner_account, _slot)) =
+                    callbacks.load_account_with(owner_id, |_| false)
+                {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {

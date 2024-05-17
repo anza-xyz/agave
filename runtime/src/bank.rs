@@ -1820,7 +1820,7 @@ impl Bank {
     where
         F: Fn(&Option<AccountSharedData>) -> AccountSharedData,
     {
-        let old_account = self.get_account_with_fixed_root(pubkey);
+        let old_account = self.get_account_with_fixed_root_no_cache(pubkey);
         let mut new_account = updater(&old_account);
 
         // When new sysvar comes into existence (with RENT_UNADJUSTED_INITIAL_BALANCE lamports),
@@ -2338,7 +2338,7 @@ impl Bank {
             // already have been cached in cached_vote_accounts; so the code
             // below is only for sanity check, and can be removed once
             // vote_accounts_cache_miss_count is shown to be always zero.
-            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            let account = self.get_account_with_fixed_root_no_cache(vote_pubkey)?;
             if account.owner() == &solana_vote_program
                 && VoteState::deserialize(account.data()).is_ok()
             {
@@ -3011,7 +3011,7 @@ impl Bank {
 
     // Used by tests to simulate clusters with precompiles that aren't owned by the native loader
     fn add_precompiled_account_with_owner(&self, program_id: &Pubkey, owner: Pubkey) {
-        if let Some(account) = self.get_account_with_fixed_root(program_id) {
+        if let Some(account) = self.get_account_with_fixed_root_no_cache(program_id) {
             if account.executable() {
                 return;
             } else {
@@ -3610,7 +3610,7 @@ impl Bank {
 
     fn check_message_for_nonce(&self, message: &SanitizedMessage) -> Option<TransactionAccount> {
         let nonce_address = message.get_durable_nonce()?;
-        let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
+        let nonce_account = self.get_account_with_fixed_root_no_cache(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
 
@@ -5080,7 +5080,7 @@ impl Bank {
         new_account: &AccountSharedData,
     ) {
         let old_account_data_size =
-            if let Some(old_account) = self.get_account_with_fixed_root(pubkey) {
+            if let Some(old_account) = self.get_account_with_fixed_root_no_cache(pubkey) {
                 match new_account.lamports().cmp(&old_account.lamports()) {
                     std::cmp::Ordering::Greater => {
                         let increased = new_account.lamports() - old_account.lamports();
@@ -5122,7 +5122,7 @@ impl Bank {
     }
 
     fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
-        match self.get_account_with_fixed_root(pubkey) {
+        match self.get_account_with_fixed_root_no_cache(pubkey) {
             Some(mut account) => {
                 let min_balance = match get_system_account_kind(&account) {
                     Some(SystemAccountKind::Nonce) => self
@@ -5246,6 +5246,14 @@ impl Bank {
                 .unwrap()
                 .register(new_hard_fork_slot);
         }
+    }
+
+    pub fn get_account_with_fixed_root_no_cache(
+        &self,
+        pubkey: &Pubkey,
+    ) -> Option<AccountSharedData> {
+        self.load_account_with(pubkey, |_| false)
+            .map(|(acc, _slot)| acc)
     }
 
     // Hi! leaky abstraction here....
@@ -6427,7 +6435,7 @@ impl Bank {
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
-            if let Some(mut account) = self.get_account_with_fixed_root(feature_id) {
+            if let Some(mut account) = self.get_account_with_fixed_root_no_cache(feature_id) {
                 if let Some(mut feature) = feature::from_account(&account) {
                     feature.activated_at = Some(self.slot());
                     if feature::to_account(&feature, &mut account).is_some() {
@@ -6516,7 +6524,7 @@ impl Bank {
 
         for feature_id in &self.feature_set.inactive {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id) {
+            if let Some(account) = self.get_account_with_fixed_root_no_cache(feature_id) {
                 if let Some(feature) = feature::from_account(&account) {
                     match feature.activated_at {
                         None if include_pending => {
@@ -6653,8 +6661,8 @@ impl Bank {
         new_address: &Pubkey,
         datapoint_name: &'static str,
     ) {
-        if let Some(old_account) = self.get_account_with_fixed_root(old_address) {
-            if let Some(new_account) = self.get_account_with_fixed_root(new_address) {
+        if let Some(old_account) = self.get_account_with_fixed_root_no_cache(old_address) {
+            if let Some(new_account) = self.get_account_with_fixed_root_no_cache(new_address) {
                 datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
                 // Burn lamports in the old account

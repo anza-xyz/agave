@@ -25,7 +25,7 @@ impl SourceBuffer {
     ) -> Result<Self, CoreBpfMigrationError> {
         // The buffer account should exist.
         let buffer_account = bank
-            .get_account_with_fixed_root(buffer_address)
+            .get_account_with_fixed_root_no_cache(buffer_address)
             .ok_or(CoreBpfMigrationError::AccountNotFound(*buffer_address))?;
 
         // The buffer account should be owned by the upgradeable loader.

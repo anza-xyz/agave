@@ -176,6 +176,7 @@ impl ReadOnlyAccountsCache {
     }
 
     pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
+        panic!("haha");
         let measure_store = Measure::start("");
         self.highest_slot_stored.fetch_max(slot, Ordering::Release);
         let account_size = Self::account_size(&account);

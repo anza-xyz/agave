@@ -29,7 +29,7 @@ impl TargetBuiltin {
             CoreBpfMigrationTargetType::Builtin => {
                 // The program account should exist.
                 let program_account = bank
-                    .get_account_with_fixed_root(program_address)
+                    .get_account_with_fixed_root_no_cache(program_address)
                     .ok_or(CoreBpfMigrationError::AccountNotFound(*program_address))?;
 
                 // The program account should be owned by the native loader.
@@ -41,7 +41,10 @@ impl TargetBuiltin {
             }
             CoreBpfMigrationTargetType::Stateless => {
                 // The program account should _not_ exist.
-                if bank.get_account_with_fixed_root(program_address).is_some() {
+                if bank
+                    .get_account_with_fixed_root_no_cache(program_address)
+                    .is_some()
+                {
                     return Err(CoreBpfMigrationError::AccountExists(*program_address));
                 }
 
@@ -53,7 +56,7 @@ impl TargetBuiltin {
 
         // The program data account should not exist.
         if bank
-            .get_account_with_fixed_root(&program_data_address)
+            .get_account_with_fixed_root_no_cache(&program_data_address)
             .is_some()
         {
             return Err(CoreBpfMigrationError::ProgramHasDataAccount(
