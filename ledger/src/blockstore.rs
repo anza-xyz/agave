@@ -498,11 +498,11 @@ impl Blockstore {
     ///
     /// Checks the map `erasure_metas`, if not present scans blockstore. Returns None
     /// if the previous consecutive erasure set is not present in either.
-    fn previous_erasure_set(
-        &self,
+    fn previous_erasure_set<'a>(
+        &'a self,
         erasure_set: ErasureSetId,
-        erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-    ) -> Result<Option<ErasureSetId>> {
+        erasure_metas: &'a BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+    ) -> Result<Option<(ErasureSetId, Cow<ErasureMeta>)>> {
         let (slot, fec_set_index) = erasure_set.store_key();
 
         // Check the previous entry from the in memory map to see if it is the consecutive
@@ -513,13 +513,15 @@ impl Blockstore {
                 Bound::Excluded(erasure_set),
             ))
             .next_back();
-        let candidate_erasure_set = candidate_erasure_entry
+        let candidate_erasure_set_and_meta = candidate_erasure_entry
             .filter(|(_, candidate_erasure_meta)| {
                 candidate_erasure_meta.as_ref().next_fec_set_index() == Some(fec_set_index)
             })
-            .map(|(candidate_erasure_set, _)| *candidate_erasure_set);
-        if candidate_erasure_set.is_some() {
-            return Ok(candidate_erasure_set);
+            .map(|(erasure_set, erasure_meta)| {
+                (*erasure_set, Cow::Borrowed(erasure_meta.as_ref()))
+            });
+        if candidate_erasure_set_and_meta.is_some() {
+            return Ok(candidate_erasure_set_and_meta);
         }
 
         // Consecutive set was not found in memory, scan blockstore for a potential candidate
@@ -549,7 +551,10 @@ impl Blockstore {
             return Err(BlockstoreError::InvalidErasureConfig);
         };
         if next_fec_set_index == fec_set_index {
-            return Ok(Some(candidate_erasure_set));
+            return Ok(Some((
+                candidate_erasure_set,
+                Cow::Owned(candidate_erasure_meta),
+            )));
         }
         Ok(None)
     }
@@ -1903,7 +1908,7 @@ impl Blockstore {
         // If a shred from the previous fec set has already been inserted, check the chaining.
         // Since we cannot compute the previous fec set index, we check the in memory map, otherwise
         // check the previous key from blockstore to see if it is consecutive with our current set.
-        let Some(prev_erasure_set) = self
+        let Some((prev_erasure_set, prev_erasure_meta)) = self
             .previous_erasure_set(erasure_set, erasure_metas)
             .expect("Expect database operations to succeed")
         else {
@@ -1913,19 +1918,6 @@ impl Blockstore {
             return true;
         };
 
-        let Some(prev_erasure_meta) = erasure_metas
-            .get(&prev_erasure_set)
-            .map(WorkingEntry::as_ref)
-            .map(Cow::Borrowed)
-            .or_else(|| self.erasure_meta(prev_erasure_set).unwrap().map(Cow::Owned))
-        else {
-            error!(
-                "The erasure meta for the previous erasure set {prev_erasure_set:?} does not exist.
-                 This should only happen in extreme cases where blockstore cleanup has caught up to the root.
-                 Skipping the backwards chained merkle root consistency check for {erasure_set:?}"
-            );
-            return true;
-        };
         let prev_shred_id = ShredId::new(
             slot,
             prev_erasure_meta
@@ -11316,8 +11308,9 @@ pub mod tests {
         assert_eq!(
             blockstore
                 .previous_erasure_set(erasure_set, &erasure_metas)
-                .unwrap(),
-            Some(erasure_set_prev)
+                .unwrap()
+                .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
+            Some((erasure_set_prev, erasure_meta_prev))
         );
 
         // Erasure meta only contains the older, blockstore has the previous fec set
@@ -11328,8 +11321,9 @@ pub mod tests {
         assert_eq!(
             blockstore
                 .previous_erasure_set(erasure_set, &erasure_metas)
-                .unwrap(),
-            Some(erasure_set_prev)
+                .unwrap()
+                .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
+            Some((erasure_set_prev, erasure_meta_prev))
         );
 
         // Both contain the previous fec set
@@ -11337,23 +11331,26 @@ pub mod tests {
         assert_eq!(
             blockstore
                 .previous_erasure_set(erasure_set, &erasure_metas)
-                .unwrap(),
-            Some(erasure_set_prev)
+                .unwrap()
+                .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
+            Some((erasure_set_prev, erasure_meta_prev))
         );
 
         // Works even if the previous fec set has index 0
         assert_eq!(
             blockstore
                 .previous_erasure_set(erasure_set_prev, &erasure_metas)
-                .unwrap(),
-            Some(erasure_set_0)
+                .unwrap()
+                .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
+            Some((erasure_set_0, erasure_meta_0))
         );
         erasure_metas.remove(&erasure_set_0);
         assert_eq!(
             blockstore
                 .previous_erasure_set(erasure_set_prev, &erasure_metas)
-                .unwrap(),
-            Some(erasure_set_0)
+                .unwrap()
+                .map(|(erasure_set, erasure_meta)| (erasure_set, erasure_meta.into_owned())),
+            Some((erasure_set_0, erasure_meta_0))
         );
 
         // Does not cross slot boundary
