@@ -1,14 +1,8 @@
 use {
     super::{
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
-<<<<<<< HEAD
-        unprocessed_transaction_storage::InsertPacketBatchSummary,
-=======
         packet_deserializer::PacketReceiverStats,
-        unprocessed_transaction_storage::{
-            InsertPacketBatchSummary, UnprocessedTransactionStorage,
-        },
->>>>>>> 0ebabfea63 (Add detailed metrics reporting for packet filtering)
+        unprocessed_transaction_storage::InsertPacketBatchSummary,
     },
     solana_accounts_db::transaction_error_metrics::*,
     solana_poh::poh_recorder::BankStart,
@@ -170,18 +164,9 @@ impl LeaderSlotPacketCountMetrics {
     fn report(&self, id: u32, slot: Slot) {
         datapoint_info!(
             "banking_stage-leader_slot_packet_counts",
-<<<<<<< HEAD
-            ("id", id as i64, i64),
-            ("slot", slot as i64, i64),
-=======
-            "id" => id,
+            ("id", id, i64),
             ("slot", slot, i64),
->>>>>>> 0ebabfea63 (Add detailed metrics reporting for packet filtering)
-            (
-                "total_new_valid_packets",
-                self.total_new_valid_packets,
-                i64
-            ),
+            ("total_new_valid_packets", self.total_new_valid_packets, i64),
             (
                 "newly_failed_sigverify_count",
                 self.newly_failed_sigverify_count,
@@ -207,11 +192,7 @@ impl LeaderSlotPacketCountMetrics {
                 self.excessive_precompile_count,
                 i64
             ),
-            (
-                "invalid_votes_count",
-                self.invalid_votes_count,
-                i64
-            ),
+            ("invalid_votes_count", self.invalid_votes_count, i64),
             (
                 "exceeded_buffer_limit_dropped_packets_count",
                 self.exceeded_buffer_limit_dropped_packets_count,
@@ -247,11 +228,7 @@ impl LeaderSlotPacketCountMetrics {
                 self.retryable_errored_transaction_count,
                 i64
             ),
-            (
-                "retryable_packets_count",
-                self.retryable_packets_count,
-                i64
-            ),
+            ("retryable_packets_count", self.retryable_packets_count, i64),
             (
                 "nonretryable_errored_transactions_count",
                 self.nonretryable_errored_transactions_count,
@@ -307,19 +284,6 @@ impl LeaderSlotPacketCountMetrics {
                 self.end_of_slot_unprocessed_buffer_len,
                 i64
             ),
-<<<<<<< HEAD
-=======
-            (
-                "min_prioritization_fees",
-                self.min_prioritization_fees,
-                i64
-            ),
-            (
-                "max_prioritization_fees",
-                self.max_prioritization_fees,
-                i64
-            ),
->>>>>>> 0ebabfea63 (Add detailed metrics reporting for packet filtering)
         );
     }
 }
