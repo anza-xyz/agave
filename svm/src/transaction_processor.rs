@@ -356,11 +356,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 saturating_add_assign!(*count, 1);
                             }
                             Entry::Vacant(entry) => {
-                                if callbacks
-                                    .account_matches_owners(key, program_owners)
-                                    .is_some()
-                                {
-                                    entry.insert(1);
+                                if let Some(account) = callbacks.get_account_shared_data(key) {
+                                    if program_owners.contains(account.owner()) {
+                                        entry.insert(1);
+                                    }
                                 }
                             }
                         });
