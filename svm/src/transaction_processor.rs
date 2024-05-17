@@ -212,7 +212,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         if program_cache_for_tx_batch.borrow().hit_max_limit {
             const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
-            let loaded_transactions = vec![(Err(ERROR), None); sanitized_txs.len()];
+            let loaded_transactions = vec![Err(ERROR); sanitized_txs.len()];
             let execution_results =
                 vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
             return LoadAndExecuteSanitizedTransactionsOutput {
@@ -239,9 +239,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let execution_results: Vec<TransactionExecutionResult> = loaded_transactions
             .iter_mut()
             .zip(sanitized_txs.iter())
-            .map(|(accs, tx)| match accs {
-                (Err(e), _nonce) => TransactionExecutionResult::NotExecuted(e.clone()),
-                (Ok(loaded_transaction), nonce) => {
+            .map(|(load_result, tx)| match load_result {
+                Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
+                Ok(loaded_transaction) => {
                     let compute_budget =
                         if let Some(compute_budget) = self.runtime_config.compute_budget {
                             compute_budget
@@ -269,7 +269,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         tx,
                         loaded_transaction,
                         compute_budget,
-                        nonce.as_ref().map(DurableNonceFee::from),
                         recording_config,
                         timings,
                         error_counters,
@@ -554,7 +553,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         tx: &SanitizedTransaction,
         loaded_transaction: &mut LoadedTransaction,
         compute_budget: ComputeBudget,
-        durable_nonce_fee: Option<DurableNonceFee>,
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         error_counters: &mut TransactionErrorMetrics,
@@ -727,7 +725,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 status,
                 log_messages,
                 inner_instructions,
-                durable_nonce_fee,
+                durable_nonce_fee: loaded_transaction.nonce.as_ref().map(DurableNonceFee::from),
                 return_data,
                 executed_units,
                 accounts_data_len_delta,

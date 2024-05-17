@@ -38,12 +38,13 @@ use {
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = (transaction::Result<()>, Option<NoncePartial>, Option<u64>);
-pub type TransactionLoadResult = (Result<LoadedTransaction>, Option<NonceFull>);
+pub type TransactionLoadResult = Result<LoadedTransaction>;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
     pub program_indices: TransactionProgramIndices,
+    pub nonce: Option<NonceFull>,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
 }
@@ -140,43 +141,21 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                         feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
                     )
                 } else {
-                    return (Err(TransactionError::BlockhashNotFound), None);
+                    return Err(TransactionError::BlockhashNotFound);
                 };
 
                 // load transactions
-                let loaded_transaction = match load_transaction_accounts(
+                load_transaction_accounts(
                     callbacks,
                     message,
+                    nonce.as_ref(),
                     fee,
                     error_counters,
                     account_overrides,
                     loaded_programs,
-                ) {
-                    Ok(loaded_transaction) => loaded_transaction,
-                    Err(e) => return (Err(e), None),
-                };
-
-                // Update nonce with fee-subtracted accounts
-                let Some((fee_payer_address, fee_payer_account)) =
-                    loaded_transaction.fee_payer_account()
-                else {
-                    // This error branch is never reached, because `load_transaction_accounts`
-                    // already validates the fee payer account.
-                    return (Err(TransactionError::AccountNotFound), None);
-                };
-
-                let nonce = nonce.as_ref().map(|nonce| {
-                    NonceFull::from_partial(
-                        nonce,
-                        fee_payer_address,
-                        fee_payer_account.clone(),
-                        &loaded_transaction.rent_debits,
-                    )
-                });
-
-                (Ok(loaded_transaction), nonce)
+                )
             }
-            (_, (Err(e), _nonce, _lamports_per_signature)) => (Err(e.clone()), None),
+            (_, (Err(e), _nonce, _lamports_per_signature)) => Err(e.clone()),
         })
         .collect()
 }
@@ -184,6 +163,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     message: &SanitizedMessage,
+    nonce: Option<&NoncePartial>,
     fee: u64,
     error_counters: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
@@ -317,6 +297,19 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         return Err(TransactionError::AccountNotFound);
     }
 
+    // Update nonce with fee-subtracted accounts
+    let nonce = nonce.map(|nonce| {
+        // SAFETY: The first accounts entry must be a validated fee payer because
+        // validated_fee_payer must be true at this point.
+        let (fee_payer_address, fee_payer_account) = accounts.first().unwrap();
+        NonceFull::from_partial(
+            nonce,
+            fee_payer_address,
+            fee_payer_account.clone(),
+            &rent_debits,
+        )
+    });
+
     let builtins_start_index = accounts.len();
     let program_indices = message
         .instructions()
@@ -384,6 +377,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     Ok(LoadedTransaction {
         accounts,
         program_indices,
+        nonce,
         rent: tx_rent,
         rent_debits,
     })
