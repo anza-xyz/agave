@@ -227,13 +227,7 @@ mod tests {
 
         // Some context (such as invoke_signed_unchecked where)
         // a &StableInstruction is needed
-
         let stabilizer = InstructionStabilizer::stabilize(&instruction);
-        // This call to drop correctly doesn't compile, due to the
-        // `PhantomData<&'a Instruction>` held by the stabilizer.
-        // See `instruction_stabilizer_borrow_scope`
-        //
-        // drop(instruction);
         let stable: &StableInstruction = stabilizer.stable_instruction_ref();
         assert_eq!(&instruction.program_id, &stable.program_id);
         assert_eq!(&instruction.accounts, &stable.accounts);
@@ -266,8 +260,6 @@ mod tests {
                 let stabilizer = InstructionStabilizer::stabilize(&instruction);
                 // This call to drop correctly doesn't compile, due to the
                 // `PhantomData<&'a Instruction>` held by the stabilizer.
-                // See `instruction_stabilizer_borrow_scope`
-                //
                 drop(instruction);
                 // Invalid instruction borrow, as we've dropped instruction!
                 let _stable: &StableInstruction = stabilizer.stable_instruction_ref();
