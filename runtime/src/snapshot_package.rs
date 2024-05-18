@@ -8,13 +8,12 @@ use {
     log::*,
     solana_accounts_db::{
         accounts::Accounts,
-        accounts_db::{AccountStorageEntry, AccountsDb},
+        accounts_db::AccountStorageEntry,
         accounts_hash::{AccountsHash, AccountsHashKind},
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_sdk::{
-        clock::Slot, feature_set, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
+        clock::Slot, rent_collector::RentCollector, sysvar::epoch_schedule::EpochSchedule,
     },
     std::{
         path::{Path, PathBuf},
@@ -37,7 +36,6 @@ pub struct AccountsPackage {
     pub accounts: Arc<Accounts>,
     pub epoch_schedule: EpochSchedule,
     pub rent_collector: RentCollector,
-    pub is_incremental_accounts_hash_feature_enabled: bool,
 
     /// Supplemental information needed for snapshots
     pub snapshot_info: Option<SupplementalSnapshotInfo>,
@@ -54,8 +52,8 @@ impl AccountsPackage {
         package_kind: AccountsPackageKind,
         bank: &Bank,
         bank_snapshot_info: &BankSnapshotInfo,
-        full_snapshot_archives_dir: impl AsRef<Path>,
-        incremental_snapshot_archives_dir: impl AsRef<Path>,
+        full_snapshot_archives_dir: impl Into<PathBuf>,
+        incremental_snapshot_archives_dir: impl Into<PathBuf>,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
         archive_format: ArchiveFormat,
         snapshot_version: SnapshotVersion,
@@ -81,10 +79,8 @@ impl AccountsPackage {
             bank_snapshot_dir: bank_snapshot_info.snapshot_dir.clone(),
             archive_format,
             snapshot_version,
-            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .as_ref()
-                .to_path_buf(),
+            full_snapshot_archives_dir: full_snapshot_archives_dir.into(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.into(),
             epoch_accounts_hash: bank.get_epoch_accounts_hash_to_serialize(),
         };
         Self::_new(
@@ -139,9 +135,6 @@ impl AccountsPackage {
         accounts_hash_for_testing: Option<AccountsHash>,
         snapshot_info: Option<SupplementalSnapshotInfo>,
     ) -> Self {
-        let is_incremental_accounts_hash_feature_enabled = bank
-            .feature_set
-            .is_active(&feature_set::incremental_snapshot_only_incremental_hash_calculation::id());
         Self {
             package_kind,
             slot: bank.slot(),
@@ -152,7 +145,6 @@ impl AccountsPackage {
             accounts: bank.accounts(),
             epoch_schedule: bank.epoch_schedule().clone(),
             rent_collector: bank.rent_collector().clone(),
-            is_incremental_accounts_hash_feature_enabled,
             snapshot_info,
             enqueued: Instant::now(),
         }
@@ -160,7 +152,9 @@ impl AccountsPackage {
 
     /// Create a new Accounts Package where basically every field is defaulted.
     /// Only use for tests; many of the fields are invalid!
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
+        use solana_accounts_db::accounts_db::AccountsDb;
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         Self {
@@ -173,7 +167,6 @@ impl AccountsPackage {
             accounts: Arc::new(accounts),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),
-            is_incremental_accounts_hash_feature_enabled: bool::default(),
             snapshot_info: Some(SupplementalSnapshotInfo {
                 bank_snapshot_dir: PathBuf::default(),
                 archive_format: ArchiveFormat::Tar,

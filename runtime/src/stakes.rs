@@ -50,7 +50,8 @@ pub enum InvalidCacheEntryReason {
 
 type StakeAccount = stake_account::StakeAccount<Delegation>;
 
-#[derive(Default, Debug, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Default, Debug)]
 pub(crate) struct StakesCache(RwLock<Stakes<StakeAccount>>);
 
 impl StakesCache {
@@ -179,7 +180,8 @@ impl StakesCache {
 /// account and StakeStateV2 deserialized from the account. Doing so, will remove
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
-#[derive(Default, Clone, PartialEq, Debug, Deserialize, Serialize, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Default, Clone, PartialEq, Debug, Deserialize, Serialize)]
 pub struct Stakes<T: Clone> {
     /// vote accounts
     vote_accounts: VoteAccounts,
@@ -204,7 +206,8 @@ pub struct Stakes<T: Clone> {
 // Below type allows EpochStakes to include either a Stakes<StakeAccount> or
 // Stakes<Delegation> and so bypass the conversion cost between the two at the
 // epoch boundary.
-#[derive(Debug, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug)]
 pub enum StakesEnum {
     Accounts(Stakes<StakeAccount>),
     Delegations(Stakes<Delegation>),
@@ -525,6 +528,7 @@ impl From<Stakes<Delegation>> for StakesEnum {
 // Therefore, if one side is Stakes<StakeAccount> and the other is a
 // Stakes<Delegation> we convert the former one to Stakes<Delegation> before
 // comparing for equality.
+#[cfg(feature = "dev-context-only-utils")]
 impl PartialEq<StakesEnum> for StakesEnum {
     fn eq(&self, other: &StakesEnum) -> bool {
         match (self, other) {

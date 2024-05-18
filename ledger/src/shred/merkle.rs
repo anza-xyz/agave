@@ -250,6 +250,7 @@ impl ShredData {
     fn from_recovered_shard(
         signature: &Signature,
         chained_merkle_root: &Option<Hash>,
+        retransmitter_signature: &Option<Signature>,
         mut shard: Vec<u8>,
     ) -> Result<Self, Error> {
         let shard_size = shard.len();
@@ -281,6 +282,9 @@ impl ShredData {
         };
         if let Some(chained_merkle_root) = chained_merkle_root {
             shred.set_chained_merkle_root(chained_merkle_root)?;
+        }
+        if let Some(signature) = retransmitter_signature {
+            shred.set_retransmitter_signature(signature)?;
         }
         shred.sanitize()?;
         Ok(shred)
@@ -331,6 +335,48 @@ impl ShredData {
         let proof = get_merkle_proof(shred, proof_offset, proof_size).ok()?;
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
+    }
+
+    pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
+        let offset = self.retransmitter_signature_offset()?;
+        self.payload
+            .get(offset..offset + SIZE_OF_SIGNATURE)
+            .map(|bytes| <[u8; SIZE_OF_SIGNATURE]>::try_from(bytes).unwrap())
+            .map(Signature::from)
+            .ok_or(Error::InvalidPayloadSize(self.payload.len()))
+    }
+
+    fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
+        let offset = self.retransmitter_signature_offset()?;
+        let Some(buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
+            return Err(Error::InvalidPayloadSize(self.payload.len()));
+        };
+        buffer.copy_from_slice(signature.as_ref());
+        Ok(())
+    }
+
+    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
+        let ShredVariant::MerkleData {
+            proof_size,
+            chained,
+            resigned,
+        } = self.common_header.shred_variant
+        else {
+            return Err(Error::InvalidShredVariant);
+        };
+        Self::get_retransmitter_signature_offset(proof_size, chained, resigned)
+    }
+
+    pub(super) fn get_retransmitter_signature_offset(
+        proof_size: u8,
+        chained: bool,
+        resigned: bool,
+    ) -> Result<usize, Error> {
+        if !resigned {
+            return Err(Error::InvalidShredVariant);
+        }
+        let proof_offset = Self::get_proof_offset(proof_size, chained, resigned)?;
+        Ok(proof_offset + usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY)
     }
 }
 
@@ -442,6 +488,7 @@ impl ShredCode {
         common_header: ShredCommonHeader,
         coding_header: CodingShredHeader,
         chained_merkle_root: &Option<Hash>,
+        retransmitter_signature: &Option<Signature>,
         mut shard: Vec<u8>,
     ) -> Result<Self, Error> {
         let ShredVariant::MerkleCode {
@@ -471,6 +518,9 @@ impl ShredCode {
         };
         if let Some(chained_merkle_root) = chained_merkle_root {
             shred.set_chained_merkle_root(chained_merkle_root)?;
+        }
+        if let Some(signature) = retransmitter_signature {
+            shred.set_retransmitter_signature(signature)?;
         }
         shred.sanitize()?;
         Ok(shred)
@@ -523,6 +573,48 @@ impl ShredCode {
         let proof = get_merkle_proof(shred, proof_offset, proof_size).ok()?;
         let node = get_merkle_node(shred, SIZE_OF_SIGNATURE..proof_offset).ok()?;
         get_merkle_root(index, node, proof).ok()
+    }
+
+    pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error> {
+        let offset = self.retransmitter_signature_offset()?;
+        self.payload
+            .get(offset..offset + SIZE_OF_SIGNATURE)
+            .map(|bytes| <[u8; SIZE_OF_SIGNATURE]>::try_from(bytes).unwrap())
+            .map(Signature::from)
+            .ok_or(Error::InvalidPayloadSize(self.payload.len()))
+    }
+
+    fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
+        let offset = self.retransmitter_signature_offset()?;
+        let Some(buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
+            return Err(Error::InvalidPayloadSize(self.payload.len()));
+        };
+        buffer.copy_from_slice(signature.as_ref());
+        Ok(())
+    }
+
+    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
+        let ShredVariant::MerkleCode {
+            proof_size,
+            chained,
+            resigned,
+        } = self.common_header.shred_variant
+        else {
+            return Err(Error::InvalidShredVariant);
+        };
+        Self::get_retransmitter_signature_offset(proof_size, chained, resigned)
+    }
+
+    pub(super) fn get_retransmitter_signature_offset(
+        proof_size: u8,
+        chained: bool,
+        resigned: bool,
+    ) -> Result<usize, Error> {
+        if !resigned {
+            return Err(Error::InvalidShredVariant);
+        }
+        let proof_offset = Self::get_proof_offset(proof_size, chained, resigned)?;
+        Ok(proof_offset + usize::from(proof_size) * SIZE_OF_MERKLE_PROOF_ENTRY)
     }
 }
 
@@ -833,13 +925,17 @@ pub(super) fn recover(
     reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<Vec<Shred>, Error> {
     // Grab {common, coding} headers from first coding shred.
-    let (common_header, coding_header, chained_merkle_root) = shreds
+    // Incoming shreds are resigned immediately after signature verification,
+    // so we can just grab the retransmitter signature from one of the
+    // available shreds and attach it to the recovered shreds.
+    let (common_header, coding_header, chained_merkle_root, retransmitter_signature) = shreds
         .iter()
         .find_map(|shred| {
             let Shred::ShredCode(shred) = shred else {
                 return None;
             };
             let chained_merkle_root = shred.chained_merkle_root().ok();
+            let retransmitter_signature = shred.retransmitter_signature().ok();
             let position = u32::from(shred.coding_header.position);
             let common_header = ShredCommonHeader {
                 index: shred.common_header.index.checked_sub(position)?,
@@ -849,7 +945,12 @@ pub(super) fn recover(
                 position: 0u16,
                 ..shred.coding_header
             };
-            Some((common_header, coding_header, chained_merkle_root))
+            Some((
+                common_header,
+                coding_header,
+                chained_merkle_root,
+                retransmitter_signature,
+            ))
         })
         .ok_or(TooFewParityShards)?;
     debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
@@ -863,6 +964,7 @@ pub(super) fn recover(
             return Err(Error::InvalidShredVariant);
         }
     };
+    debug_assert!(!resigned || retransmitter_signature.is_some());
     // Verify that shreds belong to the same erasure batch
     // and have consistent headers.
     debug_assert!(shreds.iter().all(|shred| {
@@ -941,6 +1043,7 @@ pub(super) fn recover(
                 let shred = ShredData::from_recovered_shard(
                     &common_header.signature,
                     &chained_merkle_root,
+                    &retransmitter_signature,
                     shard,
                 )?;
                 let ShredCommonHeader {
@@ -978,6 +1081,7 @@ pub(super) fn recover(
                     common_header,
                     coding_header,
                     &chained_merkle_root,
+                    &retransmitter_signature,
                     shard,
                 )?;
                 Ok(Shred::ShredCode(shred))

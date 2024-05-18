@@ -10,8 +10,8 @@ use {
             AccountMeta, StoredAccountMeta, StoredMeta, StoredMetaWriteVersion,
         },
         accounts_file::{
-            AccountsFileError, MatchAccountOwnerError, Result, StoredAccountsInfo,
-            ALIGN_BOUNDARY_OFFSET,
+            AccountsFileError, InternalsForArchive, MatchAccountOwnerError, Result, StorageAccess,
+            StoredAccountsInfo, ALIGN_BOUNDARY_OFFSET,
         },
         accounts_hash::AccountHash,
         accounts_index::ZeroLamport,
@@ -203,17 +203,25 @@ struct AccountOffsets {
     stored_size_aligned: usize,
 }
 
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug)]
+enum AppendVecFileBacking {
+    /// A file-backed block of memory that is used to store the data for each appended item.
+    MmapOnly(MmapMut),
+}
+
 /// A thread-safe, file-backed block of memory used to store `Account` instances. Append operations
 /// are serialized such that only one thread updates the internal `append_lock` at a time. No
 /// restrictions are placed on reading. That is, one may read items from one thread while another
 /// is appending new items.
-#[derive(Debug, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug)]
 pub struct AppendVec {
     /// The file path where the data is stored.
     path: PathBuf,
 
-    /// A file-backed block of memory that is used to store the data for each appended item.
-    map: MmapMut,
+    /// access the file data
+    backing: AppendVecFileBacking,
 
     /// A lock used to serialize append operations.
     append_lock: Mutex<()>,
@@ -277,8 +285,8 @@ impl AppendVec {
         data.flush().unwrap();
 
         //UNSAFE: Required to create a Mmap
-        let map = unsafe { MmapMut::map_mut(&data) };
-        let map = map.unwrap_or_else(|e| {
+        let mmap = unsafe { MmapMut::map_mut(&data) };
+        let mmap = mmap.unwrap_or_else(|e| {
             error!(
                 "Failed to map the data file (size: {}): {}.\n
                     Please increase sysctl vm.max_map_count or equivalent for your platform.",
@@ -290,7 +298,7 @@ impl AppendVec {
 
         AppendVec {
             path: file,
-            map,
+            backing: AppendVecFileBacking::MmapOnly(mmap),
             // This mutex forces append to be single threaded, but concurrent with reads
             // See UNSAFE usage in `append_ptr`
             append_lock: Mutex::new(()),
@@ -321,8 +329,9 @@ impl AppendVec {
     }
 
     pub fn flush(&self) -> Result<()> {
-        self.map.flush()?;
-        Ok(())
+        match &self.backing {
+            AppendVecFileBacking::MmapOnly(mmap) => Ok(mmap.flush()?),
+        }
     }
 
     pub fn reset(&self) {
@@ -330,6 +339,13 @@ impl AppendVec {
         // See UNSAFE usage in `append_ptr`
         let _lock = self.append_lock.lock().unwrap();
         self.current_len.store(0, Ordering::Release);
+    }
+
+    /// when we can use file i/o as opposed to mmap, this is the trigger to tell us
+    /// that no more appending will occur and we can close the initial mmap.
+    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
+        // this is a no-op when we are already a mmap
+        None
     }
 
     /// how many more bytes can be stored in this append vec
@@ -350,9 +366,13 @@ impl AppendVec {
         self.file_size
     }
 
-    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
+    pub fn new_from_file(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<(Self, usize)> {
         let path = path.into();
-        let new = Self::new_from_file_unchecked(path, current_len)?;
+        let new = Self::new_from_file_unchecked(path, current_len, storage_access)?;
 
         let (sanitized, num_accounts) = new.sanitize_layout_and_length();
         if !sanitized {
@@ -367,7 +387,11 @@ impl AppendVec {
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
-    pub fn new_from_file_unchecked(path: impl Into<PathBuf>, current_len: usize) -> Result<Self> {
+    pub fn new_from_file_unchecked(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        _storage_access: StorageAccess,
+    ) -> Result<Self> {
         let path = path.into();
         let file_size = std::fs::metadata(&path)?.len();
         Self::sanitize_len_and_size(current_len, file_size as usize)?;
@@ -378,7 +402,7 @@ impl AppendVec {
             .create(false)
             .open(&path)?;
 
-        let map = unsafe {
+        let mmap = unsafe {
             let result = MmapMut::map_mut(&data);
             if result.is_err() {
                 // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
@@ -390,7 +414,7 @@ impl AppendVec {
 
         Ok(AppendVec {
             path,
-            map,
+            backing: AppendVecFileBacking::MmapOnly(mmap),
             append_lock: Mutex::new(()),
             current_len: AtomicUsize::new(current_len),
             file_size,
@@ -431,30 +455,38 @@ impl AppendVec {
         if overflow || next > self.len() {
             return None;
         }
-        let data = &self.map[offset..next];
-        let next = u64_align!(next);
+        match &self.backing {
+            AppendVecFileBacking::MmapOnly(mmap) => {
+                let data = &mmap[offset..next];
+                let next = u64_align!(next);
 
-        Some((
-            //UNSAFE: This unsafe creates a slice that represents a chunk of self.map memory
-            //The lifetime of this slice is tied to &self, since it points to self.map memory
-            unsafe { std::slice::from_raw_parts(data.as_ptr(), size) },
-            next,
-        ))
+                Some((
+                    //UNSAFE: This unsafe creates a slice that represents a chunk of self.map memory
+                    //The lifetime of this slice is tied to &self, since it points to self.map memory
+                    unsafe { std::slice::from_raw_parts(data.as_ptr(), size) },
+                    next,
+                ))
+            }
+        }
     }
 
     /// Copy `len` bytes from `src` to the first 64-byte boundary after position `offset` of
     /// the internal buffer. Then update `offset` to the first byte after the copied data.
     fn append_ptr(&self, offset: &mut usize, src: *const u8, len: usize) {
         let pos = u64_align!(*offset);
-        let data = &self.map[pos..(pos + len)];
-        //UNSAFE: This mut append is safe because only 1 thread can append at a time
-        //Mutex<()> guarantees exclusive write access to the memory occupied in
-        //the range.
-        unsafe {
-            let dst = data.as_ptr() as *mut _;
-            ptr::copy(src, dst, len);
-        };
-        *offset = pos + len;
+        match &self.backing {
+            AppendVecFileBacking::MmapOnly(mmap) => {
+                let data = &mmap[pos..(pos + len)];
+                //UNSAFE: This mut append is safe because only 1 thread can append at a time
+                //Mutex<()> guarantees exclusive write access to the memory occupied in
+                //the range.
+                unsafe {
+                    let dst = data.as_ptr() as *mut _;
+                    ptr::copy(src, dst, len);
+                };
+                *offset = pos + len;
+            }
+        }
     }
 
     /// Copy each value in `vals`, in order, to the first 64-byte boundary after position `offset`.
@@ -789,9 +821,17 @@ impl AppendVec {
         })
     }
 
-    /// Returns a slice suitable for use when archiving append vecs
-    pub fn data_for_archive(&self) -> &[u8] {
-        self.map.as_ref()
+    /// true if this storage can possibly be appended to (independent of capacity check)
+    pub(crate) fn can_append(&self) -> bool {
+        // always can append to a mmapped append vec
+        true
+    }
+
+    /// Returns the way to access this accounts file when archiving
+    pub(crate) fn internals_for_archive(&self) -> InternalsForArchive {
+        match &self.backing {
+            AppendVecFileBacking::MmapOnly(mmap) => InternalsForArchive::Mmap(mmap),
+        }
     }
 }
 
@@ -808,6 +848,7 @@ pub mod tests {
             timing::duration_as_ms,
         },
         std::{mem::ManuallyDrop, time::Instant},
+        test_case::test_case,
     };
 
     impl AppendVec {
@@ -914,8 +955,8 @@ pub mod tests {
         let _av = AppendVec::new(&path.path, true, 0);
     }
 
-    #[test]
-    fn test_append_vec_new_from_file_bad_size() {
+    #[test_case(StorageAccess::Mmap)]
+    fn test_append_vec_new_from_file_bad_size(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_append_vec_new_from_file_bad_size");
         let path = &file.path;
 
@@ -926,7 +967,7 @@ pub mod tests {
             .open(path)
             .expect("create a test file for mmap");
 
-        let result = AppendVec::new_from_file(path, 0);
+        let result = AppendVec::new_from_file(path, 0, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("too small file size 0 for AppendVec"));
     }
 
@@ -1159,8 +1200,8 @@ pub mod tests {
         );
     }
 
-    #[test]
-    fn test_new_from_file_crafted_zero_lamport_account() {
+    #[test_case(StorageAccess::Mmap)]
+    fn test_new_from_file_crafted_zero_lamport_account(storage_access: StorageAccess) {
         // This test verifies that when we sanitize on load, that we fail sanitizing if we load an account with zero lamports that does not have all default value fields.
         // This test writes an account with zero lamports, but with 3 bytes of data. On load, it asserts that load fails.
         // It used to be possible to use the append vec api to write an account to an append vec with zero lamports, but with non-default values for other account fields.
@@ -1227,12 +1268,12 @@ pub mod tests {
             writer.write_all(append_vec_data.as_slice()).unwrap();
         }
 
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test]
-    fn test_new_from_file_crafted_data_len() {
+    #[test_case(StorageAccess::Mmap)]
+    fn test_new_from_file_crafted_data_len(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_file_crafted_data_len");
         let path = &file.path;
         let accounts_len = {
@@ -1259,19 +1300,19 @@ pub mod tests {
             av.flush().unwrap();
             av.len()
         };
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test]
-    fn test_new_from_file_too_large_data_len() {
+    #[test_case(StorageAccess::Mmap)]
+    fn test_new_from_file_too_large_data_len(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_file_too_large_data_len");
         let path = &file.path;
         let accounts_len = {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(path, true, 1024 * 1024));
 
-            let too_large_data_len = u64::max_value();
+            let too_large_data_len = u64::MAX;
             av.append_account_test(&create_test_account(10)).unwrap();
 
             av.get_stored_account_meta_callback(0, |account| {
@@ -1292,12 +1333,12 @@ pub mod tests {
             av.flush().unwrap();
             av.len()
         };
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test]
-    fn test_new_from_file_crafted_executable() {
+    #[test_case(StorageAccess::Mmap)]
+    fn test_new_from_file_crafted_executable(storage_access: StorageAccess) {
         let file = get_append_vec_path("test_new_from_crafted_executable");
         let path = &file.path;
         let accounts_len = {
@@ -1310,7 +1351,7 @@ pub mod tests {
                 av.append_account_test(&executable_account).unwrap()
             };
 
-            let crafted_executable = u8::max_value() - 1;
+            let crafted_executable = u8::MAX - 1;
 
             // reload accounts
             // ensure false is 0u8 and true is 1u8 actually
@@ -1364,7 +1405,7 @@ pub mod tests {
             av.flush().unwrap();
             av.len()
         };
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, storage_access);
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 

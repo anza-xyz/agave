@@ -11,7 +11,6 @@ use {
     },
     solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
     std::{
-        io::Read,
         mem,
         path::{Path, PathBuf},
     },
@@ -49,6 +48,13 @@ pub enum MatchAccountOwnerError {
     UnableToLoad,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum StorageAccess {
+    #[default]
+    /// storages should be accessed by Mmap
+    Mmap,
+}
+
 pub type Result<T> = std::result::Result<T, AccountsFileError>;
 
 #[derive(Debug)]
@@ -64,9 +70,30 @@ impl AccountsFile {
     ///
     /// The second element of the returned tuple is the number of accounts in the
     /// accounts file.
-    pub fn new_from_file(path: impl Into<PathBuf>, current_len: usize) -> Result<(Self, usize)> {
-        let (av, num_accounts) = AppendVec::new_from_file(path, current_len)?;
+    pub fn new_from_file(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<(Self, usize)> {
+        let (av, num_accounts) = AppendVec::new_from_file(path, current_len, storage_access)?;
         Ok((Self::AppendVec(av), num_accounts))
+    }
+
+    /// true if this storage can possibly be appended to (independent of capacity check)
+    pub(crate) fn can_append(&self) -> bool {
+        match self {
+            Self::AppendVec(av) => av.can_append(),
+            // once created, tiered storages cannot be appended to
+            Self::TieredStorage(_) => false,
+        }
+    }
+
+    /// if storage is not readonly, reopen another instance that is read only
+    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
+        match self {
+            Self::AppendVec(av) => av.reopen_as_readonly().map(Self::AppendVec),
+            Self::TieredStorage(_) => None,
+        }
     }
 
     pub fn flush(&self) -> Result<()> {
@@ -259,14 +286,15 @@ impl AccountsFile {
         }
     }
 
-    /// Returns a Read implementation suitable for use when archiving accounts files
-    pub fn data_for_archive(&self) -> impl Read + '_ {
+    /// Returns the way to access this accounts file when archiving
+    pub fn internals_for_archive(&self) -> InternalsForArchive {
         match self {
-            Self::AppendVec(av) => av.data_for_archive(),
-            Self::TieredStorage(ts) => ts
-                .reader()
-                .expect("must be a reader when archiving")
-                .data_for_archive(),
+            Self::AppendVec(av) => av.internals_for_archive(),
+            Self::TieredStorage(ts) => InternalsForArchive::Mmap(
+                ts.reader()
+                    .expect("must be a reader when archiving")
+                    .data_for_archive(),
+            ),
         }
     }
 }
@@ -288,6 +316,15 @@ impl AccountsFileProvider {
             Self::HotStorage => AccountsFile::TieredStorage(TieredStorage::new_writable(path)),
         }
     }
+}
+
+/// The access method to use when archiving an AccountsFile
+#[derive(Debug)]
+pub enum InternalsForArchive<'a> {
+    /// Accessing the internals is done via Mmap
+    Mmap(&'a [u8]),
+    /// Accessing the internals is done via File I/O
+    FileIo(&'a Path),
 }
 
 /// Information after storing accounts

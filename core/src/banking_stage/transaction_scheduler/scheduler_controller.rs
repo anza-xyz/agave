@@ -385,6 +385,8 @@ impl SchedulerController {
                 if result.is_err() {
                     saturating_add_assign!(num_dropped_on_age_and_status, 1);
                     self.container.remove_by_id(&id.id);
+                } else {
+                    self.container.push_id_into_queue(*id);
                 }
             }
         }
@@ -436,7 +438,10 @@ impl SchedulerController {
 
         let (received_packet_results, receive_time_us) = measure_us!(self
             .packet_receiver
-            .receive_packets(recv_timeout, remaining_queue_capacity, |_| true));
+            .receive_packets(recv_timeout, remaining_queue_capacity, |packet| {
+                packet.check_excessive_precompiles()?;
+                Ok(packet)
+            }));
 
         self.timing_metrics.update(|timing_metrics| {
             saturating_add_assign!(timing_metrics.receive_time_us, receive_time_us);

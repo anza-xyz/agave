@@ -20,7 +20,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
-        accounts_file::{AccountsFile, AccountsFileError},
+        accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
         hardened_unpack::{self, ParallelSelector, UnpackError},
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
@@ -823,17 +823,21 @@ pub fn archive_snapshot_package(
                     storage.slot(),
                     storage.append_vec_id(),
                 ));
-                let mut header = tar::Header::new_gnu();
-                header.set_path(path_in_archive).map_err(|err| {
-                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                })?;
-                header.set_size(storage.capacity());
-                header.set_cksum();
-                archive
-                    .append(&header, storage.accounts.data_for_archive())
-                    .map_err(|err| {
-                        E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                    })?;
+                match storage.accounts.internals_for_archive() {
+                    InternalsForArchive::Mmap(data) => {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_path(path_in_archive).map_err(|err| {
+                            E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                        })?;
+                        header.set_size(storage.capacity());
+                        header.set_cksum();
+                        archive.append(&header, data)
+                    }
+                    InternalsForArchive::FileIo(path) => {
+                        archive.append_path_with_name(path, path_in_archive)
+                    }
+                }
+                .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;
@@ -1289,6 +1293,7 @@ pub fn verify_and_unarchive_snapshots(
     full_snapshot_archive_info: &FullSnapshotArchiveInfo,
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
+    storage_access: StorageAccess,
 ) -> Result<(
     UnarchivedSnapshot,
     Option<UnarchivedSnapshot>,
@@ -1311,6 +1316,7 @@ pub fn verify_and_unarchive_snapshots(
         full_snapshot_archive_info.archive_format(),
         parallel_divisions,
         next_append_vec_id.clone(),
+        storage_access,
     )?;
 
     let unarchived_incremental_snapshot =
@@ -1324,6 +1330,7 @@ pub fn verify_and_unarchive_snapshots(
                 incremental_snapshot_archive_info.archive_format(),
                 parallel_divisions,
                 next_append_vec_id.clone(),
+                storage_access,
             )?;
             Some(unarchived_incremental_snapshot)
         } else {
@@ -1449,6 +1456,7 @@ fn unarchive_snapshot(
     archive_format: ArchiveFormat,
     parallel_divisions: usize,
     next_append_vec_id: Arc<AtomicAccountsFileId>,
+    storage_access: StorageAccess,
 ) -> Result<UnarchivedSnapshot> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(unpacked_snapshots_dir_prefix)
@@ -1474,6 +1482,7 @@ fn unarchive_snapshot(
             num_rebuilder_threads,
             next_append_vec_id,
             SnapshotFrom::Archive,
+            storage_access,
         )?,
         measure_name
     );
@@ -1524,6 +1533,7 @@ pub fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
+    storage_access: StorageAccess,
 ) -> Result<AccountStorageMap> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
     let accounts_hardlinks = bank_snapshot_dir.join(SNAPSHOT_ACCOUNTS_HARDLINKS);
@@ -1596,6 +1606,7 @@ pub fn rebuild_storages_from_snapshot_dir(
         num_rebuilder_threads,
         next_append_vec_id,
         SnapshotFrom::Dir,
+        storage_access,
     )?;
 
     let RebuiltSnapshotStorage {

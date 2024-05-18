@@ -36,11 +36,15 @@ full = [
 dev-context-only-utils = [
   "qualifier_attr"
 ]
+frozen-abi = [
+  "dep:solana-frozen-abi",
+  "dep:solana-frozen-abi-macro",
+  "solana-program/frozen-abi",
+]
 
 [dependencies]
-base64 = { workspace = true }
 bincode = { workspace = true }
-bitflags = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
 borsh = { workspace = true }
 bs58 = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
@@ -55,11 +59,9 @@ generic-array = { workspace = true, features = ["serde", "more_lengths"], option
 hmac = { workspace = true }
 itertools =  { workspace = true }
 lazy_static = { workspace = true }
-libsecp256k1 = { workspace = true, optional = true }
+libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
 log = { workspace = true }
 memmap2 = { workspace = true, optional = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
 num_enum = { workspace = true }
 pbkdf2 = { workspace = true }
 qstring = { workspace = true }
@@ -75,8 +77,8 @@ serde_with = { workspace = true, features = ["macros"] }
 sha2 = { workspace = true }
 sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
-solana-frozen-abi = { workspace = true }
-solana-frozen-abi-macro = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true }
+solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-sdk-macro = { workspace = true }
 thiserror = { workspace = true }
@@ -93,7 +95,6 @@ assert_matches = { workspace = true }
 curve25519-dalek = { workspace = true }
 hex = { workspace = true }
 solana-logger = { workspace = true }
-solana-program = { workspace = true, features = ["frozen-abi"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }

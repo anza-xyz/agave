@@ -90,8 +90,9 @@ thread_local! {
     static INVOKE_CONTEXT: RefCell<Option<usize>> = const { RefCell::new(None) };
 }
 fn set_invoke_context(new: &mut InvokeContext) {
-    INVOKE_CONTEXT
-        .with(|invoke_context| unsafe { invoke_context.replace(Some(transmute::<_, usize>(new))) });
+    INVOKE_CONTEXT.with(|invoke_context| unsafe {
+        invoke_context.replace(Some(transmute::<&mut InvokeContext, usize>(new)))
+    });
 }
 fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b> {
     let ptr = INVOKE_CONTEXT.with(|invoke_context| match *invoke_context.borrow() {
@@ -463,6 +464,7 @@ pub fn read_file<P: AsRef<Path>>(path: P) -> Vec<u8> {
 
 pub struct ProgramTest {
     accounts: Vec<(Pubkey, AccountSharedData)>,
+    genesis_accounts: Vec<(Pubkey, AccountSharedData)>,
     builtin_programs: Vec<(Pubkey, &'static str, ProgramCacheEntry)>,
     compute_max_units: Option<u64>,
     prefer_bpf: bool,
@@ -495,6 +497,7 @@ impl Default for ProgramTest {
 
         Self {
             accounts: vec![],
+            genesis_accounts: vec![],
             builtin_programs: vec![],
             compute_max_units: None,
             prefer_bpf,
@@ -546,6 +549,12 @@ impl ProgramTest {
     #[deprecated(since = "1.8.0", note = "please use `set_compute_max_units` instead")]
     pub fn set_bpf_compute_max_units(&mut self, bpf_compute_max_units: u64) {
         self.set_compute_max_units(bpf_compute_max_units);
+    }
+
+    /// Add an account to the test environment's genesis config.
+    pub fn add_genesis_account(&mut self, address: Pubkey, account: Account) {
+        self.genesis_accounts
+            .push((address, AccountSharedData::from(account)));
     }
 
     /// Add an account to the test environment
@@ -780,7 +789,7 @@ impl ProgramTest {
             fee_rate_governor,
             rent,
             ClusterType::Development,
-            vec![],
+            std::mem::take(&mut self.genesis_accounts),
         );
 
         // Remove features tagged to deactivate
@@ -1007,6 +1016,14 @@ struct DroppableTask<T>(Arc<AtomicBool>, JoinHandle<T>);
 impl<T> Drop for DroppableTask<T> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+        trace!(
+            "stopping task, which is currently {}",
+            if self.1.is_finished() {
+                "finished"
+            } else {
+                "running"
+            }
+        );
     }
 }
 
