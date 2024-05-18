@@ -293,7 +293,7 @@ pub fn invoke_signed_unchecked(
 ) -> ProgramResult {
     #[cfg(target_os = "solana")]
     {
-        use instruction_stabilizer::InstructionStabilizer;
+        use crate::stable_layout::stable_instruction::InstructionStabilizer;
         let stabilizer = InstructionStabilizer::stabilize(instruction);
         let instruction_addr = stabilizer.instruction_addr();
 
