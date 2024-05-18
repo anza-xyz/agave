@@ -1,0 +1,14 @@
+error[E0505]: cannot move out of `instruction` because it is borrowed
+  --> instruction_stabilizer_borrow_scope.rs:20:22
+   |
+9  |                 let instruction = Instruction {
+   |                     ----------- binding `instruction` declared here
+...
+15 |                 let stabilizer = InstructionStabilizer::stabilize(&instruction);
+   |                                                                   ------------ borrow of `instruction` occurs here
+...
+20 |                 drop(instruction);
+   |                      ^^^^^^^^^^^ move out of `instruction` occurs here
+21 |                 // Invalid instruction borrow, as we've dropped instruction!
+22 |                 let _stable: &StableInstruction = stabilizer.stable_instruction_ref();
+   |                                                   ---------- borrow later used here

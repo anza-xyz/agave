@@ -27,7 +27,7 @@ pub struct StableVec<T> {
     pub ptr: NonNull<T>,
     pub cap: usize,
     pub len: usize,
-    _marker: PhantomData<T>,
+    pub(super) _marker: PhantomData<T>,
 }
 
 impl<T> StableVec<T> {

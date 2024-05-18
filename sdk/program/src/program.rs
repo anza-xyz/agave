@@ -293,10 +293,13 @@ pub fn invoke_signed_unchecked(
 ) -> ProgramResult {
     #[cfg(target_os = "solana")]
     {
-        let instruction = StableInstruction::from(instruction.clone());
+        use instruction_stabilizer::InstructionStabilizer;
+        let stabilizer = InstructionStabilizer::stabilize(instruction);
+        let instruction_addr = stabilizer.instruction_addr();
+
         let result = unsafe {
             crate::syscalls::sol_invoke_signed_rust(
-                &instruction as *const _ as *const u8,
+                instruction_addr,
                 account_infos as *const _ as *const u8,
                 account_infos.len() as u64,
                 signers_seeds as *const _ as *const u8,
