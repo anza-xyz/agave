@@ -208,6 +208,7 @@ pub struct Stakes<T: Clone> {
 // using this enum, the cost of converting all entries to Stakes<Delegation> is
 // put off until serializing new snapshots. This helps avoid bogging down epoch
 // boundaries and startup with the conversion overhead.
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Clone)]
 pub enum StakesEnum {
     Accounts(Stakes<StakeAccount>),
