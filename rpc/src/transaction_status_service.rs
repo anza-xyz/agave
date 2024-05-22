@@ -6,7 +6,7 @@ use {
         blockstore::Blockstore,
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
-    solana_svm::transaction_results::{DurableNonceFee, TransactionExecutionDetails},
+    solana_svm::transaction_results::TransactionExecutionDetails,
     solana_transaction_status::{
         extract_and_fmt_memos, map_inner_instructions, Reward, TransactionStatusMeta,
     },
@@ -99,27 +99,14 @@ impl TransactionStatusService {
                             status,
                             log_messages,
                             inner_instructions,
-                            durable_nonce_fee,
                             return_data,
                             executed_units,
+                            fee_details,
                             ..
                         } = details;
-                        let lamports_per_signature = match durable_nonce_fee {
-                            Some(DurableNonceFee::Valid(lamports_per_signature)) => {
-                                Some(lamports_per_signature)
-                            }
-                            Some(DurableNonceFee::Invalid) => None,
-                            None => bank.get_lamports_per_signature_for_blockhash(
-                                transaction.message().recent_blockhash(),
-                            ),
-                        }
-                        .expect("lamports_per_signature must be available");
-                        let fee = bank.get_fee_for_message_with_lamports_per_signature(
-                            transaction.message(),
-                            lamports_per_signature,
-                        );
                         let tx_account_locks = transaction.get_account_locks_unchecked();
 
+                        let fee = fee_details.total_fee();
                         let inner_instructions = inner_instructions.map(|inner_instructions| {
                             map_inner_instructions(inner_instructions).collect()
                         });
