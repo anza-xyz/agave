@@ -1930,8 +1930,9 @@ impl Blockstore {
                 .map(Cow::into_owned)
         else {
             warn!(
-                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} is missing from blockstore.
-                 This can happen if you have recently upgraded from a version < v1.18.13, or if blockstore cleanup has caught up to the root.
+                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} \
+                 is missing from blockstore. This can happen if you have recently upgraded \
+                 from a version < v1.18.13, or if blockstore cleanup has caught up to the root. \
                  Skipping the backwards chained merkle root consistency check"
             );
             return true;
@@ -1941,10 +1942,9 @@ impl Blockstore {
 
         if !self.check_chaining(merkle_root, chained_merkle_root) {
             warn!(
-                "Received conflicting chained merkle roots for slot: {slot},
-                shred {:?} type {:?} chains to merkle root {chained_merkle_root:?}, however
-                previous fec set coding shred {prev_erasure_set:?} has merkle root {merkle_root:?}.
-                Reporting as duplicate",
+                "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
+                 chains to merkle root {chained_merkle_root:?}, however previous fec set coding \
+                 shred {prev_erasure_set:?} has merkle root {merkle_root:?}. Reporting as duplicate",
                 shred.erasure_set(),
                 shred.shred_type(),
             );
