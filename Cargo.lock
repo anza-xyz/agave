@@ -7104,6 +7104,7 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 2.0.58",
+ "toml 0.8.10",
 ]
 
 [[package]]
