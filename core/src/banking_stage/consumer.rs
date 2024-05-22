@@ -872,6 +872,7 @@ mod tests {
             system_instruction, system_program, system_transaction,
             transaction::{MessageHash, Transaction, VersionedTransaction},
         },
+        solana_svm::account_loader::CheckedTransactionDetails,
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
@@ -2511,24 +2512,45 @@ mod tests {
     fn test_bank_filter_valid_transaction_indexes() {
         assert_eq!(
             Consumer::filter_valid_transaction_indexes(&[
-                (Err(TransactionError::BlockhashNotFound), None, None),
-                (Err(TransactionError::BlockhashNotFound), None, None),
-                (Ok(()), None, None),
-                (Err(TransactionError::BlockhashNotFound), None, None),
-                (Ok(()), None, None),
-                (Ok(()), None, None),
+                Err(TransactionError::BlockhashNotFound),
+                Err(TransactionError::BlockhashNotFound),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
+                Err(TransactionError::BlockhashNotFound),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
             ]),
             [2, 4, 5]
         );
 
         assert_eq!(
             Consumer::filter_valid_transaction_indexes(&[
-                (Ok(()), None, None),
-                (Err(TransactionError::BlockhashNotFound), None, None),
-                (Err(TransactionError::BlockhashNotFound), None, None),
-                (Ok(()), None, None),
-                (Ok(()), None, None),
-                (Ok(()), None, None),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
+                Err(TransactionError::BlockhashNotFound),
+                Err(TransactionError::BlockhashNotFound),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
+                Ok(CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature: None
+                }),
             ]),
             [0, 3, 4, 5]
         );
