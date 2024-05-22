@@ -344,8 +344,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> HashMap<Pubkey, u64> {
         let mut result: HashMap<Pubkey, u64> = HashMap::new();
         check_results.iter_mut().zip(txs).for_each(|etx| {
-            if let ((Ok(()), _nonce, lamports_per_signature), tx) = etx {
-                if lamports_per_signature.is_some() {
+            if let (Ok(checked_details), tx) = etx {
+                if checked_details.lamports_per_signature.is_some() {
                     tx.message()
                         .account_keys()
                         .iter()
@@ -367,7 +367,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // If the transaction's nonce account was not valid, and blockhash is not found,
                     // the transaction will fail to process. Let's not load any programs from the
                     // transaction, and update the status of the transaction.
-                    *etx.0 = (Err(TransactionError::BlockhashNotFound), None, None);
+                    *etx.0 = Err(TransactionError::BlockhashNotFound);
                 }
             }
         });

@@ -27,7 +27,7 @@ use {
         rent_debits::RentDebits,
         saturating_add_assign,
         sysvar::{self, instructions::construct_instructions_data},
-        transaction::{self, Result, SanitizedTransaction, TransactionError},
+        transaction::{Result, SanitizedTransaction, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
@@ -37,8 +37,14 @@ use {
 // for the load instructions
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
-pub type TransactionCheckResult = (transaction::Result<()>, Option<NoncePartial>, Option<u64>);
+pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 pub type TransactionLoadResult = Result<LoadedTransaction>;
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct CheckedTransactionDetails {
+    pub nonce: Option<NoncePartial>,
+    pub lamports_per_signature: Option<u64>,
+}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct LoadedTransaction {
@@ -127,7 +133,13 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     txs.iter()
         .zip(check_results)
         .map(|etx| match etx {
-            (tx, (Ok(()), nonce, lamports_per_signature)) => {
+            (
+                tx,
+                Ok(CheckedTransactionDetails {
+                    nonce,
+                    lamports_per_signature,
+                }),
+            ) => {
                 let message = tx.message();
                 let fee = if let Some(lamports_per_signature) = lamports_per_signature {
                     fee_structure.calculate_fee(
@@ -155,7 +167,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                     loaded_programs,
                 )
             }
-            (_, (Err(e), _nonce, _lamports_per_signature)) => Err(e.clone()),
+            (_, Err(e)) => Err(e.clone()),
         })
         .collect()
 }

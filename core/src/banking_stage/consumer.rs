@@ -413,9 +413,7 @@ impl Consumer {
         let pre_results = vec![Ok(()); txs.len()];
         let check_results =
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
-        let check_results = check_results
-            .into_iter()
-            .map(|(result, _nonce, _lamports)| result);
+        let check_results = check_results.into_iter().map(|result| result.map(|_| ()));
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
@@ -819,7 +817,7 @@ impl Consumer {
         valid_txs
             .iter()
             .enumerate()
-            .filter_map(|(index, (x, _h, _lamports))| if x.is_ok() { Some(index) } else { None })
+            .filter_map(|(index, res)| res.as_ref().ok().map(|_| index))
             .collect_vec()
     }
 }
