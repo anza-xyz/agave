@@ -301,7 +301,8 @@ impl From<InnerInstructions> for UiInnerInstructions {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionTokenBalance {
     pub account_index: u8,
     pub mint: String,
@@ -348,7 +349,8 @@ impl From<TransactionTokenBalance> for UiTransactionTokenBalance {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionStatusMeta {
     pub status: TransactionResult<()>,
     pub fee: u64,
@@ -634,7 +636,8 @@ pub enum ConvertBlockError {
     TransactionsMissing(usize, usize),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfirmedBlock {
     pub previous_blockhash: String,
     pub blockhash: String,
@@ -647,7 +650,8 @@ pub struct ConfirmedBlock {
 
 // Confirmed block with type guarantees that transaction metadata
 // is always present. Used for uploading to BigTable.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionedConfirmedBlock {
     pub previous_blockhash: String,
     pub blockhash: String,
@@ -833,8 +837,9 @@ pub struct EntrySummary {
     pub starting_transaction_index: usize,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
+#[serde(rename_all = "camelCase", untagged)]
 pub enum TransactionWithStatusMeta {
     // Very old transactions may be missing metadata
     MissingMetadata(Transaction),
@@ -842,7 +847,7 @@ pub enum TransactionWithStatusMeta {
     Complete(VersionedTransactionWithStatusMeta),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VersionedTransactionWithStatusMeta {
     pub transaction: VersionedTransaction,
     pub meta: TransactionStatusMeta,
@@ -1023,14 +1028,16 @@ pub struct EncodedTransactionWithStatusMeta {
     pub version: Option<TransactionVersion>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfirmedTransactionWithStatusMeta {
     pub slot: Slot,
     pub tx_with_meta: TransactionWithStatusMeta,
     pub block_time: Option<UnixTimestamp>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionedConfirmedTransactionWithStatusMeta {
     pub slot: Slot,
     pub tx_with_meta: VersionedTransactionWithStatusMeta,
