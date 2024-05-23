@@ -464,18 +464,14 @@ pub fn derive_clone_zeroed(input: proc_macro::TokenStream) -> proc_macro::TokenS
 /// copyright = "Copyright (c) 2024 ACME Inc."
 /// ```
 ///
-/// And the following `lib.rs`:
+/// You can fetch the copyright with the following:
 /// ```ignore
 /// use solana_sdk_macro::package_metadata;
 ///
 /// pub fn main() {
 ///     let copyright = package_metadata!("copyright");
+///     assert_eq!(copyright, "Copyright (c) 2024 ACME Inc.");
 /// }
-/// ```
-///
-/// Invoking `cargo run` will produce:
-/// ```ignore
-/// Copyright (c) 2024 ACME Inc.
 /// ```
 ///
 /// ## TOML Support
