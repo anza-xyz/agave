@@ -54,7 +54,8 @@ use {
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
-            Blockstore, BlockstoreError, BlockstoreSignals, CompletedSlotsReceiver, PurgeType,
+            Blockstore, BlockstoreError, CompletedSlotsReceiver, PurgeType,
+            MAX_COMPLETED_SLOTS_IN_CHANNEL, MAX_REPLAY_WAKE_UP_SIGNALS,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{BlockstoreOptions, BlockstoreRecoveryMode, LedgerColumnOptions},
@@ -1845,13 +1846,16 @@ fn load_blockstore(
         check_poh_speed(&genesis_config, None)?;
     }
 
-    let BlockstoreSignals {
-        mut blockstore,
-        ledger_signal_receiver,
-        completed_slots_receiver,
-        ..
-    } = Blockstore::open_with_signal(ledger_path, blockstore_options_from_config(config))
-        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+    let mut blockstore =
+        Blockstore::open_with_options(ledger_path, blockstore_options_from_config(config))
+            .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+
+    let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
+    blockstore.add_new_shred_signal(ledger_signal_sender);
+
+    let (completed_slots_sender, completed_slots_receiver) =
+        bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
+    blockstore.add_completed_slots_signal(completed_slots_sender);
 
     blockstore.shred_timing_point_sender = poh_timing_point_sender;
     // following boot sequence (esp BankForks) could set root. so stash the original value
