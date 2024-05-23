@@ -188,6 +188,16 @@ impl Pubkey {
         Self(pubkey_array)
     }
 
+    /// Decode a string into a Pubkey, usable in a const context
+    ///
+    /// Note: Until https://github.com/Nullus157/bs58-rs/pull/120 lands, this
+    /// function does not include a check that the output decodes to exactly 32
+    /// bytes.
+    pub const fn from_str_const(s: &str) -> Self {
+        let id_array = bs58::decode(s.as_bytes()).into_array_const_unwrap::<PUBKEY_BYTES>();
+        Pubkey::new_from_array(id_array)
+    }
+
     #[deprecated(since = "1.3.9", note = "Please use 'Pubkey::new_unique' instead")]
     #[cfg(not(target_os = "solana"))]
     pub fn new_rand() -> Self {
