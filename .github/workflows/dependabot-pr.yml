@@ -37,8 +37,12 @@ jobs:
 
       - name: push
         run: |
-          git config user.email "49699333+dependabot[bot]@users.noreply.github.com"
-          git config user.name "dependabot[bot]"
-          git add **/Cargo.lock
-          git commit -am "update all Cargo files"
-          git push
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "✅ Nothing to update"
+          else
+            git config user.email "49699333+dependabot[bot]@users.noreply.github.com"
+            git config user.name "dependabot[bot]"
+            git add **/Cargo.lock
+            git commit -am "update all Cargo files"
+            git push
+          fi
