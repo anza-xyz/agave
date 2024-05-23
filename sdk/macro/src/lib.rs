@@ -469,7 +469,7 @@ pub fn derive_clone_zeroed(input: proc_macro::TokenStream) -> proc_macro::TokenS
 /// use solana_sdk_macro::package_metadata;
 ///
 /// pub fn main() {
-///     println!("{}", package_metadata!("copyright"));
+///     let copyright = package_metadata!("copyright");
 /// }
 /// ```
 ///
