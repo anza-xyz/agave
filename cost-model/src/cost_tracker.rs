@@ -125,7 +125,7 @@ impl CostTracker {
         estimated_tx_cost: &TransactionCost,
         actual_execution_units: u64,
     ) {
-        let estimated_execution_units = estimated_tx_cost.bpf_execution_cost();
+        let estimated_execution_units = estimated_tx_cost.programs_execution_cost();
         match actual_execution_units.cmp(&estimated_execution_units) {
             Ordering::Equal => (),
             Ordering::Greater => {
@@ -376,7 +376,7 @@ mod tests {
             system_transaction::transfer(mint_keypair, &keypair.pubkey(), 2, *start_hash),
         );
         let mut tx_cost = UsageCostDetails::new_with_capacity(1);
-        tx_cost.bpf_execution_cost = 5;
+        tx_cost.programs_execution_cost = 5;
         tx_cost.writable_accounts.push(mint_keypair.pubkey());
 
         (simple_transaction, TransactionCost::Transaction(tx_cost))
@@ -727,7 +727,7 @@ mod tests {
         {
             let tx_cost = TransactionCost::Transaction(UsageCostDetails {
                 writable_accounts: vec![acct1, acct2, acct3],
-                bpf_execution_cost: cost,
+                programs_execution_cost: cost,
                 ..UsageCostDetails::default()
             });
             assert!(testee.try_add(&tx_cost).is_ok());
@@ -745,7 +745,7 @@ mod tests {
         {
             let tx_cost = TransactionCost::Transaction(UsageCostDetails {
                 writable_accounts: vec![acct2],
-                bpf_execution_cost: cost,
+                programs_execution_cost: cost,
                 ..UsageCostDetails::default()
             });
             assert!(testee.try_add(&tx_cost).is_ok());
@@ -765,7 +765,7 @@ mod tests {
         {
             let tx_cost = TransactionCost::Transaction(UsageCostDetails {
                 writable_accounts: vec![acct1, acct2],
-                bpf_execution_cost: cost,
+                programs_execution_cost: cost,
                 ..UsageCostDetails::default()
             });
             assert!(testee.try_add(&tx_cost).is_err());
@@ -789,7 +789,7 @@ mod tests {
         let mut testee = CostTracker::new(account_max, block_max, block_max, None);
         let tx_cost = TransactionCost::Transaction(UsageCostDetails {
             writable_accounts: vec![acct1, acct2, acct3],
-            bpf_execution_cost: cost,
+            programs_execution_cost: cost,
             ..UsageCostDetails::default()
         });
         let mut expected_block_cost = tx_cost.sum();
@@ -876,7 +876,7 @@ mod tests {
 
         let tx_cost = TransactionCost::Transaction(UsageCostDetails {
             writable_accounts: vec![acct1, acct2, acct3],
-            bpf_execution_cost: cost,
+            programs_execution_cost: cost,
             ..UsageCostDetails::default()
         });
 
@@ -923,7 +923,7 @@ mod tests {
         let cost = 100u64;
         let tx_cost = TransactionCost::Transaction(UsageCostDetails {
             writable_accounts: vec![Pubkey::new_unique()],
-            bpf_execution_cost: cost,
+            programs_execution_cost: cost,
             ..UsageCostDetails::default()
         });
 

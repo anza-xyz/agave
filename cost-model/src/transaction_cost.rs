@@ -24,10 +24,10 @@ impl TransactionCost {
         }
     }
 
-    pub fn bpf_execution_cost(&self) -> u64 {
+    pub fn programs_execution_cost(&self) -> u64 {
         match self {
-            Self::SimpleVote { .. } => 0,
-            Self::Transaction(usage_cost) => usage_cost.bpf_execution_cost,
+            Self::SimpleVote { .. } => solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+            Self::Transaction(usage_cost) => usage_cost.programs_execution_cost,
         }
     }
 
@@ -74,13 +74,6 @@ impl TransactionCost {
         }
     }
 
-    pub fn builtins_execution_cost(&self) -> u64 {
-        match self {
-            Self::SimpleVote { .. } => solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
-            Self::Transaction(usage_cost) => usage_cost.builtins_execution_cost,
-        }
-    }
-
     pub fn writable_accounts(&self) -> &[Pubkey] {
         match self {
             Self::SimpleVote { writable_accounts } => writable_accounts,
@@ -119,8 +112,7 @@ pub struct UsageCostDetails {
     pub signature_cost: u64,
     pub write_lock_cost: u64,
     pub data_bytes_cost: u64,
-    pub builtins_execution_cost: u64,
-    pub bpf_execution_cost: u64,
+    pub programs_execution_cost: u64,
     pub loaded_accounts_data_size_cost: u64,
     pub account_data_size: u64,
     pub num_transaction_signatures: u64,
@@ -135,8 +127,7 @@ impl Default for UsageCostDetails {
             signature_cost: 0u64,
             write_lock_cost: 0u64,
             data_bytes_cost: 0u64,
-            builtins_execution_cost: 0u64,
-            bpf_execution_cost: 0u64,
+            programs_execution_cost: 0u64,
             loaded_accounts_data_size_cost: 0u64,
             account_data_size: 0u64,
             num_transaction_signatures: 0u64,
@@ -156,8 +147,7 @@ impl PartialEq for UsageCostDetails {
         self.signature_cost == other.signature_cost
             && self.write_lock_cost == other.write_lock_cost
             && self.data_bytes_cost == other.data_bytes_cost
-            && self.builtins_execution_cost == other.builtins_execution_cost
-            && self.bpf_execution_cost == other.bpf_execution_cost
+            && self.programs_execution_cost == other.programs_execution_cost
             && self.loaded_accounts_data_size_cost == other.loaded_accounts_data_size_cost
             && self.account_data_size == other.account_data_size
             && self.num_transaction_signatures == other.num_transaction_signatures
@@ -188,8 +178,7 @@ impl UsageCostDetails {
         self.signature_cost
             .saturating_add(self.write_lock_cost)
             .saturating_add(self.data_bytes_cost)
-            .saturating_add(self.builtins_execution_cost)
-            .saturating_add(self.bpf_execution_cost)
+            .saturating_add(self.programs_execution_cost)
             .saturating_add(self.loaded_accounts_data_size_cost)
     }
 }
