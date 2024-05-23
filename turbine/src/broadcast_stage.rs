@@ -56,7 +56,9 @@ mod standard_broadcast_run;
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = 8;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
 
-pub(crate) const NUM_INSERT_THREADS: usize = 2;
+// Blockstore::insert_threads() obtains and holds a write lock for the entire function. Until
+// this changes, there is no point in having more than one blockstore inserter thread.
+pub(crate) const NUM_INSERT_THREADS: usize = 1;
 pub(crate) type RecordReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
 pub(crate) type TransmitReceiver = Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>;
 
