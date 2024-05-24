@@ -164,7 +164,9 @@ use {
         stake_state::StakeStateV2,
     },
     solana_svm::{
-        account_loader::{TransactionCheckResult, TransactionLoadResult},
+        account_loader::{
+            CheckedTransactionDetails, TransactionCheckResult, TransactionLoadResult,
+        },
         account_overrides::AccountOverrides,
         nonce_info::{NonceInfo, NoncePartial},
         program_loader::load_program_with_pubkey,
@@ -3476,7 +3478,7 @@ impl Bank {
                     &hash_queue,
                     error_counters,
                 ),
-                Err(e) => (Err(e.clone()), None, None),
+                Err(e) => Err(e.clone()),
             })
             .collect()
     }
@@ -3491,20 +3493,23 @@ impl Bank {
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.message().recent_blockhash();
         if hash_queue.is_hash_valid_for_age(recent_blockhash, max_age) {
-            (
-                Ok(()),
-                None,
-                hash_queue.get_lamports_per_signature(tx.message().recent_blockhash()),
-            )
+            Ok(CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature: hash_queue
+                    .get_lamports_per_signature(tx.message().recent_blockhash()),
+            })
         } else if let Some((address, account)) =
             self.check_transaction_for_nonce(tx, next_durable_nonce)
         {
             let nonce = NoncePartial::new(address, account);
             let lamports_per_signature = nonce.lamports_per_signature();
-            (Ok(()), Some(nonce), lamports_per_signature)
+            Ok(CheckedTransactionDetails {
+                nonce: Some(nonce),
+                lamports_per_signature,
+            })
         } else {
             error_counters.blockhash_not_found += 1;
-            (Err(TransactionError::BlockhashNotFound), None, None)
+            Err(TransactionError::BlockhashNotFound)
         }
     }
 
@@ -3530,16 +3535,16 @@ impl Bank {
         sanitized_txs
             .iter()
             .zip(lock_results)
-            .map(|(sanitized_tx, (lock_result, nonce, lamports))| {
+            .map(|(sanitized_tx, lock_result)| {
                 let sanitized_tx = sanitized_tx.borrow();
                 if lock_result.is_ok()
                     && self.is_transaction_already_processed(sanitized_tx, &rcache)
                 {
                     error_counters.already_processed += 1;
-                    return (Err(TransactionError::AlreadyProcessed), None, None);
+                    return Err(TransactionError::AlreadyProcessed);
                 }
 
-                (lock_result, nonce, lamports)
+                lock_result
             })
             .collect()
     }
@@ -3945,16 +3950,15 @@ impl Bank {
                             .into(),
                         self.feature_set
                             .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+                        self.feature_set
+                            .is_active(&remove_rounding_in_fee_calculation::id()),
                     );
 
                     self.check_execution_status_and_charge_fee(
                         message,
                         execution_status,
                         is_nonce,
-                        fee_details.total_fee(
-                            self.feature_set
-                                .is_active(&remove_rounding_in_fee_calculation::id()),
-                        ),
+                        fee_details.total_fee(),
                     )?;
 
                     accumulated_fee_details.accumulate(&fee_details);
