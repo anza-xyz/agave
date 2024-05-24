@@ -4,7 +4,7 @@ use {
     solana_program::{
         account_info::{next_account_info, AccountInfo},
         clock::Clock,
-        declare_program_id_with_package_metadata,
+        declare_id_with_package_metadata,
         entrypoint::ProgramResult,
         msg,
         pubkey::Pubkey,
@@ -13,7 +13,7 @@ use {
     std::convert::TryInto,
 };
 
-declare_program_id_with_package_metadata!("solana.program-id");
+declare_id_with_package_metadata!("solana.program-id");
 
 solana_program::entrypoint!(process_instruction);
 

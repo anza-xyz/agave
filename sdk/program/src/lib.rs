@@ -712,7 +712,7 @@ pub use solana_sdk_macro::program_pubkey as pubkey;
 /// id in code:
 ///
 /// ```ignore
-/// declare_program_id_with_package_metadata!("solana.program-id");
+/// declare_id_with_package_metadata!("solana.program-id");
 /// ```
 ///
 /// This program id behaves exactly as if the developer had written:
@@ -724,7 +724,7 @@ pub use solana_sdk_macro::program_pubkey as pubkey;
 /// Meaning that it's possible to refer to the program id using `crate::id()`,
 /// without needing to specify the program id in multiple places.
 #[macro_export]
-macro_rules! declare_program_id_with_package_metadata {
+macro_rules! declare_id_with_package_metadata {
     ($key:literal) => {
         solana_program::declare_id!(solana_program::pubkey::Pubkey::from_str_const(
             solana_program::package_metadata!($key)
