@@ -1580,6 +1580,7 @@ mod tests {
             nonce: None,
             rent: 0,
             rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
         });
 
         let loaded1 = Ok(LoadedTransaction {
@@ -1588,6 +1589,7 @@ mod tests {
             nonce: None,
             rent: 0,
             rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
         });
 
         let mut loaded = vec![loaded0, loaded1];
@@ -1964,6 +1966,7 @@ mod tests {
             nonce: nonce.clone(),
             rent: 0,
             rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
         });
 
         let mut loaded = vec![loaded];
@@ -2068,6 +2071,7 @@ mod tests {
             nonce: nonce.clone(),
             rent: 0,
             rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
         });
 
         let mut loaded = vec![loaded];
