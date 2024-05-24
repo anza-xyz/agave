@@ -837,6 +837,7 @@ mod tests {
             account::{create_account_shared_data_for_test, WritableAccount},
             bpf_loader,
             feature_set::FeatureSet,
+            fee::FeeDetails,
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader},
@@ -989,6 +990,7 @@ mod tests {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
             program_indices: vec![vec![0]],
             nonce: None,
+            fee_details: FeeDetails::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
         };
@@ -1113,6 +1115,7 @@ mod tests {
             ],
             program_indices: vec![vec![0]],
             nonce: None,
+            fee_details: FeeDetails::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
         };

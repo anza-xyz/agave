@@ -39,6 +39,18 @@ pub struct FeeDetails {
 }
 
 impl FeeDetails {
+    pub fn new_for_tests(
+        transaction_fee: u64,
+        prioritization_fee: u64,
+        remove_rounding_in_fee_calculation: bool,
+    ) -> Self {
+        Self {
+            transaction_fee,
+            prioritization_fee,
+            remove_rounding_in_fee_calculation,
+        }
+    }
+
     pub fn total_fee(&self) -> u64 {
         let total_fee = self.transaction_fee.saturating_add(self.prioritization_fee);
         if self.remove_rounding_in_fee_calculation {
