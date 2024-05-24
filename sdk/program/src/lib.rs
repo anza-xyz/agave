@@ -718,7 +718,7 @@ pub use solana_sdk_macro::program_pubkey as pubkey;
 /// This program id behaves exactly as if the developer had written:
 ///
 /// ```
-/// declare_id!("MyProgram1111111111111111111111111111111111");
+/// solana_program::declare_id!("MyProgram1111111111111111111111111111111111");
 /// ```
 ///
 /// Meaning that it's possible to refer to the program id using `crate::id()`,
