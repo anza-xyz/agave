@@ -8385,6 +8385,7 @@ impl AccountsDb {
     fn report_store_timings(&self) {
         if self.stats.last_store_report.should_update(1000) {
             let read_cache_stats = self.read_only_accounts_cache.get_and_reset_stats();
+            let write_cache_stats = self.accounts_cache.get_and_reset_stats();
             datapoint_info!(
                 "accounts_db_store_timings",
                 (
@@ -8475,6 +8476,8 @@ impl AccountsDb {
                     read_cache_stats.evictor_wakeup_count_productive,
                     i64
                 ),
+                ("write_cache_hits", write_cache_stats.hits, i64),
+                ("write_cache_misses", write_cache_stats.misses, i64),
                 (
                     "calc_stored_meta_us",
                     self.stats.calc_stored_meta.swap(0, Ordering::Relaxed),

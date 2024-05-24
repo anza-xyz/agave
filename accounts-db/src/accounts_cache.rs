@@ -154,6 +154,18 @@ impl CachedAccountInner {
     }
 }
 
+#[derive(Default, Debug)]
+struct AccountsCacheStats {
+    hits: AtomicU64,
+    misses: AtomicU64,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct AccountsCacheStatReport {
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct AccountsCache {
     cache: DashMap<Slot, SlotCache>,
@@ -162,6 +174,7 @@ pub struct AccountsCache {
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
     max_flushed_root: AtomicU64,
     total_size: Arc<AtomicU64>,
+    stats: AccountsCacheStats,
 }
 
 impl AccountsCache {
@@ -208,6 +221,13 @@ impl AccountsCache {
         );
     }
 
+    pub(crate) fn get_and_reset_stats(&self) -> AccountsCacheStatReport {
+        AccountsCacheStatReport {
+            hits: self.stats.hits.swap(0, Ordering::Relaxed),
+            misses: self.stats.misses.swap(0, Ordering::Relaxed),
+        }
+    }
+
     pub fn store(&self, slot: Slot, pubkey: &Pubkey, account: AccountSharedData) -> CachedAccount {
         let slot_cache = self.slot_cache(slot).unwrap_or_else(||
             // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
@@ -224,8 +244,15 @@ impl AccountsCache {
     }
 
     pub fn load(&self, slot: Slot, pubkey: &Pubkey) -> Option<CachedAccount> {
-        self.slot_cache(slot)
-            .and_then(|slot_cache| slot_cache.get_cloned(pubkey))
+        let account = self
+            .slot_cache(slot)
+            .and_then(|slot_cache| slot_cache.get_cloned(pubkey));
+        if account.is_some() {
+            self.stats.hits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.stats.misses.fetch_add(1, Ordering::Relaxed);
+        }
+        account
     }
 
     pub fn remove_slot(&self, slot: Slot) -> Option<SlotCache> {
