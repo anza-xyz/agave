@@ -5206,7 +5206,7 @@ impl Bank {
     fn load_account_with(
         &self,
         pubkey: &Pubkey,
-        callback: impl for<'a> Fn(&'a AccountSharedData) -> bool,
+        callback: impl for<'local> Fn(&'local AccountSharedData) -> bool,
     ) -> Option<(AccountSharedData, Slot)> {
         self.rc
             .accounts
