@@ -3466,6 +3466,7 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        let mut dedup_nonce_lookup: HashSet<Hash> = HashSet::new();
 
         sanitized_txs
             .iter()
@@ -3477,6 +3478,7 @@ impl Bank {
                     &next_durable_nonce,
                     &hash_queue,
                     error_counters,
+                    &mut dedup_nonce_lookup,
                 ),
                 Err(e) => Err(e.clone()),
             })
@@ -3490,6 +3492,7 @@ impl Bank {
         next_durable_nonce: &DurableNonce,
         hash_queue: &BlockhashQueue,
         error_counters: &mut TransactionErrorMetrics,
+        dedup_nonce_lookup: &mut HashSet<Hash>,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.message().recent_blockhash();
         if hash_queue.is_hash_valid_for_age(recent_blockhash, max_age) {
@@ -3501,6 +3504,12 @@ impl Bank {
         } else if let Some((address, account)) =
             self.check_transaction_for_nonce(tx, next_durable_nonce)
         {
+            let nonce_hash = tx.message().recent_blockhash();
+            if dedup_nonce_lookup.contains(nonce_hash) {
+                return Err(TransactionError::BlockhashNotFound);
+            } else {
+                dedup_nonce_lookup.insert(*nonce_hash);
+            }
             let nonce = NoncePartial::new(address, account);
             let lamports_per_signature = nonce.lamports_per_signature();
             Ok(CheckedTransactionDetails {

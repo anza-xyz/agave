@@ -1,10 +1,12 @@
 use {
     crate::{
         account_loader::{
-            load_accounts, LoadedTransaction, TransactionCheckResult, TransactionLoadResult,
+            load_accounts, validate_fee_payer, LoadedTransaction, TransactionCheckResult,
+            TransactionLoadResult, TransactionRent,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
+        nonce_info::{NonceFull, NonceInfo},
         program_loader::load_program_with_pubkey,
         runtime_config::RuntimeConfig,
         transaction_account_state_info::TransactionAccountStateInfo,
@@ -14,13 +16,14 @@ use {
             DurableNonceFee, TransactionExecutionDetails, TransactionExecutionResult,
         },
     },
-    log::debug,
+    log::{debug, warn},
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_measure::measure::Measure,
     solana_program_runtime::{
         compute_budget::ComputeBudget,
+        compute_budget_processor::process_compute_budget_instructions,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
@@ -31,18 +34,24 @@ use {
         timings::{ExecuteTimingType, ExecuteTimings},
     },
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
+        account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
         epoch_schedule::EpochSchedule,
-        feature_set::FeatureSet,
+        feature_set::{
+            disable_rent_fees_collection, include_loaded_accounts_data_size_in_fee_calculation,
+            remove_rounding_in_fee_calculation, FeatureSet,
+        },
         fee::FeeStructure,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
         message::SanitizedMessage,
         pubkey::Pubkey,
+        rent::RentDue,
+        rent_collector::RENT_EXEMPT_RENT_EPOCH,
+        rent_debits::RentDebits,
         saturating_add_assign,
         transaction::{SanitizedTransaction, TransactionError},
-        transaction_context::{ExecutionRecord, TransactionContext},
+        transaction_context::{ExecutionRecord, IndexOfAccount, TransactionContext},
     },
     std::{
         cell::RefCell,
@@ -55,6 +64,8 @@ use {
         },
     },
 };
+
+const MAX_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
@@ -228,7 +239,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sanitized_txs,
             check_results,
             error_counters,
-            &self.fee_structure,
             account_overrides,
             &program_cache_for_tx_batch.borrow(),
         );
@@ -236,12 +246,42 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut execution_time = Measure::start("execution_time");
 
+        // collect unique loaded accounts
+        let mut unique_loaded_accounts: HashMap<Pubkey, AccountSharedData> = HashMap::default();
+        for tx in loaded_transactions.iter().filter(|tx| tx.is_ok()) {
+            let accts = &tx.as_ref().unwrap().accounts;
+            for acct in accts.iter() {
+                unique_loaded_accounts.insert(acct.0, acct.1.clone());
+            }
+        }
+
+        let mut entry_level_dedup_map = HashSet::with_capacity(MAX_NUM_TRANSACTIONS_PER_BATCH);
+        let mut error = None;
+        let feature_set = callbacks.get_feature_set();
+        let rent_collector = callbacks.get_rent_collector();
         let execution_results: Vec<TransactionExecutionResult> = loaded_transactions
             .iter_mut()
             .zip(sanitized_txs.iter())
-            .map(|(load_result, tx)| match load_result {
+            .zip(check_results.iter())
+            .map(|((accts, tx), check_result)| match accts {
                 Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
                 Ok(loaded_transaction) => {
+                    let mut nonce = None;
+                    let mut lamports_per_signature = None;
+                    if let Ok(check_result) = check_result {
+                        nonce = check_result.nonce.clone();
+                        lamports_per_signature = check_result.lamports_per_signature;
+                    }
+
+                    let msg_hash = tx.message_hash();
+                    if entry_level_dedup_map.contains(msg_hash) {
+                        Self::update_loaded_accounts(loaded_transaction, &unique_loaded_accounts);
+                        return TransactionExecutionResult::NotExecuted(
+                            TransactionError::AlreadyProcessed,
+                        );
+                    } else {
+                        entry_level_dedup_map.insert(msg_hash);
+                    }
                     let compute_budget =
                         if let Some(compute_budget) = self.runtime_config.compute_budget {
                             compute_budget
@@ -259,10 +299,136 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 compute_budget_process_transaction_time.as_us()
                             );
                             if let Err(err) = maybe_compute_budget {
+                                Self::update_loaded_accounts(
+                                    loaded_transaction,
+                                    &unique_loaded_accounts,
+                                );
                                 return TransactionExecutionResult::NotExecuted(err);
                             }
                             maybe_compute_budget.unwrap()
                         };
+
+                    let message = tx.message();
+                    let fee = if let Some(lamports_per_signature) = lamports_per_signature {
+                        self.fee_structure.calculate_fee(
+                            message,
+                            lamports_per_signature,
+                            &process_compute_budget_instructions(
+                                message.program_instructions_iter(),
+                            )
+                            .unwrap_or_default()
+                            .into(),
+                            feature_set.is_active(
+                                &include_loaded_accounts_data_size_in_fee_calculation::id(),
+                            ),
+                            feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
+                        )
+                    } else {
+                        Self::update_loaded_accounts(loaded_transaction, &unique_loaded_accounts);
+                        return TransactionExecutionResult::NotExecuted(
+                            TransactionError::BlockhashNotFound,
+                        );
+                    };
+
+                    let mut validated_fee_payer = false;
+                    let mut rent;
+                    let mut tx_rent: TransactionRent = 0;
+                    let mut rent_debits = RentDebits::default();
+
+                    // collect rent and fee
+                    error = None;
+                    for (i, (key, acct)) in loaded_transaction.accounts.iter_mut().enumerate() {
+                        *acct = unique_loaded_accounts.get(key).unwrap().clone();
+
+                        if message.is_writable(i) {
+                            rent = 0;
+                            if !feature_set.is_active(&disable_rent_fees_collection::id()) {
+                                rent = rent_collector
+                                    .collect_from_existing_account(key, acct)
+                                    .rent_amount;
+                            } else {
+                                // When rent fee collection is disabled, we won't collect rent for any account. If there
+                                // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
+                                // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
+                                // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
+                                if acct.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
+                                    && rent_collector.get_rent_due(
+                                        acct.lamports(),
+                                        acct.data().len(),
+                                        acct.rent_epoch(),
+                                    ) == RentDue::Exempt
+                                {
+                                    acct.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                                }
+                            }
+                            unique_loaded_accounts.insert(*key, acct.clone());
+                        } else {
+                            rent = 0;
+                        }
+
+                        tx_rent += rent;
+                        rent_debits.insert(key, rent, acct.lamports());
+
+                        if !validated_fee_payer && !message.is_invoked(i) {
+                            if i != 0 {
+                                warn!("Payer index should be 0! {:?}", message);
+                            }
+
+                            if let Err(e) = validate_fee_payer(
+                                key,
+                                acct,
+                                i as IndexOfAccount,
+                                error_counters,
+                                rent_collector,
+                                fee,
+                            ) {
+                                error = Some(TransactionExecutionResult::NotExecuted(e));
+                                break;
+                            }
+
+                            validated_fee_payer = true;
+                            unique_loaded_accounts.insert(*key, acct.clone());
+                        }
+                    }
+
+                    if let Some(e) = &error {
+                        Self::update_loaded_accounts(loaded_transaction, &unique_loaded_accounts);
+                        return e.clone();
+                    }
+                    if !validated_fee_payer {
+                        error_counters.account_not_found += 1;
+                        Self::update_loaded_accounts(loaded_transaction, &unique_loaded_accounts);
+                        return TransactionExecutionResult::NotExecuted(
+                            TransactionError::AccountNotFound,
+                        );
+                    }
+
+                    loaded_transaction.rent = tx_rent;
+                    loaded_transaction.rent_debits = rent_debits;
+
+                    // Update nonce with fee-subtracted accounts
+                    if let Some(nonce) = nonce {
+                        // SAFETY: The first accounts entry must be a validated fee payer because
+                        // validated_fee_payer must be true at this point.
+                        let (fee_payer_address, fee_payer_account) =
+                            loaded_transaction.accounts.first().unwrap();
+                        let full_nonce = NonceFull::from_partial(
+                            &nonce.clone(),
+                            fee_payer_address,
+                            fee_payer_account.clone(),
+                            &loaded_transaction.rent_debits,
+                        );
+                        if full_nonce.account()
+                            != unique_loaded_accounts.get(nonce.address()).unwrap()
+                        {
+                            if let Some(nonce_acct) =
+                                unique_loaded_accounts.get_mut(nonce.address())
+                            {
+                                *nonce_acct = full_nonce.account().clone();
+                            }
+                        }
+                        let _ = loaded_transaction.nonce.insert(full_nonce.clone());
+                    }
 
                     let result = self.execute_loaded_transaction(
                         callbacks,
@@ -274,6 +440,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         error_counters,
                         log_messages_bytes_limit,
                         &program_cache_for_tx_batch.borrow(),
+                        &mut unique_loaded_accounts,
                     );
 
                     if let TransactionExecutionResult::Executed {
@@ -331,6 +498,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         LoadAndExecuteSanitizedTransactionsOutput {
             loaded_transactions,
             execution_results,
+        }
+    }
+
+    /// update loaded accounts state according to the intermediate state
+    fn update_loaded_accounts(
+        loaded_transaction: &mut LoadedTransaction,
+        unique_loaded_accounts: &HashMap<Pubkey, AccountSharedData>,
+    ) {
+        for (key, acct) in loaded_transaction.accounts.iter_mut() {
+            if *acct != *unique_loaded_accounts.get(key).unwrap() {
+                *acct = unique_loaded_accounts.get(key).unwrap().clone();
+            }
         }
     }
 
@@ -558,8 +737,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         error_counters: &mut TransactionErrorMetrics,
         log_messages_bytes_limit: Option<usize>,
         program_cache_for_tx_batch: &ProgramCacheForTxBatch,
+        unique_loaded_accounts: &mut HashMap<Pubkey, AccountSharedData>,
     ) -> TransactionExecutionResult {
-        let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
+        let mut transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
+
+        // get latest value of acct struct from unique_loaded_accounts
+        for (key, acct) in transaction_accounts.iter_mut() {
+            if let Some(unique_acct_data) = unique_loaded_accounts.get(key) {
+                if *unique_acct_data != *acct {
+                    *acct = unique_acct_data.clone();
+                }
+            }
+        }
 
         fn transaction_accounts_lamports_sum(
             accounts: &[(Pubkey, AccountSharedData)],
@@ -577,7 +766,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             transaction_accounts_lamports_sum(&transaction_accounts, tx.message()).unwrap_or(0);
 
         let mut transaction_context = TransactionContext::new(
-            transaction_accounts,
+            transaction_accounts.clone(),
             callback.get_rent_collector().rent.clone(),
             compute_budget.max_invoke_stack_height,
             compute_budget.max_instruction_trace_length,
@@ -639,6 +828,44 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         process_message_time.stop();
 
         drop(invoke_context);
+
+        // update latest value of acct struct in unique_loaded_accounts
+        let feature_set = callback.get_feature_set();
+        if process_result.is_ok() {
+            let account_keys: Vec<Pubkey> = transaction_accounts
+                .iter()
+                .map(|(pubkey, _)| *pubkey)
+                .collect();
+            let accounts = transaction_context
+                .accounts()
+                .as_ref()
+                .clone()
+                .into_accounts();
+
+            for acct_index in 0..account_keys.len() {
+                let key = account_keys[acct_index];
+                let acct_data_from_lookup = unique_loaded_accounts
+                    .entry(key)
+                    .or_insert_with(|| accounts[acct_index].clone());
+
+                if acct_data_from_lookup != &accounts[acct_index] {
+                    if accounts[acct_index].lamports() == 0 {
+                        let mut account = AccountSharedData::default();
+                        let set_exempt_rent_epoch_max = feature_set
+                            .is_active(&solana_sdk::feature_set::set_exempt_rent_epoch_max::id());
+                        if set_exempt_rent_epoch_max {
+                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                            // with this field already set would allow us to skip rent collection for these accounts.
+                            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                        }
+                        *acct_data_from_lookup = account;
+                    } else {
+                        *acct_data_from_lookup = accounts[acct_index].clone();
+                    }
+                }
+            }
+        }
 
         saturating_add_assign!(
             timings.execute_accessories.process_message_us,
@@ -998,6 +1225,11 @@ mod tests {
             enable_return_data_recording: false,
         };
 
+        let mut unique_loaded_accounts: HashMap<Pubkey, AccountSharedData> = HashMap::default();
+        for acct in loaded_transaction.accounts.iter() {
+            unique_loaded_accounts.insert(acct.0, acct.1.clone());
+        }
+
         let result = batch_processor.execute_loaded_transaction(
             &mock_bank,
             &sanitized_transaction,
@@ -1008,6 +1240,7 @@ mod tests {
             &mut TransactionErrorMetrics::default(),
             None,
             &program_cache_for_tx_batch,
+            &mut unique_loaded_accounts,
         );
 
         let TransactionExecutionResult::Executed {
@@ -1029,6 +1262,7 @@ mod tests {
             &mut TransactionErrorMetrics::default(),
             Some(2),
             &program_cache_for_tx_batch,
+            &mut unique_loaded_accounts,
         );
 
         let TransactionExecutionResult::Executed {
@@ -1059,6 +1293,7 @@ mod tests {
             &mut TransactionErrorMetrics::default(),
             None,
             &program_cache_for_tx_batch,
+            &mut unique_loaded_accounts,
         );
 
         let TransactionExecutionResult::Executed {
@@ -1122,6 +1357,11 @@ mod tests {
         let record_config = ExecutionRecordingConfig::new_single_setting(false);
         let mut error_metrics = TransactionErrorMetrics::new();
 
+        let mut unique_loaded_accounts: HashMap<Pubkey, AccountSharedData> = HashMap::default();
+        for acct in loaded_transaction.accounts.iter() {
+            unique_loaded_accounts.insert(acct.0, acct.1.clone());
+        }
+
         let _ = batch_processor.execute_loaded_transaction(
             &mock_bank,
             &sanitized_transaction,
@@ -1132,6 +1372,7 @@ mod tests {
             &mut error_metrics,
             None,
             &program_cache_for_tx_batch,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(error_metrics.instruction_error, 1);
