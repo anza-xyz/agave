@@ -27,9 +27,12 @@ use {
         signature::Signature,
     },
     solana_svm::{
+        account_loader::CheckedTransactionDetails,
         runtime_config::RuntimeConfig,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processor::{ExecutionRecordingConfig, TransactionBatchProcessor},
+        transaction_processor::{
+            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+        },
     },
     std::{
         collections::{HashMap, HashSet},
@@ -121,7 +124,6 @@ fn execute_fixtures() {
         file.read_to_end(&mut buffer).expect("Failed to read file");
 
         let fixture = proto::InstrFixture::decode(buffer.as_slice()).unwrap();
-        std::println!("Testing case: {:?}", filename);
         run_fixture(fixture, filename);
     }
 
@@ -179,7 +181,10 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
     };
 
     let transactions = vec![transaction];
-    let mut transaction_check = vec![(Ok(()), None, Some(30))];
+    let mut transaction_check = vec![Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 30,
+    })];
 
     let mut mock_bank = MockBankCallback::default();
     {
@@ -238,6 +243,12 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         enable_return_data_recording: true,
         enable_cpi_recording: false,
     };
+    let processor_config = TransactionProcessingConfig {
+        account_overrides: None,
+        log_messages_bytes_limit: None,
+        limit_to_load_programs: true,
+        recording_config,
+    };
     let mut timings = ExecuteTimings::default();
 
     let result = batch_processor.load_and_execute_sanitized_transactions(
@@ -245,11 +256,8 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         &transactions,
         transaction_check.as_mut_slice(),
         &mut error_counter,
-        recording_config,
         &mut timings,
-        None,
-        None,
-        true,
+        &processor_config,
     );
 
     // Assert that the transaction has worked without errors.
@@ -270,7 +278,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
 
     // Check modified accounts
     let idx_map: HashMap<Pubkey, usize> = result.loaded_transactions[0]
-        .0
         .as_ref()
         .unwrap()
         .accounts
@@ -284,7 +291,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         let index = *idx_map
             .get(&pubkey)
             .expect("Account not in expected results");
-        let received_data = &result.loaded_transactions[0].0.as_ref().unwrap().accounts[index].1;
+        let received_data = &result.loaded_transactions[0].as_ref().unwrap().accounts[index].1;
 
         assert_eq!(
             received_data.lamports(),
