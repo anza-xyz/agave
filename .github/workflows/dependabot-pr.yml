@@ -32,8 +32,8 @@ jobs:
           new_version="${BASH_REMATCH[3]}"
           echo "crate_name: $crate_name, old_version: $old_version, new_version: $new_version"
 
-          ./scripts/cargo-for-all-lock-files.sh -- update -p $crate_name:$old_version --precise $new_version
-          ./scripts/cargo-for-all-lock-files.sh -- tree
+          ./scripts/cargo-for-all-lock-files.sh -- update -p $crate_name:$old_version --precise $new_version || \
+          ./scripts/cargo-for-all-lock-files.sh -- update -p $crate_name --precise $new_version
 
       - name: push
         run: |
