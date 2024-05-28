@@ -111,6 +111,10 @@ where
     /// Attempt to send and confirm tx "attempts" times
     /// Wait for signature confirmation before returning
     /// Return the transaction signature
+    /// NOTE: send_wire_transaction() and try_send_transaction() above both fail in a specific case when used in LocalCluster
+    /// They both invoke the nonblocking TPUClient and both fail when calling "transfer_with_client()" multiple times
+    /// I do not full understand WHY the nonblocking TPUClient fails in this specific case. But the method defined below
+    /// does work although it has only been tested in LocalCluster integration tests
     pub fn send_and_confirm_transaction_with_retries<T: Signers + ?Sized>(
         &self,
         keypairs: &T,
