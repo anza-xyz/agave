@@ -10,9 +10,7 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     log::*,
-    solana_accounts_db::{
-        accounts_file::StorageAccess, accounts_update_notifier_interface::AccountsUpdateNotifier,
-    },
+    solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
         bank_forks::BankForks,
@@ -40,7 +38,7 @@ pub enum BankForksUtilsError {
 
     #[error(
         "failed to load bank: {source}, full snapshot archive: {full_snapshot_archive}, \
-        incremental snapshot archive: {incremental_snapshot_archive}"
+         incremental snapshot archive: {incremental_snapshot_archive}"
     )]
     BankFromSnapshotsArchive {
         source: snapshot_utils::SnapshotError,
@@ -49,8 +47,8 @@ pub enum BankForksUtilsError {
     },
 
     #[error(
-        "there is no local state to startup from. \
-        Ensure --{flag} is NOT set to \"{value}\" and restart"
+        "there is no local state to startup from. Ensure --{flag} is NOT set to \"{value}\" and \
+         restart"
     )]
     NoBankSnapshotDirectory { flag: String, value: String },
 
@@ -210,7 +208,7 @@ pub fn load_bank_forks(
     let mut leader_schedule_cache =
         LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
     if process_options.full_leader_cache {
-        leader_schedule_cache.set_max_schedules(std::usize::MAX);
+        leader_schedule_cache.set_max_schedules(usize::MAX);
     }
 
     if let Some(ref new_hard_forks) = process_options.new_hard_forks {
@@ -262,9 +260,9 @@ fn bank_forks_from_snapshot(
             // higher than the local state we will load.  Did the user intend for this?
             if bank_snapshot.slot < latest_snapshot_archive_slot {
                 warn!(
-                    "Starting up from local state at slot {}, which is *older* than \
-                    the latest snapshot archive at slot {}. If this is not desired, \
-                    change the --{} CLI option to *not* \"{}\" and restart.",
+                    "Starting up from local state at slot {}, which is *older* than the latest \
+                     snapshot archive at slot {}. If this is not desired, change the --{} CLI \
+                     option to *not* \"{}\" and restart.",
                     bank_snapshot.slot,
                     latest_snapshot_archive_slot,
                     use_snapshot_archives_at_startup::cli::LONG_ARG,
@@ -294,7 +292,6 @@ fn bank_forks_from_snapshot(
             process_options.accounts_db_config.clone(),
             accounts_update_notifier,
             exit,
-            StorageAccess::default(),
         )
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
             source: err,

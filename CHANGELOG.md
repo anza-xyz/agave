@@ -14,6 +14,8 @@ Release channels have their own copy of this changelog:
 
 <a name="edge-channel"></a>
 ## [2.0.0] - Unreleased
+* Breaking
+  * SDK: Support for Borsh v0.9 removed, please use v1 or v0.10 (#1440)
 * Changes
   * `central-scheduler` as default option for `--block-production-method` (#34891)
   * `solana-rpc-client-api`: `RpcFilterError` depends on `base64` version 0.22, so users may need to upgrade to `base64` version 0.22
@@ -21,6 +23,7 @@ Release channels have their own copy of this changelog:
   * CLI: Can specify `--with-compute-unit-price`, `--max-sign-attempts`, and `--use-rpc` during program deployment
   * RPC's `simulateTransaction` now returns an extra `replacementBlockhash` field in the response
     when the `replaceRecentBlockhash` config param is `true` (#380)
+  * SDK: `cargo test-sbf` accepts `--tools-version`, just like `build-sbf` (#1359)
 
 ## [1.18.0]
 * Changes

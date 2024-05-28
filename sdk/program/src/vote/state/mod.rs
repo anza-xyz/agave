@@ -585,7 +585,7 @@ impl VoteState {
 
         VoteState {
             votes: VecDeque::from(vec![LandedVote::default(); MAX_LOCKOUT_HISTORY]),
-            root_slot: Some(std::u64::MAX),
+            root_slot: Some(u64::MAX),
             epoch_credits: vec![(0, 0, 0); MAX_EPOCH_CREDITS_HISTORY],
             authorized_voters,
             ..Self::default()
@@ -902,14 +902,14 @@ pub mod serde_compact_vote_state_update {
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-    #[derive(Deserialize, Serialize)]
+    #[derive(serde_derive::Deserialize, serde_derive::Serialize)]
     struct LockoutOffset {
         #[serde(with = "serde_varint")]
         offset: Slot,
         confirmation_count: u8,
     }
 
-    #[derive(Deserialize, Serialize)]
+    #[derive(serde_derive::Deserialize, serde_derive::Serialize)]
     struct CompactVoteStateUpdate {
         root: Slot,
         #[serde(with = "short_vec")]
@@ -999,14 +999,14 @@ pub mod serde_tower_sync {
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-    #[derive(Deserialize, Serialize)]
+    #[derive(serde_derive::Deserialize, serde_derive::Serialize)]
     struct LockoutOffset {
         #[serde(with = "serde_varint")]
         offset: Slot,
         confirmation_count: u8,
     }
 
-    #[derive(Deserialize, Serialize)]
+    #[derive(serde_derive::Deserialize, serde_derive::Serialize)]
     struct CompactTowerSync {
         root: Slot,
         #[serde(with = "short_vec")]
@@ -1165,7 +1165,7 @@ mod tests {
         assert_eq!(vote_state.commission_split(1), (0, 1, false));
 
         let mut vote_state = VoteState {
-            commission: std::u8::MAX,
+            commission: u8::MAX,
             ..VoteState::default()
         };
         assert_eq!(vote_state.commission_split(1), (1, 0, false));

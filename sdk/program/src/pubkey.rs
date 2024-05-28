@@ -504,8 +504,8 @@ impl Pubkey {
         // not supported
         #[cfg(not(target_os = "solana"))]
         {
-            let mut bump_seed = [std::u8::MAX];
-            for _ in 0..std::u8::MAX {
+            let mut bump_seed = [u8::MAX];
+            for _ in 0..u8::MAX {
                 {
                     let mut seeds_with_bump = seeds.to_vec();
                     seeds_with_bump.push(&bump_seed);
@@ -523,7 +523,7 @@ impl Pubkey {
         #[cfg(target_os = "solana")]
         {
             let mut bytes = [0; 32];
-            let mut bump_seed = std::u8::MAX;
+            let mut bump_seed = u8::MAX;
             let result = unsafe {
                 crate::syscalls::sol_try_find_program_address(
                     seeds as *const _ as *const u8,
@@ -684,11 +684,6 @@ impl borsh0_10::de::BorshDeserialize for Pubkey {
         )?))
     }
 }
-impl borsh0_9::de::BorshDeserialize for Pubkey {
-    fn deserialize(buf: &mut &[u8]) -> ::core::result::Result<Self, borsh0_9::maybestd::io::Error> {
-        Ok(Self(borsh0_9::BorshDeserialize::deserialize(buf)?))
-    }
-}
 
 macro_rules! impl_borsh_schema {
     ($borsh:ident) => {
@@ -722,7 +717,6 @@ macro_rules! impl_borsh_schema {
     };
 }
 impl_borsh_schema!(borsh0_10);
-impl_borsh_schema!(borsh0_9);
 
 macro_rules! impl_borsh_serialize {
     ($borsh:ident) => {
@@ -738,7 +732,6 @@ macro_rules! impl_borsh_serialize {
     };
 }
 impl_borsh_serialize!(borsh0_10);
-impl_borsh_serialize!(borsh0_9);
 
 #[cfg(test)]
 mod tests {

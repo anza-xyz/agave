@@ -2,19 +2,19 @@ use {
     crate::{
         bank::Bank,
         snapshot_archive_info::{SnapshotArchiveInfo, SnapshotArchiveInfoGetter},
+        snapshot_config::SnapshotConfig,
         snapshot_hash::SnapshotHash,
-        snapshot_utils::{self, ArchiveFormat, BankSnapshotInfo, SnapshotVersion},
+        snapshot_utils::{self, BankSnapshotInfo},
     },
     log::*,
     solana_accounts_db::{
         accounts::Accounts,
-        accounts_db::{AccountStorageEntry, AccountsDb},
+        accounts_db::AccountStorageEntry,
         accounts_hash::{AccountsHash, AccountsHashKind},
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_sdk::{
-        clock::Slot, feature_set, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
+        clock::Slot, rent_collector::RentCollector, sysvar::epoch_schedule::EpochSchedule,
     },
     std::{
         path::{Path, PathBuf},
@@ -37,7 +37,6 @@ pub struct AccountsPackage {
     pub accounts: Arc<Accounts>,
     pub epoch_schedule: EpochSchedule,
     pub rent_collector: RentCollector,
-    pub is_incremental_accounts_hash_feature_enabled: bool,
 
     /// Supplemental information needed for snapshots
     pub snapshot_info: Option<SupplementalSnapshotInfo>,
@@ -49,16 +48,11 @@ pub struct AccountsPackage {
 
 impl AccountsPackage {
     /// Package up bank files, storages, and slot deltas for a snapshot
-    #[allow(clippy::too_many_arguments)]
     pub fn new_for_snapshot(
         package_kind: AccountsPackageKind,
         bank: &Bank,
         bank_snapshot_info: &BankSnapshotInfo,
-        full_snapshot_archives_dir: impl AsRef<Path>,
-        incremental_snapshot_archives_dir: impl AsRef<Path>,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-        archive_format: ArchiveFormat,
-        snapshot_version: SnapshotVersion,
         accounts_hash_for_testing: Option<AccountsHash>,
     ) -> Self {
         if let AccountsPackageKind::Snapshot(snapshot_kind) = package_kind {
@@ -79,12 +73,6 @@ impl AccountsPackage {
 
         let snapshot_info = SupplementalSnapshotInfo {
             bank_snapshot_dir: bank_snapshot_info.snapshot_dir.clone(),
-            archive_format,
-            snapshot_version,
-            full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .as_ref()
-                .to_path_buf(),
             epoch_accounts_hash: bank.get_epoch_accounts_hash_to_serialize(),
         };
         Self::_new(
@@ -139,9 +127,6 @@ impl AccountsPackage {
         accounts_hash_for_testing: Option<AccountsHash>,
         snapshot_info: Option<SupplementalSnapshotInfo>,
     ) -> Self {
-        let is_incremental_accounts_hash_feature_enabled = bank
-            .feature_set
-            .is_active(&feature_set::incremental_snapshot_only_incremental_hash_calculation::id());
         Self {
             package_kind,
             slot: bank.slot(),
@@ -152,7 +137,6 @@ impl AccountsPackage {
             accounts: bank.accounts(),
             epoch_schedule: bank.epoch_schedule().clone(),
             rent_collector: bank.rent_collector().clone(),
-            is_incremental_accounts_hash_feature_enabled,
             snapshot_info,
             enqueued: Instant::now(),
         }
@@ -160,7 +144,9 @@ impl AccountsPackage {
 
     /// Create a new Accounts Package where basically every field is defaulted.
     /// Only use for tests; many of the fields are invalid!
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn default_for_tests() -> Self {
+        use solana_accounts_db::accounts_db::AccountsDb;
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         Self {
@@ -173,13 +159,8 @@ impl AccountsPackage {
             accounts: Arc::new(accounts),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),
-            is_incremental_accounts_hash_feature_enabled: bool::default(),
             snapshot_info: Some(SupplementalSnapshotInfo {
                 bank_snapshot_dir: PathBuf::default(),
-                archive_format: ArchiveFormat::Tar,
-                snapshot_version: SnapshotVersion::default(),
-                full_snapshot_archives_dir: PathBuf::default(),
-                incremental_snapshot_archives_dir: PathBuf::default(),
                 epoch_accounts_hash: Option::default(),
             }),
             enqueued: Instant::now(),
@@ -217,10 +198,6 @@ impl std::fmt::Debug for AccountsPackage {
 /// Supplemental information needed for snapshots
 pub struct SupplementalSnapshotInfo {
     pub bank_snapshot_dir: PathBuf,
-    pub archive_format: ArchiveFormat,
-    pub snapshot_version: SnapshotVersion,
-    pub full_snapshot_archives_dir: PathBuf,
-    pub incremental_snapshot_archives_dir: PathBuf,
     pub epoch_accounts_hash: Option<EpochAccountsHash>,
 }
 
@@ -240,7 +217,6 @@ pub struct SnapshotPackage {
     pub block_height: Slot,
     pub bank_snapshot_dir: PathBuf,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-    pub snapshot_version: SnapshotVersion,
     pub snapshot_kind: SnapshotKind,
 
     /// The instant this snapshot package was sent to the queue.
@@ -249,7 +225,11 @@ pub struct SnapshotPackage {
 }
 
 impl SnapshotPackage {
-    pub fn new(accounts_package: AccountsPackage, accounts_hash: AccountsHashKind) -> Self {
+    pub fn new(
+        accounts_package: AccountsPackage,
+        accounts_hash: AccountsHashKind,
+        snapshot_config: &SnapshotConfig,
+    ) -> Self {
         let AccountsPackageKind::Snapshot(snapshot_kind) = accounts_package.package_kind else {
             panic!(
                 "The AccountsPackage must be of kind Snapshot in order to make a SnapshotPackage!"
@@ -265,10 +245,10 @@ impl SnapshotPackage {
         let mut snapshot_storages = accounts_package.snapshot_storages;
         let snapshot_archive_path = match snapshot_kind {
             SnapshotKind::FullSnapshot => snapshot_utils::build_full_snapshot_archive_path(
-                snapshot_info.full_snapshot_archives_dir,
+                &snapshot_config.full_snapshot_archives_dir,
                 accounts_package.slot,
                 &snapshot_hash,
-                snapshot_info.archive_format,
+                snapshot_config.archive_format,
             ),
             SnapshotKind::IncrementalSnapshot(incremental_snapshot_base_slot) => {
                 snapshot_storages.retain(|storage| storage.slot() > incremental_snapshot_base_slot);
@@ -277,11 +257,11 @@ impl SnapshotPackage {
                     "Incremental snapshot package must only contain storage entries where slot > incremental snapshot base slot (i.e. full snapshot slot)!"
                 );
                 snapshot_utils::build_incremental_snapshot_archive_path(
-                    snapshot_info.incremental_snapshot_archives_dir,
+                    &snapshot_config.incremental_snapshot_archives_dir,
                     incremental_snapshot_base_slot,
                     accounts_package.slot,
                     &snapshot_hash,
-                    snapshot_info.archive_format,
+                    snapshot_config.archive_format,
                 )
             }
         };
@@ -291,12 +271,11 @@ impl SnapshotPackage {
                 path: snapshot_archive_path,
                 slot: accounts_package.slot,
                 hash: snapshot_hash,
-                archive_format: snapshot_info.archive_format,
+                archive_format: snapshot_config.archive_format,
             },
             block_height: accounts_package.block_height,
             bank_snapshot_dir: snapshot_info.bank_snapshot_dir,
             snapshot_storages,
-            snapshot_version: snapshot_info.snapshot_version,
             snapshot_kind,
             enqueued: Instant::now(),
         }

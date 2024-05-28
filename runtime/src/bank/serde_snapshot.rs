@@ -5,17 +5,21 @@ mod tests {
             bank::{
                 epoch_accounts_hash_utils, test_utils as bank_test_utils, Bank, EpochRewardStatus,
             },
+            epoch_stakes::{
+                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
+            },
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{
                 reserialize_bank_with_new_accounts_hash, BankIncrementalSnapshotPersistence,
-                SerdeAccountsHash, SerdeIncrementalAccountsHash, SerdeStyle, SnapshotStreams,
+                SerdeAccountsHash, SerdeIncrementalAccountsHash, SnapshotStreams,
             },
             snapshot_bank_utils,
             snapshot_utils::{
                 self, create_tmp_accounts_dir_for_tests, get_storages_to_serialize, ArchiveFormat,
                 StorageAndNextAccountsFileId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
             },
+            stakes::Stakes,
             status_cache::StatusCache,
         },
         solana_accounts_db::{
@@ -35,8 +39,10 @@ mod tests {
             hash::Hash,
             pubkey::Pubkey,
             signature::{Keypair, Signer},
+            stake::state::Stake,
         },
         std::{
+            collections::HashMap,
             io::{Cursor, Read, Write},
             ops::RangeFull,
             path::Path,
@@ -92,7 +98,6 @@ mod tests {
     }
 
     fn test_bank_serialize_style(
-        serde_style: SerdeStyle,
         reserialize_accounts_hash: bool,
         update_accounts_hash: bool,
         incremental_snapshot_persistence: bool,
@@ -158,7 +163,6 @@ mod tests {
         }
 
         crate::serde_snapshot::bank_to_stream(
-            serde_style,
             &mut std::io::BufWriter::new(&mut writer),
             &bank2,
             &get_storages_to_serialize(&snapshot_storages),
@@ -265,7 +269,6 @@ mod tests {
             incremental_snapshot_stream: None,
         };
         let mut dbank = crate::serde_snapshot::bank_from_streams(
-            serde_style,
             &mut snapshot_streams,
             &dbank_paths,
             storage_and_next_append_vec_id,
@@ -322,7 +325,6 @@ mod tests {
             for incremental_snapshot_persistence in parameters.clone() {
                 for initial_epoch_accounts_hash in [false, true] {
                     test_bank_serialize_style(
-                        SerdeStyle::Newer,
                         reserialize_accounts_hash,
                         update_accounts_hash,
                         incremental_snapshot_persistence,
@@ -367,12 +369,23 @@ mod tests {
         let mut writer = Cursor::new(&mut buf);
 
         crate::serde_snapshot::bank_to_stream(
-            SerdeStyle::Newer,
             &mut std::io::BufWriter::new(&mut writer),
             &bank,
             &get_storages_to_serialize(&snapshot_storages),
         )
         .unwrap();
+
+        let mut new_epoch_stakes: HashMap<u64, VersionedEpochStakes> = HashMap::new();
+        new_epoch_stakes.insert(
+            42,
+            VersionedEpochStakes::Current {
+                stakes: Stakes::<Stake>::default(),
+                total_stake: 42,
+                node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
+                epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
+            },
+        );
+        bincode::serialize_into(&mut writer, &new_epoch_stakes).unwrap();
 
         // Deserialize
         let rdr = Cursor::new(&buf[..]);
@@ -390,7 +403,6 @@ mod tests {
         )
         .unwrap();
         let dbank = crate::serde_snapshot::bank_from_streams(
-            SerdeStyle::Newer,
             &mut snapshot_streams,
             &dbank_paths,
             storage_and_next_append_vec_id,
@@ -407,6 +419,13 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
+
+        assert_eq!(
+            dbank.epoch_stakes(42),
+            Some(&EpochStakes::from(
+                new_epoch_stakes.get(&42).unwrap().clone()
+            ))
+        );
 
         assert_eq!(
             bank.fee_rate_governor.lamports_per_signature,
@@ -502,7 +521,6 @@ mod tests {
         let mut writer = Cursor::new(&mut buf);
 
         crate::serde_snapshot::bank_to_stream_no_extra_fields(
-            SerdeStyle::Newer,
             &mut std::io::BufWriter::new(&mut writer),
             &bank,
             &get_storages_to_serialize(&snapshot_storages),
@@ -525,7 +543,6 @@ mod tests {
         )
         .unwrap();
         let dbank = crate::serde_snapshot::bank_from_streams(
-            SerdeStyle::Newer,
             &mut snapshot_streams,
             &dbank_paths,
             storage_and_next_append_vec_id,
@@ -557,14 +574,18 @@ mod tests {
 
         // This some what long test harness is required to freeze the ABI of
         // Bank's serialization due to versioned nature
-        #[frozen_abi(digest = "8pZwgyMdvxExLgN9GMKnCdofb5CQJgsZ8Dt88hfVd9bf")]
-        #[derive(Serialize, AbiExample)]
+        #[cfg_attr(
+            feature = "frozen-abi",
+            derive(AbiExample),
+            frozen_abi(digest = "7K1xfUkoCwhxssszgoSpbeMCcX3KEyjycGyLXrpFaJNe")
+        )]
+        #[derive(Serialize)]
         pub struct BankAbiTestWrapperNewer {
-            #[serde(serialize_with = "wrapper_newer")]
+            #[serde(serialize_with = "wrapper")]
             bank: Bank,
         }
 
-        pub fn wrapper_newer<S>(bank: &Bank, s: S) -> std::result::Result<S::Ok, S::Error>
+        pub fn wrapper<S>(bank: &Bank, s: S) -> std::result::Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {

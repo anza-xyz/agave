@@ -99,7 +99,7 @@ fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
         .unwrap()
-        .set_limits(std::u64::MAX, std::u64::MAX, std::u64::MAX);
+        .set_limits(u64::MAX, u64::MAX, u64::MAX);
     let bank = bank.wrap_with_bank_forks_for_tests().0;
     let prioritization_fee_cache = PrioritizationFeeCache::default();
     BenchFrame {
@@ -117,9 +117,8 @@ fn bench_execute_batch(
     assert_eq!(
         TRANSACTIONS_PER_ITERATION % batch_size,
         0,
-        "batch_size must be a factor of \
-        `TRANSACTIONS_PER_ITERATION` ({TRANSACTIONS_PER_ITERATION}) \
-        so that bench results are easily comparable"
+        "batch_size must be a factor of `TRANSACTIONS_PER_ITERATION` \
+         ({TRANSACTIONS_PER_ITERATION}) so that bench results are easily comparable"
     );
     let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
 

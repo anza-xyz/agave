@@ -31,11 +31,13 @@ use {
         transaction::{SanitizedTransaction, TransactionError},
     },
     solana_svm::{
-        account_loader::TransactionCheckResult,
+        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         runtime_config::RuntimeConfig,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::{ExecutionRecordingConfig, TransactionBatchProcessor},
+        transaction_processor::{
+            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+        },
         transaction_results::TransactionExecutionResult,
     },
     std::{
@@ -270,8 +272,11 @@ fn prepare_transactions(
     let sanitized_transaction =
         transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), false);
 
-    all_transactions.push(sanitized_transaction);
-    transaction_checks.push((Ok(()), None, Some(20)));
+    all_transactions.push(sanitized_transaction.unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
 
     // The transaction fee payer must have enough funds
     let mut account_data = AccountSharedData::default();
@@ -313,8 +318,11 @@ fn prepare_transactions(
 
     let sanitized_transaction =
         transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), true);
-    all_transactions.push(sanitized_transaction);
-    transaction_checks.push((Ok(()), None, Some(20)));
+    all_transactions.push(sanitized_transaction.unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
 
     // Setting up the accounts for the transfer
 
@@ -352,8 +360,11 @@ fn prepare_transactions(
     let sanitized_transaction =
         transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), false);
 
-    all_transactions.push(sanitized_transaction);
-    transaction_checks.push((Ok(()), None, Some(20)));
+    all_transactions.push(sanitized_transaction.unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
 
     let mut account_data = AccountSharedData::default();
     account_data.set_lamports(80000);
@@ -393,8 +404,11 @@ fn prepare_transactions(
 
     let sanitized_transaction =
         transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), true);
-    all_transactions.push(sanitized_transaction.clone());
-    transaction_checks.push((Ok(()), None, Some(20)));
+    all_transactions.push(sanitized_transaction.clone().unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
 
     // fee payer
     let mut account_data = AccountSharedData::default();
@@ -421,8 +435,8 @@ fn prepare_transactions(
         .insert(recipient, account_data);
 
     // A transaction whose verification has already failed
-    all_transactions.push(sanitized_transaction);
-    transaction_checks.push((Err(TransactionError::BlockhashNotFound), None, Some(20)));
+    all_transactions.push(sanitized_transaction.unwrap());
+    transaction_checks.push(Err(TransactionError::BlockhashNotFound));
 
     (all_transactions, transaction_checks)
 }
@@ -447,10 +461,13 @@ fn svm_integration() {
     register_builtins(&mock_bank, &batch_processor);
 
     let mut error_counter = TransactionErrorMetrics::default();
-    let recording_config = ExecutionRecordingConfig {
-        enable_log_recording: true,
-        enable_return_data_recording: true,
-        enable_cpi_recording: false,
+    let processing_config = TransactionProcessingConfig {
+        recording_config: ExecutionRecordingConfig {
+            enable_log_recording: true,
+            enable_return_data_recording: true,
+            enable_cpi_recording: false,
+        },
+        ..Default::default()
     };
     let mut timings = ExecuteTimings::default();
 
@@ -459,11 +476,8 @@ fn svm_integration() {
         &transactions,
         check_results.as_mut_slice(),
         &mut error_counter,
-        recording_config,
         &mut timings,
-        None,
-        None,
-        false,
+        &processing_config,
     );
 
     assert_eq!(result.execution_results.len(), 5);
@@ -489,7 +503,6 @@ fn svm_integration() {
     // The SVM does not commit the account changes in MockBank
     let recipient_key = transactions[1].message().account_keys()[2];
     let recipient_data = result.loaded_transactions[1]
-        .0
         .as_ref()
         .unwrap()
         .accounts

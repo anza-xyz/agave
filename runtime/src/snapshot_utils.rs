@@ -20,7 +20,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
-        accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
         hardened_unpack::{self, ParallelSelector, UnpackError},
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
@@ -539,7 +539,7 @@ pub enum GetSnapshotAccountsHardLinkDirError {
 /// from <account_path>/run taken at snapshot <slot> time.  They are referenced by the symlinks from the
 /// bank snapshot dir snapshot/<slot>/accounts_hardlinks/.  We observed that sometimes the bank snapshot dir
 /// could be deleted but the account snapshot directories were left behind, possibly by some manual operations
-/// or some legacy code not using the symlinks to clean up the acccount snapshot hardlink directories.
+/// or some legacy code not using the symlinks to clean up the account snapshot hardlink directories.
 /// This function cleans up any account snapshot directories that are no longer referenced by the bank
 /// snapshot dirs, to ensure proper snapshot operations.
 pub fn clean_orphaned_account_snapshot_dirs(
@@ -730,13 +730,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
 }
 
 /// Make a snapshot archive out of the snapshot package
-pub fn archive_snapshot_package(
-    snapshot_package: &SnapshotPackage,
-    full_snapshot_archives_dir: impl AsRef<Path>,
-    incremental_snapshot_archives_dir: impl AsRef<Path>,
-    maximum_full_snapshot_archives_to_retain: NonZeroUsize,
-    maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
-) -> Result<()> {
+pub fn archive_snapshot_package(snapshot_package: &SnapshotPackage) -> Result<()> {
     use ArchiveSnapshotPackageError as E;
     const SNAPSHOTS_DIR: &str = "snapshots";
     const ACCOUNTS_DIR: &str = "accounts";
@@ -823,17 +817,21 @@ pub fn archive_snapshot_package(
                     storage.slot(),
                     storage.append_vec_id(),
                 ));
-                let mut header = tar::Header::new_gnu();
-                header.set_path(path_in_archive).map_err(|err| {
-                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                })?;
-                header.set_size(storage.capacity());
-                header.set_cksum();
-                archive
-                    .append(&header, storage.accounts.data_for_archive())
-                    .map_err(|err| {
-                        E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                    })?;
+                match storage.accounts.internals_for_archive() {
+                    InternalsForArchive::Mmap(data) => {
+                        let mut header = tar::Header::new_gnu();
+                        header.set_path(path_in_archive).map_err(|err| {
+                            E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                        })?;
+                        header.set_size(storage.capacity());
+                        header.set_cksum();
+                        archive.append(&header, data)
+                    }
+                    InternalsForArchive::FileIo(path) => {
+                        archive.append_path_with_name(path, path_in_archive)
+                    }
+                }
+                .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;
@@ -879,13 +877,6 @@ pub fn archive_snapshot_package(
         .map_err(|err| E::QueryArchiveMetadata(err, archive_path.clone()))?;
     fs::rename(&archive_path, snapshot_package.path())
         .map_err(|err| E::MoveArchive(err, archive_path, snapshot_package.path().clone()))?;
-
-    purge_old_snapshot_archives(
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-    );
 
     timer.stop();
     info!(

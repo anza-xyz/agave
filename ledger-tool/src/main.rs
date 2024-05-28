@@ -17,7 +17,7 @@ use {
     },
     dashmap::DashMap,
     log::*,
-    serde::Serialize,
+    serde_derive::Serialize,
     solana_account_decoder::UiAccountEncoding,
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource, accounts_index::ScanConfig,
@@ -334,7 +334,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     // while collecting information about the absent votes and stakes
     let mut absent_stake = 0;
     let mut absent_votes = 0;
-    let mut lowest_last_vote_slot = std::u64::MAX;
+    let mut lowest_last_vote_slot = u64::MAX;
     let mut lowest_total_stake = 0;
     for (node_pubkey, (last_vote_slot, vote_state, stake, total_stake)) in &last_votes {
         all_votes.entry(*node_pubkey).and_modify(|validator_votes| {
@@ -986,6 +986,16 @@ fn main() {
                         .long("enable-rpc-transaction-history")
                         .takes_value(false)
                         .help("Store transaction info for processed slots into local ledger"),
+                )
+                .arg(
+                    Arg::with_name("enable_extended_tx_metadata_storage")
+                        .long("enable-extended-tx-metadata-storage")
+                        .requires("enable_rpc_transaction_history")
+                        .takes_value(false)
+                        .help(
+                            "Include CPI inner instructions, logs, and return data in the historical \
+                             transaction info stored",
+                        ),
                 )
                 .arg(
                     Arg::with_name("run_final_hash_calc")
@@ -2629,7 +2639,7 @@ fn main() {
                                     detail.voter_owner = *owner;
                                     detail.total_stake = delegation.stake;
                                     detail.activation_epoch = delegation.activation_epoch;
-                                    if delegation.deactivation_epoch < Epoch::max_value() {
+                                    if delegation.deactivation_epoch < Epoch::MAX {
                                         detail.deactivation_epoch =
                                             Some(delegation.deactivation_epoch);
                                     }
@@ -2836,7 +2846,7 @@ fn main() {
                                                 detail.map(|d| d.rent_exempt_reserve),
                                             ),
                                             activation_epoch: format_or_na(detail.map(|d| {
-                                                if d.activation_epoch < Epoch::max_value() {
+                                                if d.activation_epoch < Epoch::MAX {
                                                     d.activation_epoch
                                                 } else {
                                                     // bootstraped

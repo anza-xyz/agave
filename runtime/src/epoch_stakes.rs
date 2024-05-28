@@ -1,7 +1,7 @@
 use {
-    crate::stakes::StakesEnum,
+    crate::stakes::{Stakes, StakesEnum},
     serde::{Deserialize, Serialize},
-    solana_sdk::{clock::Epoch, pubkey::Pubkey},
+    solana_sdk::{clock::Epoch, pubkey::Pubkey, stake::state::Stake},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, sync::Arc},
 };
@@ -9,13 +9,16 @@ use {
 pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
 pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
 
-#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
 pub struct NodeVoteAccounts {
     pub vote_accounts: Vec<Pubkey>,
     pub total_stake: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, AbiExample, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
     #[serde(with = "crate::stakes::serde_stakes_enum_compat")]
     stakes: Arc<StakesEnum>,
@@ -118,6 +121,34 @@ impl EpochStakes {
             node_id_to_vote_accounts,
             epoch_authorized_voters,
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) enum VersionedEpochStakes {
+    Current {
+        stakes: Stakes<Stake>,
+        total_stake: u64,
+        node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
+        epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
+    },
+}
+
+impl From<VersionedEpochStakes> for EpochStakes {
+    fn from(versioned: VersionedEpochStakes) -> Self {
+        let VersionedEpochStakes::Current {
+            stakes,
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
+        } = versioned;
+
+        Self {
+            stakes: Arc::new(StakesEnum::Stakes(stakes)),
+            total_stake,
+            node_id_to_vote_accounts,
+            epoch_authorized_voters,
+        }
     }
 }
 

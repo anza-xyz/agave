@@ -63,7 +63,8 @@ impl ThresholdDecision {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SwitchForkDecision {
     SwitchProof(Hash),
     SameFork,
@@ -221,7 +222,8 @@ impl TowerVersions {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Default, Clone, Copy, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(PartialEq, Eq, Debug, Default, Clone, Copy)]
 pub(crate) enum BlockhashStatus {
     /// No vote since restart
     #[default]
@@ -232,8 +234,12 @@ pub(crate) enum BlockhashStatus {
     Blockhash(Hash),
 }
 
-#[frozen_abi(digest = "679XkZ4upGc389SwqAsjs5tr2qB4wisqjbwtei7fGhxC")]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, AbiExample)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "679XkZ4upGc389SwqAsjs5tr2qB4wisqjbwtei7fGhxC")
+)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower {
     pub node_pubkey: Pubkey,
     threshold_depth: usize,
@@ -1168,18 +1174,16 @@ impl Tower {
             fork_stake,
             total_stake
         );
-        if threshold_vote.confirmation_count() as usize > threshold_depth {
-            for old_vote in &vote_state_before_applying_vote.votes {
-                if old_vote.slot() == threshold_vote.slot()
-                    && old_vote.confirmation_count() == threshold_vote.confirmation_count()
-                {
-                    // If you bounce back to voting on the main fork after not
-                    // voting for a while, your latest vote N on the main fork
-                    // might pop off a lot of the stake of votes in the tower.
-                    // This stake would have rolled up to earlier votes in the
-                    // tower, so skip the stake check.
-                    return ThresholdDecision::PassedThreshold;
-                }
+        for old_vote in &vote_state_before_applying_vote.votes {
+            if old_vote.slot() == threshold_vote.slot()
+                && old_vote.confirmation_count() == threshold_vote.confirmation_count()
+            {
+                // If you bounce back to voting on the main fork after not
+                // voting for a while, your latest vote N on the main fork
+                // might pop off a lot of the stake of votes in the tower.
+                // This stake would have rolled up to earlier votes in the
+                // tower, so skip the stake check.
+                return ThresholdDecision::PassedThreshold;
             }
         }
         if lockout > threshold_size {

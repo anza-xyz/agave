@@ -220,6 +220,8 @@ impl AccountsHashVerifier {
 
         Self::save_epoch_accounts_hash(&accounts_package, accounts_hash);
 
+        Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
+
         Self::submit_for_packaging(
             accounts_package,
             snapshot_package_sender,
@@ -241,13 +243,7 @@ impl AccountsHashVerifier {
             AccountsPackageKind::EpochAccountsHash => CalcAccountsHashKind::Full,
             AccountsPackageKind::Snapshot(snapshot_kind) => match snapshot_kind {
                 SnapshotKind::FullSnapshot => CalcAccountsHashKind::Full,
-                SnapshotKind::IncrementalSnapshot(_) => {
-                    if accounts_package.is_incremental_accounts_hash_feature_enabled {
-                        CalcAccountsHashKind::Incremental
-                    } else {
-                        CalcAccountsHashKind::Full
-                    }
-                }
+                SnapshotKind::IncrementalSnapshot(_) => CalcAccountsHashKind::Incremental,
             },
         };
 
@@ -328,15 +324,6 @@ impl AccountsHashVerifier {
                     "failed to calculate accounts hash for {accounts_package:?}: {err}"
                 ))
             })?;
-        }
-
-        if accounts_package.package_kind
-            == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
-        {
-            accounts_package
-                .accounts
-                .accounts_db
-                .purge_old_accounts_hashes(accounts_package.slot);
         }
 
         // After an accounts package has had its accounts hash calculated and
@@ -505,6 +492,37 @@ impl AccountsHashVerifier {
         }
     }
 
+    fn purge_old_accounts_hashes(
+        accounts_package: &AccountsPackage,
+        snapshot_config: &SnapshotConfig,
+    ) {
+        let should_purge = match (
+            snapshot_config.should_generate_snapshots(),
+            accounts_package.package_kind,
+        ) {
+            (false, _) => {
+                // If we are *not* generating snapshots, then it is safe to purge every time.
+                true
+            }
+            (true, AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)) => {
+                // If we *are* generating snapshots, then only purge old accounts hashes after
+                // handling full snapshot packages.  This is because handling incremental snapshot
+                // packages requires the accounts hash from the latest full snapshot, and if we
+                // purged after every package, we'd remove the accounts hash needed by the next
+                // incremental snapshot.
+                true
+            }
+            (true, _) => false,
+        };
+
+        if should_purge {
+            accounts_package
+                .accounts
+                .accounts_db
+                .purge_old_accounts_hashes(accounts_package.slot);
+        }
+    }
+
     fn submit_for_packaging(
         accounts_package: AccountsPackage,
         snapshot_package_sender: Option<&Sender<SnapshotPackage>>,
@@ -524,7 +542,8 @@ impl AccountsHashVerifier {
             return;
         };
 
-        let snapshot_package = SnapshotPackage::new(accounts_package, accounts_hash);
+        let snapshot_package =
+            SnapshotPackage::new(accounts_package, accounts_hash, snapshot_config);
         let send_result = snapshot_package_sender.send(snapshot_package);
         if let Err(err) = send_result {
             // Sending the snapshot package should never fail *unless* we're shutting down.

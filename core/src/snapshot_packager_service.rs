@@ -3,7 +3,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_measure::measure_us,
+    solana_measure::{measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
         snapshot_archive_info::SnapshotArchiveInfoGetter,
@@ -67,41 +67,44 @@ impl SnapshotPackagerService {
                     info!("handling snapshot package: {snapshot_package:?}");
                     let enqueued_time = snapshot_package.enqueued.elapsed();
 
-                    let (purge_bank_snapshots_time_us, handling_time_us) = measure_us!({
-                        // Archiving the snapshot package is not allowed to fail.
-                        // AccountsBackgroundService calls `clean_accounts()` with a value for
-                        // last_full_snapshot_slot that requires this archive call to succeed.
-                        let result = snapshot_utils::archive_snapshot_package(
-                            &snapshot_package,
-                            &snapshot_config.full_snapshot_archives_dir,
-                            &snapshot_config.incremental_snapshot_archives_dir,
-                            snapshot_config.maximum_full_snapshot_archives_to_retain,
-                            snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+                    let measure_handling = Measure::start("");
+
+                    // Archiving the snapshot package is not allowed to fail.
+                    // AccountsBackgroundService calls `clean_accounts()` with a value for
+                    // last_full_snapshot_slot that requires this archive call to succeed.
+                    let result = snapshot_utils::archive_snapshot_package(
+                        &snapshot_package,
+                    );
+                    if let Err(err) = result {
+                        error!("Stopping SnapshotPackagerService! Fatal error while archiving snapshot package: {err}");
+                        exit.store(true, Ordering::Relaxed);
+                        break;
+                    }
+
+                    if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
+                        snapshot_gossip_manager.push_snapshot_hash(
+                            snapshot_package.snapshot_kind,
+                            (snapshot_package.slot(), *snapshot_package.hash()),
                         );
-                        if let Err(err) = result {
-                            error!("Stopping SnapshotPackagerService! Fatal error while archiving snapshot package: {err}");
-                            exit.store(true, Ordering::Relaxed);
-                            break;
-                        }
+                    }
 
-                        if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
-                            snapshot_gossip_manager.push_snapshot_hash(
-                                snapshot_package.snapshot_kind,
-                                (snapshot_package.slot(), *snapshot_package.hash()),
-                            );
-                        }
+                    let (_, purge_archives_time_us) = measure_us!(snapshot_utils::purge_old_snapshot_archives(
+                        &snapshot_config.full_snapshot_archives_dir,
+                        &snapshot_config.incremental_snapshot_archives_dir,
+                        snapshot_config.maximum_full_snapshot_archives_to_retain,
+                        snapshot_config.maximum_incremental_snapshot_archives_to_retain,
+                    ));
 
-                        // Now that this snapshot package has been archived, it is safe to remove
-                        // all bank snapshots older than this slot.  We want to keep the bank
-                        // snapshot *at this slot* so that it can be used during restarts, when
-                        // booting from local state.
-                        measure_us!(snapshot_utils::purge_bank_snapshots_older_than_slot(
-                            &snapshot_config.bank_snapshots_dir,
-                            snapshot_package.slot(),
-                        ))
-                        .1
-                    });
+                    // Now that this snapshot package has been archived, it is safe to remove
+                    // all bank snapshots older than this slot.  We want to keep the bank
+                    // snapshot *at this slot* so that it can be used during restarts, when
+                    // booting from local state.
+                    let (_, purge_bank_snapshots_time_us) = measure_us!(snapshot_utils::purge_bank_snapshots_older_than_slot(
+                        &snapshot_config.bank_snapshots_dir,
+                        snapshot_package.slot(),
+                    ));
 
+                    let handling_time_us = measure_handling.end_as_us();
                     datapoint_info!(
                         "snapshot_packager_service",
                         (
@@ -119,6 +122,11 @@ impl SnapshotPackagerService {
                         (
                             "purge_old_snapshots_time_us",
                             purge_bank_snapshots_time_us,
+                            i64
+                        ),
+                        (
+                            "purge_old_archives_time_us",
+                            purge_archives_time_us,
                             i64
                         ),
                     );
@@ -196,90 +204,13 @@ mod tests {
         rand::seq::SliceRandom,
         solana_runtime::{
             snapshot_archive_info::SnapshotArchiveInfo,
-            snapshot_bank_utils,
             snapshot_hash::SnapshotHash,
             snapshot_package::{SnapshotKind, SnapshotPackage},
-            snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
+            snapshot_utils::ArchiveFormat,
         },
-        solana_sdk::{clock::Slot, genesis_config::GenesisConfig, hash::Hash},
-        std::{
-            fs::{self, remove_dir_all},
-            path::{Path, PathBuf},
-            time::Instant,
-        },
-        tempfile::TempDir,
+        solana_sdk::{clock::Slot, hash::Hash},
+        std::{path::PathBuf, time::Instant},
     };
-
-    // Create temporary placeholder directory for all test files
-    fn make_tmp_dir_path() -> PathBuf {
-        let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
-        let path = PathBuf::from(format!("{out_dir}/tmp/test_package_snapshots"));
-
-        // whack any possible collision
-        let _ignored = std::fs::remove_dir_all(&path);
-        // whack any possible collision
-        let _ignored = std::fs::remove_file(&path);
-
-        path
-    }
-
-    #[test]
-    fn test_package_snapshots_relative_ledger_path() {
-        let temp_dir = make_tmp_dir_path();
-        create_and_verify_snapshot(&temp_dir);
-        remove_dir_all(temp_dir).expect("should remove tmp dir");
-    }
-
-    #[test]
-    fn test_package_snapshots() {
-        create_and_verify_snapshot(TempDir::new().unwrap().path())
-    }
-
-    fn create_and_verify_snapshot(temp_dir: &Path) {
-        let bank_snapshots_dir = temp_dir.join("snapshots");
-        fs::create_dir_all(&bank_snapshots_dir).unwrap();
-        let full_snapshot_archives_dir = temp_dir.join("full_snapshot_archives");
-        let incremental_snapshot_archives_dir = temp_dir.join("incremental_snapshot_archives");
-        fs::create_dir_all(&full_snapshot_archives_dir).unwrap();
-        fs::create_dir_all(&incremental_snapshot_archives_dir).unwrap();
-
-        let num_snapshots = 1;
-
-        let genesis_config = GenesisConfig::default();
-        let bank = snapshot_bank_utils::create_snapshot_dirs_for_tests(
-            &genesis_config,
-            &bank_snapshots_dir,
-            num_snapshots,
-            num_snapshots,
-        );
-
-        let bank_snapshot_info =
-            snapshot_utils::get_highest_bank_snapshot(&bank_snapshots_dir).unwrap();
-        let snapshot_storages = bank.get_snapshot_storages(None);
-        let archive_format = ArchiveFormat::Tar;
-
-        let full_archive = snapshot_bank_utils::package_and_archive_full_snapshot(
-            &bank,
-            &bank_snapshot_info,
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
-            snapshot_storages,
-            archive_format,
-            SnapshotVersion::default(),
-            snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            snapshot_utils::DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-        )
-        .unwrap();
-
-        // Check archive is correct
-        snapshot_utils::verify_snapshot_archive(
-            full_archive.path(),
-            bank_snapshots_dir,
-            archive_format,
-            snapshot_utils::VerifyBank::Deterministic,
-            bank_snapshot_info.slot,
-        );
-    }
 
     /// Ensure that unhandled snapshot packages are properly re-enqueued or dropped
     ///
@@ -299,7 +230,6 @@ mod tests {
                 block_height: slot,
                 bank_snapshot_dir: PathBuf::default(),
                 snapshot_storages: Vec::default(),
-                snapshot_version: SnapshotVersion::default(),
                 snapshot_kind,
                 enqueued: Instant::now(),
             }
