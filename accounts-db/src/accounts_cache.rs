@@ -24,6 +24,7 @@ pub struct SlotCacheInner {
     cache: DashMap<Pubkey, CachedAccount>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
+    unique_account_writes: AtomicU64,
     unique_account_writes_size: AtomicU64,
     size: AtomicU64,
     total_size: Arc<AtomicU64>,
@@ -50,6 +51,11 @@ impl SlotCacheInner {
             (
                 "same_account_writes_size",
                 self.same_account_writes_size.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "unique_account_writes",
+                self.unique_account_writes.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -94,6 +100,7 @@ impl SlotCacheInner {
             self.total_size.fetch_add(data_len, Ordering::Relaxed);
             self.unique_account_writes_size
                 .fetch_add(data_len, Ordering::Relaxed);
+            self.unique_account_writes.fetch_add(1, Ordering::Relaxed);
         }
         item
     }
@@ -154,6 +161,18 @@ impl CachedAccountInner {
     }
 }
 
+#[derive(Default, Debug)]
+struct AccountsCacheStats {
+    hits: AtomicU64,
+    misses: AtomicU64,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct AccountsCacheStatReport {
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct AccountsCache {
     cache: DashMap<Slot, SlotCache>,
@@ -162,6 +181,7 @@ pub struct AccountsCache {
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
     max_flushed_root: AtomicU64,
     total_size: Arc<AtomicU64>,
+    stats: AccountsCacheStats,
 }
 
 impl AccountsCache {
@@ -170,6 +190,7 @@ impl AccountsCache {
             cache: DashMap::default(),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
+            unique_account_writes: AtomicU64::default(),
             unique_account_writes_size: AtomicU64::default(),
             size: AtomicU64::default(),
             total_size: Arc::clone(&self.total_size),
@@ -190,6 +211,19 @@ impl AccountsCache {
     pub fn size(&self) -> u64 {
         self.total_size.load(Ordering::Relaxed)
     }
+
+    fn total_num_accounts(&self) -> u64 {
+        let total = self
+            .cache
+            .iter()
+            .map(|item| {
+                let slot_cache = item.value();
+                slot_cache.len()
+            })
+            .sum::<usize>();
+        total as u64
+    }
+
     pub fn report_size(&self) {
         datapoint_info!(
             "accounts_cache_size",
@@ -204,8 +238,16 @@ impl AccountsCache {
                 self.unique_account_writes_size(),
                 i64
             ),
+            ("total_num_accounts", self.total_num_accounts(), i64),
             ("total_size", self.size(), i64),
         );
+    }
+
+    pub(crate) fn get_and_reset_stats(&self) -> AccountsCacheStatReport {
+        AccountsCacheStatReport {
+            hits: self.stats.hits.swap(0, Ordering::Relaxed),
+            misses: self.stats.misses.swap(0, Ordering::Relaxed),
+        }
     }
 
     pub fn store(&self, slot: Slot, pubkey: &Pubkey, account: AccountSharedData) -> CachedAccount {
@@ -224,8 +266,15 @@ impl AccountsCache {
     }
 
     pub fn load(&self, slot: Slot, pubkey: &Pubkey) -> Option<CachedAccount> {
-        self.slot_cache(slot)
-            .and_then(|slot_cache| slot_cache.get_cloned(pubkey))
+        let account = self
+            .slot_cache(slot)
+            .and_then(|slot_cache| slot_cache.get_cloned(pubkey));
+        if account.is_some() {
+            self.stats.hits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.stats.misses.fetch_add(1, Ordering::Relaxed);
+        }
+        account
     }
 
     pub fn remove_slot(&self, slot: Slot) -> Option<SlotCache> {
@@ -288,11 +337,11 @@ impl AccountsCache {
     }
 
     pub fn fetch_max_flush_root(&self) -> Slot {
-        self.max_flushed_root.load(Ordering::Relaxed)
+        self.max_flushed_root.load(Ordering::Acquire)
     }
 
     pub fn set_max_flush_root(&self, root: Slot) {
-        self.max_flushed_root.fetch_max(root, Ordering::Relaxed);
+        self.max_flushed_root.fetch_max(root, Ordering::AcqRel);
     }
 }
 
