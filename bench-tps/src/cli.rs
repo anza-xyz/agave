@@ -688,6 +688,26 @@ mod tests {
             }
         );
 
+        // check if --identity is working
+        let keypair = read_keypair_file(&keypair_file_name).unwrap();
+        let matches = build_args("1.0.0").get_matches_from(vec![
+            "solana-bench-tps",
+            "--identity",
+            &keypair_file_name,
+            "-u",
+            "http://123.4.5.6:8899",
+        ]);
+        let actual = parse_args(&matches).unwrap();
+        assert_eq!(
+            actual,
+            Config {
+                json_rpc_url: "http://123.4.5.6:8899".to_string(),
+                websocket_url: "ws://123.4.5.6:8900/".to_string(),
+                id: keypair,
+                ..Config::default()
+            }
+        );
+
         // parse cli args typical for private cluster tests
         let keypair = read_keypair_file(&keypair_file_name).unwrap();
         let matches = build_args("1.0.0").get_matches_from(vec![
