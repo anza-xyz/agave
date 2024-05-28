@@ -168,12 +168,13 @@ use {
             CheckedTransactionDetails, TransactionCheckResult, TransactionLoadResult,
         },
         account_overrides::AccountOverrides,
-        nonce_info::{NonceInfo, NoncePartial},
+        nonce_info::NoncePartial,
         program_loader::load_program_with_pubkey,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
+            TransactionProcessingConfig,
         },
         transaction_results::{
             TransactionExecutionDetails, TransactionExecutionResult, TransactionResults,
@@ -3039,10 +3040,8 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            self.check_message_for_nonce(message)
-                .and_then(|(address, account)| {
-                    NoncePartial::new(address, account).lamports_per_signature()
-                })
+            self.load_message_nonce_account(message)
+                .map(|(_nonce, nonce_data)| nonce_data.get_lamports_per_signature())
         })?;
         Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
     }
@@ -3492,20 +3491,17 @@ impl Bank {
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.message().recent_blockhash();
-        if hash_queue.is_hash_valid_for_age(recent_blockhash, max_age) {
+        if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
             Ok(CheckedTransactionDetails {
                 nonce: None,
-                lamports_per_signature: hash_queue
-                    .get_lamports_per_signature(tx.message().recent_blockhash()),
+                lamports_per_signature: hash_info.lamports_per_signature(),
             })
-        } else if let Some((address, account)) =
-            self.check_transaction_for_nonce(tx, next_durable_nonce)
+        } else if let Some((nonce, nonce_data)) =
+            self.check_and_load_message_nonce_account(tx.message(), next_durable_nonce)
         {
-            let nonce = NoncePartial::new(address, account);
-            let lamports_per_signature = nonce.lamports_per_signature();
             Ok(CheckedTransactionDetails {
                 nonce: Some(nonce),
-                lamports_per_signature,
+                lamports_per_signature: nonce_data.get_lamports_per_signature(),
             })
         } else {
             error_counters.blockhash_not_found += 1;
@@ -3560,7 +3556,10 @@ impl Bank {
             .is_hash_valid_for_age(hash, max_age)
     }
 
-    fn check_message_for_nonce(&self, message: &SanitizedMessage) -> Option<TransactionAccount> {
+    fn load_message_nonce_account(
+        &self,
+        message: &SanitizedMessage,
+    ) -> Option<(NoncePartial, nonce::state::Data)> {
         let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
@@ -3573,17 +3572,17 @@ impl Bank {
             return None;
         }
 
-        Some((*nonce_address, nonce_account))
+        Some((NoncePartial::new(*nonce_address, nonce_account), nonce_data))
     }
 
-    fn check_transaction_for_nonce(
+    fn check_and_load_message_nonce_account(
         &self,
-        tx: &SanitizedTransaction,
+        message: &SanitizedMessage,
         next_durable_nonce: &DurableNonce,
-    ) -> Option<TransactionAccount> {
-        let nonce_is_advanceable = tx.message().recent_blockhash() != next_durable_nonce.as_hash();
+    ) -> Option<(NoncePartial, nonce::state::Data)> {
+        let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
         if nonce_is_advanceable {
-            self.check_message_for_nonce(tx.message())
+            self.load_message_nonce_account(message)
         } else {
             None
         }
@@ -3674,6 +3673,13 @@ impl Bank {
         debug!("check: {}us", check_time.as_us());
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_time.as_us());
 
+        let processing_config = TransactionProcessingConfig {
+            account_overrides,
+            limit_to_load_programs,
+            log_messages_bytes_limit,
+            recording_config,
+        };
+
         let sanitized_output = self
             .transaction_processor
             .load_and_execute_sanitized_transactions(
@@ -3681,11 +3687,8 @@ impl Bank {
                 sanitized_txs,
                 &mut check_results,
                 &mut error_counters,
-                recording_config,
                 timings,
-                account_overrides,
-                log_messages_bytes_limit,
-                limit_to_load_programs,
+                &processing_config,
             );
 
         let mut signature_count = 0;
