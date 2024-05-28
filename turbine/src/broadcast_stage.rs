@@ -279,7 +279,7 @@ impl BroadcastStage {
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
-        broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
+        mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
     ) -> Self {
         let (socket_sender, socket_receiver) = unbounded();
         let (blockstore_sender, blockstore_receiver) = unbounded();
@@ -333,11 +333,9 @@ impl BroadcastStage {
         // Blockstore::insert_threads() obtains and holds a write lock for the entire function.
         // Until this changes, only a single inserter thread is necessary.
         thread_hdls.push({
-            let blockstore_receiver = blockstore_receiver.clone();
-            let mut bs_record = broadcast_stage_run.clone();
-            let btree = blockstore.clone();
+            let blockstore = blockstore.clone();
             let run_record = move || loop {
-                let res = bs_record.record(&blockstore_receiver, &btree);
+                let res = broadcast_stage_run.record(&blockstore_receiver, &blockstore);
                 let res = Self::handle_error(res, "solana-broadcaster-record");
                 if let Some(res) = res {
                     return res;
