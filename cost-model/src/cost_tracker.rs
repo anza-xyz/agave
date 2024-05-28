@@ -160,20 +160,25 @@ impl CostTracker {
         &mut self,
         estimated_tx_cost: &TransactionCost,
         actual_execution_units: u64,
+        actual_loaded_accounts_data_size_cost: u64,
     ) {
-        let estimated_execution_units = estimated_tx_cost.programs_execution_cost();
-        match actual_execution_units.cmp(&estimated_execution_units) {
+        let actual_load_and_execution_units =
+            actual_execution_units.saturating_add(actual_loaded_accounts_data_size_cost);
+        let estimated_load_and_execution_units = estimated_tx_cost
+            .programs_execution_cost()
+            .saturating_add(estimated_tx_cost.loaded_accounts_data_size_cost());
+        match actual_load_and_execution_units.cmp(&estimated_load_and_execution_units) {
             Ordering::Equal => (),
             Ordering::Greater => {
                 self.add_transaction_execution_cost(
                     estimated_tx_cost,
-                    actual_execution_units - estimated_execution_units,
+                    actual_load_and_execution_units - estimated_load_and_execution_units,
                 );
             }
             Ordering::Less => {
                 self.sub_transaction_execution_cost(
                     estimated_tx_cost,
-                    estimated_execution_units - actual_execution_units,
+                    estimated_load_and_execution_units - actual_load_and_execution_units,
                 );
             }
         }
@@ -879,7 +884,7 @@ mod tests {
 
         // assert no-change if actual units is same as estimated units
         let mut expected_cost = cost;
-        cost_tracker.update_execution_cost(&tx_cost, cost);
+        cost_tracker.update_execution_cost(&tx_cost, cost, 0);
         let (_costliest_account, costliest_account_cost) = cost_tracker.find_costliest_account();
         assert_eq!(expected_cost, cost_tracker.block_cost);
         assert_eq!(expected_cost, costliest_account_cost);
@@ -888,7 +893,7 @@ mod tests {
         // assert cost are adjusted down
         let reduced_units = 3;
         expected_cost -= reduced_units;
-        cost_tracker.update_execution_cost(&tx_cost, cost - reduced_units);
+        cost_tracker.update_execution_cost(&tx_cost, cost - reduced_units, 0);
         let (_costliest_account, costliest_account_cost) = cost_tracker.find_costliest_account();
         assert_eq!(expected_cost, cost_tracker.block_cost);
         assert_eq!(expected_cost, costliest_account_cost);
@@ -897,7 +902,7 @@ mod tests {
         // assert cost are adjusted up
         let increased_units = 1;
         expected_cost += increased_units;
-        cost_tracker.update_execution_cost(&tx_cost, cost + increased_units);
+        cost_tracker.update_execution_cost(&tx_cost, cost + increased_units, 0);
         let (_costliest_account, costliest_account_cost) = cost_tracker.find_costliest_account();
         assert_eq!(expected_cost, cost_tracker.block_cost);
         assert_eq!(expected_cost, costliest_account_cost);

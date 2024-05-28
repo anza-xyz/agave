@@ -198,10 +198,19 @@ impl QosService {
                 // Only transactions that the qos service included have to be
                 // checked for update
                 if let Ok(tx_cost) = tx_cost {
-                    if let CommitTransactionDetails::Committed { compute_units } =
-                        transaction_committed_details
+                    if let CommitTransactionDetails::Committed {
+                        compute_units,
+                        loaded_accounts_data_size,
+                    } = transaction_committed_details
                     {
-                        cost_tracker.update_execution_cost(tx_cost, *compute_units)
+                        cost_tracker.update_execution_cost(
+                            tx_cost,
+                            *compute_units,
+                            CostModel::calculate_loaded_accounts_data_size_cost(
+                                *loaded_accounts_data_size,
+                                &bank.feature_set,
+                            ),
+                        )
                     }
                 }
             });
@@ -755,6 +764,7 @@ mod tests {
                 .map(|tx_cost| CommitTransactionDetails::Committed {
                     compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                         + execute_units_adjustment,
+                    loaded_accounts_data_size: 0,
                 })
                 .collect();
             let final_txs_cost = total_txs_cost + execute_units_adjustment * transaction_count;
@@ -882,6 +892,7 @@ mod tests {
                         CommitTransactionDetails::Committed {
                             compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                                 + execute_units_adjustment,
+                            loaded_accounts_data_size: 0,
                         }
                     }
                 })
