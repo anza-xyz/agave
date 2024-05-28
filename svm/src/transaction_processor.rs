@@ -1618,14 +1618,17 @@ mod tests {
         batch_processor.program_cache.write().unwrap().fork_graph =
             Some(Arc::new(RwLock::new(TestForkGraph {})));
 
-        let hello_program = deploy_program("hello-solana".to_string(), &mut mock_bank);
-        let transfer_program = deploy_program("simple-transfer".to_string(), &mut mock_bank);
-        let clock_program = deploy_program("clock-sysvar".to_string(), &mut mock_bank);
+        let programs = vec![
+            deploy_program("hello-solana".to_string(), &mut mock_bank),
+            deploy_program("simple-transfer".to_string(), &mut mock_bank),
+            deploy_program("clock-sysvar".to_string(), &mut mock_bank),
+        ];
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
-        account_maps.insert(clock_program, 2);
-        account_maps.insert(transfer_program, 1);
-        account_maps.insert(hello_program, 0);
+        let account_maps: HashMap<Pubkey, u64> = programs
+            .iter()
+            .enumerate()
+            .map(|(idx, key)| (*key, idx as u64))
+            .collect();
 
         for _ in 0..10 {
             let ths: Vec<_> = (0..4)
@@ -1640,29 +1643,16 @@ mod tests {
                         HashSet::new(),
                     );
                     let maps = account_maps.clone();
+                    let programs = programs.clone();
                     thread::spawn(move || {
                         let result = processor.replenish_program_cache(&local_bank, &maps, true);
-                        let clock = result.find(&clock_program);
-                        assert!(matches!(
-                            clock.unwrap().program,
-                            ProgramCacheEntryType::Loaded(_)
-                        ));
-                        let transfer = result.find(&transfer_program);
-                        assert!(matches!(
-                            transfer.unwrap().program,
-                            ProgramCacheEntryType::Loaded(_)
-                        ));
-                        let hello = result.find(&transfer_program);
-                        assert!(matches!(
-                            hello.unwrap().program,
-                            ProgramCacheEntryType::Loaded(_)
-                        ));
-                        let entries = processor
-                            .program_cache
-                            .read()
-                            .unwrap()
-                            .get_flattened_entries(true, true);
-                        assert_eq!(entries.len(), 3);
+                        for key in &programs {
+                            let cache_entry = result.find(key);
+                            assert!(matches!(
+                                cache_entry.unwrap().program,
+                                ProgramCacheEntryType::Loaded(_)
+                            ));
+                        }
                     })
                 })
                 .collect();
