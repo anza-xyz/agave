@@ -654,6 +654,7 @@ impl ReplayStage {
                     r_bank_forks.get_vote_only_mode_signal(),
                 )
             };
+            let mut last_threshold_failure_slot = 0;
             // Thread pool to (maybe) replay multiple threads in parallel
             let replay_mode = if replay_forks_threads.get() == 1 {
                 ForkReplayMode::Serial
@@ -961,6 +962,27 @@ impl ReplayStage {
                                 progress.get_latest_leader_slot_must_exist(*slot)
                             {
                                 progress.log_propagated_stats(latest_leader_slot, &bank_forks);
+                            }
+                        }
+                        if let HeaviestForkFailures::FailedThreshold(slot, depth, ..) = r {
+                            if *slot > last_threshold_failure_slot {
+                                last_threshold_failure_slot = *slot;
+                                let in_partition =
+                                    if let Some(last_voted_slot) = tower.last_voted_slot() {
+                                        Self::is_partition_detected(
+                                            &ancestors,
+                                            last_voted_slot,
+                                            heaviest_bank.slot(),
+                                        )
+                                    } else {
+                                        false
+                                    };
+                                datapoint_info!(
+                                    "replay_stage-threshold-failure",
+                                    ("slot", *slot as i64, i64),
+                                    ("depth", *depth as i64, i64),
+                                    ("in_partition", in_partition, bool),
+                                );
                             }
                         }
                     }
