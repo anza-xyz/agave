@@ -1060,17 +1060,20 @@ impl Transaction {
             return Err(TransactionError::InvalidAccountIndex);
         }
 
-        let indices = signers.iter().map(|(pubkey, _signature)| {
-            self.message
-                .account_keys
-                .iter()
-                .position(|key| key == pubkey)
-                .filter(|index| index < &num_required_signatures)
-                .ok_or(TransactionError::InvalidAccountIndex)
-        });
-        for ((_pubkey, signature), index) in signers.iter().zip(indices) {
-            let index = index?;
-            self.signatures[index] = *signature
+        for (index, account_key) in self
+            .message
+            .account_keys
+            .iter()
+            .enumerate()
+            .take(num_required_signatures)
+        {
+            if let Some((_pubkey, signature)) =
+                signers.iter().find(|(key, _signature)| account_key == key)
+            {
+                self.signatures[index] = *signature
+            } else {
+                return Err(TransactionError::InvalidAccountIndex);
+            }
         }
 
         self.verify()
@@ -1692,7 +1695,8 @@ mod tests {
         let signature1 = keypair1.sign_message(&tx.message_data());
 
         // Replace signatures with order swapped
-        tx.replace_signatures(&[(pubkey1, signature1), (pubkey0, signature0)]);
+        tx.replace_signatures(&[(pubkey1, signature1), (pubkey0, signature0)])
+            .unwrap();
         // Order of account_keys should not change
         assert_eq!(tx.message.account_keys, expected_account_keys);
         // Order of signatures should match original account_keys list
