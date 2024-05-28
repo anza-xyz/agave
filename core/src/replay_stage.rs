@@ -4423,12 +4423,12 @@ impl ReplayStage {
                         } else {
                             false
                         };
-                        let stake_pct = 100f64 * observed_stake as f64 / total_stake as f64;
                         datapoint_info!(
                             "replay_stage-threshold-failure",
                             ("slot", slot as i64, i64),
                             ("depth", depth as i64, i64),
-                            ("stake_pct", stake_pct, f64),
+                            ("observed_stake", observed_stake as i64, i64),
+                            ("total_stake", total_stake as i64, i64),
                             ("in_partition", in_partition, bool),
                         );
                     }
