@@ -122,7 +122,7 @@ use {
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{
         wait_for_wen_restart_phase_one, wen_restart_is_in_phase_one, wen_restart_mark_done,
-        wen_restart_wait_for_supermajority_bank_id, WenRestartConfig,
+        wen_restart_wait_for_supermajority_slot_hash, WenRestartConfig,
     },
     std::{
         collections::{HashMap, HashSet},
@@ -2326,13 +2326,16 @@ fn wait_for_supermajority(
     // or when wen_restart is in WAIT_FOR_SUPERMAJORITY mode.
     let (wait_for_supermajority, expected_bank_hash) = match config.wait_for_supermajority {
         Some(wait_for_supermajority) => (Some(wait_for_supermajority), config.expected_bank_hash),
-        None => match wen_restart_wait_for_supermajority_bank_id(&config.wen_restart_proto_path) {
-            Ok((slot, hash)) => (slot, hash),
-            Err(e) => {
-                error!("Failed to read wen_restart supermajority bank id: {}", e);
-                return Err(ValidatorError::Error(e.to_string()));
+        None => {
+            match wen_restart_wait_for_supermajority_slot_hash(&config.wen_restart_proto_path) {
+                Ok(None) => (None, None),
+                Ok(Some((slot, hash))) => (Some(slot), Some(hash)),
+                Err(e) => {
+                    error!("Failed to read wen_restart supermajority bank id: {}", e);
+                    return Err(ValidatorError::Error(e.to_string()));
+                }
             }
-        },
+        }
     };
     match wait_for_supermajority {
         Some(wait_for_supermajority_slot) => {
