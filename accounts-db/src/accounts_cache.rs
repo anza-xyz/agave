@@ -24,6 +24,7 @@ pub struct SlotCacheInner {
     cache: DashMap<Pubkey, CachedAccount>,
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
+    unique_account_writes: AtomicU64,
     unique_account_writes_size: AtomicU64,
     size: AtomicU64,
     total_size: Arc<AtomicU64>,
@@ -50,6 +51,11 @@ impl SlotCacheInner {
             (
                 "same_account_writes_size",
                 self.same_account_writes_size.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "unique_account_writes",
+                self.unique_account_writes.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -94,6 +100,7 @@ impl SlotCacheInner {
             self.total_size.fetch_add(data_len, Ordering::Relaxed);
             self.unique_account_writes_size
                 .fetch_add(data_len, Ordering::Relaxed);
+            self.unique_account_writes.fetch_add(1, Ordering::Relaxed);
         }
         item
     }
@@ -183,6 +190,7 @@ impl AccountsCache {
             cache: DashMap::default(),
             same_account_writes: AtomicU64::default(),
             same_account_writes_size: AtomicU64::default(),
+            unique_account_writes: AtomicU64::default(),
             unique_account_writes_size: AtomicU64::default(),
             size: AtomicU64::default(),
             total_size: Arc::clone(&self.total_size),
