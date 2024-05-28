@@ -1662,4 +1662,35 @@ mod tests {
 
         assert!(tx.is_signed());
     }
+
+    #[test]
+    fn test_replace_signatures() {
+        let program_id = Pubkey::default();
+        let keypair0 = Keypair::new();
+        let keypair1 = Keypair::new();
+        let pubkey0 = keypair0.pubkey();
+        let pubkey1 = keypair1.pubkey();
+        let ix = Instruction::new_with_bincode(
+            program_id,
+            &0,
+            vec![
+                AccountMeta::new(pubkey0, true),
+                AccountMeta::new(pubkey1, true),
+            ],
+        );
+        let message = Message::new(&[ix], Some(&pubkey0));
+        let expected_account_keys = message.account_keys.clone();
+        let mut tx = Transaction::new_unsigned(message);
+        tx.sign(&[&keypair0, &keypair1], Hash::new_unique());
+
+        let signature0 = keypair0.sign_message(&tx.message_data());
+        let signature1 = keypair1.sign_message(&tx.message_data());
+
+        // Replace signatures with order swapped
+        tx.replace_signatures(&[(pubkey1, signature1), (pubkey0, signature0)]);
+        // Order of account_keys should not change
+        assert_eq!(tx.message.account_keys, expected_account_keys);
+        // Order of signatures should match original account_keys list
+        assert_eq!(tx.signatures, &[signature0, signature1]);
+    }
 }
