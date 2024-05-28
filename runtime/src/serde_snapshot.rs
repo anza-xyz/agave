@@ -544,6 +544,7 @@ where
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub(crate) fn bank_to_stream<W>(
     stream: &mut BufWriter<W>,
     bank: &Bank,
