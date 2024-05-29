@@ -22,8 +22,8 @@ use {
         native_loader,
         nonce::State as NonceState,
         pubkey::Pubkey,
-        rent::RentDue,
-        rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        rent::{Rent, RentDue},
+        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         rent_debits::RentDebits,
         saturating_add_assign,
         sysvar::{self, instructions::construct_instructions_data},
@@ -69,9 +69,8 @@ impl LoadedTransaction {
 pub fn validate_fee_payer(
     payer_address: &Pubkey,
     payer_account: &mut AccountSharedData,
-    payer_index: IndexOfAccount,
     error_counters: &mut TransactionErrorMetrics,
-    rent_collector: &RentCollector,
+    rent: &Rent,
     fee: u64,
 ) -> Result<()> {
     if payer_account.lamports() == 0 {
@@ -87,7 +86,7 @@ pub fn validate_fee_payer(
         SystemAccountKind::Nonce => {
             // Should we ever allow a fees charge to zero a nonce account's
             // balance. The state MUST be set to uninitialized in that case
-            rent_collector.rent.minimum_balance(NonceState::size())
+            rent.minimum_balance(NonceState::size())
         }
     };
 
@@ -100,18 +99,18 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
+    let payer_pre_rent_state = RentState::from_account(payer_account, rent);
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
+    let payer_post_rent_state = RentState::from_account(payer_account, rent);
     RentState::check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,
         payer_address,
         payer_account,
-        payer_index,
+        0,
     )
 }
 
@@ -280,9 +279,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     validate_fee_payer(
                         key,
                         &mut account,
-                        i as IndexOfAccount,
                         error_counters,
-                        rent_collector,
+                        &rent_collector.rent,
                         fee,
                     )?;
 
@@ -1268,10 +1266,7 @@ mod tests {
         expected_result: Result<()>,
         payer_post_balance: u64,
     }
-    fn validate_fee_payer_account(
-        test_parameter: ValidateFeePayerTestParameter,
-        rent_collector: &RentCollector,
-    ) {
+    fn validate_fee_payer_account(test_parameter: ValidateFeePayerTestParameter, rent: &Rent) {
         let payer_account_keys = Keypair::new();
         let mut account = if test_parameter.is_nonce {
             AccountSharedData::new_data(
@@ -1286,9 +1281,8 @@ mod tests {
         let result = validate_fee_payer(
             &payer_account_keys.pubkey(),
             &mut account,
-            0,
             &mut TransactionErrorMetrics::default(),
-            rent_collector,
+            rent,
             test_parameter.fee,
         );
 
@@ -1322,7 +1316,7 @@ mod tests {
                         expected_result: Ok(()),
                         payer_post_balance: min_balance,
                     },
-                    &rent_collector,
+                    &rent_collector.rent,
                 );
             }
         }
@@ -1339,7 +1333,7 @@ mod tests {
                         expected_result: Err(TransactionError::AccountNotFound),
                         payer_post_balance: 0,
                     },
-                    &rent_collector,
+                    &rent_collector.rent,
                 );
             }
         }
@@ -1356,7 +1350,7 @@ mod tests {
                         expected_result: Err(TransactionError::InsufficientFundsForFee),
                         payer_post_balance: min_balance + fee - 1,
                     },
-                    &rent_collector,
+                    &rent_collector.rent,
                 );
             }
         }
@@ -1372,7 +1366,7 @@ mod tests {
                     expected_result: Ok(()),
                     payer_post_balance: 0,
                 },
-                &rent_collector,
+                &rent_collector.rent,
             );
         }
     }
@@ -1400,7 +1394,7 @@ mod tests {
                 expected_result: Err(TransactionError::InsufficientFundsForFee),
                 payer_post_balance: u64::MAX,
             },
-            &rent_collector,
+            &rent_collector.rent,
         );
     }
 
