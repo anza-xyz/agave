@@ -714,11 +714,13 @@ pub fn reserialize_bank_with_new_accounts_hash(
     found
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 struct SerializableBankAndStorage<'a> {
     bank: &'a Bank,
     snapshot_storages: &'a [Vec<Arc<AccountStorageEntry>>],
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 impl<'a> Serialize for SerializableBankAndStorage<'a> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
