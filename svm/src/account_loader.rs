@@ -15,7 +15,7 @@ use {
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         feature_set::{
             self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation,
+            remove_rounding_in_fee_calculation, FeatureSet,
         },
         fee::FeeStructure,
         message::SanitizedMessage,
@@ -23,7 +23,7 @@ use {
         nonce::State as NonceState,
         pubkey::Pubkey,
         rent::RentDue,
-        rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        rent_collector::{CollectedInfo, RentCollector, RENT_EXEMPT_RENT_EPOCH},
         rent_debits::RentDebits,
         saturating_add_assign,
         sysvar::{self, instructions::construct_instructions_data},
@@ -58,6 +58,36 @@ pub struct LoadedTransaction {
 impl LoadedTransaction {
     pub fn fee_payer_account(&self) -> Option<&TransactionAccount> {
         self.accounts.first()
+    }
+}
+
+/// Collect rent from an account if rent is still enabled and regardless of
+/// whether rent is enabled, set the rent epoch to u64::MAX if the account is
+/// rent exempt.
+pub fn collect_rent_from_account(
+    feature_set: &FeatureSet,
+    rent_collector: &RentCollector,
+    address: &Pubkey,
+    account: &mut AccountSharedData,
+) -> CollectedInfo {
+    if !feature_set.is_active(&feature_set::disable_rent_fees_collection::id()) {
+        rent_collector.collect_from_existing_account(address, account)
+    } else {
+        // When rent fee collection is disabled, we won't collect rent for any account. If there
+        // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
+        // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
+        // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
+        if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
+            && rent_collector.get_rent_due(
+                account.lamports(),
+                account.data().len(),
+                account.rent_epoch(),
+            ) == RentDue::Exempt
+        {
+            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        }
+
+        CollectedInfo::default()
     }
 }
 
@@ -231,30 +261,15 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                         .get_account_shared_data(key)
                         .map(|mut account| {
                             if message.is_writable(i) {
-                                if !feature_set
-                                    .is_active(&feature_set::disable_rent_fees_collection::id())
-                                {
-                                    let rent_due = rent_collector
-                                        .collect_from_existing_account(key, &mut account)
-                                        .rent_amount;
+                                let rent_due = collect_rent_from_account(
+                                    &feature_set,
+                                    rent_collector,
+                                    key,
+                                    &mut account,
+                                )
+                                .rent_amount;
 
-                                    (account.data().len(), account, rent_due)
-                                } else {
-                                    // When rent fee collection is disabled, we won't collect rent for any account. If there
-                                    // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
-                                    // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
-                                    // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
-                                    if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
-                                        && rent_collector.get_rent_due(
-                                            account.lamports(),
-                                            account.data().len(),
-                                            account.rent_epoch(),
-                                        ) == RentDue::Exempt
-                                    {
-                                        account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                                    }
-                                    (account.data().len(), account, 0)
-                                }
+                                (account.data().len(), account, rent_due)
                             } else {
                                 (account.data().len(), account, 0)
                             }
