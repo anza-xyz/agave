@@ -34,7 +34,7 @@ use {
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
     solana_streamer::{
         nonblocking::quic::{DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
-        quic::{spawn_server, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
+        quic::{spawn_server_multi, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -57,8 +57,8 @@ pub struct TpuSockets {
     pub transaction_forwards: Vec<UdpSocket>,
     pub vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
-    pub transactions_quic: UdpSocket,
-    pub transactions_forwards_quic: UdpSocket,
+    pub transactions_quic: Vec<UdpSocket>,
+    pub transactions_forwards_quic: Vec<UdpSocket>,
 }
 
 pub struct Tpu {
@@ -148,7 +148,7 @@ impl Tpu {
 
         let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
 
-        let (_, tpu_quic_t) = spawn_server(
+        let (_, tpu_quic_t) = spawn_server_multi(
             "quic_streamer_tpu",
             transactions_quic_sockets,
             keypair,
@@ -169,7 +169,7 @@ impl Tpu {
         )
         .unwrap();
 
-        let (_, tpu_forwards_quic_t) = spawn_server(
+        let (_, tpu_forwards_quic_t) = spawn_server_multi(
             "quic_streamer_tpu_forwards",
             transactions_forwards_quic_sockets,
             keypair,
