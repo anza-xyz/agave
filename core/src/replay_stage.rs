@@ -615,27 +615,7 @@ impl ReplayStage {
                     r_bank_forks.get_vote_only_mode_signal(),
                 )
             };
-<<<<<<< HEAD
-=======
             let mut last_threshold_failure_slot = 0;
-            // Thread pool to (maybe) replay multiple threads in parallel
-            let replay_mode = if replay_forks_threads.get() == 1 {
-                ForkReplayMode::Serial
-            } else {
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(replay_forks_threads.get())
-                    .thread_name(|i| format!("solReplayFork{i:02}"))
-                    .build()
-                    .expect("new rayon threadpool");
-                ForkReplayMode::Parallel(pool)
-            };
-            // Thread pool to replay multiple transactions within one block in parallel
-            let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(replay_transactions_threads.get())
-                .thread_name(|i| format!("solReplayTx{i:02}"))
-                .build()
-                .expect("new rayon threadpool");
->>>>>>> 6bade6fd88 (replay: add metrics for threshold failures (#1500))
 
             Self::reset_poh_recorder(
                 &my_pubkey,
