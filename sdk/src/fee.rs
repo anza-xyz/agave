@@ -39,6 +39,7 @@ pub struct FeeDetails {
 }
 
 impl FeeDetails {
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests(
         transaction_fee: u64,
         prioritization_fee: u64,
@@ -125,7 +126,7 @@ impl FeeStructure {
 
     /// Backward compatibility - lamports_per_signature == 0 means to clear
     /// transaction fee to zero
-    pub fn to_clear_transaction_fee(lamports_per_signature: u64) -> bool {
+    fn to_clear_transaction_fee(lamports_per_signature: u64) -> bool {
         lamports_per_signature == 0
     }
 
@@ -139,17 +140,14 @@ impl FeeStructure {
         include_loaded_account_data_size_in_fee: bool,
         remove_rounding_in_fee_calculation: bool,
     ) -> u64 {
-        if Self::to_clear_transaction_fee(lamports_per_signature) {
-            0
-        } else {
-            self.calculate_fee_details(
-                message,
-                budget_limits,
-                include_loaded_account_data_size_in_fee,
-                remove_rounding_in_fee_calculation,
-            )
-            .total_fee()
-        }
+        self.calculate_fee_details(
+            message,
+            lamports_per_signature,
+            budget_limits,
+            include_loaded_account_data_size_in_fee,
+            remove_rounding_in_fee_calculation,
+        )
+        .total_fee()
     }
 
     /// Calculate fee details for `SanitizedMessage`
@@ -157,10 +155,15 @@ impl FeeStructure {
     pub fn calculate_fee_details(
         &self,
         message: &SanitizedMessage,
+        lamports_per_signature: u64,
         budget_limits: &FeeBudgetLimits,
         include_loaded_account_data_size_in_fee: bool,
         remove_rounding_in_fee_calculation: bool,
     ) -> FeeDetails {
+        if Self::to_clear_transaction_fee(lamports_per_signature) {
+            return FeeDetails::default();
+        }
+
         let signature_fee = message
             .num_signatures()
             .saturating_mul(self.lamports_per_signature);
