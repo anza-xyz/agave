@@ -124,12 +124,6 @@ impl FeeStructure {
             .saturating_mul(heap_cost)
     }
 
-    /// Backward compatibility - lamports_per_signature == 0 means to clear
-    /// transaction fee to zero
-    fn to_clear_transaction_fee(lamports_per_signature: u64) -> bool {
-        lamports_per_signature == 0
-    }
-
     /// Calculate fee for `SanitizedMessage`
     #[cfg(not(target_os = "solana"))]
     pub fn calculate_fee(
@@ -160,7 +154,9 @@ impl FeeStructure {
         include_loaded_account_data_size_in_fee: bool,
         remove_rounding_in_fee_calculation: bool,
     ) -> FeeDetails {
-        if Self::to_clear_transaction_fee(lamports_per_signature) {
+        // Backward compatibility - lamports_per_signature == 0 means to clear
+        // transaction fee to zero
+        if lamports_per_signature == 0 {
             return FeeDetails::default();
         }
 
