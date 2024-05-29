@@ -486,7 +486,7 @@ mod tests {
             prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         },
         solana_sdk::{
-            account::{AccountSharedData, ReadableAccount, WritableAccount},
+            account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
@@ -2240,5 +2240,76 @@ mod tests {
         );
 
         assert_eq!(result, vec![Err(TransactionError::InvalidWritableAccount)]);
+    }
+
+    #[test]
+    fn test_collect_rent_from_account() {
+        let feature_set = FeatureSet::all_enabled();
+        let rent_collector = RentCollector {
+            epoch: 1,
+            ..RentCollector::default()
+        };
+
+        let address = Pubkey::new_unique();
+        let min_exempt_balance = rent_collector.rent.minimum_balance(0);
+        let mut account = AccountSharedData::from(Account {
+            lamports: min_exempt_balance,
+            ..Account::default()
+        });
+
+        assert_eq!(
+            collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
+            CollectedInfo::default()
+        );
+        assert_eq!(account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
+    }
+
+    #[test]
+    fn test_collect_rent_from_account_rent_paying() {
+        let feature_set = FeatureSet::all_enabled();
+        let rent_collector = RentCollector {
+            epoch: 1,
+            ..RentCollector::default()
+        };
+
+        let address = Pubkey::new_unique();
+        let mut account = AccountSharedData::from(Account {
+            lamports: 1,
+            ..Account::default()
+        });
+
+        assert_eq!(
+            collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
+            CollectedInfo::default()
+        );
+        assert_eq!(account.rent_epoch(), 0);
+        assert_eq!(account.lamports(), 1);
+    }
+
+    #[test]
+    fn test_collect_rent_from_account_rent_enabled() {
+        let feature_set =
+            all_features_except(Some(&[feature_set::disable_rent_fees_collection::id()]));
+        let rent_collector = RentCollector {
+            epoch: 1,
+            ..RentCollector::default()
+        };
+
+        let address = Pubkey::new_unique();
+        let mut account = AccountSharedData::from(Account {
+            lamports: 1,
+            data: vec![0],
+            ..Account::default()
+        });
+
+        assert_eq!(
+            collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
+            CollectedInfo {
+                rent_amount: 1,
+                account_data_len_reclaimed: 1
+            }
+        );
+        assert_eq!(account.rent_epoch(), 0);
+        assert_eq!(account.lamports(), 0);
     }
 }
