@@ -3903,8 +3903,9 @@ impl ReplayStage {
                     total_threshold_stake,
                 ));
                 // Ignore shallow checks for voting purposes
-                threshold_passed =
-                    threshold_passed && ((vote_depth as usize) < tower.threshold_depth);
+                if (vote_depth as usize) >= tower.threshold_depth {
+                    threshold_passed = false;
+                }
             }
             if !propagation_confirmed {
                 failure_reasons.push(HeaviestForkFailures::NoPropagatedConfirmation(

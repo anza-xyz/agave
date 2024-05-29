@@ -1206,6 +1206,10 @@ impl Tower {
 
         // Assemble all the vote thresholds and depths to check.
         let vote_thresholds_and_depths = vec![
+            // The following two checks are log only and are currently being used for experimentation
+            // purposes. We wish to impose a shallow threshold check to prevent the frequent 8 deep
+            // lockouts seen multiple times a day. We check both the 4th and 5th deep here to collect
+            // metrics to determine the right depth and threshold percentage to set in the future.
             (VOTE_THRESHOLD_DEPTH_SHALLOW, SWITCH_FORK_THRESHOLD),
             (VOTE_THRESHOLD_DEPTH_SHALLOW + 1, SWITCH_FORK_THRESHOLD),
             (self.threshold_depth, self.threshold_size),
