@@ -251,14 +251,28 @@ pub fn token_amount_to_ui_amount(
     additional_data: &SplTokenAdditionalData,
 ) -> UiTokenAmount {
     let decimals = additional_data.decimals;
-    let amount_decimals = 10_usize
-        .checked_pow(decimals as u32)
-        .map(|dividend| amount as f64 / dividend as f64);
+    let (ui_amount, ui_amount_string) = if let Some((interest_bearing_config, unix_timestamp)) =
+        additional_data.interest_bearing_config
+    {
+        let ui_amount_string =
+            interest_bearing_config.amount_to_ui_amount(amount, decimals, unix_timestamp);
+        (
+            ui_amount_string
+                .as_ref()
+                .and_then(|x| f64::from_str(x).ok()),
+            ui_amount_string.unwrap_or("".to_string()),
+        )
+    } else {
+        let ui_amount = 10_usize
+            .checked_pow(decimals as u32)
+            .map(|dividend| amount as f64 / dividend as f64);
+        (ui_amount, real_number_string_trimmed(amount, decimals))
+    };
     UiTokenAmount {
-        ui_amount: amount_decimals,
+        ui_amount,
         decimals,
         amount: amount.to_string(),
-        ui_amount_string: real_number_string_trimmed(amount, decimals),
+        ui_amount_string,
     }
 }
 
@@ -296,11 +310,13 @@ mod test {
         crate::parse_token_extension::{UiMemoTransfer, UiMintCloseAuthority},
         spl_pod::optional_keys::OptionalNonZeroPubkey,
         spl_token_2022::extension::{
-            immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
-            mint_close_authority::MintCloseAuthority, BaseStateWithExtensionsMut, ExtensionType,
-            StateWithExtensionsMut,
+            immutable_owner::ImmutableOwner, interest_bearing_mint::InterestBearingConfig,
+            memo_transfer::MemoTransfer, mint_close_authority::MintCloseAuthority,
+            BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
         },
     };
+
+    const INT_SECONDS_PER_YEAR: i64 = 6 * 6 * 24 * 36524;
 
     #[test]
     fn test_parse_token() {
@@ -471,6 +487,44 @@ mod test {
             real_number_string_trimmed(1_234_567_890, 20)
         );
         assert_eq!(token_amount.ui_amount, None);
+    }
+
+    #[test]
+    fn test_ui_token_amount_with_interest() {
+        // constant 5%
+        let config = InterestBearingConfig {
+            initialization_timestamp: 0.into(),
+            pre_update_average_rate: 500.into(),
+            last_update_timestamp: INT_SECONDS_PER_YEAR.into(),
+            current_rate: 500.into(),
+            ..Default::default()
+        };
+        let additional_data = SplTokenAdditionalData {
+            decimals: 0,
+            interest_bearing_config: Some((config, INT_SECONDS_PER_YEAR)),
+        };
+        let token_amount = token_amount_to_ui_amount(1, &additional_data);
+        assert_eq!(token_amount.ui_amount_string, "1.0512710963760241");
+        assert!((token_amount.ui_amount.unwrap() - 1.0512710963760241f64).abs() < f64::EPSILON);
+        let token_amount = token_amount_to_ui_amount(10, &additional_data);
+        assert_eq!(token_amount.ui_amount_string, "10.512710963760242");
+        assert!((token_amount.ui_amount.unwrap() - 10.512710963760241f64).abs() < f64::EPSILON);
+
+        // huge case
+        let config = InterestBearingConfig {
+            initialization_timestamp: 0.into(),
+            pre_update_average_rate: 32767.into(),
+            last_update_timestamp: 0.into(),
+            current_rate: 32767.into(),
+            ..Default::default()
+        };
+        let additional_data = SplTokenAdditionalData {
+            decimals: 0,
+            interest_bearing_config: Some((config, INT_SECONDS_PER_YEAR * 1_000)),
+        };
+        let token_amount = token_amount_to_ui_amount(u64::MAX, &additional_data);
+        assert_eq!(token_amount.ui_amount, Some(f64::INFINITY));
+        assert_eq!(token_amount.ui_amount_string, "inf");
     }
 
     #[test]
