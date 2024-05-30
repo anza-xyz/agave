@@ -8481,17 +8481,22 @@ pub mod tests {
             let owner = SplTokenPubkey::new_from_array([3; 32]);
             let delegate = SplTokenPubkey::new_from_array([4; 32]);
             let token_account_pubkey = solana_sdk::pubkey::new_rand();
-            let (program_name, account_size, mint_size) = if program_id
+            let amount = 420;
+            let delegated_amount = 30;
+            let rent_exempt_amount = 10;
+            let supply = 500;
+            let decimals = 2;
+            let (program_name, account_size, mint_size, additional_data) = if program_id
                 == solana_inline_spl::token_2022::id()
             {
                 let account_base = TokenAccount {
                     mint,
                     owner,
                     delegate: COption::Some(delegate),
-                    amount: 420,
+                    amount,
                     state: TokenAccountState::Initialized,
-                    is_native: COption::Some(10),
-                    delegated_amount: 30,
+                    is_native: COption::Some(rent_exempt_amount),
+                    delegated_amount,
                     close_authority: COption::Some(owner),
                 };
                 let account_size = ExtensionType::try_calculate_account_len::<TokenAccount>(&[
@@ -8523,12 +8528,13 @@ pub mod tests {
 
                 let mint_size = ExtensionType::try_calculate_account_len::<Mint>(&[
                     ExtensionType::MintCloseAuthority,
+                    ExtensionType::InterestBearingConfig,
                 ])
                 .unwrap();
                 let mint_base = Mint {
                     mint_authority: COption::Some(owner),
-                    supply: 500,
-                    decimals: 2,
+                    supply,
+                    decimals,
                     is_initialized: true,
                     freeze_authority: COption::Some(owner),
                 };
@@ -8544,6 +8550,22 @@ pub mod tests {
                     .unwrap();
                 mint_close_authority.close_authority =
                     OptionalNonZeroPubkey::try_from(Some(owner)).unwrap();
+                let interest_bearing_config = mint_state
+                    .init_extension::<InterestBearingConfig>(true)
+                    .unwrap();
+                interest_bearing_config.initialization_timestamp =
+                    bank.clock().unix_timestamp.saturating_sub(1_000_000).into();
+                interest_bearing_config.pre_update_average_rate = 500.into();
+                interest_bearing_config.last_update_timestamp = bank.clock().unix_timestamp.into();
+                interest_bearing_config.current_rate = 500.into();
+
+                let additional_data = SplTokenAdditionalData {
+                    decimals,
+                    interest_bearing_config: Some((
+                        *interest_bearing_config,
+                        bank.clock().unix_timestamp,
+                    )),
+                };
 
                 let mint_account = AccountSharedData::from(Account {
                     lamports: 111,
@@ -8552,7 +8574,7 @@ pub mod tests {
                     ..Account::default()
                 });
                 bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
-                ("spl-token-2022", account_size, mint_size)
+                ("spl-token-2022", account_size, mint_size, additional_data)
             } else {
                 let account_size = TokenAccount::get_packed_len();
                 let mut account_data = vec![0; account_size];
@@ -8560,10 +8582,10 @@ pub mod tests {
                     mint,
                     owner,
                     delegate: COption::Some(delegate),
-                    amount: 420,
+                    amount,
                     state: TokenAccountState::Initialized,
-                    is_native: COption::Some(10),
-                    delegated_amount: 30,
+                    is_native: COption::Some(rent_exempt_amount),
+                    delegated_amount,
                     close_authority: COption::Some(owner),
                 };
                 TokenAccount::pack(token_account, &mut account_data).unwrap();
@@ -8580,8 +8602,8 @@ pub mod tests {
                 let mut mint_data = vec![0; mint_size];
                 let mint_state = Mint {
                     mint_authority: COption::Some(owner),
-                    supply: 500,
-                    decimals: 2,
+                    supply,
+                    decimals,
                     is_initialized: true,
                     freeze_authority: COption::Some(owner),
                 };
@@ -8593,7 +8615,11 @@ pub mod tests {
                     ..Account::default()
                 });
                 bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
-                ("spl-token", account_size, mint_size)
+                let additional_data = SplTokenAdditionalData {
+                    decimals,
+                    interest_bearing_config: None,
+                };
+                ("spl-token", account_size, mint_size, additional_data)
             };
 
             let req = format!(
@@ -8602,6 +8628,10 @@ pub mod tests {
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
                 .expect("actual response deserialization");
+            let token_ui_amount = token_amount_to_ui_amount(amount, &additional_data);
+            let delegated_ui_amount = token_amount_to_ui_amount(delegated_amount, &additional_data);
+            let rent_exempt_ui_amount =
+                token_amount_to_ui_amount(rent_exempt_amount, &additional_data);
             let mut expected_value = json!({
                 "program": program_name,
                 "space": account_size,
@@ -8610,27 +8640,12 @@ pub mod tests {
                     "info": {
                         "mint": mint.to_string(),
                         "owner": owner.to_string(),
-                        "tokenAmount": {
-                            "uiAmount": 4.2,
-                            "decimals": 2,
-                            "amount": "420",
-                            "uiAmountString": "4.2",
-                        },
+                        "tokenAmount": json!(token_ui_amount),
                         "delegate": delegate.to_string(),
                         "state": "initialized",
                         "isNative": true,
-                        "rentExemptReserve": {
-                            "uiAmount": 0.1,
-                            "decimals": 2,
-                            "amount": "10",
-                            "uiAmountString": "0.1",
-                        },
-                        "delegatedAmount": {
-                            "uiAmount": 0.3,
-                            "decimals": 2,
-                            "amount": "30",
-                            "uiAmountString": "0.3",
-                        },
+                        "rentExemptReserve": json!(rent_exempt_ui_amount),
+                        "delegatedAmount": json!(delegated_ui_amount),
                         "closeAuthority": owner.to_string(),
                     }
                 }
@@ -8677,6 +8692,16 @@ pub mod tests {
                         "extension": "mintCloseAuthority",
                         "state": {
                             "closeAuthority": owner.to_string(),
+                        }
+                    },
+                    {
+                        "extension": "interestBearingConfig",
+                        "state": {
+                            "currentRate": 500,
+                            "initializationTimestamp": bank.clock().unix_timestamp.saturating_sub(1_000_000),
+                            "lastUpdateTimestamp": bank.clock().unix_timestamp,
+                            "preUpdateAverageRate": 500,
+                            "rateAuthority": null,
                         }
                     }
                 ]);
