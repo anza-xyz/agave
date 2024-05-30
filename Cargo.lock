@@ -5938,6 +5938,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serial_test",
+ "solana-account-decoder",
  "solana-accounts-db",
  "solana-bloom",
  "solana-client",

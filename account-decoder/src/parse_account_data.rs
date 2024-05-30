@@ -8,9 +8,10 @@ use {
     inflector::Inflector,
     serde_json::Value,
     solana_sdk::{
-        address_lookup_table, instruction::InstructionError, pubkey::Pubkey, stake, system_program,
-        sysvar, vote,
+        address_lookup_table, clock::UnixTimestamp, instruction::InstructionError, pubkey::Pubkey,
+        stake, system_program, sysvar, vote,
     },
+    spl_token_2022::extension::interest_bearing_mint::InterestBearingConfig,
     std::collections::HashMap,
     thiserror::Error,
 };
@@ -86,7 +87,22 @@ pub enum ParsableAccount {
 
 #[derive(Clone, Copy, Default)]
 pub struct AccountAdditionalData {
-    pub spl_token_decimals: Option<u8>,
+    pub spl_token_additional_data: Option<SplTokenAdditionalData>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct SplTokenAdditionalData {
+    pub decimals: u8,
+    pub interest_bearing_config: Option<(InterestBearingConfig, UnixTimestamp)>,
+}
+
+impl SplTokenAdditionalData {
+    pub fn with_decimals(decimals: u8) -> Self {
+        Self {
+            decimals,
+            ..Default::default()
+        }
+    }
 }
 
 pub fn parse_account_data(
@@ -108,9 +124,9 @@ pub fn parse_account_data(
         }
         ParsableAccount::Config => serde_json::to_value(parse_config(data, pubkey)?)?,
         ParsableAccount::Nonce => serde_json::to_value(parse_nonce(data)?)?,
-        ParsableAccount::SplToken | ParsableAccount::SplToken2022 => {
-            serde_json::to_value(parse_token(data, additional_data.spl_token_decimals)?)?
-        }
+        ParsableAccount::SplToken | ParsableAccount::SplToken2022 => serde_json::to_value(
+            parse_token(data, additional_data.spl_token_additional_data.as_ref())?,
+        )?,
         ParsableAccount::Stake => serde_json::to_value(parse_stake(data)?)?,
         ParsableAccount::Sysvar => serde_json::to_value(parse_sysvar(data, pubkey)?)?,
         ParsableAccount::Vote => serde_json::to_value(parse_vote(data)?)?,

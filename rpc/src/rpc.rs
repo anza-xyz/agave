@@ -11,6 +11,7 @@ use {
     jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
     jsonrpc_derive::rpc,
     solana_account_decoder::{
+        parse_account_data::SplTokenAdditionalData,
         parse_token::{is_known_spl_token_id, token_amount_to_ui_amount, UiTokenAmount},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
@@ -1866,8 +1867,8 @@ impl JsonRpcRequestProcessor {
             .map_err(|_| Error::invalid_params("Invalid param: not a Token account".to_string()))?;
         let mint = &Pubkey::from_str(&token_account.base.mint.to_string())
             .expect("Token account mint should be convertible to Pubkey");
-        let (_, decimals) = get_mint_owner_and_decimals(&bank, mint)?;
-        let balance = token_amount_to_ui_amount(token_account.base.amount, decimals);
+        let (_, data) = get_mint_owner_and_additional_data(&bank, mint)?;
+        let balance = token_amount_to_ui_amount(token_account.base.amount, &data);
         Ok(new_response(&bank, balance))
     }
 
@@ -1889,7 +1890,10 @@ impl JsonRpcRequestProcessor {
             Error::invalid_params("Invalid param: mint could not be unpacked".to_string())
         })?;
 
-        let supply = token_amount_to_ui_amount(mint.base.supply, mint.base.decimals);
+        let supply = token_amount_to_ui_amount(
+            mint.base.supply,
+            &SplTokenAdditionalData::with_decimals(mint.base.decimals),
+        );
         Ok(new_response(&bank, supply))
     }
 
@@ -1899,7 +1903,7 @@ impl JsonRpcRequestProcessor {
         commitment: Option<CommitmentConfig>,
     ) -> Result<RpcResponse<Vec<RpcTokenAccountBalance>>> {
         let bank = self.bank(commitment);
-        let (mint_owner, decimals) = get_mint_owner_and_decimals(&bank, mint)?;
+        let (mint_owner, data) = get_mint_owner_and_additional_data(&bank, mint)?;
         if !is_known_spl_token_id(&mint_owner) {
             return Err(Error::invalid_params(
                 "Invalid param: not a Token mint".to_string(),
@@ -1931,11 +1935,13 @@ impl JsonRpcRequestProcessor {
         let token_balances = token_balances
             .into_sorted_vec()
             .into_iter()
-            .map(|Reverse((amount, address))| RpcTokenAccountBalance {
-                address: address.to_string(),
-                amount: token_amount_to_ui_amount(amount, decimals),
+            .map(|Reverse((amount, address))| {
+                Ok(RpcTokenAccountBalance {
+                    address: address.to_string(),
+                    amount: token_amount_to_ui_amount(amount, &data),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(new_response(&bank, token_balances))
     }
@@ -2522,7 +2528,7 @@ fn get_token_program_id_and_mint(
 ) -> Result<(Pubkey, Option<Pubkey>)> {
     match token_account_filter {
         TokenAccountsFilter::Mint(mint) => {
-            let (mint_owner, _) = get_mint_owner_and_decimals(bank, &mint)?;
+            let (mint_owner, _) = get_mint_owner_and_additional_data(bank, &mint)?;
             if !is_known_spl_token_id(&mint_owner) {
                 return Err(Error::invalid_params(
                     "Invalid param: not a Token mint".to_string(),
