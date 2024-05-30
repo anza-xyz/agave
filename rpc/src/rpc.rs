@@ -98,7 +98,10 @@ use {
     },
     solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY},
     spl_token_2022::{
-        extension::StateWithExtensions,
+        extension::{
+            interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
+            StateWithExtensions,
+        },
         solana_program::program_pack::Pack,
         state::{Account as TokenAccount, Mint},
     },
@@ -1890,9 +1893,17 @@ impl JsonRpcRequestProcessor {
             Error::invalid_params("Invalid param: mint could not be unpacked".to_string())
         })?;
 
+        let interest_bearing_config = mint
+            .get_extension::<InterestBearingConfig>()
+            .map(|x| (*x, bank.clock().unix_timestamp))
+            .ok();
+
         let supply = token_amount_to_ui_amount(
             mint.base.supply,
-            &SplTokenAdditionalData::with_decimals(mint.base.decimals),
+            &SplTokenAdditionalData {
+                decimals: mint.base.decimals,
+                interest_bearing_config,
+            },
         );
         Ok(new_response(&bank, supply))
     }

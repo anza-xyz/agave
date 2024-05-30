@@ -12,7 +12,13 @@ use {
         account::{AccountSharedData, ReadableAccount},
         pubkey::Pubkey,
     },
-    spl_token_2022::{extension::StateWithExtensions, state::Mint},
+    spl_token_2022::{
+        extension::{
+            interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
+            StateWithExtensions,
+        },
+        state::Mint,
+    },
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -31,7 +37,7 @@ pub fn get_parsed_token_account(
                 overwrite_accounts,
             )
         })
-        .and_then(|mint_account| get_additional_mint_data(mint_account.data()).ok())
+        .and_then(|mint_account| get_additional_mint_data(bank, mint_account.data()).ok())
         .map(|data| AccountAdditionalData {
             spl_token_additional_data: Some(data),
         });
@@ -98,15 +104,24 @@ pub fn get_mint_owner_and_additional_data(
         let mint_account = bank.get_account(mint).ok_or_else(|| {
             Error::invalid_params("Invalid param: could not find mint".to_string())
         })?;
-        let mint_data = get_additional_mint_data(mint_account.data())?;
+        let mint_data = get_additional_mint_data(bank, mint_account.data())?;
         Ok((*mint_account.owner(), mint_data))
     }
 }
 
-fn get_additional_mint_data(data: &[u8]) -> Result<SplTokenAdditionalData> {
+fn get_additional_mint_data(bank: &Bank, data: &[u8]) -> Result<SplTokenAdditionalData> {
     StateWithExtensions::<Mint>::unpack(data)
         .map_err(|_| {
             Error::invalid_params("Invalid param: Token mint could not be unpacked".to_string())
         })
-        .map(|mint| SplTokenAdditionalData::with_decimals(mint.base.decimals))
+        .map(|mint| {
+            let interest_bearing_config = mint
+                .get_extension::<InterestBearingConfig>()
+                .map(|x| (*x, bank.clock().unix_timestamp))
+                .ok();
+            SplTokenAdditionalData {
+                decimals: mint.base.decimals,
+                interest_bearing_config,
+            }
+        })
 }

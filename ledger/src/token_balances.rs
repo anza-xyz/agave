@@ -11,7 +11,10 @@ use {
         token_balances::TransactionTokenBalances, TransactionTokenBalance,
     },
     spl_token_2022::{
-        extension::StateWithExtensions,
+        extension::{
+            interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
+            StateWithExtensions,
+        },
         state::{Account as TokenAccount, Mint},
     },
     std::collections::HashMap,
@@ -28,9 +31,14 @@ fn get_mint_additional_data(bank: &Bank, mint: &Pubkey) -> Option<SplTokenAdditi
             return None;
         }
         let mint_state = StateWithExtensions::<Mint>::unpack(mint_account.data()).ok()?;
-        Some(SplTokenAdditionalData::with_decimals(
-            mint_state.base.decimals,
-        ))
+        let interest_bearing_config = mint_state
+            .get_extension::<InterestBearingConfig>()
+            .map(|x| (*x, bank.clock().unix_timestamp))
+            .ok();
+        Some(SplTokenAdditionalData {
+            decimals: mint_state.base.decimals,
+            interest_bearing_config,
+        })
     }
 }
 
