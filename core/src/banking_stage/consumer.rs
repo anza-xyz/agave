@@ -403,19 +403,15 @@ impl Consumer {
         let pre_results = vec![Ok(()); txs.len()];
         let check_results =
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
-<<<<<<< HEAD
-        let check_results = check_results.into_iter().map(|(result, _nonce)| result);
-=======
         // If checks passed, verify pre-compiles and continue processing on success.
         let check_results: Vec<_> = txs
             .iter()
             .zip(check_results)
-            .map(|(tx, result)| match result {
+            .map(|(tx, (result, _nonce))| match result {
                 Ok(_) => tx.verify_precompiles(&bank.feature_set),
                 Err(err) => Err(err),
             })
             .collect();
->>>>>>> 0d34a1a160 (scheduler optimization - worker precompile verification (#1531))
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
