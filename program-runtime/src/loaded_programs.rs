@@ -62,8 +62,11 @@ pub trait ForkGraph {
 
 #[derive(Default)]
 pub enum LoadedProgramType {
-    /// Tombstone for undeployed, closed or unloadable programs
+    /// Tombstone for programs which currently do not pass the verifier but could if the feature set changed.
     FailedVerification(ProgramRuntimeEnvironment),
+    /// Tombstone for programs that were either explicitly closed or never deployed.
+    ///
+    /// It's also used for accounts belonging to program loaders, that don't actually contain program code (e.g. buffer accounts for LoaderV3 programs).
     #[default]
     Closed,
     DelayVisibility,
@@ -568,17 +571,59 @@ pub struct LoadedProgramsForTxBatch {
     entries: HashMap<Pubkey, Arc<LoadedProgram>>,
     slot: Slot,
     pub environments: ProgramRuntimeEnvironments,
+    /// Anticipated replacement for `environments` at the next epoch.
+    ///
+    /// This is `None` during most of an epoch, and only `Some` around the boundaries (at the end and beginning of an epoch).
+    /// More precisely, it starts with the recompilation phase a few hundred slots before the epoch boundary,
+    /// and it ends with the first rerooting after the epoch boundary.
+    /// Needed when a program is deployed at the last slot of an epoch, becomes effective in the next epoch.
+    /// So needs to be compiled with the environment for the next epoch.
+    pub upcoming_environments: Option<ProgramRuntimeEnvironments>,
+    /// The epoch of the last rerooting
+    pub latest_root_epoch: Epoch,
     pub hit_max_limit: bool,
 }
 
 impl LoadedProgramsForTxBatch {
-    pub fn new(slot: Slot, environments: ProgramRuntimeEnvironments) -> Self {
+    pub fn new(
+        slot: Slot,
+        environments: ProgramRuntimeEnvironments,
+        upcoming_environments: Option<ProgramRuntimeEnvironments>,
+        latest_root_epoch: Epoch,
+    ) -> Self {
         Self {
             entries: HashMap::new(),
             slot,
             environments,
+            upcoming_environments,
+            latest_root_epoch,
             hit_max_limit: false,
         }
+    }
+
+    pub fn new_from_cache<FG: ForkGraph>(
+        slot: Slot,
+        epoch: Epoch,
+        cache: &LoadedPrograms<FG>,
+    ) -> Self {
+        Self {
+            entries: HashMap::new(),
+            slot,
+            environments: cache.get_environments_for_epoch(epoch).clone(),
+            upcoming_environments: cache.get_upcoming_environments_for_epoch(epoch),
+            latest_root_epoch: cache.latest_root_epoch,
+            hit_max_limit: false,
+        }
+    }
+
+    /// Returns the current environments depending on the given epoch
+    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> &ProgramRuntimeEnvironments {
+        if epoch != self.latest_root_epoch {
+            if let Some(upcoming_environments) = self.upcoming_environments.as_ref() {
+                return upcoming_environments;
+            }
+        }
+        &self.environments
     }
 
     /// Refill the cache with a single entry. It's typically called during transaction loading, and
@@ -660,14 +705,47 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
         &self.environments
     }
 
+    /// Returns the upcoming environments depending on the given epoch
+    pub fn get_upcoming_environments_for_epoch(
+        &self,
+        epoch: Epoch,
+    ) -> Option<ProgramRuntimeEnvironments> {
+        if epoch == self.latest_root_epoch {
+            return self.upcoming_environments.clone();
+        }
+        None
+    }
+
     /// Insert a single entry. It's typically called during transaction loading,
     /// when the cache doesn't contain the entry corresponding to program `key`.
     pub fn assign_program(&mut self, key: Pubkey, entry: Arc<LoadedProgram>) -> bool {
+        // This function always returns `true` during normal operation.
+        // Only during the recompilation phase this can return `false`
+        // for entries with `upcoming_environments`.
+        fn is_current_env(
+            environments: &ProgramRuntimeEnvironments,
+            env_opt: Option<&ProgramRuntimeEnvironment>,
+        ) -> bool {
+            env_opt
+                .map(|env| {
+                    Arc::ptr_eq(env, &environments.program_runtime_v1)
+                        || Arc::ptr_eq(env, &environments.program_runtime_v2)
+                })
+                .unwrap_or(true)
+        }
         let slot_versions = &mut self.entries.entry(key).or_default().slot_versions;
         match slot_versions.binary_search_by(|at| {
             at.effective_slot
                 .cmp(&entry.effective_slot)
                 .then(at.deployment_slot.cmp(&entry.deployment_slot))
+                .then(
+                    // This `.then()` has no effect during normal operation.
+                    // Only during the recompilation phase this does allow entries
+                    // which only differ in their environment to be interleaved in `slot_versions`.
+                    is_current_env(&self.environments, at.program.get_environment()).cmp(
+                        &is_current_env(&self.environments, entry.program.get_environment()),
+                    ),
+                )
         }) {
             Ok(index) => {
                 let existing = slot_versions.get_mut(index).unwrap();
@@ -688,6 +766,10 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
                     false
                 } else {
                     // Something is wrong, I can feel it ...
+                    error!(
+                        "ProgramCache::assign_program() failed key={:?} existing={:?} entry={:?}",
+                        key, slot_versions, entry
+                    );
                     self.stats.replacements.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -958,6 +1040,7 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
             self.stats.lost_insertions.fetch_add(1, Ordering::Relaxed);
         }
         let was_occupied = self.assign_program(key, loaded_program);
+        debug_assert!(!was_occupied, "Unexpected replacement of an entry");
         self.loading_task_waiter.notify();
         was_occupied
     }
@@ -1047,6 +1130,14 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
         for k in keys {
             self.entries.remove(&k);
         }
+    }
+
+    /// Returns the `slot_versions` of the second level for the given program id.
+    pub fn get_slot_versions_for_tests(&self, key: &Pubkey) -> &[Arc<LoadedProgram>] {
+        self.entries
+            .get(key)
+            .map(|second_level| second_level.slot_versions.as_ref())
+            .unwrap_or(&[])
     }
 
     fn unload_program(&mut self, id: &Pubkey) {
@@ -2063,7 +2154,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 3)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 4)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(22, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(22, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 20, 22));
@@ -2079,7 +2170,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(15, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(15, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 15));
@@ -2102,7 +2193,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(18, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(18, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 18));
@@ -2120,7 +2211,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(23, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(23, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 23));
@@ -2138,7 +2229,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(11, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(11, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 11));
@@ -2172,7 +2263,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(19, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(19, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 19));
@@ -2190,7 +2281,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(21, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(21, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 21));
@@ -2228,7 +2319,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(21, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(21, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         // Since the fork was pruned, we should not find the entry deployed at slot 20.
@@ -2245,7 +2336,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(27, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(27, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 27));
@@ -2277,7 +2368,7 @@ mod tests {
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program4, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(23, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(23, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 23));
@@ -2332,7 +2423,7 @@ mod tests {
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(12, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(12, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 12));
@@ -2352,7 +2443,7 @@ mod tests {
             ),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(12, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(12, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program2, 11, 12));
@@ -2418,7 +2509,7 @@ mod tests {
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(19, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(19, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 19));
@@ -2432,7 +2523,7 @@ mod tests {
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(27, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(27, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 27));
@@ -2446,7 +2537,7 @@ mod tests {
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(22, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(22, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 20, 22));
@@ -2511,7 +2602,7 @@ mod tests {
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(12, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(12, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         // Program1 deployed at slot 11 should not be expired yet
@@ -2527,7 +2618,7 @@ mod tests {
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program3, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(15, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(15, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program2, 11, 15));
@@ -2593,7 +2684,7 @@ mod tests {
         cache.prune(10, 0);
 
         let mut missing = vec![(program1, (LoadedProgramMatchCriteria::NoCriteria, 1))];
-        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         // The cache should have the program deployed at slot 0
@@ -2637,7 +2728,7 @@ mod tests {
             (program1, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 20));
@@ -2647,7 +2738,7 @@ mod tests {
             (program1, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(6, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(6, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 5, 6));
@@ -2661,7 +2752,7 @@ mod tests {
             (program1, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 20));
@@ -2671,7 +2762,7 @@ mod tests {
             (program1, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(6, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(6, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 6));
@@ -2685,7 +2776,7 @@ mod tests {
             (program1, (LoadedProgramMatchCriteria::NoCriteria, 1)),
             (program2, (LoadedProgramMatchCriteria::NoCriteria, 1)),
         ];
-        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone());
+        let mut extracted = LoadedProgramsForTxBatch::new(20, cache.environments.clone(), None, 0);
         cache.extract(&mut missing, &mut extracted, true);
 
         assert!(match_slot(&extracted, &program1, 0, 20));

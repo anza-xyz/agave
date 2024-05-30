@@ -1,4 +1,5 @@
 use {
+    super::packet_filter::PacketFilterFailure,
     solana_perf::packet::Packet,
     solana_runtime::transaction_priority_details::{
         GetTransactionPriorityDetails, TransactionPriorityDetails,
@@ -34,6 +35,8 @@ pub enum DeserializedPacketError {
     PrioritizationFailure,
     #[error("vote transaction failure")]
     VoteTransactionError,
+    #[error("Packet filter failure: {0}")]
+    FailedFilter(#[from] PacketFilterFailure),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -152,7 +155,10 @@ fn packet_message(packet: &Packet) -> Result<&[u8], DeserializedPacketError> {
 mod tests {
     use {
         super::*,
-        solana_sdk::{signature::Keypair, system_transaction},
+        solana_sdk::{
+            compute_budget, instruction::Instruction, pubkey::Pubkey, signature::Keypair,
+            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
+        },
     };
 
     #[test]
@@ -167,5 +173,38 @@ mod tests {
         let deserialized_packet = ImmutableDeserializedPacket::new(packet);
 
         assert!(deserialized_packet.is_ok());
+    }
+
+    #[test]
+    fn compute_unit_limit_above_static_builtins() {
+        // Cases:
+        // 1. compute_unit_limit under static builtins
+        // 2. compute_unit_limit equal to static builtins
+        // 3. compute_unit_limit above static builtins
+        for (cu_limit, expectation) in [
+            (250, Err(PacketFilterFailure::InsufficientComputeLimit)),
+            (300, Ok(())),
+            (350, Ok(())),
+        ] {
+            let keypair = Keypair::new();
+            let bpf_program_id = Pubkey::new_unique();
+            let ixs = vec![
+                system_instruction::transfer(&keypair.pubkey(), &Pubkey::new_unique(), 1),
+                compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
+                Instruction::new_with_bytes(bpf_program_id, &[], vec![]), // non-builtin - not counted in filter
+            ];
+            let tx = Transaction::new_signed_with_payer(
+                &ixs,
+                Some(&keypair.pubkey()),
+                &[&keypair],
+                Hash::new_unique(),
+            );
+            let packet = Packet::from_data(None, tx).unwrap();
+            let deserialized_packet = ImmutableDeserializedPacket::new(packet).unwrap();
+            assert_eq!(
+                deserialized_packet.check_insufficent_compute_unit_limit(),
+                expectation
+            );
+        }
     }
 }

@@ -925,7 +925,6 @@ impl Validator {
                 bank.clone(),
                 None,
                 bank.ticks_per_slot(),
-                &id,
                 blockstore.clone(),
                 blockstore.get_new_shred_signal(0),
                 &leader_schedule_cache,
@@ -1307,7 +1306,7 @@ impl Validator {
             config.wait_to_vote_slot,
             accounts_background_request_sender,
             config.runtime_config.log_messages_bytes_limit,
-            &connection_cache,
+            json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),

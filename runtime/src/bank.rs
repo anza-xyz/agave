@@ -116,7 +116,7 @@ use {
         loaded_programs::{
             LoadProgramMetrics, LoadedProgram, LoadedProgramMatchCriteria, LoadedProgramType,
             LoadedPrograms, LoadedProgramsForTxBatch, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
+            DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
         message_processor::MessageProcessor,
@@ -125,9 +125,9 @@ use {
     },
     solana_sdk::{
         account::{
-            create_account_shared_data_with_fields as create_account, create_executable_meta,
-            from_account, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
-            WritableAccount, PROGRAM_OWNERS,
+            create_account_shared_data_with_fields as create_account, from_account, Account,
+            AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
+            PROGRAM_OWNERS,
         },
         account_utils::StateMut,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
@@ -308,8 +308,7 @@ impl BankRc {
 }
 
 enum ProgramAccountLoadResult {
-    AccountNotFound,
-    InvalidAccountData(ProgramRuntimeEnvironment),
+    InvalidAccountData,
     ProgramOfLoaderV1orV2(AccountSharedData),
     ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
     ProgramOfLoaderV4(AccountSharedData, Slot),
@@ -688,12 +687,13 @@ pub struct Bank {
     /// slots to hard fork at
     hard_forks: Arc<RwLock<HardForks>>,
 
-    /// The number of transactions processed without error
+    /// The number of committed transactions since genesis.
     transaction_count: AtomicU64,
 
-    /// The number of non-vote transactions processed without error since the most recent boot from
-    /// snapshot or genesis. This value is not shared though the network, nor retained within
-    /// snapshots, but is preserved in `Bank::new_from_parent`.
+    /// The number of non-vote transactions committed since the most
+    /// recent boot from snapshot or genesis. This value is only stored in
+    /// blockstore for the RPC method "getPerformanceSamples". It is not
+    /// retained within snapshots, but is preserved in `Bank::new_from_parent`.
     non_vote_transaction_count_since_restart: AtomicU64,
 
     /// The number of transaction errors in this slot
@@ -1375,9 +1375,12 @@ impl Bank {
                     loaded_programs_cache.programs_to_recompile.pop()
                 {
                     drop(loaded_programs_cache);
-                    let recompiled = new.load_program(&key, false, Some(program_to_recompile));
-                    let mut loaded_programs_cache = new.loaded_programs_cache.write().unwrap();
-                    loaded_programs_cache.assign_program(key, recompiled);
+                    if let Some(recompiled) =
+                        new.load_program(&key, false, Some(program_to_recompile))
+                    {
+                        let mut loaded_programs_cache = new.loaded_programs_cache.write().unwrap();
+                        loaded_programs_cache.assign_program(key, recompiled);
+                    }
                 }
             } else if new.epoch() != loaded_programs_cache.latest_root_epoch
                 || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
@@ -3903,12 +3906,10 @@ impl Bank {
         // Add a bogus executable account, which will be loaded and ignored.
         let (lamports, rent_epoch) = self.inherit_specially_retained_account_fields(&None);
 
-        // Mock account_data with executable_meta so that the account is executable.
-        let account_data = create_executable_meta(&owner);
         let account = AccountSharedData::from(Account {
             lamports,
             owner,
-            data: account_data.to_vec(),
+            data: vec![],
             executable: true,
             rent_epoch,
         });
@@ -4558,58 +4559,52 @@ impl Bank {
         }
     }
 
-    fn load_program_accounts(
-        &self,
-        pubkey: &Pubkey,
-        environments: &ProgramRuntimeEnvironments,
-    ) -> ProgramAccountLoadResult {
-        let program_account = match self.get_account_with_fixed_root(pubkey) {
-            None => return ProgramAccountLoadResult::AccountNotFound,
-            Some(account) => account,
-        };
+    fn load_program_accounts(&self, pubkey: &Pubkey) -> Option<ProgramAccountLoadResult> {
+        let program_account = self.get_account_with_fixed_root(pubkey)?;
 
         debug_assert!(solana_bpf_loader_program::check_loader_id(
             program_account.owner()
         ));
 
         if loader_v4::check_id(program_account.owner()) {
-            return solana_loader_v4_program::get_state(program_account.data())
-                .ok()
-                .and_then(|state| {
-                    (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
-                })
-                .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
-                .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
-                    environments.program_runtime_v2.clone(),
-                ));
+            return Some(
+                solana_loader_v4_program::get_state(program_account.data())
+                    .ok()
+                    .and_then(|state| {
+                        (!matches!(state.status, LoaderV4Status::Retracted)).then_some(state.slot)
+                    })
+                    .map(|slot| ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, slot))
+                    .unwrap_or(ProgramAccountLoadResult::InvalidAccountData),
+            );
         }
 
         if !bpf_loader_upgradeable::check_id(program_account.owner()) {
-            return ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account);
+            return Some(ProgramAccountLoadResult::ProgramOfLoaderV1orV2(
+                program_account,
+            ));
         }
 
         if let Ok(UpgradeableLoaderState::Program {
             programdata_address,
         }) = program_account.state()
         {
-            let programdata_account = match self.get_account_with_fixed_root(&programdata_address) {
-                None => return ProgramAccountLoadResult::AccountNotFound,
-                Some(account) => account,
-            };
-
-            if let Ok(UpgradeableLoaderState::ProgramData {
-                slot,
-                upgrade_authority_address: _,
-            }) = programdata_account.state()
+            if let Some(programdata_account) =
+                self.get_account_with_fixed_root(&programdata_address)
             {
-                return ProgramAccountLoadResult::ProgramOfLoaderV3(
-                    program_account,
-                    programdata_account,
+                if let Ok(UpgradeableLoaderState::ProgramData {
                     slot,
-                );
+                    upgrade_authority_address: _,
+                }) = programdata_account.state()
+                {
+                    return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
+                        program_account,
+                        programdata_account,
+                        slot,
+                    ));
+                }
             }
         }
-        ProgramAccountLoadResult::InvalidAccountData(environments.program_runtime_v1.clone())
+        Some(ProgramAccountLoadResult::InvalidAccountData)
     }
 
     fn load_program_from_bytes(
@@ -4654,7 +4649,7 @@ impl Bank {
         pubkey: &Pubkey,
         reload: bool,
         recompile: Option<Arc<LoadedProgram>>,
-    ) -> Arc<LoadedProgram> {
+    ) -> Option<Arc<LoadedProgram>> {
         let loaded_programs_cache = self.loaded_programs_cache.read().unwrap();
         let effective_epoch = if recompile.is_some() {
             loaded_programs_cache.latest_root_epoch.saturating_add(1)
@@ -4667,13 +4662,11 @@ impl Bank {
             ..LoadProgramMetrics::default()
         };
 
-        let mut loaded_program = match self.load_program_accounts(pubkey, environments) {
-            ProgramAccountLoadResult::AccountNotFound => Ok(LoadedProgram::new_tombstone(
+        let mut loaded_program = match self.load_program_accounts(pubkey)? {
+            ProgramAccountLoadResult::InvalidAccountData => Ok(LoadedProgram::new_tombstone(
                 self.slot,
                 LoadedProgramType::Closed,
             )),
-
-            ProgramAccountLoadResult::InvalidAccountData(env) => Err((self.slot, env)),
 
             ProgramAccountLoadResult::ProgramOfLoaderV1orV2(program_account) => {
                 Self::load_program_from_bytes(
@@ -4735,21 +4728,6 @@ impl Bank {
 
         let mut timings = ExecuteDetailsTimings::default();
         load_program_metrics.submit_datapoint(&mut timings);
-        if !Arc::ptr_eq(
-            &environments.program_runtime_v1,
-            &loaded_programs_cache.environments.program_runtime_v1,
-        ) || !Arc::ptr_eq(
-            &environments.program_runtime_v2,
-            &loaded_programs_cache.environments.program_runtime_v2,
-        ) {
-            // There can be two entries per program when the environment changes.
-            // One for the old environment before the epoch boundary and one for the new environment after the epoch boundary.
-            // These two entries have the same deployment slot, so they must differ in their effective slot instead.
-            // This is done by setting the effective slot of the entry for the new environment to the epoch boundary.
-            loaded_program.effective_slot = loaded_program
-                .effective_slot
-                .max(self.epoch_schedule.get_first_slot_in_epoch(effective_epoch));
-        }
         if let Some(recompile) = recompile {
             loaded_program.tx_usage_counter =
                 AtomicU64::new(recompile.tx_usage_counter.load(Ordering::Relaxed));
@@ -4757,7 +4735,7 @@ impl Bank {
                 AtomicU64::new(recompile.ix_usage_counter.load(Ordering::Relaxed));
         }
         loaded_program.update_access_slot(self.slot());
-        Arc::new(loaded_program)
+        Some(Arc::new(loaded_program))
     }
 
     pub fn clear_program_cache(&self) {
@@ -4830,6 +4808,8 @@ impl Bank {
         let mut programs_modified_by_tx = LoadedProgramsForTxBatch::new(
             self.slot,
             programs_loaded_for_tx_batch.environments.clone(),
+            programs_loaded_for_tx_batch.upcoming_environments.clone(),
+            programs_loaded_for_tx_batch.latest_root_epoch,
         );
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = MessageProcessor::process_message(
@@ -4979,11 +4959,10 @@ impl Bank {
                 // Initialize our local cache.
                 let is_first_round = loaded_programs_for_txs.is_none();
                 if is_first_round {
-                    loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new(
+                    loaded_programs_for_txs = Some(LoadedProgramsForTxBatch::new_from_cache(
                         self.slot,
-                        loaded_programs_cache
-                            .get_environments_for_epoch(self.epoch)
-                            .clone(),
+                        self.epoch,
+                        &loaded_programs_cache,
                     ));
                 }
                 // Submit our last completed loading task.
@@ -4992,7 +4971,11 @@ impl Bank {
                         .finish_cooperative_loading_task(self.slot, key, program)
                         && limit_to_load_programs
                     {
-                        let mut ret = LoadedProgramsForTxBatch::default();
+                        let mut ret = LoadedProgramsForTxBatch::new_from_cache(
+                            self.slot,
+                            self.epoch,
+                            &loaded_programs_cache,
+                        );
                         ret.hit_max_limit = true;
                         return ret;
                     }
@@ -5010,7 +4993,9 @@ impl Bank {
 
             if let Some((key, count)) = program_to_load {
                 // Load, verify and compile one program.
-                let program = self.load_program(&key, false, None);
+                let program = self
+                    .load_program(&key, false, None)
+                    .expect("called load_program() with nonexistent account");
                 program.tx_usage_counter.store(count, Ordering::Relaxed);
                 program_to_store = Some((key, program));
             } else if missing_programs.is_empty() {
@@ -5159,6 +5144,7 @@ impl Bank {
         ));
 
         if programs_loaded_for_tx_batch.borrow().hit_max_limit {
+            error!("Discarding TX batch {:#?}", batch.sanitized_transactions());
             return LoadAndExecuteTransactionsOutput {
                 loaded_transactions: vec![],
                 execution_results: vec![],
@@ -5361,13 +5347,14 @@ impl Bank {
                 // replay could occur
                 signature_count += u64::from(tx.message().header().num_required_signatures);
                 executed_transactions_count += 1;
+
+                if !is_vote {
+                    executed_non_vote_transactions_count += 1;
+                }
             }
 
             match execution_result.flattened_result() {
                 Ok(()) => {
-                    if !is_vote {
-                        executed_non_vote_transactions_count += 1;
-                    }
                     executed_with_successful_result_count += 1;
                 }
                 Err(err) => {
@@ -8334,6 +8321,14 @@ impl Bank {
 
     pub fn update_accounts_hash_for_tests(&self) -> AccountsHash {
         self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false, false)
+    }
+
+    pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> LoadedProgramsForTxBatch {
+        LoadedProgramsForTxBatch::new_from_cache(
+            slot,
+            self.epoch_schedule.get_epoch(slot),
+            &self.loaded_programs_cache.read().unwrap(),
+        )
     }
 }
 

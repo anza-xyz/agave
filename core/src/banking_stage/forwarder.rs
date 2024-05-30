@@ -61,9 +61,9 @@ impl Forwarder {
     ) {
         let forward_option = unprocessed_transaction_storage.forward_option();
 
-        // get current root bank from bank_forks, use it to sanitize transaction and
+        // get current working bank from bank_forks, use it to sanitize transaction and
         // load all accounts from address loader;
-        let current_bank = self.bank_forks.read().unwrap().root_bank();
+        let current_bank = self.bank_forks.read().unwrap().working_bank();
 
         let mut forward_packet_batches_by_accounts =
             ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
@@ -161,6 +161,7 @@ impl Forwarder {
         self.update_data_budget();
         let packet_vec: Vec<_> = forwardable_packets
             .filter(|p| !p.meta().forwarded())
+            .filter(|p| p.meta().is_from_staked_node())
             .filter(|p| self.data_budget.take(p.meta().size))
             .filter_map(|p| p.data(..).map(|data| data.to_vec()))
             .collect();

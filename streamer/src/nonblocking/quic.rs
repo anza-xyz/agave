@@ -1,7 +1,8 @@
 use {
     crate::{
         nonblocking::stream_throttle::{
-            ConnectionStreamCounter, StakedStreamLoadEMA, STREAM_STOP_CODE_THROTTLING,
+            ConnectionStreamCounter, StakedStreamLoadEMA, STREAM_THROTTLING_INTERVAL,
+            STREAM_THROTTLING_INTERVAL_MS,
         },
         quic::{configure_server, QuicServerError, StreamStats},
         streamer::StakedNodes,
@@ -17,6 +18,7 @@ use {
     quinn::{Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
     quinn_proto::VarIntBoundsExceeded,
     rand::{thread_rng, Rng},
+    smallvec::SmallVec,
     solana_perf::packet::{PacketBatch, PACKETS_PER_BATCH},
     solana_sdk::{
         packet::{Meta, PACKET_DATA_SIZE},
@@ -33,13 +35,26 @@ use {
     std::{
         iter::repeat_with,
         net::{IpAddr, SocketAddr, UdpSocket},
+        // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, Mutex, MutexGuard, RwLock,
+            Arc, RwLock,
         },
         time::{Duration, Instant},
     },
-    tokio::{task::JoinHandle, time::timeout},
+    tokio::{
+        // CAUTION: It's kind of sketch that we're mixing async and sync locks (see the RwLock above).
+        // This is done so that sync code can also access the stake table.
+        // Make sure we don't hold a sync lock across an await - including the await to
+        // lock an async Mutex. This does not happen now and should not happen as long as we
+        // don't hold an async Mutex and sync RwLock at the same time (currently true)
+        // but if we do, the scope of the RwLock must always be a subset of the async Mutex
+        // (i.e. lock order is always async Mutex -> RwLock). Also, be careful not to
+        // introduce any other awaits while holding the RwLock.
+        sync::{Mutex, MutexGuard},
+        task::JoinHandle,
+        time::{sleep, timeout},
+    },
 };
 
 const WAIT_FOR_STREAM_TIMEOUT: Duration = Duration::from_millis(100);
@@ -58,6 +73,9 @@ const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] = b"exceed_max_stre
 
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
+
+/// Limit to 250K PPS
+pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
 
 // A sequence of bytes that is part of a packet
 // along with where in the packet it is
@@ -80,7 +98,7 @@ struct PacketChunk {
 // the Packet and then when copying the Packet into a PacketBatch)
 struct PacketAccumulator {
     pub meta: Meta,
-    pub chunks: Vec<PacketChunk>,
+    pub chunks: SmallVec<[PacketChunk; 2]>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -95,6 +113,13 @@ impl ConnectionPeerType {
     }
 }
 
+pub struct SpawnNonBlockingServerResult {
+    pub endpoint: Endpoint,
+    pub stats: Arc<StreamStats>,
+    pub thread: JoinHandle<()>,
+    pub max_concurrent_connections: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_server(
     name: &'static str,
@@ -107,11 +132,14 @@ pub fn spawn_server(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
     max_unstaked_connections: usize,
+    max_streams_per_ms: u64,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
-) -> Result<(Endpoint, Arc<StreamStats>, JoinHandle<()>), QuicServerError> {
+) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
     info!("Start {name} quic server on {sock:?}");
-    let (config, _cert) = configure_server(keypair, gossip_host)?;
+    let concurrent_connections = max_staked_connections + max_unstaked_connections;
+    let max_concurrent_connections = concurrent_connections + concurrent_connections / 4;
+    let (config, _cert) = configure_server(keypair, gossip_host, max_concurrent_connections)?;
 
     let endpoint = Endpoint::new(
         EndpointConfig::default(),
@@ -120,6 +148,7 @@ pub fn spawn_server(
         Arc::new(TokioRuntime),
     )
     .map_err(QuicServerError::EndpointFailed)?;
+
     let stats = Arc::<StreamStats>::default();
     let handle = tokio::spawn(run_server(
         name,
@@ -130,11 +159,17 @@ pub fn spawn_server(
         staked_nodes,
         max_staked_connections,
         max_unstaked_connections,
+        max_streams_per_ms,
         stats.clone(),
         wait_for_chunk_timeout,
         coalesce,
     ));
-    Ok((endpoint, stats, handle))
+    Ok(SpawnNonBlockingServerResult {
+        endpoint,
+        stats,
+        thread: handle,
+        max_concurrent_connections,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,6 +182,7 @@ async fn run_server(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
     max_unstaked_connections: usize,
+    max_streams_per_ms: u64,
     stats: Arc<StreamStats>,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
@@ -157,8 +193,9 @@ async fn run_server(
     let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
     let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
-        max_unstaked_connections > 0,
         stats.clone(),
+        max_unstaked_connections,
+        max_streams_per_ms,
     ));
     let staked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
@@ -189,6 +226,7 @@ async fn run_server(
                 staked_nodes.clone(),
                 max_staked_connections,
                 max_unstaked_connections,
+                max_streams_per_ms,
                 stats.clone(),
                 wait_for_chunk_timeout,
                 stream_load_ema.clone(),
@@ -322,15 +360,9 @@ fn handle_and_cache_new_connection(
         params.total_stake,
     ) as u64)
     {
-        connection.set_max_concurrent_uni_streams(max_uni_streams);
+        let remote_addr = connection.remote_address();
         let receive_window =
             compute_recieve_window(params.max_stake, params.min_stake, params.peer_type);
-
-        if let Ok(receive_window) = receive_window {
-            connection.set_receive_window(receive_window);
-        }
-
-        let remote_addr = connection.remote_address();
 
         debug!(
             "Peer type {:?}, total stake {}, max streams {} receive_window {:?} from peer {}",
@@ -352,6 +384,12 @@ fn handle_and_cache_new_connection(
             )
         {
             drop(connection_table_l);
+
+            if let Ok(receive_window) = receive_window {
+                connection.set_receive_window(receive_window);
+            }
+            connection.set_max_concurrent_uni_streams(max_uni_streams);
+
             tokio::spawn(handle_connection(
                 connection,
                 remote_addr,
@@ -384,7 +422,7 @@ fn handle_and_cache_new_connection(
     }
 }
 
-fn prune_unstaked_connections_and_add_new_connection(
+async fn prune_unstaked_connections_and_add_new_connection(
     connection: Connection,
     connection_table: Arc<Mutex<ConnectionTable>>,
     max_connections: usize,
@@ -395,7 +433,7 @@ fn prune_unstaked_connections_and_add_new_connection(
     let stats = params.stats.clone();
     if max_connections > 0 {
         let connection_table_clone = connection_table.clone();
-        let mut connection_table = connection_table.lock().unwrap();
+        let mut connection_table = connection_table.lock().await;
         prune_unstaked_connection_table(&mut connection_table, max_connections, stats);
         handle_and_cache_new_connection(
             connection,
@@ -467,6 +505,7 @@ async fn setup_connection(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
     max_unstaked_connections: usize,
+    max_streams_per_ms: u64,
     stats: Arc<StreamStats>,
     wait_for_chunk_timeout: Duration,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
@@ -485,10 +524,16 @@ async fn setup_connection(
                         stats.clone(),
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
-                        let peer_type = if stake > 0 {
-                            ConnectionPeerType::Staked(stake)
-                        } else {
+                        // The heuristic is that the stake should be large engouh to have 1 stream pass throuh within one throttle
+                        // interval during which we allow max (MAX_STREAMS_PER_MS * STREAM_THROTTLING_INTERVAL_MS) streams.
+                        let min_stake_ratio =
+                            1_f64 / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
+                        let stake_ratio = stake as f64 / total_stake as f64;
+                        let peer_type = if stake_ratio < min_stake_ratio {
+                            // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
                             ConnectionPeerType::Unstaked
+                        } else {
+                            ConnectionPeerType::Staked(stake)
                         };
                         NewConnectionHandlerParams {
                             packet_sender,
@@ -505,7 +550,8 @@ async fn setup_connection(
 
                 match params.peer_type {
                     ConnectionPeerType::Staked(stake) => {
-                        let mut connection_table_l = staked_connection_table.lock().unwrap();
+                        let mut connection_table_l = staked_connection_table.lock().await;
+
                         if connection_table_l.total_size >= max_staked_connections {
                             let num_pruned =
                                 connection_table_l.prune_random(PRUNE_RANDOM_SAMPLE_SIZE, stake);
@@ -536,7 +582,9 @@ async fn setup_connection(
                                 &params,
                                 wait_for_chunk_timeout,
                                 stream_load_ema.clone(),
-                            ) {
+                            )
+                            .await
+                            {
                                 stats
                                     .connection_added_from_staked_peer
                                     .fetch_add(1, Ordering::Relaxed);
@@ -558,7 +606,9 @@ async fn setup_connection(
                             &params,
                             wait_for_chunk_timeout,
                             stream_load_ema.clone(),
-                        ) {
+                        )
+                        .await
+                        {
                             stats
                                 .connection_added_from_unstaked_peer
                                 .fetch_add(1, Ordering::Relaxed);
@@ -733,13 +783,36 @@ async fn handle_connection(
                             params.total_stake,
                         );
 
-                    stream_counter.reset_throttling_params_if_needed();
-                    if stream_counter.stream_count.load(Ordering::Relaxed)
-                        >= max_streams_per_throttling_interval
-                    {
-                        stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                        let _ = stream.stop(VarInt::from_u32(STREAM_STOP_CODE_THROTTLING));
-                        continue;
+                    let throttle_interval_start =
+                        stream_counter.reset_throttling_params_if_needed();
+                    let streams_read_in_throttle_interval =
+                        stream_counter.stream_count.load(Ordering::Relaxed);
+                    if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
+                        // The peer is sending faster than we're willing to read. Sleep for what's
+                        // left of this read interval so the peer backs off.
+                        let throttle_duration = STREAM_THROTTLING_INTERVAL
+                            .saturating_sub(throttle_interval_start.elapsed());
+
+                        if !throttle_duration.is_zero() {
+                            debug!("Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
+                                    max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
+                                    throttle_duration: {throttle_duration:?}",
+                                    params.peer_type, params.total_stake);
+                            stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
+                            match params.peer_type {
+                                ConnectionPeerType::Unstaked => {
+                                    stats
+                                        .throttled_unstaked_streams
+                                        .fetch_add(1, Ordering::Relaxed);
+                                }
+                                ConnectionPeerType::Staked(_) => {
+                                    stats
+                                        .throttled_staked_streams
+                                        .fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                            sleep(throttle_duration).await;
+                        }
                     }
                     stream_load_ema.increment_load(params.peer_type);
                     stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
@@ -801,7 +874,7 @@ async fn handle_connection(
         }
     }
 
-    let removed_connection_count = connection_table.lock().unwrap().remove_connection(
+    let removed_connection_count = connection_table.lock().await.remove_connection(
         ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
         remote_addr.port(),
         stable_id,
@@ -852,9 +925,10 @@ async fn handle_chunk(
                 if packet_accum.is_none() {
                     let mut meta = Meta::default();
                     meta.set_socket_addr(remote_addr);
+                    meta.set_from_staked_node(matches!(peer_type, ConnectionPeerType::Staked(_)));
                     *packet_accum = Some(PacketAccumulator {
                         meta,
-                        chunks: Vec::new(),
+                        chunks: SmallVec::new(),
                     });
                 }
 
@@ -904,6 +978,19 @@ async fn handle_chunk(
                         stats
                             .total_chunks_sent_for_batching
                             .fetch_add(chunks_sent, Ordering::Relaxed);
+
+                        match peer_type {
+                            ConnectionPeerType::Unstaked => {
+                                stats
+                                    .total_unstaked_packets_sent_for_batching
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                            ConnectionPeerType::Staked(_) => {
+                                stats
+                                    .total_staked_packets_sent_for_batching
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
 
                         trace!("sent {} byte packet for batching", bytes_sent);
                     }
@@ -1075,16 +1162,10 @@ impl ConnectionTable {
         if has_connection_capacity {
             let exit = Arc::new(AtomicBool::new(false));
             let last_update = Arc::new(AtomicU64::new(last_update));
-            let stream_counter = if peer_type.is_staked() {
-                connection_entry
-                    .first()
-                    .map(|entry| entry.stream_counter.clone())
-                    .unwrap_or(Arc::new(ConnectionStreamCounter::new()))
-            } else {
-                // Unstaked connections are tracked using peer IP address. It's possible that different clients
-                // use the same IP due to NAT. So counting all the streams from a given IP could be too restrictive.
-                Arc::new(ConnectionStreamCounter::new())
-            };
+            let stream_counter = connection_entry
+                .first()
+                .map(|entry| entry.stream_counter.clone())
+                .unwrap_or(Arc::new(ConnectionStreamCounter::new()));
             connection_entry.push(ConnectionEntry::new(
                 exit.clone(),
                 peer_type,
@@ -1225,7 +1306,12 @@ pub mod test {
         let ip = "127.0.0.1".parse().unwrap();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
-        let (_, stats, t) = spawn_server(
+        let SpawnNonBlockingServerResult {
+            endpoint: _,
+            stats,
+            thread: t,
+            max_concurrent_connections: _,
+        } = spawn_server(
             "quic_streamer_test",
             s,
             &keypair,
@@ -1236,6 +1322,7 @@ pub mod test {
             staked_nodes,
             MAX_STAKED_CONNECTIONS,
             MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
             Duration::from_secs(2),
             DEFAULT_TPU_COALESCE,
         )
@@ -1453,7 +1540,7 @@ pub mod test {
             meta.size = size;
             let packet_accum = PacketAccumulator {
                 meta,
-                chunks: vec![PacketChunk {
+                chunks: smallvec::smallvec![PacketChunk {
                     bytes,
                     offset,
                     end_of_chunk: size,
@@ -1661,7 +1748,12 @@ pub mod test {
         let ip = "127.0.0.1".parse().unwrap();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let (_, _, t) = spawn_server(
+        let SpawnNonBlockingServerResult {
+            endpoint: _,
+            stats: _,
+            thread: t,
+            max_concurrent_connections: _,
+        } = spawn_server(
             "quic_streamer_test",
             s,
             &keypair,
@@ -1672,6 +1764,7 @@ pub mod test {
             staked_nodes,
             MAX_STAKED_CONNECTIONS,
             0, // Do not allow any connection from unstaked clients/nodes
+            DEFAULT_MAX_STREAMS_PER_MS,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
         )
@@ -1692,7 +1785,12 @@ pub mod test {
         let ip = "127.0.0.1".parse().unwrap();
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let (_, stats, t) = spawn_server(
+        let SpawnNonBlockingServerResult {
+            endpoint: _,
+            stats,
+            thread: t,
+            max_concurrent_connections: _,
+        } = spawn_server(
             "quic_streamer_test",
             s,
             &keypair,
@@ -1703,6 +1801,7 @@ pub mod test {
             staked_nodes,
             MAX_STAKED_CONNECTIONS,
             MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
         )
