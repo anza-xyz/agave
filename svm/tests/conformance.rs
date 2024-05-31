@@ -244,7 +244,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     let v1_environment =
         create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
 
-    let mut program_cache = ProgramCache::<MockForkGraph>::new(0, 20);
+    let mut program_cache = ProgramCache::<MockForkGraph>::new(42, 2);
     program_cache.environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(v1_environment),
         program_runtime_v2: Arc::new(BuiltinProgram::new_loader(

@@ -133,7 +133,7 @@ fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
 }
 
 fn create_executable_environment(mock_bank: &mut MockBankCallback) -> ProgramCache<MockForkGraph> {
-    let mut program_cache = ProgramCache::<MockForkGraph>::new(0, 20);
+    let mut program_cache = ProgramCache::<MockForkGraph>::new(EXECUTION_SLOT, EXECUTION_EPOCH);
 
     program_cache.environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(create_custom_environment()),
