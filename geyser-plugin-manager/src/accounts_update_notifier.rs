@@ -52,9 +52,8 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             100000
         );
 
-        if let Some(account_info) = account {
-            self.notify_plugins_of_account_update(account_info, slot, true);
-        }
+        self.notify_plugins_of_account_update(account, slot, true);
+
         measure_all.stop();
 
         inc_new_counter_debug!(
@@ -124,7 +123,7 @@ impl AccountsUpdateNotifierImpl {
     fn accountinfo_from_stored_account_meta<'a>(
         &self,
         stored_account_meta: &'a StoredAccountMeta,
-    ) -> Option<ReplicaAccountInfoV3<'a>> {
+    ) -> ReplicaAccountInfoV3<'a> {
         // We do not need to rely on the specific write_version read from the append vec.
         // So, overwrite the write_version with something that works.
         // There is already only entry per pubkey.
@@ -132,7 +131,7 @@ impl AccountsUpdateNotifierImpl {
         // so it doesn't matter what value it gets here.
         // Passing 0 for everyone's write_version is sufficiently correct.
         let write_version = 0;
-        Some(ReplicaAccountInfoV3 {
+        ReplicaAccountInfoV3 {
             pubkey: stored_account_meta.pubkey().as_ref(),
             lamports: stored_account_meta.lamports(),
             owner: stored_account_meta.owner().as_ref(),
@@ -141,7 +140,7 @@ impl AccountsUpdateNotifierImpl {
             data: stored_account_meta.data(),
             write_version,
             txn: None,
-        })
+        }
     }
 
     fn notify_plugins_of_account_update(
