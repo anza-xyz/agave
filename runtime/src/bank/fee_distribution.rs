@@ -87,6 +87,7 @@ impl Bank {
     ) -> u64 {
         let fee_details = self.fee_structure().calculate_fee_details(
             transaction.message(),
+            self.get_lamports_per_signature(),
             fee_budget_limits,
             self.feature_set
                 .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
@@ -162,7 +163,9 @@ impl Bank {
         fees: u64,
         options: DepositFeeOptions,
     ) -> Result<u64, DepositFeeError> {
-        let mut account = self.get_account_with_fixed_root(pubkey).unwrap_or_default();
+        let mut account = self
+            .get_account_with_fixed_root_no_cache(pubkey)
+            .unwrap_or_default();
 
         if options.check_account_owner && !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);

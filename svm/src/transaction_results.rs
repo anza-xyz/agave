@@ -5,9 +5,9 @@
 )]
 pub use solana_sdk::inner_instruction::{InnerInstruction, InnerInstructionsList};
 use {
-    crate::nonce_info::{NonceFull, NonceInfo},
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_sdk::{
+        fee::FeeDetails,
         rent_debits::RentDebits,
         transaction::{self, TransactionError},
         transaction_context::TransactionReturnData,
@@ -16,8 +16,15 @@ use {
 
 pub struct TransactionResults {
     pub fee_collection_results: Vec<transaction::Result<()>>,
+    pub loaded_accounts_stats: Vec<transaction::Result<TransactionLoadedAccountsStats>>,
     pub execution_results: Vec<TransactionExecutionResult>,
     pub rent_debits: Vec<RentDebits>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TransactionLoadedAccountsStats {
+    pub loaded_accounts_data_size: usize,
+    pub loaded_accounts_count: usize,
 }
 
 /// Type safe representation of a transaction execution attempt which
@@ -74,34 +81,11 @@ pub struct TransactionExecutionDetails {
     pub status: transaction::Result<()>,
     pub log_messages: Option<Vec<String>>,
     pub inner_instructions: Option<InnerInstructionsList>,
-    pub durable_nonce_fee: Option<DurableNonceFee>,
+    pub fee_details: FeeDetails,
+    pub is_nonce: bool,
     pub return_data: Option<TransactionReturnData>,
     pub executed_units: u64,
     /// The change in accounts data len for this transaction.
     /// NOTE: This value is valid IFF `status` is `Ok`.
     pub accounts_data_len_delta: i64,
-}
-
-#[derive(Debug, Clone)]
-pub enum DurableNonceFee {
-    Valid(u64),
-    Invalid,
-}
-
-impl From<&NonceFull> for DurableNonceFee {
-    fn from(nonce: &NonceFull) -> Self {
-        match nonce.lamports_per_signature() {
-            Some(lamports_per_signature) => Self::Valid(lamports_per_signature),
-            None => Self::Invalid,
-        }
-    }
-}
-
-impl DurableNonceFee {
-    pub fn lamports_per_signature(&self) -> Option<u64> {
-        match self {
-            Self::Valid(lamports_per_signature) => Some(*lamports_per_signature),
-            Self::Invalid => None,
-        }
-    }
 }

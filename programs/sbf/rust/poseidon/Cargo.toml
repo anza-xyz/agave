@@ -10,6 +10,7 @@ edition = { workspace = true }
 
 [dependencies]
 array-bytes = { workspace = true }
+solana-poseidon = { workspace = true }
 solana-program = { workspace = true }
 
 [lib]
