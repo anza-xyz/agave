@@ -156,13 +156,16 @@ impl AncientSlotInfos {
         let threshold_bytes = self.total_alive_bytes_shrink.0 * percent_of_alive_shrunk_data / 100;
         for info_index in &self.shrink_indexes {
             let info = &mut self.all_infos[*info_index];
+            if bytes_to_shrink_due_to_ratio.0 < threshold_bytes {
+                // adding here means we won't include the storage that would exceed the threshold
+                bytes_to_shrink_due_to_ratio += info.alive_bytes;
+            }
+
             if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
                 // we exceeded the amount to shrink due to alive ratio, so don't shrink this one just due to 'should_shrink'
                 // It MAY be shrunk based on total capacity still.
                 // Mark it as false for 'should_shrink' so it gets evaluated solely based on # of files.
                 info.should_shrink = false;
-            } else {
-                bytes_to_shrink_due_to_ratio += info.alive_bytes;
             }
         }
     }
