@@ -33,11 +33,9 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         pubkey: &Pubkey,
         write_version: u64,
     ) {
-        if let Some(account_info) =
-            self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version)
-        {
-            self.notify_plugins_of_account_update(account_info, slot, false);
-        }
+        let account_info =
+            self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version);
+        self.notify_plugins_of_account_update(account_info, slot, false);
     }
 
     fn notify_account_restore_from_snapshot(&self, slot: Slot, account: &StoredAccountMeta) {
@@ -110,8 +108,8 @@ impl AccountsUpdateNotifierImpl {
         txn: &'a Option<&'a SanitizedTransaction>,
         pubkey: &'a Pubkey,
         write_version: u64,
-    ) -> Option<ReplicaAccountInfoV3<'a>> {
-        Some(ReplicaAccountInfoV3 {
+    ) -> ReplicaAccountInfoV3<'a> {
+        ReplicaAccountInfoV3 {
             pubkey: pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
@@ -120,7 +118,7 @@ impl AccountsUpdateNotifierImpl {
             data: account.data(),
             write_version,
             txn: *txn,
-        })
+        }
     }
 
     fn accountinfo_from_stored_account_meta<'a>(
