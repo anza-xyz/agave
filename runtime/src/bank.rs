@@ -996,10 +996,7 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             Arc::new(RuntimeConfig::default()),
-            Arc::new(RwLock::new(ProgramCache::new(
-                Slot::default(),
-                Epoch::default(),
-            ))),
+            Arc::new(RwLock::new(ProgramCache::new(bank.slot, bank.epoch))),
             HashSet::default(),
         );
 
@@ -1630,7 +1627,7 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             runtime_config,
-            Arc::new(RwLock::new(ProgramCache::new(fields.slot, fields.epoch))),
+            Arc::new(RwLock::new(ProgramCache::new(bank.slot, bank.epoch))),
             HashSet::default(),
         );
 
