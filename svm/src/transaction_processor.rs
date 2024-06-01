@@ -965,7 +965,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 mod tests {
     use {
         super::*,
-        crate::account_loader::CheckedTransactionDetails,
+        crate::account_loader::ValidatedTransactionDetails,
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
@@ -1407,15 +1407,9 @@ mod tests {
             sanitized_transaction_2.clone(),
             sanitized_transaction_1,
         ];
-        let mut lock_results = vec![
-            Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: 25,
-            }),
-            Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: 25,
-            }),
+        let validation_results = vec![
+            Ok(ValidatedTransactionDetails::default()),
+            Ok(ValidatedTransactionDetails::default()),
             Err(TransactionError::ProgramAccountNotFound),
         ];
         let owners = vec![owner1, owner2];
@@ -1423,7 +1417,7 @@ mod tests {
         let result = TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
             &mock_bank,
             &transactions,
-            lock_results.as_mut_slice(),
+            &validation_results,
             &owners,
         );
 
@@ -1505,15 +1499,9 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
                 &bank,
                 &[sanitized_tx1, sanitized_tx2],
-                &mut [
-                    Ok(CheckedTransactionDetails {
-                        nonce: None,
-                        lamports_per_signature: 0,
-                    }),
-                    Ok(CheckedTransactionDetails {
-                        nonce: None,
-                        lamports_per_signature: 0,
-                    }),
+                &[
+                    Ok(ValidatedTransactionDetails::default()),
+                    Ok(ValidatedTransactionDetails::default()),
                 ],
                 owners,
             );
@@ -1604,18 +1592,15 @@ mod tests {
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
         let owners = &[program1_pubkey, program2_pubkey];
-        let mut lock_results = vec![
-            Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: 0,
-            }),
+        let validation_results = vec![
+            Ok(ValidatedTransactionDetails::default()),
             Err(TransactionError::BlockhashNotFound),
         ];
         let programs =
             TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
                 &bank,
                 &[sanitized_tx1, sanitized_tx2],
-                &mut lock_results,
+                &validation_results,
                 owners,
             );
 

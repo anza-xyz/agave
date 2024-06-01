@@ -176,29 +176,16 @@ mod tests {
         );
         assert_eq!(partial.fee_payer_account(), None);
 
-        // Add rent debits to ensure the rollback captures accounts without rent fees
-        let mut rent_debits = RentDebits::default();
-        rent_debits.insert(
-            &from_address,
-            TEST_RENT_DEBIT,
-            rent_collected_from_account.lamports(),
-        );
-        rent_debits.insert(
-            &nonce_address,
-            TEST_RENT_DEBIT,
-            rent_collected_nonce_account.lamports(),
-        );
-
         // NonceFull create + NonceInfo impl
         {
             let message = new_sanitized_message(&instructions, Some(&from_address));
             let fee_payer_address = message.account_keys().get(0).unwrap();
             let fee_payer_account = rent_collected_from_account.clone();
             let full = NonceFull::from_partial(
-                &partial,
+                partial.clone(),
                 fee_payer_address,
                 fee_payer_account,
-                &rent_debits,
+                TEST_RENT_DEBIT,
             );
             assert_eq!(*full.address(), nonce_address);
             assert_eq!(*full.account(), rent_collected_nonce_account);
@@ -216,10 +203,10 @@ mod tests {
             let fee_payer_address = message.account_keys().get(0).unwrap();
             let fee_payer_account = rent_collected_nonce_account;
             let full = NonceFull::from_partial(
-                &partial,
+                partial,
                 fee_payer_address,
                 fee_payer_account,
-                &rent_debits,
+                TEST_RENT_DEBIT,
             );
             assert_eq!(*full.address(), nonce_address);
             assert_eq!(*full.account(), nonce_account);

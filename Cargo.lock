@@ -7333,6 +7333,7 @@ dependencies = [
  "solana-metrics",
  "solana-program-runtime",
  "solana-sdk",
+ "solana-svm",
  "solana-system-program",
 ]
 
