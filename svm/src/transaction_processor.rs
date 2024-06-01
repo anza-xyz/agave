@@ -971,15 +971,18 @@ mod tests {
             account::{create_account_shared_data_for_test, WritableAccount},
             bpf_loader,
             bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+            compute_budget::ComputeBudgetInstruction,
             feature_set::FeatureSet,
             fee::FeeDetails,
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader},
-            rent_collector::RentCollector,
+            nonce,
+            rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
             rent_debits::RentDebits,
             reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signature},
+            system_program,
             sysvar::{self, rent::Rent},
             transaction::{SanitizedTransaction, Transaction, TransactionError},
             transaction_context::TransactionContext,
@@ -1934,5 +1937,322 @@ mod tests {
             .insert(program_data_account, account_data);
 
         program_account
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_exact_balance() {
+        let lamports_per_signature = 5000;
+        let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
+                ComputeBudgetInstruction::set_compute_unit_price(1_000_000_000),
+            ],
+            Some(&Pubkey::new_unique()),
+            &Hash::new_unique(),
+        ));
+        let fee_payer_address = message.fee_payer();
+        let rent_collector = RentCollector::default();
+        let min_balance = rent_collector.rent.minimum_balance(nonce::State::size());
+        let transaction_fee = lamports_per_signature;
+        let priority_fee = 2_000_000u64;
+        let starting_balance = transaction_fee + priority_fee;
+        assert!(
+            starting_balance > min_balance,
+            "we're testing that a rent exempt fee payer can be fully drained, \
+        so ensure that the starting balance is more than the min balance"
+        );
+
+        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
+        let mut mock_accounts = HashMap::new();
+        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mock_bank = MockBankCallback {
+            account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+            rent_collector,
+            ..MockBankCallback::default()
+        };
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            lamports_per_signature,
+            &mut error_counters,
+        );
+
+        let post_validation_fee_payer_account = {
+            let mut account = fee_payer_account.clone();
+            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+            account.set_lamports(0);
+            account
+        };
+
+        assert_eq!(
+            result,
+            Ok((
+                FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                post_validation_fee_payer_account,
+                0 // rent due
+            ))
+        );
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_rent_paying() {
+        let lamports_per_signature = 5000;
+        let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
+            &[],
+            Some(&Pubkey::new_unique()),
+            &Hash::new_unique(),
+        ));
+        let fee_payer_address = message.fee_payer();
+        let mut rent_collector = RentCollector::default();
+        rent_collector.rent.lamports_per_byte_year = 1_000_000;
+        let min_balance = rent_collector.rent.minimum_balance(0);
+        let transaction_fee = lamports_per_signature;
+        let starting_balance = min_balance - 1;
+        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
+        let rent_due = rent_collector
+            .get_rent_due(
+                fee_payer_account.lamports(),
+                fee_payer_account.data().len(),
+                fee_payer_account.rent_epoch(),
+            )
+            .lamports();
+        assert!(rent_due > 0);
+
+        let mut mock_accounts = HashMap::new();
+        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mock_bank = MockBankCallback {
+            account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+            rent_collector,
+            ..MockBankCallback::default()
+        };
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            lamports_per_signature,
+            &mut error_counters,
+        );
+
+        let post_validation_fee_payer_account = {
+            let mut account = fee_payer_account.clone();
+            account.set_rent_epoch(1);
+            account.set_lamports(starting_balance - transaction_fee - rent_due);
+            account
+        };
+
+        assert_eq!(
+            result,
+            Ok((
+                FeeDetails::new_for_tests(transaction_fee, 0, false),
+                post_validation_fee_payer_account,
+                rent_due,
+            ))
+        );
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_not_found() {
+        let lamports_per_signature = 5000;
+        let message =
+            new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+
+        let mock_bank = MockBankCallback::default();
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            lamports_per_signature,
+            &mut error_counters,
+        );
+
+        assert_eq!(error_counters.account_not_found, 1);
+        assert_eq!(result, Err(TransactionError::AccountNotFound));
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_insufficient_funds() {
+        let lamports_per_signature = 5000;
+        let message =
+            new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+        let fee_payer_address = message.fee_payer();
+        let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let mut mock_accounts = HashMap::new();
+        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mock_bank = MockBankCallback {
+            account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+            ..MockBankCallback::default()
+        };
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            lamports_per_signature,
+            &mut error_counters,
+        );
+
+        assert_eq!(error_counters.insufficient_funds, 1);
+        assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_insufficient_rent() {
+        let lamports_per_signature = 5000;
+        let message =
+            new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+        let fee_payer_address = message.fee_payer();
+        let transaction_fee = lamports_per_signature;
+        let rent_collector = RentCollector::default();
+        let min_balance = rent_collector.rent.minimum_balance(0);
+        let starting_balance = min_balance + transaction_fee - 1;
+        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
+        let mut mock_accounts = HashMap::new();
+        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mock_bank = MockBankCallback {
+            account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+            rent_collector,
+            ..MockBankCallback::default()
+        };
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            lamports_per_signature,
+            &mut error_counters,
+        );
+
+        assert_eq!(
+            result,
+            Err(TransactionError::InsufficientFundsForRent { account_index: 0 })
+        );
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_invalid() {
+        let lamports_per_signature = 5000;
+        let message =
+            new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
+        let fee_payer_address = message.fee_payer();
+        let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
+        let mut mock_accounts = HashMap::new();
+        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mock_bank = MockBankCallback {
+            account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+            ..MockBankCallback::default()
+        };
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            lamports_per_signature,
+            &mut error_counters,
+        );
+
+        assert_eq!(error_counters.invalid_account_for_fee, 1);
+        assert_eq!(result, Err(TransactionError::InvalidAccountForFee));
+    }
+
+    #[test]
+    fn test_validate_transaction_fee_payer_is_nonce() {
+        let lamports_per_signature = 5000;
+        let compute_unit_limit = 2 * solana_compute_budget_program::DEFAULT_COMPUTE_UNITS;
+        let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit as u32),
+                ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+            ],
+            Some(&Pubkey::new_unique()),
+            &Hash::new_unique(),
+        ));
+        let fee_payer_address = message.fee_payer();
+        let min_balance = Rent::default().minimum_balance(nonce::State::size());
+        let transaction_fee = lamports_per_signature;
+        let priority_fee = compute_unit_limit;
+
+        // Sufficient Fees
+        {
+            let fee_payer_account = AccountSharedData::new_data(
+                min_balance + transaction_fee + priority_fee,
+                &nonce::state::Versions::new(nonce::State::Initialized(
+                    nonce::state::Data::default(),
+                )),
+                &system_program::id(),
+            )
+            .unwrap();
+
+            let mut mock_accounts = HashMap::new();
+            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            let mock_bank = MockBankCallback {
+                account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+                ..MockBankCallback::default()
+            };
+
+            let mut error_counters = TransactionErrorMetrics::default();
+            let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+            let result = batch_processor.validate_transaction_fee_payer(
+                &mock_bank,
+                &message,
+                lamports_per_signature,
+                &mut error_counters,
+            );
+
+            let post_validation_fee_payer_account = {
+                let mut account = fee_payer_account.clone();
+                account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                account.set_lamports(min_balance);
+                account
+            };
+
+            assert_eq!(
+                result,
+                Ok((
+                    FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                    post_validation_fee_payer_account,
+                    0 // rent due
+                ))
+            );
+        }
+
+        // Insufficient Fees
+        {
+            let fee_payer_account = AccountSharedData::new_data(
+                transaction_fee + priority_fee, // no min_balance this time
+                &nonce::state::Versions::new(nonce::State::Initialized(
+                    nonce::state::Data::default(),
+                )),
+                &system_program::id(),
+            )
+            .unwrap();
+
+            let mut mock_accounts = HashMap::new();
+            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            let mock_bank = MockBankCallback {
+                account_shared_data: Arc::new(RwLock::new(mock_accounts)),
+                ..MockBankCallback::default()
+            };
+
+            let mut error_counters = TransactionErrorMetrics::default();
+            let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+            let result = batch_processor.validate_transaction_fee_payer(
+                &mock_bank,
+                &message,
+                lamports_per_signature,
+                &mut error_counters,
+            );
+
+            assert_eq!(error_counters.insufficient_funds, 1);
+            assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
+        }
     }
 }
