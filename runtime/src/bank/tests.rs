@@ -3092,7 +3092,6 @@ fn test_interleaving_locks() {
             false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
-            None,
         )
         .0
         .fee_collection_results;
@@ -5908,7 +5907,6 @@ fn test_pre_post_transaction_balances() {
             true,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
-            None,
         );
 
     assert_eq!(transaction_balances_set.pre_balances.len(), 3);
@@ -9303,7 +9301,6 @@ fn test_tx_log_order() {
                 enable_return_data_recording: false,
             },
             &mut ExecuteTimings::default(),
-            None,
         )
         .0
         .execution_results;
@@ -9413,7 +9410,6 @@ fn test_tx_return_data() {
                     enable_return_data_recording: true,
                 },
                 &mut ExecuteTimings::default(),
-                None,
             )
             .0
             .execution_results[0]

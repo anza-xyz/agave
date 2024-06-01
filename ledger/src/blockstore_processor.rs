@@ -145,7 +145,6 @@ pub fn execute_batch(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
@@ -168,7 +167,6 @@ pub fn execute_batch(
         transaction_status_sender.is_some(),
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
-        log_messages_bytes_limit,
     );
 
     bank_utils::find_and_send_votes(
@@ -246,7 +244,6 @@ fn execute_batches_internal(
     batches: &[TransactionBatchWithIndexes],
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<ExecuteBatchesInternalMetrics> {
     assert!(!batches.is_empty());
@@ -269,7 +266,6 @@ fn execute_batches_internal(
                             transaction_status_sender,
                             replay_vote_sender,
                             &mut timings,
-                            log_messages_bytes_limit,
                             prioritization_fee_cache,
                         )
                     },
@@ -330,7 +326,6 @@ fn process_batches(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_execution_timing: &mut BatchExecutionTiming,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
     if bank.has_installed_scheduler() {
@@ -373,7 +368,6 @@ fn process_batches(
             transaction_status_sender,
             replay_vote_sender,
             batch_execution_timing,
-            log_messages_bytes_limit,
             prioritization_fee_cache,
         )
     }
@@ -425,7 +419,6 @@ fn rebatch_and_execute_batches(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
     if batches.is_empty() {
@@ -508,7 +501,6 @@ fn rebatch_and_execute_batches(
         rebatched_txs,
         transaction_status_sender,
         replay_vote_sender,
-        log_messages_bytes_limit,
         prioritization_fee_cache,
     )?;
 
@@ -566,7 +558,6 @@ pub fn process_entries_for_tests(
         transaction_status_sender,
         replay_vote_sender,
         &mut batch_timing,
-        None,
         &ignored_prioritization_fee_cache,
     );
 
@@ -581,7 +572,6 @@ fn process_entries(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_timing: &mut BatchExecutionTiming,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
     // accumulator for entries that can be processed in parallel
@@ -607,7 +597,6 @@ fn process_entries(
                         transaction_status_sender,
                         replay_vote_sender,
                         batch_timing,
-                        log_messages_bytes_limit,
                         prioritization_fee_cache,
                     )?;
                     batches.clear();
@@ -662,7 +651,6 @@ fn process_entries(
                             transaction_status_sender,
                             replay_vote_sender,
                             batch_timing,
-                            log_messages_bytes_limit,
                             prioritization_fee_cache,
                         )?;
                         batches.clear();
@@ -678,7 +666,6 @@ fn process_entries(
         transaction_status_sender,
         replay_vote_sender,
         batch_timing,
-        log_messages_bytes_limit,
         prioritization_fee_cache,
     )?;
     for hash in tick_hashes {
@@ -1051,7 +1038,6 @@ fn confirm_full_slot(
         replay_vote_sender,
         recyclers,
         opts.allow_dead_slots,
-        opts.runtime_config.log_messages_bytes_limit,
         &ignored_prioritization_fee_cache,
     )?;
 
@@ -1344,7 +1330,6 @@ pub fn confirm_slot(
     replay_vote_sender: Option<&ReplayVoteSender>,
     recyclers: &VerifyRecyclers,
     allow_dead_slots: bool,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
@@ -1374,7 +1359,6 @@ pub fn confirm_slot(
         entry_notification_sender,
         replay_vote_sender,
         recyclers,
-        log_messages_bytes_limit,
         prioritization_fee_cache,
     )
 }
@@ -1391,7 +1375,6 @@ fn confirm_slot_entries(
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     recyclers: &VerifyRecyclers,
-    log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
@@ -1534,7 +1517,6 @@ fn confirm_slot_entries(
         transaction_status_sender,
         replay_vote_sender,
         batch_execute_timing,
-        log_messages_bytes_limit,
         prioritization_fee_cache,
     )
     .map_err(BlockstoreProcessorError::from);
@@ -4180,7 +4162,6 @@ pub mod tests {
             false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
-            None,
         );
         let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
         assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
@@ -4568,7 +4549,6 @@ pub mod tests {
             None,
             None,
             &VerifyRecyclers::default(),
-            None,
             &PrioritizationFeeCache::new(0u64),
         )
     }
@@ -4662,7 +4642,6 @@ pub mod tests {
             None,
             None,
             &VerifyRecyclers::default(),
-            None,
             &PrioritizationFeeCache::new(0u64),
         )
         .unwrap();
@@ -4707,7 +4686,6 @@ pub mod tests {
             None,
             None,
             &VerifyRecyclers::default(),
-            None,
             &PrioritizationFeeCache::new(0u64),
         )
         .unwrap();
@@ -4833,7 +4811,6 @@ pub mod tests {
             None,
             None,
             &mut batch_execution_timing,
-            None,
             &ignored_prioritization_fee_cache,
         );
         if should_succeed {

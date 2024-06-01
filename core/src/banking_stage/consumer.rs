@@ -77,7 +77,6 @@ pub struct Consumer {
     committer: Committer,
     transaction_recorder: TransactionRecorder,
     qos_service: QosService,
-    log_messages_bytes_limit: Option<usize>,
 }
 
 impl Consumer {
@@ -85,13 +84,11 @@ impl Consumer {
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         qos_service: QosService,
-        log_messages_bytes_limit: Option<usize>,
     ) -> Self {
         Self {
             committer,
             transaction_recorder,
             qos_service,
-            log_messages_bytes_limit,
         }
     }
 
@@ -606,7 +603,6 @@ impl Consumer {
                 ExecutionRecordingConfig::new_single_setting(transaction_status_sender_enabled),
                 &mut execute_and_commit_timings.execute_timings,
                 None, // account_overrides
-                self.log_messages_bytes_limit,
                 true,
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -932,7 +928,7 @@ mod tests {
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
-        let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+        let consumer = Consumer::new(committer, recorder, QosService::new(1));
         let process_transactions_summary =
             consumer.process_transactions(&bank, &Instant::now(), &transactions);
 
@@ -1105,7 +1101,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1289,7 +1285,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1390,7 +1386,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1479,7 +1475,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
             let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
@@ -1634,7 +1630,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -1830,7 +1826,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1));
 
             let process_transactions_summary =
                 consumer.process_transactions(&bank, &Instant::now(), &transactions);
@@ -1957,7 +1953,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let _ = consumer.process_and_record_transactions(&bank, &transactions, 0);
 
@@ -2102,7 +2098,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
 
@@ -2162,7 +2158,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             // When the working bank in poh_recorder is None, no packets should be processed (consume will not be called)
             assert!(!poh_recorder.read().unwrap().has_bank());
@@ -2240,7 +2236,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             // When the working bank in poh_recorder is None, no packets should be processed
             assert!(!poh_recorder.read().unwrap().has_bank());
@@ -2292,7 +2288,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             // When the working bank in poh_recorder is None, no packets should be processed (consume will not be called)
             assert!(!poh_recorder.read().unwrap().has_bank());
@@ -2417,7 +2413,7 @@ mod tests {
                 replay_vote_sender,
                 Arc::new(PrioritizationFeeCache::new(0u64)),
             );
-            let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+            let consumer = Consumer::new(committer, recorder, QosService::new(1));
 
             // When the working bank in poh_recorder is None, no packets should be processed (consume will not be called)
             assert!(!poh_recorder.read().unwrap().has_bank());

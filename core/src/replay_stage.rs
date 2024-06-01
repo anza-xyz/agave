@@ -550,7 +550,6 @@ impl ReplayStage {
         voting_sender: Sender<VoteOp>,
         drop_bank_sender: Sender<Vec<BankWithScheduler>>,
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
-        log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         dumped_slots_sender: DumpedSlotsSender,
         banking_tracer: Arc<BankingTracer>,
@@ -732,7 +731,6 @@ impl ReplayStage {
                     &ancestor_hashes_replay_update_sender,
                     block_metadata_notifier.clone(),
                     &mut replay_timing,
-                    log_messages_bytes_limit,
                     &replay_mode,
                     &replay_tx_thread_pool,
                     &prioritization_fee_cache,
@@ -2174,7 +2172,6 @@ impl ReplayStage {
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         verify_recyclers: &VerifyRecyclers,
-        log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: &PrioritizationFeeCache,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
@@ -2195,7 +2192,6 @@ impl ReplayStage {
             Some(replay_vote_sender),
             verify_recyclers,
             false,
-            log_messages_bytes_limit,
             prioritization_fee_cache,
         )?;
         let tx_count_after = w_replay_progress.num_txs;
@@ -2752,7 +2748,6 @@ impl ReplayStage {
         verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         replay_timing: &mut ReplayLoopTiming,
-        log_messages_bytes_limit: Option<usize>,
         active_bank_slots: &[Slot],
         prioritization_fee_cache: &PrioritizationFeeCache,
     ) -> Vec<ReplaySlotFromBlockstore> {
@@ -2835,7 +2830,6 @@ impl ReplayStage {
                             entry_notification_sender,
                             &replay_vote_sender.clone(),
                             &verify_recyclers.clone(),
-                            log_messages_bytes_limit,
                             prioritization_fee_cache,
                         );
                         replay_blockstore_time.stop();
@@ -2867,7 +2861,6 @@ impl ReplayStage {
         verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
         replay_timing: &mut ReplayLoopTiming,
-        log_messages_bytes_limit: Option<usize>,
         bank_slot: Slot,
         prioritization_fee_cache: &PrioritizationFeeCache,
     ) -> ReplaySlotFromBlockstore {
@@ -2924,7 +2917,6 @@ impl ReplayStage {
                     entry_notification_sender,
                     &replay_vote_sender.clone(),
                     &verify_recyclers.clone(),
-                    log_messages_bytes_limit,
                     prioritization_fee_cache,
                 );
                 replay_blockstore_time.stop();
@@ -3259,7 +3251,6 @@ impl ReplayStage {
         ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         replay_timing: &mut ReplayLoopTiming,
-        log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
         replay_tx_thread_pool: &ThreadPool,
         prioritization_fee_cache: &PrioritizationFeeCache,
@@ -3292,7 +3283,6 @@ impl ReplayStage {
                     verify_recyclers,
                     replay_vote_sender,
                     replay_timing,
-                    log_messages_bytes_limit,
                     &active_bank_slots,
                     prioritization_fee_cache,
                 )
@@ -3312,7 +3302,6 @@ impl ReplayStage {
                         verify_recyclers,
                         replay_vote_sender,
                         replay_timing,
-                        log_messages_bytes_limit,
                         *bank_slot,
                         prioritization_fee_cache,
                     )
@@ -5202,7 +5191,6 @@ pub(crate) mod tests {
                 None,
                 &replay_vote_sender,
                 &VerifyRecyclers::default(),
-                None,
                 &PrioritizationFeeCache::new(0u64),
             );
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
