@@ -3687,7 +3687,7 @@ impl Bank {
             .collect();
 
         let mut check_time = Measure::start("check_transactions");
-        let mut check_results = self.check_transactions(
+        let check_results = self.check_transactions(
             sanitized_txs,
             batch.lock_results(),
             max_age,
@@ -3702,7 +3702,7 @@ impl Bank {
             .load_and_execute_sanitized_transactions(
                 self,
                 sanitized_txs,
-                &mut check_results,
+                check_results,
                 &processing_config,
             );
 

@@ -2,7 +2,6 @@ use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     nonce_account,
     pubkey::Pubkey,
-    rent_debits::RentDebits,
 };
 
 pub trait NonceInfo {
@@ -60,24 +59,28 @@ impl NonceFull {
             fee_payer_account,
         }
     }
+
     pub fn from_partial(
-        partial: &NoncePartial,
+        partial: NoncePartial,
         fee_payer_address: &Pubkey,
         mut fee_payer_account: AccountSharedData,
-        rent_debits: &RentDebits,
+        fee_payer_rent_debit: u64,
     ) -> Self {
-        let rent_debit = rent_debits.get_account_rent_debit(fee_payer_address);
-        fee_payer_account.set_lamports(fee_payer_account.lamports().saturating_add(rent_debit));
+        fee_payer_account.set_lamports(
+            fee_payer_account
+                .lamports()
+                .saturating_add(fee_payer_rent_debit),
+        );
 
-        let nonce_address = *partial.address();
+        let NoncePartial {
+            address: nonce_address,
+            account: nonce_account,
+        } = partial;
+
         if *fee_payer_address == nonce_address {
             Self::new(nonce_address, fee_payer_account, None)
         } else {
-            Self::new(
-                nonce_address,
-                partial.account().clone(),
-                Some(fee_payer_account),
-            )
+            Self::new(nonce_address, nonce_account, Some(fee_payer_account))
         }
     }
 }

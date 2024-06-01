@@ -11,11 +11,8 @@ use {
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        feature_set::{
-            self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
-        },
-        fee::{FeeDetails, FeeStructure},
+        feature_set::{self, FeatureSet},
+        fee::FeeDetails,
         message::SanitizedMessage,
         native_loader,
         nonce::State as NonceState,
@@ -36,12 +33,21 @@ use {
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
+pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 pub type TransactionLoadResult = Result<LoadedTransaction>;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CheckedTransactionDetails {
     pub nonce: Option<NoncePartial>,
     pub lamports_per_signature: u64,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct ValidatedTransactionDetails {
+    pub nonce: Option<NonceFull>,
+    pub fee_details: FeeDetails,
+    pub fee_payer_account: AccountSharedData,
+    pub fee_payer_rent_debit: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -153,47 +159,28 @@ pub fn validate_fee_payer(
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[SanitizedTransaction],
-    check_results: &[TransactionCheckResult],
+    validation_results: Vec<TransactionValidationResult>,
     error_metrics: &mut TransactionErrorMetrics,
-    fee_structure: &FeeStructure,
     account_overrides: Option<&AccountOverrides>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Vec<TransactionLoadResult> {
-    let feature_set = callbacks.get_feature_set();
     txs.iter()
-        .zip(check_results)
+        .zip(validation_results)
         .map(|etx| match etx {
-            (
-                tx,
-                Ok(CheckedTransactionDetails {
-                    nonce,
-                    lamports_per_signature,
-                }),
-            ) => {
+            (tx, Ok(tx_details)) => {
                 let message = tx.message();
-                let fee_details = fee_structure.calculate_fee_details(
-                    message,
-                    *lamports_per_signature,
-                    &process_compute_budget_instructions(message.program_instructions_iter())
-                        .unwrap_or_default()
-                        .into(),
-                    feature_set
-                        .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-                    feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
-                );
 
                 // load transactions
                 load_transaction_accounts(
                     callbacks,
                     message,
-                    nonce.as_ref(),
-                    fee_details,
+                    tx_details,
                     error_metrics,
                     account_overrides,
                     loaded_programs,
                 )
             }
-            (_, Err(e)) => Err(e.clone()),
+            (_, Err(e)) => Err(e),
         })
         .collect()
 }
@@ -201,17 +188,13 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     message: &SanitizedMessage,
-    nonce: Option<&NoncePartial>,
-    fee_details: FeeDetails,
+    tx_details: ValidatedTransactionDetails,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<LoadedTransaction> {
     let feature_set = callbacks.get_feature_set();
 
-    // There is no way to predict what program will execute without an error
-    // If a fee can pay for execution then the program will be scheduled
-    let mut validated_fee_payer = false;
     let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
     let mut accounts_found = Vec::with_capacity(account_keys.len());
@@ -238,10 +221,17 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             let account = if solana_sdk::sysvar::instructions::check_id(key) {
                 construct_instructions_account(message)
             } else {
+                let is_fee_payer = i == 0;
                 let instruction_account = u8::try_from(i)
                     .map(|i| instruction_accounts.contains(&&i))
                     .unwrap_or(false);
-                let (account_size, mut account, rent) = if let Some(account_override) =
+                let (account_size, account, rent) = if is_fee_payer {
+                    (
+                        tx_details.fee_payer_account.data().len(),
+                        tx_details.fee_payer_account.clone(),
+                        tx_details.fee_payer_rent_debit,
+                    )
+                } else if let Some(account_override) =
                     account_overrides.and_then(|overrides| overrides.get(key))
                 {
                     (account_override.data().len(), account_override.clone(), 0)
@@ -291,19 +281,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     error_metrics,
                 )?;
 
-                if i == 0 {
-                    validate_fee_payer(
-                        key,
-                        &mut account,
-                        i as IndexOfAccount,
-                        error_metrics,
-                        rent_collector,
-                        fee_details.total_fee(),
-                    )?;
-
-                    validated_fee_payer = true;
-                }
-
                 tx_rent += rent;
                 rent_debits.insert(key, rent, account.lamports());
 
@@ -314,24 +291,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             Ok((*key, account))
         })
         .collect::<Result<Vec<_>>>()?;
-
-    if !validated_fee_payer {
-        error_metrics.account_not_found += 1;
-        return Err(TransactionError::AccountNotFound);
-    }
-
-    // Update nonce with fee-subtracted accounts
-    let nonce = nonce.map(|nonce| {
-        // SAFETY: The first accounts entry must be a validated fee payer because
-        // validated_fee_payer must be true at this point.
-        let (fee_payer_address, fee_payer_account) = accounts.first().unwrap();
-        NonceFull::from_partial(
-            nonce,
-            fee_payer_address,
-            fee_payer_account.clone(),
-            &rent_debits,
-        )
-    });
 
     let builtins_start_index = accounts.len();
     let program_indices = message
@@ -400,8 +359,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     Ok(LoadedTransaction {
         accounts,
         program_indices,
-        nonce,
-        fee_details,
+        nonce: tx_details.nonce,
+        fee_details: tx_details.fee_details,
         rent: tx_rent,
         rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size,

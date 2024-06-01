@@ -1,10 +1,13 @@
 use {
     crate::{
         account_loader::{
-            load_accounts, LoadedTransaction, TransactionCheckResult, TransactionLoadResult,
+            collect_rent_from_account, load_accounts, validate_fee_payer,
+            CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
+            TransactionLoadResult, TransactionValidationResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
+        nonce_info::NonceFull,
         program_loader::load_program_with_pubkey,
         runtime_config::RuntimeConfig,
         transaction_account_state_info::TransactionAccountStateInfo,
@@ -15,9 +18,12 @@ use {
     log::debug,
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget::{
+        compute_budget::ComputeBudget,
+        compute_budget_processor::process_compute_budget_instructions,
+    },
     solana_loader_v4_program::create_program_runtime_environment_v2,
-    solana_measure::measure::Measure,
+    solana_measure::{measure, measure::Measure},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
@@ -32,14 +38,17 @@ use {
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
         epoch_schedule::EpochSchedule,
-        feature_set::FeatureSet,
-        fee::FeeStructure,
+        feature_set::{
+            include_loaded_accounts_data_size_in_fee_calculation,
+            remove_rounding_in_fee_calculation, FeatureSet,
+        },
+        fee::{FeeDetails, FeeStructure},
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
         message::SanitizedMessage,
         pubkey::Pubkey,
         saturating_add_assign,
-        transaction::{SanitizedTransaction, TransactionError},
+        transaction::{self, SanitizedTransaction, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
     std::{
@@ -211,18 +220,25 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         callbacks: &CB,
         sanitized_txs: &[SanitizedTransaction],
-        check_results: &mut [TransactionCheckResult],
+        check_results: Vec<TransactionCheckResult>,
         config: &TransactionProcessingConfig,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
         // Initialize metrics.
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
 
+        let (validation_results, validate_fees_time) = measure!(self.validate_fees(
+            callbacks,
+            sanitized_txs,
+            check_results,
+            &mut error_metrics
+        ));
+
         let mut program_cache_time = Measure::start("program_cache");
         let mut program_accounts_map = Self::filter_executable_program_accounts(
             callbacks,
             sanitized_txs,
-            check_results,
+            &validation_results,
             PROGRAM_OWNERS,
         );
         for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
@@ -253,9 +269,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut loaded_transactions = load_accounts(
             callbacks,
             sanitized_txs,
-            check_results,
+            validation_results,
             &mut error_metrics,
-            &self.fee_structure,
             config.account_overrides,
             &program_cache_for_tx_batch.borrow(),
         );
@@ -348,6 +363,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         execute_timings.saturating_add_in_place(
+            ExecuteTimingType::ValidateFeesUs,
+            validate_fees_time.as_us(),
+        );
+        execute_timings.saturating_add_in_place(
             ExecuteTimingType::ProgramCacheUs,
             program_cache_time.as_us(),
         );
@@ -363,16 +382,115 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
+    fn validate_fees<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        check_results: Vec<TransactionCheckResult>,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> Vec<TransactionValidationResult> {
+        sanitized_txs
+            .iter()
+            .zip(check_results)
+            .map(|(sanitized_tx, check_result)| {
+                check_result.and_then(
+                    |CheckedTransactionDetails {
+                         nonce,
+                         lamports_per_signature,
+                     }| {
+                        let message = sanitized_tx.borrow().message();
+                        let (fee_details, fee_payer_account, fee_payer_rent_debit) = self
+                            .validate_transaction_fee_payer(
+                                callbacks,
+                                message,
+                                lamports_per_signature,
+                                error_counters,
+                            )?;
+
+                        // Update nonce with fee-subtracted accounts
+                        let fee_payer_address = message.fee_payer();
+                        let nonce = nonce.map(|nonce| {
+                            NonceFull::from_partial(
+                                nonce,
+                                fee_payer_address,
+                                fee_payer_account.clone(),
+                                fee_payer_rent_debit,
+                            )
+                        });
+
+                        Ok(ValidatedTransactionDetails {
+                            nonce,
+                            fee_details,
+                            fee_payer_account,
+                            fee_payer_rent_debit,
+                        })
+                    },
+                )
+            })
+            .collect()
+    }
+
+    // Loads transaction fee payer, collects rent if necessary, then calculates
+    // transaction fees, and deducts them from the fee payer balance. If the
+    // account is not found or has insufficient funds, an error is returned.
+    fn validate_transaction_fee_payer<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        message: &SanitizedMessage,
+        lamports_per_signature: u64,
+        error_counters: &mut TransactionErrorMetrics,
+    ) -> transaction::Result<(FeeDetails, AccountSharedData, u64)> {
+        let feature_set = callbacks.get_feature_set();
+        let rent_collector = callbacks.get_rent_collector();
+
+        let fee_payer_address = message.fee_payer();
+        let Some(mut fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
+        else {
+            error_counters.account_not_found += 1;
+            return Err(TransactionError::AccountNotFound);
+        };
+
+        let fee_payer_rent_debit = collect_rent_from_account(
+            &feature_set,
+            rent_collector,
+            fee_payer_address,
+            &mut fee_payer_account,
+        )
+        .rent_amount;
+
+        let fee_details = self.fee_structure.calculate_fee_details(
+            message,
+            lamports_per_signature,
+            &process_compute_budget_instructions(message.program_instructions_iter())
+                .unwrap_or_default()
+                .into(),
+            feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+            feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
+        );
+
+        let fee_payer_index = 0;
+        validate_fee_payer(
+            fee_payer_address,
+            &mut fee_payer_account,
+            fee_payer_index,
+            error_counters,
+            rent_collector,
+            fee_details.total_fee(),
+        )?;
+
+        Ok((fee_details, fee_payer_account, fee_payer_rent_debit))
+    }
+
     /// Returns a map from executable program accounts (all accounts owned by any loader)
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
     fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
         callbacks: &CB,
         txs: &[SanitizedTransaction],
-        check_results: &mut [TransactionCheckResult],
+        validation_results: &[TransactionValidationResult],
         program_owners: &[Pubkey],
     ) -> HashMap<Pubkey, u64> {
         let mut result: HashMap<Pubkey, u64> = HashMap::new();
-        check_results.iter_mut().zip(txs).for_each(|etx| {
+        validation_results.iter().zip(txs).for_each(|etx| {
             if let (Ok(_), tx) = etx {
                 tx.message()
                     .account_keys()
