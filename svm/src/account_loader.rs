@@ -6,7 +6,9 @@ use {
         transaction_processing_callback::TransactionProcessingCallback,
     },
     itertools::Itertools,
-    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
+    solana_compute_budget::compute_budget_processor::{
+        process_compute_budget_instructions, ComputeBudgetLimits,
+    },
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -45,6 +47,7 @@ pub struct CheckedTransactionDetails {
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct ValidatedTransactionDetails {
     pub rollback_accounts: RollbackAccounts,
+    pub compute_budget_limits: ComputeBudgetLimits,
     pub fee_details: FeeDetails,
     pub fee_payer_account: AccountSharedData,
     pub fee_payer_rent_debit: u64,
@@ -56,6 +59,7 @@ pub struct LoadedTransaction {
     pub program_indices: TransactionProgramIndices,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
+    pub compute_budget_limits: ComputeBudgetLimits,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
     pub loaded_accounts_data_size: usize,
@@ -358,6 +362,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         program_indices,
         fee_details: tx_details.fee_details,
         rollback_accounts: tx_details.rollback_accounts,
+        compute_budget_limits: tx_details.compute_budget_limits,
         rent: tx_rent,
         rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size,

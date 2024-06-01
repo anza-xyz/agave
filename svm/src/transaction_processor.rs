@@ -42,7 +42,7 @@ use {
             include_loaded_accounts_data_size_in_fee_calculation,
             remove_rounding_in_fee_calculation, FeatureSet,
         },
-        fee::FeeStructure,
+        fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
@@ -298,31 +298,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .map(|(load_result, tx)| match load_result {
                 Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
                 Ok(loaded_transaction) => {
-                    let compute_budget = if let Some(compute_budget) = config.compute_budget {
-                        compute_budget
-                    } else {
-                        let mut compute_budget_process_transaction_time =
-                            Measure::start("compute_budget_process_transaction_time");
-                        let maybe_compute_budget = ComputeBudget::try_from_instructions(
-                            tx.message().program_instructions_iter(),
-                        );
-                        compute_budget_process_transaction_time.stop();
-                        saturating_add_assign!(
-                            execute_timings
-                                .execute_accessories
-                                .compute_budget_process_transaction_us,
-                            compute_budget_process_transaction_time.as_us()
-                        );
-                        if let Err(err) = maybe_compute_budget {
-                            return TransactionExecutionResult::NotExecuted(err);
-                        }
-                        maybe_compute_budget.unwrap()
-                    };
-
                     let result = self.execute_loaded_transaction(
                         tx,
                         loaded_transaction,
-                        compute_budget,
                         &mut execute_timings,
                         &mut error_metrics,
                         &mut program_cache_for_tx_batch.borrow_mut(),
@@ -438,6 +416,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> transaction::Result<ValidatedTransactionDetails> {
+        let compute_budget_limits = process_compute_budget_instructions(
+            message.program_instructions_iter(),
+        )
+        .map_err(|err| {
+            error_counters.invalid_compute_budget += 1;
+            err
+        })?;
+
         let fee_payer_address = message.fee_payer();
         let Some(mut fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
         else {
@@ -459,12 +445,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             lamports_per_signature,
         } = checked_details;
 
+        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let fee_details = fee_structure.calculate_fee_details(
             message,
             lamports_per_signature,
-            &process_compute_budget_instructions(message.program_instructions_iter())
-                .unwrap_or_default()
-                .into(),
+            &fee_budget_limits,
             feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
         );
@@ -494,6 +479,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_payer_account,
             fee_payer_rent_debit,
             rollback_accounts,
+            compute_budget_limits,
         })
     }
 
@@ -709,7 +695,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         tx: &SanitizedTransaction,
         loaded_transaction: &mut LoadedTransaction,
-        compute_budget: ComputeBudget,
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
@@ -737,6 +722,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let lamports_before_tx =
             transaction_accounts_lamports_sum(&transaction_accounts, tx.message()).unwrap_or(0);
+
+        let compute_budget = config
+            .compute_budget
+            .unwrap_or_else(|| ComputeBudget::from(loaded_transaction.compute_budget_limits));
 
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
