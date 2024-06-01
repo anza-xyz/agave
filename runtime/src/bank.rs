@@ -97,7 +97,7 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheMatchCriteria,
         },
         timings::{ExecuteTimingType, ExecuteTimings},
@@ -996,7 +996,6 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             Arc::new(RuntimeConfig::default()),
-            Arc::new(RwLock::new(ProgramCache::new(bank.slot, bank.epoch))),
             HashSet::default(),
         );
 
@@ -1627,7 +1626,6 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             runtime_config,
-            Arc::new(RwLock::new(ProgramCache::new(bank.slot, bank.epoch))),
             HashSet::default(),
         );
 
