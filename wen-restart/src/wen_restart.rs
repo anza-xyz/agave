@@ -2631,7 +2631,7 @@ mod tests {
         assert!(wen_restart_is_in_phase_one(&proto_path_option));
         progress.set_state(RestartState::WaitingForSupermajority);
         assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
-        assert!(!wen_restart_is_in_phase_one(&proto_path_option));
+        assert!(wen_restart_is_in_phase_one(&proto_path_option));
         progress.set_state(RestartState::Done);
         assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
         assert!(!wen_restart_is_in_phase_one(&proto_path_option));

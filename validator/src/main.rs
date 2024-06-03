@@ -2033,6 +2033,7 @@ pub fn main() {
                 tpu_use_quic,
                 tpu_connection_pool_size,
                 tpu_enable_udp,
+                tpu_max_connections_per_ipaddr_per_minute,
                 admin_service_post_init,
             )
             .unwrap_or_else(|err| {
