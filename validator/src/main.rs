@@ -34,7 +34,7 @@ use {
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorStartProgress,
+            ValidatorConfig, ValidatorError, ValidatorStartProgress,
         },
     },
     solana_gossip::{
@@ -1907,6 +1907,10 @@ pub fn main() {
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
+        if validator_config.wen_restart_proto_path.is_some() {
+            error!("--restricted-repair-only-mode is not compatible with --wen-restart-proto-path");
+            exit(1);
+        }
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -1980,28 +1984,67 @@ pub fn main() {
         return;
     }
 
-    let validator = Validator::new(
+    let validator = match Validator::new(
         node,
-        identity_keypair,
+        identity_keypair.clone(),
         &ledger_path,
         &vote_account,
-        authorized_voter_keypairs,
-        cluster_entrypoints,
+        authorized_voter_keypairs.clone(),
+        cluster_entrypoints.clone(),
         &validator_config,
         should_check_duplicate_instance,
-        rpc_to_plugin_manager_receiver,
-        start_progress,
+        rpc_to_plugin_manager_receiver.clone(),
+        start_progress.clone(),
         socket_addr_space,
         tpu_use_quic,
         tpu_connection_pool_size,
         tpu_enable_udp,
         tpu_max_connections_per_ipaddr_per_minute,
-        admin_service_post_init,
-    )
-    .unwrap_or_else(|e| {
-        error!("Failed to start validator: {:?}", e);
-        exit(1);
-    });
+        admin_service_post_init.clone(),
+    ) {
+        Ok(validator) => validator,
+        Err(ValidatorError::WenRestartReset(slot, hash, shred_version)) => {
+            // Entering second phase of wen_restart, change param and try again.
+            validator_config.wait_for_supermajority = Some(slot);
+            validator_config.expected_bank_hash = Some(hash);
+            validator_config.expected_shred_version = Some(shred_version);
+            Validator::new(
+                Node::new_with_external_ip(
+                    &identity_keypair.pubkey(),
+                    NodeConfig {
+                        gossip_addr,
+                        port_range: dynamic_port_range,
+                        bind_ip_addr: bind_address,
+                        public_tpu_addr,
+                        public_tpu_forwards_addr,
+                        num_tvu_sockets: tvu_receive_threads,
+                    },
+                ),
+                identity_keypair,
+                &ledger_path,
+                &vote_account,
+                authorized_voter_keypairs,
+                cluster_entrypoints,
+                &validator_config,
+                should_check_duplicate_instance,
+                rpc_to_plugin_manager_receiver,
+                start_progress,
+                socket_addr_space,
+                tpu_use_quic,
+                tpu_connection_pool_size,
+                tpu_enable_udp,
+                admin_service_post_init,
+            )
+            .unwrap_or_else(|err| {
+                error!("Failed to complete wen_restart: {:?}", err);
+                exit(1);
+            })
+        }
+        Err(err) => {
+            error!("Failed to start validator: {:?}", err);
+            exit(1);
+        }
+    };
 
     if let Some(filename) = init_complete_file {
         File::create(filename).unwrap_or_else(|_| {

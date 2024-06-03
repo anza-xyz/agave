@@ -123,7 +123,7 @@ use {
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{
         wait_for_wen_restart_phase_one, wen_restart_is_in_phase_one, wen_restart_mark_done,
-        wen_restart_wait_for_supermajority_slot_hash, WenRestartConfig,
+        WenRestartConfig,
     },
     std::{
         collections::{HashMap, HashSet},
@@ -516,7 +516,7 @@ impl Validator {
         tpu_enable_udp: bool,
         tpu_max_connections_per_ipaddr_per_minute: u64,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ValidatorError> {
         let start_time = Instant::now();
 
         let id = identity_keypair.pubkey();
@@ -582,15 +582,17 @@ impl Validator {
         info!("Initializing sigverify done.");
 
         if !ledger_path.is_dir() {
-            return Err(format!(
+            return Err(ValidatorError::Error(format!(
                 "ledger directory does not exist or is not accessible: {ledger_path:?}"
-            ));
+            )));
         }
         let genesis_config =
             open_genesis_config(ledger_path, config.max_genesis_archive_unpacked_size)
                 .map_err(|err| format!("Failed to open genesis config: {err}"))?;
 
-        metrics_config_sanity_check(genesis_config.cluster_type)?;
+        metrics_config_sanity_check(genesis_config.cluster_type).map_err(|err| {
+            format!("Invalid metrics configuration detected in genesis config: {err}")
+        })?;
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
@@ -746,11 +748,11 @@ impl Validator {
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if expected_shred_version != node.info.shred_version() {
-                return Err(format!(
+                return Err(ValidatorError::Error(format!(
                     "shred version mismatch: expected {} found: {}",
                     expected_shred_version,
                     node.info.shred_version(),
-                ));
+                )));
             }
         }
 
@@ -1388,13 +1390,14 @@ impl Validator {
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
             }) {
-                Ok(()) => {
-                    return Err(
-                        "wen_restart phase one completed, will restart to wait for supermajority"
-                            .to_string(),
-                    );
+                Ok((slot, hash, shred_version)) => {
+                    return Err(ValidatorError::WenRestartReset(slot, hash, shred_version));
                 }
-                Err(e) => return Err(format!("wait_for_wen_restart failed: {e:?}")),
+                Err(e) => {
+                    return Err(ValidatorError::Error(format!(
+                        "wait_for_wen_restart failed: {e:?}"
+                    )))
+                }
             };
         }
 
@@ -2333,11 +2336,20 @@ fn initialize_rpc_transaction_history_services(
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ValidatorError {
+#[derive(Debug, Display, PartialEq, Eq)]
+pub enum ValidatorError {
     BadExpectedBankHash,
     NotEnoughLedgerData,
     Error(String),
+    WenRestartReset(Slot, Hash, u16),
+}
+
+impl std::error::Error for ValidatorError {}
+
+impl From<String> for ValidatorError {
+    fn from(err: String) -> Self {
+        ValidatorError::Error(err)
+    }
 }
 
 // Return if the validator waited on other nodes to start. In this case
@@ -2354,27 +2366,11 @@ fn wait_for_supermajority(
     rpc_override_health_check: Arc<AtomicBool>,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
 ) -> Result<bool, ValidatorError> {
-    // wait_for_supermajority can be triggered either through commandline
-    // or when wen_restart is in WAIT_FOR_SUPERMAJORITY mode.
-    let (wait_for_supermajority, expected_bank_hash) = match config.wait_for_supermajority {
-        Some(wait_for_supermajority) => (Some(wait_for_supermajority), config.expected_bank_hash),
-        None => {
-            match wen_restart_wait_for_supermajority_slot_hash(&config.wen_restart_proto_path) {
-                Ok(None) => (None, None),
-                Ok(Some((slot, hash))) => (Some(slot), Some(hash)),
-                Err(e) => {
-                    error!("Failed to read wen_restart supermajority bank id: {}", e);
-                    return Err(ValidatorError::Error(e.to_string()));
-                }
-            }
-        }
-    };
-    match wait_for_supermajority {
+    match config.wait_for_supermajority {
+        None => Ok(false),
         Some(wait_for_supermajority_slot) => {
             if let Some(process_blockstore) = process_blockstore {
-                process_blockstore
-                    .process()
-                    .map_err(ValidatorError::Error)?;
+                process_blockstore.process()?;
             }
 
             let bank = bank_forks.read().unwrap().working_bank();
@@ -2392,7 +2388,7 @@ fn wait_for_supermajority(
                 _ => {}
             }
 
-            if let Some(expected_bank_hash) = expected_bank_hash {
+            if let Some(expected_bank_hash) = config.expected_bank_hash {
                 if bank.hash() != expected_bank_hash {
                     error!(
                         "Bank hash({}) does not match expected value: {}",
@@ -2436,16 +2432,13 @@ fn wait_for_supermajority(
                 sleep(Duration::new(1, 0));
             }
             rpc_override_health_check.store(false, Ordering::Relaxed);
-            if config.wait_for_supermajority.is_none() {
-                if let Some(proto_path) = &config.wen_restart_proto_path {
-                    if let Err(e) = wen_restart_mark_done(proto_path) {
-                        return Err(ValidatorError::Error(e.to_string()));
-                    }
+            if let Some(proto_path) = &config.wen_restart_proto_path {
+                if let Err(e) = wen_restart_mark_done(proto_path) {
+                    return Err(ValidatorError::Error(e.to_string()));
                 }
             }
             Ok(true)
         }
-        None => Ok(false),
     }
 }
 
@@ -2602,9 +2595,7 @@ mod tests {
         solana_tpu_client::tpu_client::{
             DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
         },
-        solana_wen_restart::wen_restart::write_wen_restart_wait_for_supermajority_record,
         std::{fs::remove_dir_all, thread, time::Duration},
-        tempfile::NamedTempFile,
     };
 
     #[test]
@@ -2827,83 +2818,6 @@ mod tests {
                 &bank_forks,
                 &cluster_info,
                 rpc_override_health_check,
-                &start_progress,
-            ),
-            Err(ValidatorError::BadExpectedBankHash)
-        );
-    }
-
-    #[test]
-    fn test_wait_for_supermajority_in_wen_restart() {
-        solana_logger::setup();
-        let node_keypair = Arc::new(Keypair::new());
-        let cluster_info = ClusterInfo::new(
-            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
-            node_keypair,
-            SocketAddrSpace::Unspecified,
-        );
-
-        let (genesis_config, _mint_keypair) = create_genesis_config(1);
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let mut config = ValidatorConfig::default_for_test();
-        let rpc_override_health_check = Arc::new(AtomicBool::new(false));
-        let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
-
-        let file = NamedTempFile::new().unwrap();
-        let temp_path = file.into_temp_path();
-        let proto_path = temp_path.to_path_buf();
-        config.wen_restart_proto_path = Some(proto_path.clone());
-
-        assert!(!wait_for_supermajority(
-            &config,
-            None,
-            &bank_forks,
-            &cluster_info,
-            rpc_override_health_check.clone(),
-            &start_progress,
-        )
-        .unwrap());
-
-        // bank=0, wait=1, should fail
-        write_wen_restart_wait_for_supermajority_record(&proto_path, 1, Hash::new_unique());
-        assert_eq!(
-            wait_for_supermajority(
-                &config,
-                None,
-                &bank_forks,
-                &cluster_info,
-                rpc_override_health_check.clone(),
-                &start_progress,
-            ),
-            Err(ValidatorError::NotEnoughLedgerData)
-        );
-
-        // bank=1, wait=0, should pass, bank is past the wait slot
-        let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
-            bank_forks.read().unwrap().root_bank(),
-            &Pubkey::default(),
-            1,
-        ));
-        write_wen_restart_wait_for_supermajority_record(&proto_path, 0, Hash::new_unique());
-        assert!(!wait_for_supermajority(
-            &config,
-            None,
-            &bank_forks,
-            &cluster_info,
-            rpc_override_health_check.clone(),
-            &start_progress,
-        )
-        .unwrap());
-
-        // bank=1, wait=1, equal, but bad hash provided
-        write_wen_restart_wait_for_supermajority_record(&proto_path, 1, Hash::new_unique());
-        assert_eq!(
-            wait_for_supermajority(
-                &config,
-                None,
-                &bank_forks,
-                &cluster_info,
-                rpc_override_health_check.clone(),
                 &start_progress,
             ),
             Err(ValidatorError::BadExpectedBankHash)
