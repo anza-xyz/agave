@@ -720,6 +720,26 @@ mod tests {
             ),
             Err(InstructionError::InvalidAccountData),
         );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::move_stake(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+            ),
+            Err(InstructionError::InvalidAccountData),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::move_lamports(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+            ),
+            Err(InstructionError::InvalidAccountData),
+        );
     }
 
     #[test_case(feature_set_no_minimum_delegation(); "no_min_delegation")]
@@ -846,6 +866,26 @@ mod tests {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
             )[2],
+            Err(InstructionError::InvalidAccountOwner),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::move_stake(
+                &spoofed_stake_state_pubkey(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+            ),
+            Err(InstructionError::InvalidAccountOwner),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::move_lamports(
+                &spoofed_stake_state_pubkey(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+            ),
             Err(InstructionError::InvalidAccountOwner),
         );
     }
@@ -8077,6 +8117,26 @@ mod tests {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
             )[2],
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::move_stake(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+            ),
+            Err(StakeError::EpochRewardsActive.into()),
+        );
+        process_instruction_as_one_arg(
+            Arc::clone(&feature_set),
+            &instruction::move_lamports(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                100,
+            ),
             Err(StakeError::EpochRewardsActive.into()),
         );
 
