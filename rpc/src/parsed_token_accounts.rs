@@ -2,7 +2,7 @@ use {
     crate::rpc::account_resolver,
     jsonrpc_core::{Error, Result},
     solana_account_decoder::{
-        parse_account_data::{AccountAdditionalData, SplTokenAdditionalData},
+        parse_account_data::{AccountAdditionalDataV2, SplTokenAdditionalData},
         parse_token::get_token_account_mint,
         UiAccount, UiAccountData, UiAccountEncoding,
     },
@@ -38,7 +38,7 @@ pub fn get_parsed_token_account(
             )
         })
         .and_then(|mint_account| get_additional_mint_data(bank, mint_account.data()).ok())
-        .map(|data| AccountAdditionalData {
+        .map(|data| AccountAdditionalDataV2 {
             spl_token_additional_data: Some(data),
         });
 
@@ -58,12 +58,12 @@ pub fn get_parsed_token_accounts<I>(
 where
     I: Iterator<Item = (Pubkey, AccountSharedData)>,
 {
-    let mut mint_data: HashMap<Pubkey, AccountAdditionalData> = HashMap::new();
+    let mut mint_data: HashMap<Pubkey, AccountAdditionalDataV2> = HashMap::new();
     keyed_accounts.filter_map(move |(pubkey, account)| {
         let additional_data = get_token_account_mint(account.data()).and_then(|mint_pubkey| {
             mint_data.get(&mint_pubkey).cloned().or_else(|| {
                 let (_, data) = get_mint_owner_and_additional_data(&bank, &mint_pubkey).ok()?;
-                let data = AccountAdditionalData {
+                let data = AccountAdditionalDataV2 {
                     spl_token_additional_data: Some(data),
                 };
                 mint_data.insert(mint_pubkey, data);

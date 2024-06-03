@@ -85,8 +85,14 @@ pub enum ParsableAccount {
     Vote,
 }
 
+#[deprecated(since = "2.0.0", note = "Use `AccountAdditionalDataV2` instead")]
 #[derive(Clone, Copy, Default)]
 pub struct AccountAdditionalData {
+    pub spl_token_decimals: Option<u8>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct AccountAdditionalDataV2 {
     pub spl_token_additional_data: Option<SplTokenAdditionalData>,
 }
 
@@ -105,11 +111,31 @@ impl SplTokenAdditionalData {
     }
 }
 
+#[deprecated(since = "2.0.0", note = "Use `parse_account_data_v2` instead")]
+#[allow(deprecated)]
 pub fn parse_account_data(
     pubkey: &Pubkey,
     program_id: &Pubkey,
     data: &[u8],
     additional_data: Option<AccountAdditionalData>,
+) -> Result<ParsedAccount, ParseAccountError> {
+    parse_account_data_v2(
+        pubkey,
+        program_id,
+        data,
+        additional_data.map(|d| AccountAdditionalDataV2 {
+            spl_token_additional_data: d
+                .spl_token_decimals
+                .map(SplTokenAdditionalData::with_decimals),
+        }),
+    )
+}
+
+pub fn parse_account_data_v2(
+    pubkey: &Pubkey,
+    program_id: &Pubkey,
+    data: &[u8],
+    additional_data: Option<AccountAdditionalDataV2>,
 ) -> Result<ParsedAccount, ParseAccountError> {
     let program_name = PARSABLE_PROGRAM_IDS
         .get(program_id)
@@ -159,13 +185,13 @@ mod test {
         let account_pubkey = solana_sdk::pubkey::new_rand();
         let other_program = solana_sdk::pubkey::new_rand();
         let data = vec![0; 4];
-        assert!(parse_account_data(&account_pubkey, &other_program, &data, None).is_err());
+        assert!(parse_account_data_v2(&account_pubkey, &other_program, &data, None).is_err());
 
         let vote_state = VoteState::default();
         let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
         let versioned = VoteStateVersions::new_current(vote_state);
         VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
-        let parsed = parse_account_data(
+        let parsed = parse_account_data_v2(
             &account_pubkey,
             &vote_program_id(),
             &vote_account_data,
@@ -177,7 +203,7 @@ mod test {
 
         let nonce_data = Versions::new(State::Initialized(Data::default()));
         let nonce_account_data = bincode::serialize(&nonce_data).unwrap();
-        let parsed = parse_account_data(
+        let parsed = parse_account_data_v2(
             &account_pubkey,
             &system_program::id(),
             &nonce_account_data,
