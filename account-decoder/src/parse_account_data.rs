@@ -3,7 +3,7 @@ use {
         parse_address_lookup_table::parse_address_lookup_table,
         parse_bpf_loader::parse_bpf_upgradeable_loader, parse_config::parse_config,
         parse_nonce::parse_nonce, parse_stake::parse_stake, parse_sysvar::parse_sysvar,
-        parse_token::parse_token, parse_vote::parse_vote,
+        parse_token::parse_token_v2, parse_vote::parse_vote,
     },
     inflector::Inflector,
     serde_json::Value,
@@ -125,7 +125,7 @@ pub fn parse_account_data(
         ParsableAccount::Config => serde_json::to_value(parse_config(data, pubkey)?)?,
         ParsableAccount::Nonce => serde_json::to_value(parse_nonce(data)?)?,
         ParsableAccount::SplToken | ParsableAccount::SplToken2022 => serde_json::to_value(
-            parse_token(data, additional_data.spl_token_additional_data.as_ref())?,
+            parse_token_v2(data, additional_data.spl_token_additional_data.as_ref())?,
         )?,
         ParsableAccount::Stake => serde_json::to_value(parse_stake(data)?)?,
         ParsableAccount::Sysvar => serde_json::to_value(parse_sysvar(data, pubkey)?)?,

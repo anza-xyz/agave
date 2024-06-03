@@ -57,7 +57,16 @@ pub fn pubkey_from_spl_token(pubkey: &SplTokenPubkey) -> Pubkey {
     Pubkey::new_from_array(pubkey.to_bytes())
 }
 
+#[deprecated(since = "2.0.0", note = "Use `parse_token_v2` instead")]
 pub fn parse_token(
+    data: &[u8],
+    decimals: Option<u8>,
+) -> Result<TokenAccountType, ParseAccountError> {
+    let additional_data = decimals.map(SplTokenAdditionalData::with_decimals);
+    parse_token_v2(data, additional_data.as_ref())
+}
+
+pub fn parse_token_v2(
     data: &[u8],
     additional_data: Option<&SplTokenAdditionalData>,
 ) -> Result<TokenAccountType, ParseAccountError> {
@@ -332,9 +341,9 @@ mod test {
         account.close_authority = COption::Some(owner_pubkey);
         Account::pack(account, &mut account_data).unwrap();
 
-        assert!(parse_token(&account_data, None).is_err());
+        assert!(parse_token_v2(&account_data, None).is_err());
         assert_eq!(
-            parse_token(
+            parse_token_v2(
                 &account_data,
                 Some(&SplTokenAdditionalData::with_decimals(2))
             )
@@ -368,7 +377,7 @@ mod test {
         Mint::pack(mint, &mut mint_data).unwrap();
 
         assert_eq!(
-            parse_token(&mint_data, None).unwrap(),
+            parse_token_v2(&mint_data, None).unwrap(),
             TokenAccountType::Mint(UiMint {
                 mint_authority: Some(owner_pubkey.to_string()),
                 supply: 42.to_string(),
@@ -395,7 +404,7 @@ mod test {
         Multisig::pack(multisig, &mut multisig_data).unwrap();
 
         assert_eq!(
-            parse_token(&multisig_data, None).unwrap(),
+            parse_token_v2(&multisig_data, None).unwrap(),
             TokenAccountType::Multisig(UiMultisig {
                 num_required_signers: 2,
                 num_valid_signers: 3,
@@ -409,7 +418,7 @@ mod test {
         );
 
         let bad_data = vec![0; 4];
-        assert!(parse_token(&bad_data, None).is_err());
+        assert!(parse_token_v2(&bad_data, None).is_err());
     }
 
     #[test]
@@ -583,9 +592,9 @@ mod test {
         account_state.pack_base();
         account_state.init_account_type().unwrap();
 
-        assert!(parse_token(&account_data, None).is_err());
+        assert!(parse_token_v2(&account_data, None).is_err());
         assert_eq!(
-            parse_token(
+            parse_token_v2(
                 &account_data,
                 Some(&SplTokenAdditionalData::with_decimals(2))
             )
@@ -623,9 +632,9 @@ mod test {
         let memo_transfer = account_state.init_extension::<MemoTransfer>(true).unwrap();
         memo_transfer.require_incoming_transfer_memos = true.into();
 
-        assert!(parse_token(&account_data, None).is_err());
+        assert!(parse_token_v2(&account_data, None).is_err());
         assert_eq!(
-            parse_token(
+            parse_token_v2(
                 &account_data,
                 Some(&SplTokenAdditionalData::with_decimals(2))
             )
@@ -677,7 +686,7 @@ mod test {
         mint_state.init_account_type().unwrap();
 
         assert_eq!(
-            parse_token(&mint_data, None).unwrap(),
+            parse_token_v2(&mint_data, None).unwrap(),
             TokenAccountType::Mint(UiMint {
                 mint_authority: Some(owner_pubkey.to_string()),
                 supply: 42.to_string(),
@@ -703,7 +712,7 @@ mod test {
         mint_state.init_account_type().unwrap();
 
         assert_eq!(
-            parse_token(&mint_data, None).unwrap(),
+            parse_token_v2(&mint_data, None).unwrap(),
             TokenAccountType::Mint(UiMint {
                 mint_authority: Some(owner_pubkey.to_string()),
                 supply: 42.to_string(),
