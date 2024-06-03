@@ -297,7 +297,34 @@ pub fn parse_stake(
                 }),
             })
         }
-        StakeInstruction::MoveStake(_) | StakeInstruction::MoveLamports(_) => todo!(),
+        StakeInstruction::MoveStake(lamports) => {
+            check_num_stake_accounts(&instruction.accounts, 5)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "moveStake".to_string(),
+                info: json!({
+                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "clockSysvar": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "stakeHistorySysvar": account_keys[instruction.accounts[3] as usize].to_string(),
+                    "stakeAuthority": account_keys[instruction.accounts[4] as usize].to_string(),
+                    "lamports": lamports,
+                }),
+            })
+        }
+        StakeInstruction::MoveLamports(lamports) => {
+            check_num_stake_accounts(&instruction.accounts, 5)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "moveLamports".to_string(),
+                info: json!({
+                    "source": account_keys[instruction.accounts[0] as usize].to_string(),
+                    "destination": account_keys[instruction.accounts[1] as usize].to_string(),
+                    "clockSysvar": account_keys[instruction.accounts[2] as usize].to_string(),
+                    "stakeHistorySysvar": account_keys[instruction.accounts[3] as usize].to_string(),
+                    "stakeAuthority": account_keys[instruction.accounts[4] as usize].to_string(),
+                    "lamports": lamports,
+                }),
+            })
+        }
     }
 }
 
@@ -310,6 +337,7 @@ mod test {
     use {
         super::*,
         solana_sdk::{
+            instruction::Instruction,
             message::Message,
             pubkey::Pubkey,
             stake::{
@@ -1157,5 +1185,55 @@ mod test {
         message.instructions[0].accounts.pop();
         message.instructions[0].accounts.pop();
         assert!(parse_stake(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
+    }
+
+    #[test]
+    fn test_parse_stake_move_ix() {
+        let source_stake_pubkey = Pubkey::new_unique();
+        let destination_stake_pubkey = Pubkey::new_unique();
+        let authorized_pubkey = Pubkey::new_unique();
+        let lamports = 1_000_000;
+
+        type InstructionFn = fn(&Pubkey, &Pubkey, &Pubkey, u64) -> Instruction;
+        let test_vectors: Vec<(InstructionFn, String)> = vec![
+            (instruction::move_stake, "moveStake".to_string()),
+            (instruction::move_lamports, "moveLamports".to_string()),
+        ];
+
+        for (mk_ixn, ixn_string) in test_vectors {
+            let instruction = mk_ixn(
+                &source_stake_pubkey,
+                &destination_stake_pubkey,
+                &authorized_pubkey,
+                lamports,
+            );
+            let mut message = Message::new(&[instruction], None);
+            assert_eq!(
+                parse_stake(
+                    &message.instructions[0],
+                    &AccountKeys::new(&message.account_keys, None)
+                )
+                .unwrap(),
+                ParsedInstructionEnum {
+                    instruction_type: ixn_string,
+                    info: json!({
+                        "source": source_stake_pubkey.to_string(),
+                        "destination": destination_stake_pubkey.to_string(),
+                        "clockSysvar": sysvar::clock::ID.to_string(),
+                        "stakeHistorySysvar": sysvar::stake_history::ID.to_string(),
+                        "stakeAuthority": authorized_pubkey.to_string(),
+                        "lamports": lamports,
+                    }),
+                }
+            );
+            assert!(parse_stake(
+                &message.instructions[0],
+                &AccountKeys::new(&message.account_keys[0..4], None)
+            )
+            .is_err());
+            let keys = message.account_keys.clone();
+            message.instructions[0].accounts.pop();
+            assert!(parse_stake(&message.instructions[0], &AccountKeys::new(&keys, None)).is_err());
+        }
     }
 }
