@@ -89,15 +89,15 @@ use {
         storable_accounts::StorableAccounts,
     },
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_cost_model::cost_tracker::CostTracker,
     solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_measure::{measure, measure::Measure, measure_us},
     solana_perf::perf_libs,
     solana_program_runtime::{
-        compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheMatchCriteria,
         },
         timings::{ExecuteTimingType, ExecuteTimings},
@@ -140,8 +140,7 @@ use {
         packet::PACKET_DATA_SIZE,
         precompiles::get_precompiles,
         pubkey::Pubkey,
-        rent::RentDue,
-        rent_collector::{CollectedInfo, RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
         reserved_account_keys::ReservedAccountKeys,
         reward_info::RewardInfo,
@@ -165,7 +164,8 @@ use {
     },
     solana_svm::{
         account_loader::{
-            CheckedTransactionDetails, TransactionCheckResult, TransactionLoadResult,
+            collect_rent_from_account, CheckedTransactionDetails, TransactionCheckResult,
+            TransactionLoadResult,
         },
         account_overrides::AccountOverrides,
         nonce_info::NoncePartial,
@@ -996,10 +996,6 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             Arc::new(RuntimeConfig::default()),
-            Arc::new(RwLock::new(ProgramCache::new(
-                Slot::default(),
-                Epoch::default(),
-            ))),
             HashSet::default(),
         );
 
@@ -1630,7 +1626,6 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             runtime_config,
-            Arc::new(RwLock::new(ProgramCache::new(fields.slot, fields.epoch))),
             HashSet::default(),
         );
 
@@ -3391,15 +3386,17 @@ impl Bank {
             // for processing. During forwarding, the transaction could expire if the
             // delay is not accounted for.
             MAX_PROCESSING_AGE - MAX_TRANSACTION_FORWARDING_DELAY,
-            ExecutionRecordingConfig {
-                enable_cpi_recording,
-                enable_log_recording: true,
-                enable_return_data_recording: true,
-            },
             &mut timings,
-            Some(&account_overrides),
-            None,
-            true,
+            TransactionProcessingConfig {
+                account_overrides: Some(&account_overrides),
+                log_messages_bytes_limit: None,
+                limit_to_load_programs: true,
+                recording_config: ExecutionRecordingConfig {
+                    enable_cpi_recording,
+                    enable_log_recording: true,
+                    enable_return_data_recording: true,
+                },
+            },
         );
 
         let post_simulation_accounts = loaded_transactions
@@ -3642,16 +3639,12 @@ impl Bank {
         balances
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch,
         max_age: usize,
-        recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
-        account_overrides: Option<&AccountOverrides>,
-        log_messages_bytes_limit: Option<usize>,
-        limit_to_load_programs: bool,
+        processing_config: TransactionProcessingConfig,
     ) -> LoadAndExecuteTransactionsOutput {
         let sanitized_txs = batch.sanitized_transactions();
         debug!("processing transactions: {}", sanitized_txs.len());
@@ -3703,13 +3696,6 @@ impl Bank {
         check_time.stop();
         debug!("check: {}us", check_time.as_us());
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_time.as_us());
-
-        let processing_config = TransactionProcessingConfig {
-            account_overrides,
-            limit_to_load_programs,
-            log_messages_bytes_limit,
-            recording_config,
-        };
 
         let sanitized_output = self
             .transaction_processor
@@ -4422,28 +4408,14 @@ impl Bank {
                 .test_skip_rewrites_but_include_in_bank_hash;
         let mut skipped_rewrites = Vec::default();
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
-            let rent_collected_info = if self.should_collect_rent() {
-                let (rent_collected_info, measure) = measure!(self
-                    .rent_collector
-                    .collect_from_existing_account(pubkey, account));
-                time_collecting_rent_us += measure.as_us();
-                rent_collected_info
-            } else {
-                // When rent fee collection is disabled, we won't collect rent for any account. If there
-                // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
-                // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
-                // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
-                if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
-                    && self.rent_collector.get_rent_due(
-                        account.lamports(),
-                        account.data().len(),
-                        account.rent_epoch(),
-                    ) == RentDue::Exempt
-                {
-                    account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                }
-                CollectedInfo::default()
-            };
+            let (rent_collected_info, measure) = measure!(collect_rent_from_account(
+                &self.feature_set,
+                &self.rent_collector,
+                pubkey,
+                account
+            ));
+            time_collecting_rent_us += measure.as_us();
+
             // only store accounts where we collected rent
             // but get the hash for all these accounts even if collected rent is 0 (= not updated).
             // Also, there's another subtle side-effect from rewrites: this
@@ -4835,11 +4807,13 @@ impl Bank {
         } = self.load_and_execute_transactions(
             batch,
             max_age,
-            recording_config,
             timings,
-            None,
-            log_messages_bytes_limit,
-            false,
+            TransactionProcessingConfig {
+                account_overrides: None,
+                log_messages_bytes_limit,
+                limit_to_load_programs: false,
+                recording_config,
+            },
         );
 
         let (last_blockhash, lamports_per_signature) =

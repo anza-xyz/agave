@@ -121,7 +121,7 @@ dependencies = [
  "nix",
  "reqwest",
  "scopeguard",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_derive",
  "serde_yaml 0.8.26",
@@ -167,6 +167,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-clap-utils",
  "solana-cli-output",
+ "solana-compute-budget",
  "solana-core",
  "solana-cost-model",
  "solana-entry",
@@ -943,12 +944,12 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbe5b10e214954177fb1dc9fbd20a1a2608fe99e6c832033bdc7cea287a20d77"
+checksum = "a6362ed55def622cddc70a4746a68554d7b687713770de539e59a739b249f8ed"
 dependencies = [
- "borsh-derive 1.5.0",
- "cfg_aliases",
+ "borsh-derive 1.5.1",
+ "cfg_aliases 0.2.1",
 ]
 
 [[package]]
@@ -966,9 +967,9 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7a8646f94ab393e43e8b35a2558b1624bed28b97ee09c5d15456e3c9463f46d"
+checksum = "c3ef8005764f53cd4dca619f5bf64cafd4664dada50ece25e4d81de54c80cc0b"
 dependencies = [
  "once_cell",
  "proc-macro-crate 3.1.0",
@@ -1184,7 +1185,7 @@ checksum = "eee4243f1f26fc7a42710e7439c149e2b10b05472f88090acce52632f231a73a"
 dependencies = [
  "camino",
  "cargo-platform",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_json",
  "thiserror",
@@ -1241,6 +1242,12 @@ name = "cfg_aliases"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -3485,7 +3492,7 @@ checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
 dependencies = [
  "bitflags 2.5.0",
  "cfg-if 1.0.0",
- "cfg_aliases",
+ "cfg_aliases 0.1.1",
  "libc",
  "memoffset 0.9.0",
 ]
@@ -3597,9 +3604,9 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.18"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0df0e5185db44f69b44f26786fe401b6c293d1907744beaa7fa62b2e5a517a"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
@@ -4709,7 +4716,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
- "semver 1.0.22",
+ "semver 1.0.23",
 ]
 
 [[package]]
@@ -4899,9 +4906,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.22"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92d43fe69e652f3df9bdc2b85b2854a0825b86e4fb76bc44d945137d053639ca"
+checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
 dependencies = [
  "serde",
 ]
@@ -4955,9 +4962,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.115"
+version = "1.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
+checksum = "455182ea6142b14f93f4bc5320a2b31c1f266b66a4a5c858b013302a5d8cbfc3"
 dependencies = [
  "itoa",
  "ryu",
@@ -5466,7 +5473,7 @@ dependencies = [
 name = "solana-banks-client"
 version = "2.0.0"
 dependencies = [
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "futures 0.3.30",
  "solana-banks-interface",
  "solana-banks-server",
@@ -5592,6 +5599,7 @@ dependencies = [
  "memoffset 0.9.0",
  "rand 0.8.5",
  "scopeguard",
+ "solana-compute-budget",
  "solana-measure",
  "solana-poseidon",
  "solana-program-runtime",
@@ -5653,7 +5661,7 @@ dependencies = [
  "predicates",
  "regex",
  "reqwest",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serial_test",
  "solana-download-utils",
  "solana-logger",
@@ -5731,7 +5739,7 @@ dependencies = [
  "num-traits",
  "pretty-hex",
  "reqwest",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_derive",
  "serde_json",
@@ -5741,6 +5749,7 @@ dependencies = [
  "solana-cli-config",
  "solana-cli-output",
  "solana-client",
+ "solana-compute-budget",
  "solana-config-program",
  "solana-faucet",
  "solana-loader-v4-program",
@@ -5795,7 +5804,7 @@ dependencies = [
  "humantime",
  "indicatif",
  "pretty-hex",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_json",
  "solana-account-decoder",
@@ -5868,6 +5877,13 @@ dependencies = [
  "systemstat",
  "tokio",
  "tungstenite",
+]
+
+[[package]]
+name = "solana-compute-budget"
+version = "2.0.0"
+dependencies = [
+ "solana-sdk",
 ]
 
 [[package]]
@@ -5954,6 +5970,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-bloom",
  "solana-client",
+ "solana-compute-budget",
  "solana-core",
  "solana-cost-model",
  "solana-entry",
@@ -6011,6 +6028,7 @@ dependencies = [
  "rustc_version 0.4.0",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
+ "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-frozen-abi",
@@ -6018,7 +6036,6 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-logger",
  "solana-metrics",
- "solana-program-runtime",
  "solana-sdk",
  "solana-stake-program",
  "solana-system-program",
@@ -6372,6 +6389,7 @@ version = "2.0.0"
 dependencies = [
  "bincode",
  "log",
+ "solana-compute-budget",
  "solana-measure",
  "solana-program-runtime",
  "solana-sdk",
@@ -6633,7 +6651,7 @@ dependencies = [
  "bitflags 2.5.0",
  "blake3",
  "borsh 0.10.3",
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "bs58",
  "bv",
  "bytemuck",
@@ -6688,6 +6706,7 @@ dependencies = [
  "rand 0.8.5",
  "rustc_version 0.4.0",
  "serde",
+ "solana-compute-budget",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-logger",
@@ -6716,6 +6735,7 @@ dependencies = [
  "solana-banks-interface",
  "solana-banks-server",
  "solana-bpf-loader-program",
+ "solana-compute-budget",
  "solana-inline-spl",
  "solana-logger",
  "solana-program-runtime",
@@ -6739,7 +6759,7 @@ dependencies = [
  "futures-util",
  "log",
  "reqwest",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6802,7 +6822,7 @@ dependencies = [
  "num-traits",
  "parking_lot 0.12.2",
  "qstring",
- "semver 1.0.22",
+ "semver 1.0.23",
  "solana-sdk",
  "thiserror",
  "uriparse",
@@ -6886,7 +6906,7 @@ dependencies = [
  "log",
  "reqwest",
  "reqwest-middleware",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6909,7 +6929,7 @@ dependencies = [
  "jsonrpc-core",
  "reqwest",
  "reqwest-middleware",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_derive",
  "serde_json",
@@ -7015,6 +7035,7 @@ dependencies = [
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-bucket-map",
+ "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-cost-model",
@@ -7057,8 +7078,8 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "rustc_version 0.4.0",
+ "solana-compute-budget",
  "solana-program",
- "solana-program-runtime",
  "solana-sdk",
  "thiserror",
 ]
@@ -7071,7 +7092,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bitflags 2.5.0",
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "bs58",
  "bytemuck",
  "byteorder",
@@ -7178,6 +7199,7 @@ dependencies = [
  "log",
  "proptest",
  "rustc_version 0.4.0",
+ "solana-compute-budget",
  "solana-config-program",
  "solana-logger",
  "solana-program-runtime",
@@ -7298,6 +7320,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-bpf-loader-program",
+ "solana-compute-budget",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-loader-v4-program",
@@ -7318,6 +7341,7 @@ dependencies = [
  "log",
  "serde",
  "serde_derive",
+ "solana-compute-budget",
  "solana-logger",
  "solana-program-runtime",
  "solana-sdk",
@@ -7336,13 +7360,13 @@ dependencies = [
  "solana-accounts-db",
  "solana-cli-output",
  "solana-client",
+ "solana-compute-budget",
  "solana-core",
  "solana-geyser-plugin-manager",
  "solana-gossip",
  "solana-ledger",
  "solana-logger",
  "solana-net-utils",
- "solana-program-runtime",
  "solana-program-test",
  "solana-rpc",
  "solana-rpc-client",
@@ -7471,7 +7495,7 @@ dependencies = [
  "Inflector",
  "base64 0.22.1",
  "bincode",
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "bs58",
  "lazy_static",
  "log",
@@ -7582,7 +7606,7 @@ version = "2.0.0"
 dependencies = [
  "log",
  "rustc_version 0.4.0",
- "semver 1.0.22",
+ "semver 1.0.23",
  "serde",
  "serde_derive",
  "solana-frozen-abi",
@@ -7726,7 +7750,7 @@ version = "2.0.0"
 dependencies = [
  "bytemuck",
  "curve25519-dalek",
- "solana-program-runtime",
+ "solana-compute-budget",
  "solana-program-test",
  "solana-sdk",
  "solana-zk-token-sdk",
@@ -7800,7 +7824,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2e688554bac5838217ffd1fab7845c573ff106b6336bf7d290db7c98d5a8efd"
 dependencies = [
  "assert_matches",
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "num-derive",
  "num-traits",
  "solana-program",
@@ -7869,7 +7893,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "046ce669f48cf2eca1ec518916d8725596bfb655beb1c74374cf71dc6cb773c9"
 dependencies = [
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "bytemuck",
  "solana-program",
  "solana-zk-token-sdk",
@@ -7973,7 +7997,7 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30179c47e93625680dabb620c6e7931bd12d62af390f447bc7beb4a3a9b5feee"
 dependencies = [
- "borsh 1.5.0",
+ "borsh 1.5.1",
  "solana-program",
  "spl-discriminator",
  "spl-pod",

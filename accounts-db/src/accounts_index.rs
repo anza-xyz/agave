@@ -1632,7 +1632,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // But, does NOT update secondary index
     // This is designed to be called at startup time.
     // returns (dirty_pubkeys, insertion_time_us, GenerateIndexResult)
-    #[allow(clippy::needless_collect)]
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
@@ -1964,15 +1963,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     pub(crate) fn reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
-        let mut cleaned_roots = HashSet::new();
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
         w_roots_tracker.uncleaned_roots.retain(|root| {
             let is_cleaned = max_clean_root
                 .map(|max_clean_root| *root <= max_clean_root)
                 .unwrap_or(true);
-            if is_cleaned {
-                cleaned_roots.insert(*root);
-            }
             // Only keep the slots that have yet to be cleaned
             !is_cleaned
         });

@@ -4,7 +4,6 @@
 #![allow(clippy::redundant_clone)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::cmp_owned)]
-#![allow(clippy::needless_collect)]
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
@@ -15,11 +14,12 @@ use {
     solana_account_decoder::parse_bpf_loader::{
         parse_bpf_upgradeable_loader, BpfUpgradeableLoaderAccountType,
     },
-    solana_ledger::token_balances::collect_token_balances,
-    solana_program_runtime::{
+    solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_processor::process_compute_budget_instructions, timings::ExecuteTimings,
+        compute_budget_processor::process_compute_budget_instructions,
     },
+    solana_ledger::token_balances::collect_token_balances,
+    solana_program_runtime::timings::ExecuteTimings,
     solana_rbpf::vm::ContextObject,
     solana_runtime::{
         bank::TransactionBalancesSet,

@@ -9,15 +9,14 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
+    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
         BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
-    solana_program_runtime::{
-        compute_budget_processor::process_compute_budget_instructions, timings::ExecuteTimings,
-    },
+    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         bank::{Bank, LoadAndExecuteTransactionsOutput},
         compute_budget_details::GetComputeBudgetDetails,
@@ -34,7 +33,7 @@ use {
     solana_svm::{
         account_loader::{validate_fee_payer, TransactionCheckResult},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processor::ExecutionRecordingConfig,
+        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     std::{
         sync::{atomic::Ordering, Arc},
@@ -604,11 +603,15 @@ impl Consumer {
             .load_and_execute_transactions(
                 batch,
                 MAX_PROCESSING_AGE,
-                ExecutionRecordingConfig::new_single_setting(transaction_status_sender_enabled),
                 &mut execute_and_commit_timings.execute_timings,
-                None, // account_overrides
-                self.log_messages_bytes_limit,
-                true,
+                TransactionProcessingConfig {
+                    account_overrides: None,
+                    log_messages_bytes_limit: self.log_messages_bytes_limit,
+                    limit_to_load_programs: true,
+                    recording_config: ExecutionRecordingConfig::new_single_setting(
+                        transaction_status_sender_enabled
+                    ),
+                }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
 
