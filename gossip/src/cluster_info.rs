@@ -130,7 +130,7 @@ pub const MAX_INCREMENTAL_SNAPSHOT_HASHES: usize = 25;
 /// serialized size of the PruneMessage stays below PACKET_DATA_SIZE.
 const MAX_PRUNE_DATA_NODES: usize = 32;
 /// Prune data prefix for PruneMessage
-const PRUNE_DATA_PREFIX: &[u8] = "SOLANA_PRUNE_DATA".as_bytes();
+const PRUNE_DATA_PREFIX: &[u8] = b"\xffSOLANA_PRUNE_DATA";
 /// Number of bytes in the randomly generated token sent with ping messages.
 const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 const GOSSIP_PING_CACHE_CAPACITY: usize = 65536;
