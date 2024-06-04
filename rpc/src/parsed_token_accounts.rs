@@ -91,7 +91,7 @@ where
 
 /// Analyze a mint Pubkey that may be the native_mint and get the mint-account owner (token
 /// program_id) and decimals
-pub fn get_mint_owner_and_additional_data(
+pub(crate) fn get_mint_owner_and_additional_data(
     bank: &Bank,
     mint: &Pubkey,
 ) -> Result<(Pubkey, SplTokenAdditionalData)> {
