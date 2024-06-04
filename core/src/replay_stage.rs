@@ -58,7 +58,7 @@ use {
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
-        bank::{bank_hash_details, Bank, NewBankOptions},
+        bank::{bank_hash_details, Bank, KeyedRewardsAndNumPartitions, NewBankOptions},
         bank_forks::{BankForks, SetRootError, MAX_ROOT_DISTANCE_FOR_VOTE_ONLY},
         commitment::BlockCommitmentCache,
         installed_scheduler_pool::BankWithScheduler,
@@ -4396,7 +4396,13 @@ impl ReplayStage {
             let rewards = bank.rewards.read().unwrap();
             if !rewards.is_empty() {
                 rewards_recorder_sender
-                    .send(RewardsMessage::Batch((bank.slot(), rewards.clone())))
+                    .send(RewardsMessage::Batch((
+                        bank.slot(),
+                        KeyedRewardsAndNumPartitions {
+                            keyed_rewards: rewards.clone(),
+                            num_partitions: None,
+                        },
+                    )))
                     .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
             }
             rewards_recorder_sender

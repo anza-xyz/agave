@@ -155,6 +155,12 @@ pub struct KeyedRewardsAndNumPartitions {
     pub num_partitions: Option<u64>,
 }
 
+impl KeyedRewardsAndNumPartitions {
+    pub fn is_empty(&self) -> bool {
+        self.keyed_rewards.is_empty() && self.num_partitions.is_none()
+    }
+}
+
 impl Bank {
     pub fn get_rewards_and_num_partitions(&self) -> KeyedRewardsAndNumPartitions {
         let rewards = self.rewards.read().unwrap();
