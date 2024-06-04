@@ -150,7 +150,27 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
 
+pub struct KeyedRewardsAndNumPartitions {
+    pub keyed_rewards: Vec<(Pubkey, RewardInfo)>,
+    pub num_partitions: Option<u64>,
+}
+
 impl Bank {
+    pub fn get_rewards_and_num_partitions(&self) -> KeyedRewardsAndNumPartitions {
+        let rewards = self.rewards.read().unwrap();
+        let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
+        // If partitioned epoch rewards are active and this Bank is the
+        // epoch-boundary block, populate num_partitions
+        let num_partitions = (epoch_rewards_sysvar.active
+            && (self.block_height().saturating_add(1)
+                == epoch_rewards_sysvar.distribution_starting_block_height))
+            .then_some(epoch_rewards_sysvar.num_partitions);
+        KeyedRewardsAndNumPartitions {
+            keyed_rewards: rewards.clone(),
+            num_partitions,
+        }
+    }
+
     pub(super) fn is_partitioned_rewards_feature_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::enable_partitioned_epoch_reward::id())
