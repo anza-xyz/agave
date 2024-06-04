@@ -628,6 +628,11 @@ pub struct Reward {
 
 pub type Rewards = Vec<Reward>;
 
+pub struct RewardsAndNumPartitions {
+    pub rewards: Rewards,
+    pub num_partitions: Option<u64>,
+}
+
 #[derive(Debug, Error)]
 pub enum ConvertBlockError {
     #[error("transactions missing after converted, before: {0}, after: {1}")]

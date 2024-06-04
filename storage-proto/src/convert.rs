@@ -16,8 +16,9 @@ use {
     },
     solana_transaction_status::{
         ConfirmedBlock, EntrySummary, InnerInstruction, InnerInstructions, Reward, RewardType,
-        TransactionByAddrInfo, TransactionStatusMeta, TransactionTokenBalance,
-        TransactionWithStatusMeta, VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
+        RewardsAndNumPartitions, TransactionByAddrInfo, TransactionStatusMeta,
+        TransactionTokenBalance, TransactionWithStatusMeta, VersionedConfirmedBlock,
+        VersionedTransactionWithStatusMeta,
     },
     std::{
         convert::{TryFrom, TryInto},
@@ -48,6 +49,15 @@ impl From<Vec<Reward>> for generated::Rewards {
         Self {
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
             num_partitions: None,
+        }
+    }
+}
+
+impl From<RewardsAndNumPartitions> for generated::Rewards {
+    fn from(input: RewardsAndNumPartitions) -> Self {
+        Self {
+            rewards: input.rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: input.num_partitions.map(|n| n.into()),
         }
     }
 }
