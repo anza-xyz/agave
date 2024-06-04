@@ -47,6 +47,7 @@ impl From<Vec<Reward>> for generated::Rewards {
     fn from(rewards: Vec<Reward>) -> Self {
         Self {
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: None,
         }
     }
 }
@@ -67,6 +68,7 @@ impl From<StoredExtendedRewards> for generated::Rewards {
                     r.into()
                 })
                 .collect(),
+            num_partitions: None,
         }
     }
 }
@@ -121,6 +123,12 @@ impl From<generated::Reward> for Reward {
     }
 }
 
+impl From<u64> for generated::NumPartitions {
+    fn from(num_partitions: u64) -> Self {
+        Self { num_partitions }
+    }
+}
+
 impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
     fn from(confirmed_block: VersionedConfirmedBlock) -> Self {
         let VersionedConfirmedBlock {
@@ -139,6 +147,7 @@ impl From<VersionedConfirmedBlock> for generated::ConfirmedBlock {
             parent_slot,
             transactions: transactions.into_iter().map(|tx| tx.into()).collect(),
             rewards: rewards.into_iter().map(|r| r.into()).collect(),
+            num_partitions: None,
             block_time: block_time.map(|timestamp| generated::UnixTimestamp { timestamp }),
             block_height: block_height.map(|block_height| generated::BlockHeight { block_height }),
         }
@@ -156,6 +165,7 @@ impl TryFrom<generated::ConfirmedBlock> for ConfirmedBlock {
             parent_slot,
             transactions,
             rewards,
+            num_partitions: _num_partitions,
             block_time,
             block_height,
         } = confirmed_block;
