@@ -2,7 +2,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_ledger::blockstore::Blockstore,
     solana_sdk::{clock::Slot, pubkey::Pubkey, reward_info::RewardInfo},
-    solana_transaction_status::Reward,
+    solana_transaction_status::{Reward, RewardsAndNumPartitions},
     std::{
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -68,7 +68,13 @@ impl RewardsRecorderService {
                     .collect();
 
                 blockstore
-                    .write_rewards(slot, rpc_rewards)
+                    .write_rewards(
+                        slot,
+                        RewardsAndNumPartitions {
+                            rewards: rpc_rewards,
+                            num_partitions: None,
+                        },
+                    )
                     .expect("Expect database write to succeed");
             }
             RewardsMessage::Complete(slot) => {

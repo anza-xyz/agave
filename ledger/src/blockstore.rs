@@ -57,8 +57,9 @@ use {
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
     solana_transaction_status::{
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
-        TransactionStatusMeta, TransactionWithStatusMeta, VersionedConfirmedBlock,
-        VersionedConfirmedBlockWithEntries, VersionedTransactionWithStatusMeta,
+        RewardsAndNumPartitions, TransactionStatusMeta, TransactionWithStatusMeta,
+        VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
+        VersionedTransactionWithStatusMeta,
     },
     std::{
         borrow::Cow,
@@ -3371,7 +3372,7 @@ impl Blockstore {
             .map(|result| result.map(|option| option.into()))
     }
 
-    pub fn write_rewards(&self, index: Slot, rewards: Rewards) -> Result<()> {
+    pub fn write_rewards(&self, index: Slot, rewards: RewardsAndNumPartitions) -> Result<()> {
         let rewards = rewards.into();
         self.rewards_cf.put_protobuf(index, &rewards)
     }
