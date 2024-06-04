@@ -149,11 +149,9 @@ scripts/cargo-for-all-lock-files.sh tree >/dev/null
 # Only apply related changes
 (
   shopt -s globstar
-  # shellcheck disable=SC2035
-  git diff --unified=0 **/Cargo.lock >cargo-lock-patch
+  git diff --unified=0 ./**/Cargo.lock >cargo-lock-patch
   grep -E '^(diff|index|---|\+\+\+|@@.*@@ name = .*|-version|\+version)' cargo-lock-patch >filtered-cargo-lock-patch
-  # shellcheck disable=SC2035
-  git checkout **/Cargo.lock
+  git checkout ./**/Cargo.lock
   git apply --unidiff-zero filtered-cargo-lock-patch
   rm cargo-lock-patch filtered-cargo-lock-patch
 )
