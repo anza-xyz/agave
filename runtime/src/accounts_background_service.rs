@@ -589,14 +589,14 @@ impl AccountsBackgroundService {
                 let mut last_snapshot_end_time = None;
 
                 loop {
-                    if exit.load(Ordering::Relaxed) {
-                        break;
-                    }
                     let start_time = Instant::now();
 
                     // Grab the current root bank
                     let bank = bank_forks.read().unwrap().root_bank();
 
+                    if exit.load(Ordering::Relaxed) {
+                        break; // check the exit flag before any possibly long-running function
+                    }
                     // Purge accounts of any dead slots
                     request_handlers
                         .pruned_banks_request_handler
@@ -649,6 +649,9 @@ impl AccountsBackgroundService {
                         last_snapshot_end_time = Some(Instant::now());
                     }
 
+                    if exit.load(Ordering::Relaxed) {
+                        break; // check the exit flag before any possibly long-running function
+                    }
                     // Note that the flush will do an internal clean of the
                     // cache up to bank.slot(), so should be safe as long
                     // as any later snapshots that are taken are of
@@ -673,15 +676,24 @@ impl AccountsBackgroundService {
                         if bank.block_height() - last_cleaned_block_height
                             > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10))
                         {
+                            if exit.load(Ordering::Relaxed) {
+                                break; // check the exit flag before any possibly long-running function
+                            }
                             // Note that the flush will do an internal clean of the
                             // cache up to bank.slot(), so should be safe as long
                             // as any later snapshots that are taken are of
                             // slots >= bank.slot()
                             bank.force_flush_accounts_cache();
+                            if exit.load(Ordering::Relaxed) {
+                                break; // check the exit flag before any possibly long-running function
+                            }
                             bank.clean_accounts(last_full_snapshot_slot);
                             last_cleaned_block_height = bank.block_height();
                             // See justification below for why we skip 'shrink' here.
                             if bank.is_startup_verification_complete() {
+                                if exit.load(Ordering::Relaxed) {
+                                    break; // check the exit flag before any possibly long-running function
+                                }
                                 bank.shrink_ancient_slots();
                             }
                         }
@@ -693,6 +705,9 @@ impl AccountsBackgroundService {
                         // progress, or (2) could get snapshot storages that were newer than what
                         // was in the snapshot itself.
                         if bank.is_startup_verification_complete() {
+                            if exit.load(Ordering::Relaxed) {
+                                break; // check the exit flag before any possibly long-running function
+                            }
                             bank.shrink_candidate_slots();
                         }
                     }
