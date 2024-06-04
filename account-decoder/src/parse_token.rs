@@ -84,7 +84,7 @@ pub fn parse_token_v2(
         return Ok(TokenAccountType::Account(UiTokenAccount {
             mint: account.base.mint.to_string(),
             owner: account.base.owner.to_string(),
-            token_amount: token_amount_to_ui_amount(account.base.amount, additional_data),
+            token_amount: token_amount_to_ui_amount_v2(account.base.amount, additional_data),
             delegate: match account.base.delegate {
                 COption::Some(pubkey) => Some(pubkey.to_string()),
                 COption::None => None,
@@ -92,13 +92,15 @@ pub fn parse_token_v2(
             state: account.base.state.into(),
             is_native: account.base.is_native(),
             rent_exempt_reserve: match account.base.is_native {
-                COption::Some(reserve) => Some(token_amount_to_ui_amount(reserve, additional_data)),
+                COption::Some(reserve) => {
+                    Some(token_amount_to_ui_amount_v2(reserve, additional_data))
+                }
                 COption::None => None,
             },
             delegated_amount: if account.base.delegate.is_none() {
                 None
             } else {
-                Some(token_amount_to_ui_amount(
+                Some(token_amount_to_ui_amount_v2(
                     account.base.delegated_amount,
                     additional_data,
                 ))
@@ -255,7 +257,12 @@ impl UiTokenAmount {
     }
 }
 
-pub fn token_amount_to_ui_amount(
+#[deprecated(since = "2.0.0", note = "Use `token_amount_to_ui_amount_v2` instead")]
+pub fn token_amount_to_ui_amount(amount: u64, decimals: u8) -> UiTokenAmount {
+    token_amount_to_ui_amount_v2(amount, &SplTokenAdditionalData::with_decimals(decimals))
+}
+
+pub fn token_amount_to_ui_amount_v2(
     amount: u64,
     additional_data: &SplTokenAdditionalData,
 ) -> UiTokenAmount {
@@ -441,7 +448,8 @@ mod test {
     fn test_ui_token_amount_real_string() {
         assert_eq!(&real_number_string(1, 0), "1");
         assert_eq!(&real_number_string_trimmed(1, 0), "1");
-        let token_amount = token_amount_to_ui_amount(1, &SplTokenAdditionalData::with_decimals(0));
+        let token_amount =
+            token_amount_to_ui_amount_v2(1, &SplTokenAdditionalData::with_decimals(0));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(1, 0)
@@ -449,7 +457,8 @@ mod test {
         assert_eq!(token_amount.ui_amount, Some(1.0));
         assert_eq!(&real_number_string(10, 0), "10");
         assert_eq!(&real_number_string_trimmed(10, 0), "10");
-        let token_amount = token_amount_to_ui_amount(10, &SplTokenAdditionalData::with_decimals(0));
+        let token_amount =
+            token_amount_to_ui_amount_v2(10, &SplTokenAdditionalData::with_decimals(0));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(10, 0)
@@ -457,7 +466,8 @@ mod test {
         assert_eq!(token_amount.ui_amount, Some(10.0));
         assert_eq!(&real_number_string(1, 9), "0.000000001");
         assert_eq!(&real_number_string_trimmed(1, 9), "0.000000001");
-        let token_amount = token_amount_to_ui_amount(1, &SplTokenAdditionalData::with_decimals(9));
+        let token_amount =
+            token_amount_to_ui_amount_v2(1, &SplTokenAdditionalData::with_decimals(9));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(1, 9)
@@ -466,7 +476,7 @@ mod test {
         assert_eq!(&real_number_string(1_000_000_000, 9), "1.000000000");
         assert_eq!(&real_number_string_trimmed(1_000_000_000, 9), "1");
         let token_amount =
-            token_amount_to_ui_amount(1_000_000_000, &SplTokenAdditionalData::with_decimals(9));
+            token_amount_to_ui_amount_v2(1_000_000_000, &SplTokenAdditionalData::with_decimals(9));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(1_000_000_000, 9)
@@ -475,7 +485,7 @@ mod test {
         assert_eq!(&real_number_string(1_234_567_890, 3), "1234567.890");
         assert_eq!(&real_number_string_trimmed(1_234_567_890, 3), "1234567.89");
         let token_amount =
-            token_amount_to_ui_amount(1_234_567_890, &SplTokenAdditionalData::with_decimals(3));
+            token_amount_to_ui_amount_v2(1_234_567_890, &SplTokenAdditionalData::with_decimals(3));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(1_234_567_890, 3)
@@ -490,7 +500,7 @@ mod test {
             "0.000000000000000123456789"
         );
         let token_amount =
-            token_amount_to_ui_amount(1_234_567_890, &SplTokenAdditionalData::with_decimals(20));
+            token_amount_to_ui_amount_v2(1_234_567_890, &SplTokenAdditionalData::with_decimals(20));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(1_234_567_890, 20)
@@ -512,10 +522,10 @@ mod test {
             decimals: 0,
             interest_bearing_config: Some((config, INT_SECONDS_PER_YEAR)),
         };
-        let token_amount = token_amount_to_ui_amount(1, &additional_data);
+        let token_amount = token_amount_to_ui_amount_v2(1, &additional_data);
         assert_eq!(token_amount.ui_amount_string, "1.0512710963760241");
         assert!((token_amount.ui_amount.unwrap() - 1.0512710963760241f64).abs() < f64::EPSILON);
-        let token_amount = token_amount_to_ui_amount(10, &additional_data);
+        let token_amount = token_amount_to_ui_amount_v2(10, &additional_data);
         assert_eq!(token_amount.ui_amount_string, "10.512710963760242");
         assert!((token_amount.ui_amount.unwrap() - 10.512710963760241f64).abs() < f64::EPSILON);
 
@@ -531,7 +541,7 @@ mod test {
             decimals: 0,
             interest_bearing_config: Some((config, INT_SECONDS_PER_YEAR * 1_000)),
         };
-        let token_amount = token_amount_to_ui_amount(u64::MAX, &additional_data);
+        let token_amount = token_amount_to_ui_amount_v2(u64::MAX, &additional_data);
         assert_eq!(token_amount.ui_amount, Some(f64::INFINITY));
         assert_eq!(token_amount.ui_amount_string, "inf");
     }
@@ -540,7 +550,8 @@ mod test {
     fn test_ui_token_amount_real_string_zero() {
         assert_eq!(&real_number_string(0, 0), "0");
         assert_eq!(&real_number_string_trimmed(0, 0), "0");
-        let token_amount = token_amount_to_ui_amount(0, &SplTokenAdditionalData::with_decimals(0));
+        let token_amount =
+            token_amount_to_ui_amount_v2(0, &SplTokenAdditionalData::with_decimals(0));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(0, 0)
@@ -548,7 +559,8 @@ mod test {
         assert_eq!(token_amount.ui_amount, Some(0.0));
         assert_eq!(&real_number_string(0, 9), "0.000000000");
         assert_eq!(&real_number_string_trimmed(0, 9), "0");
-        let token_amount = token_amount_to_ui_amount(0, &SplTokenAdditionalData::with_decimals(9));
+        let token_amount =
+            token_amount_to_ui_amount_v2(0, &SplTokenAdditionalData::with_decimals(9));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(0, 9)
@@ -556,7 +568,8 @@ mod test {
         assert_eq!(token_amount.ui_amount, Some(0.0));
         assert_eq!(&real_number_string(0, 25), "0.0000000000000000000000000");
         assert_eq!(&real_number_string_trimmed(0, 25), "0");
-        let token_amount = token_amount_to_ui_amount(0, &SplTokenAdditionalData::with_decimals(20));
+        let token_amount =
+            token_amount_to_ui_amount_v2(0, &SplTokenAdditionalData::with_decimals(20));
         assert_eq!(
             token_amount.ui_amount_string,
             real_number_string_trimmed(0, 20)

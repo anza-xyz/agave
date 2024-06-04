@@ -1,7 +1,7 @@
 use {
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalData,
-        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount, UiTokenAmount},
+        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v2, UiTokenAmount},
     },
     solana_measure::measure::Measure,
     solana_metrics::datapoint_debug,
@@ -119,7 +119,7 @@ fn collect_token_balance_from_account(
     Some(TokenBalanceData {
         mint: token_account.base.mint.to_string(),
         owner: token_account.base.owner.to_string(),
-        ui_token_amount: token_amount_to_ui_amount(token_account.base.amount, &additional_data),
+        ui_token_amount: token_amount_to_ui_amount_v2(token_account.base.amount, &additional_data),
         program_id: account.owner().to_string(),
     })
 }

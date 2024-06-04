@@ -12,7 +12,7 @@ use {
     serde_json::{json, Map, Value},
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalData,
-        parse_token::{token_amount_to_ui_amount, UiAccountState},
+        parse_token::{token_amount_to_ui_amount_v2, UiAccountState},
     },
     solana_sdk::{
         instruction::{AccountMeta, CompiledInstruction, Instruction},
@@ -371,7 +371,7 @@ pub fn parse_token(
                     "source": account_keys[instruction.accounts[0] as usize].to_string(),
                     "mint": account_keys[instruction.accounts[1] as usize].to_string(),
                     "destination": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "tokenAmount": token_amount_to_ui_amount(amount, &additional_data),
+                    "tokenAmount": token_amount_to_ui_amount_v2(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -394,7 +394,7 @@ pub fn parse_token(
                     "source": account_keys[instruction.accounts[0] as usize].to_string(),
                     "mint": account_keys[instruction.accounts[1] as usize].to_string(),
                     "delegate": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "tokenAmount": token_amount_to_ui_amount(amount, &additional_data),
+                    "tokenAmount": token_amount_to_ui_amount_v2(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -416,7 +416,7 @@ pub fn parse_token(
                 let mut value = json!({
                     "mint": account_keys[instruction.accounts[0] as usize].to_string(),
                     "account": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "tokenAmount": token_amount_to_ui_amount(amount, &additional_data),
+                    "tokenAmount": token_amount_to_ui_amount_v2(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(
@@ -438,7 +438,7 @@ pub fn parse_token(
                 let mut value = json!({
                     "account": account_keys[instruction.accounts[0] as usize].to_string(),
                     "mint": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "tokenAmount": token_amount_to_ui_amount(amount, &additional_data),
+                    "tokenAmount": token_amount_to_ui_amount_v2(amount, &additional_data),
                 });
                 let map = value.as_object_mut().unwrap();
                 parse_signers(

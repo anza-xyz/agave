@@ -12,7 +12,7 @@ use {
     jsonrpc_derive::rpc,
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalData,
-        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount, UiTokenAmount},
+        parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v2, UiTokenAmount},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
     solana_accounts_db::{
@@ -1871,7 +1871,7 @@ impl JsonRpcRequestProcessor {
         let mint = &Pubkey::from_str(&token_account.base.mint.to_string())
             .expect("Token account mint should be convertible to Pubkey");
         let (_, data) = get_mint_owner_and_additional_data(&bank, mint)?;
-        let balance = token_amount_to_ui_amount(token_account.base.amount, &data);
+        let balance = token_amount_to_ui_amount_v2(token_account.base.amount, &data);
         Ok(new_response(&bank, balance))
     }
 
@@ -1898,7 +1898,7 @@ impl JsonRpcRequestProcessor {
             .map(|x| (*x, bank.clock().unix_timestamp))
             .ok();
 
-        let supply = token_amount_to_ui_amount(
+        let supply = token_amount_to_ui_amount_v2(
             mint.base.supply,
             &SplTokenAdditionalData {
                 decimals: mint.base.decimals,
@@ -1949,7 +1949,7 @@ impl JsonRpcRequestProcessor {
             .map(|Reverse((amount, address))| {
                 Ok(RpcTokenAccountBalance {
                     address: address.to_string(),
-                    amount: token_amount_to_ui_amount(amount, &data),
+                    amount: token_amount_to_ui_amount_v2(amount, &data),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -8628,10 +8628,11 @@ pub mod tests {
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
                 .expect("actual response deserialization");
-            let token_ui_amount = token_amount_to_ui_amount(amount, &additional_data);
-            let delegated_ui_amount = token_amount_to_ui_amount(delegated_amount, &additional_data);
+            let token_ui_amount = token_amount_to_ui_amount_v2(amount, &additional_data);
+            let delegated_ui_amount =
+                token_amount_to_ui_amount_v2(delegated_amount, &additional_data);
             let rent_exempt_ui_amount =
-                token_amount_to_ui_amount(rent_exempt_amount, &additional_data);
+                token_amount_to_ui_amount_v2(rent_exempt_amount, &additional_data);
             let mut expected_value = json!({
                 "program": program_name,
                 "space": account_size,
