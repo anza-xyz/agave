@@ -543,11 +543,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV4,
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
-                    .program_cache
-                    .read()
-                    .unwrap()
                     .get_environments_for_epoch(20)
-                    .clone()
                     .program_runtime_v1,
             ),
         );
@@ -580,11 +576,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV2,
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
-                    .program_cache
-                    .read()
-                    .unwrap()
                     .get_environments_for_epoch(20)
-                    .clone()
                     .program_runtime_v1,
             ),
         );
@@ -665,11 +657,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV3,
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
-                    .program_cache
-                    .read()
-                    .unwrap()
                     .get_environments_for_epoch(0)
-                    .clone()
                     .program_runtime_v1,
             ),
         );
@@ -756,11 +744,7 @@ mod tests {
             ProgramCacheEntryOwner::LoaderV4,
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
-                    .program_cache
-                    .read()
-                    .unwrap()
                     .get_environments_for_epoch(0)
-                    .clone()
                     .program_runtime_v1,
             ),
         );

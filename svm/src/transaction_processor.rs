@@ -197,7 +197,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .read()
             .unwrap()
             .get_environments_for_epoch(epoch)
-            .clone()
     }
 
     /// Main entrypoint to the SVM.
