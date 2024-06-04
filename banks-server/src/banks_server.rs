@@ -380,6 +380,7 @@ impl Banks for BanksServer {
                         compute_units_consumed: details.executed_units,
                         log_messages: details.log_messages.unwrap_or_default(),
                         return_data: details.return_data,
+                        inner_instructions: details.inner_instructions,
                     }),
                 }
             }
