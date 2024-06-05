@@ -58,7 +58,7 @@ made.
   - 16 cores / 32 threads, or more
 - RAM
   - **1.17** 512 GB or more if an `account-index` is used, 1TB+ for all three [account indexes](https://docs.solanalabs.com/operations/setup-an-rpc-node#account-indexing)
-  - **1.18 or newer** 512 GB for all three indexes
+  - **1.18 or newer** 512 GB or more for all three indexes
 - Disk
   - Consider a larger ledger disk if longer transaction history is required
   - Accounts and ledger should not be stored on the same disk
