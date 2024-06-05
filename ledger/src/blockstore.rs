@@ -2679,7 +2679,7 @@ impl Blockstore {
                     Hash::default()
                 };
 
-                let rewards = self
+                let (rewards, num_partitions) = self
                     .rewards_cf
                     .get_protobuf_or_bincode::<StoredExtendedRewards>(slot)?
                     .unwrap_or_default()
@@ -2700,6 +2700,7 @@ impl Blockstore {
                     transactions: self
                         .map_transactions_to_statuses(slot, slot_transaction_iterator)?,
                     rewards,
+                    num_partitions,
                     block_time,
                     block_height,
                 };
@@ -8303,6 +8304,7 @@ pub mod tests {
             blockhash: blockhash.to_string(),
             previous_blockhash: Hash::default().to_string(),
             rewards: vec![],
+            num_partitions: None,
             block_time: None,
             block_height: None,
         };
@@ -8317,6 +8319,7 @@ pub mod tests {
             blockhash: blockhash.to_string(),
             previous_blockhash: blockhash.to_string(),
             rewards: vec![],
+            num_partitions: None,
             block_time: None,
             block_height: None,
         };
@@ -8334,6 +8337,7 @@ pub mod tests {
             blockhash: blockhash.to_string(),
             previous_blockhash: blockhash.to_string(),
             rewards: vec![],
+            num_partitions: None,
             block_time: None,
             block_height: None,
         };
