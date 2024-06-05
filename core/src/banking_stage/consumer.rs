@@ -570,7 +570,7 @@ impl Consumer {
             if transaction_status_sender_enabled {
                 pre_balance_info.native = bank.collect_balances(batch);
                 pre_balance_info.token =
-                    collect_token_balances(bank, batch, &mut pre_balance_info.mint_data)
+                    collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals)
             }
         });
         execute_and_commit_timings.collect_balances_us = collect_balances_us;

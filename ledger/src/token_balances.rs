@@ -11,41 +11,34 @@ use {
         token_balances::TransactionTokenBalances, TransactionTokenBalance,
     },
     spl_token_2022::{
-        extension::{
-            interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
-            StateWithExtensions,
-        },
+        extension::StateWithExtensions,
         state::{Account as TokenAccount, Mint},
     },
     std::collections::HashMap,
 };
 
-fn get_mint_additional_data(bank: &Bank, mint: &Pubkey) -> Option<SplTokenAdditionalData> {
+fn get_mint_decimals(bank: &Bank, mint: &Pubkey) -> Option<u8> {
     if mint == &spl_token::native_mint::id() {
-        Some(SplTokenAdditionalData::with_decimals(
-            spl_token::native_mint::DECIMALS,
-        ))
+        Some(spl_token::native_mint::DECIMALS)
     } else {
         let mint_account = bank.get_account(mint)?;
+
         if !is_known_spl_token_id(mint_account.owner()) {
             return None;
         }
-        let mint_state = StateWithExtensions::<Mint>::unpack(mint_account.data()).ok()?;
-        let interest_bearing_config = mint_state
-            .get_extension::<InterestBearingConfig>()
-            .map(|x| (*x, bank.clock().unix_timestamp))
-            .ok();
-        Some(SplTokenAdditionalData {
-            decimals: mint_state.base.decimals,
-            interest_bearing_config,
-        })
+
+        let decimals = StateWithExtensions::<Mint>::unpack(mint_account.data())
+            .map(|mint| mint.base.decimals)
+            .ok()?;
+
+        Some(decimals)
     }
 }
 
 pub fn collect_token_balances(
     bank: &Bank,
     batch: &TransactionBatch,
-    mint_data: &mut HashMap<Pubkey, SplTokenAdditionalData>,
+    mint_decimals: &mut HashMap<Pubkey, u8>,
 ) -> TransactionTokenBalances {
     let mut balances: TransactionTokenBalances = vec![];
     let mut collect_time = Measure::start("collect_token_balances");
@@ -66,7 +59,7 @@ pub fn collect_token_balances(
                     ui_token_amount,
                     owner,
                     program_id,
-                }) = collect_token_balance_from_account(bank, account_id, mint_data)
+                }) = collect_token_balance_from_account(bank, account_id, mint_decimals)
                 {
                     transaction_balances.push(TransactionTokenBalance {
                         account_index: index as u8,
@@ -99,7 +92,7 @@ struct TokenBalanceData {
 fn collect_token_balance_from_account(
     bank: &Bank,
     account_id: &Pubkey,
-    mint_data: &mut HashMap<Pubkey, SplTokenAdditionalData>,
+    mint_decimals: &mut HashMap<Pubkey, u8>,
 ) -> Option<TokenBalanceData> {
     let account = bank.get_account(account_id)?;
 
@@ -110,16 +103,22 @@ fn collect_token_balance_from_account(
     let token_account = StateWithExtensions::<TokenAccount>::unpack(account.data()).ok()?;
     let mint = token_account.base.mint;
 
-    let additional_data = mint_data.get(&mint).cloned().or_else(|| {
-        let additional_data = get_mint_additional_data(bank, &mint)?;
-        mint_data.insert(mint, additional_data);
-        Some(additional_data)
+    let decimals = mint_decimals.get(&mint).cloned().or_else(|| {
+        let decimals = get_mint_decimals(bank, &mint)?;
+        mint_decimals.insert(mint, decimals);
+        Some(decimals)
     })?;
 
     Some(TokenBalanceData {
         mint: token_account.base.mint.to_string(),
         owner: token_account.base.owner.to_string(),
-        ui_token_amount: token_amount_to_ui_amount_v2(token_account.base.amount, &additional_data),
+        ui_token_amount: token_amount_to_ui_amount_v2(
+            token_account.base.amount,
+            // NOTE: Same as parsed instruction data, ledger data always uses
+            // the raw token amount, and does not calculate the UI amount with
+            // any consideration for interest.
+            &SplTokenAdditionalData::with_decimals(decimals),
+        ),
         program_id: account.owner().to_string(),
     })
 }

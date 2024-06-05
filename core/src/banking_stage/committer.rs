@@ -1,7 +1,6 @@
 use {
     super::leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
     itertools::Itertools,
-    solana_account_decoder::parse_account_data::SplTokenAdditionalData,
     solana_ledger::{
         blockstore_processor::TransactionStatusSender, token_balances::collect_token_balances,
     },
@@ -34,7 +33,7 @@ pub enum CommitTransactionDetails {
 pub(super) struct PreBalanceInfo {
     pub native: Vec<Vec<u64>>,
     pub token: Vec<Vec<TransactionTokenBalance>>,
-    pub mint_data: HashMap<Pubkey, SplTokenAdditionalData>,
+    pub mint_decimals: HashMap<Pubkey, u8>,
 }
 
 #[derive(Clone)]
@@ -145,7 +144,7 @@ impl Committer {
             let txs = batch.sanitized_transactions().to_vec();
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =
-                collect_token_balances(bank, batch, &mut pre_balance_info.mint_data);
+                collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);
             let mut transaction_index = starting_transaction_index.unwrap_or_default();
             let batch_transaction_indexes: Vec<_> = tx_results
                 .execution_results

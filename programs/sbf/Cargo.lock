@@ -4907,7 +4907,6 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_derive",
- "solana-account-decoder",
  "solana-accounts-db",
  "solana-bloom",
  "solana-client",

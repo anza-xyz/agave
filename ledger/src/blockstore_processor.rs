@@ -15,7 +15,6 @@ use {
     log::*,
     rayon::{prelude::*, ThreadPool},
     scopeguard::defer,
-    solana_account_decoder::parse_account_data::SplTokenAdditionalData,
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_index::AccountSecondaryIndexes,
@@ -155,10 +154,10 @@ pub fn execute_batch(
     } = batch;
     let record_token_balances = transaction_status_sender.is_some();
 
-    let mut mint_data: HashMap<Pubkey, SplTokenAdditionalData> = HashMap::new();
+    let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
     let pre_token_balances = if record_token_balances {
-        collect_token_balances(bank, batch, &mut mint_data)
+        collect_token_balances(bank, batch, &mut mint_decimals)
     } else {
         vec![]
     };
@@ -194,7 +193,7 @@ pub fn execute_batch(
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions = batch.sanitized_transactions().to_vec();
         let post_token_balances = if record_token_balances {
-            collect_token_balances(bank, batch, &mut mint_data)
+            collect_token_balances(bank, batch, &mut mint_decimals)
         } else {
             vec![]
         };
