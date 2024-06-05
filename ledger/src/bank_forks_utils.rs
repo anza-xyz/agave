@@ -323,7 +323,7 @@ fn bank_forks_from_snapshot(
             );
         }
 
-        let (bank, _) = snapshot_bank_utils::bank_from_snapshot_dir(
+        let result = snapshot_bank_utils::bank_from_snapshot_dir(
             &account_paths,
             &bank_snapshot,
             genesis_config,
@@ -337,11 +337,7 @@ fn bank_forks_from_snapshot(
             process_options.accounts_db_config.clone(),
             accounts_update_notifier,
             exit,
-        )
-        .map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
-            source: err,
-            path: bank_snapshot.snapshot_path(),
-        })?;
+        );
 
         // If the node crashes before taking the next bank snapshot, the next startup will attempt
         // to load from the same bank snapshot again.  And if `shrink` has run, the account storage
@@ -350,6 +346,11 @@ fn bank_forks_from_snapshot(
         // the bank snapshots here.  In the above scenario, this will cause the node to load from a
         // snapshot archive next time, which is safe.
         snapshot_utils::purge_old_bank_snapshots(&snapshot_config.bank_snapshots_dir, 0, None);
+
+        let (bank, _) = result.map_err(|err| BankForksUtilsError::BankFromSnapshotsDirectory {
+            source: err,
+            path: bank_snapshot.snapshot_path(),
+        })?;
 
         bank
     };
