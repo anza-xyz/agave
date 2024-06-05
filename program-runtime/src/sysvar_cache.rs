@@ -1,5 +1,9 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::Arc;
 #[allow(deprecated)]
 use solana_sdk::sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::Arc;
 use {
     crate::invoke_context::InvokeContext,
     serde::de::DeserializeOwned,
@@ -13,7 +17,6 @@ use {
         },
         transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
-    std::sync::Arc,
 };
 
 #[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]

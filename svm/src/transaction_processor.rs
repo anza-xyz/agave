@@ -1,3 +1,13 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::{
+    atomic::Ordering::{self, Relaxed},
+    Arc, RwLock,
+};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{
+    atomic::Ordering::{self, Relaxed},
+    Arc, RwLock,
+};
 use {
     crate::{
         account_loader::{
@@ -47,10 +57,6 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
-        sync::{
-            atomic::Ordering::{self, Relaxed},
-            Arc, RwLock,
-        },
     },
 };
 

@@ -10,6 +10,10 @@ pub use self::{
         SyscallGetSysvar,
     },
 };
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::Arc;
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::Arc;
 #[allow(deprecated)]
 use {
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -62,7 +66,6 @@ use {
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
-        sync::Arc,
     },
     thiserror::Error as ThisError,
 };

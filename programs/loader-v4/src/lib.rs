@@ -1,3 +1,7 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::{atomic::Ordering, Arc};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{atomic::Ordering, Arc};
 use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_measure::measure::Measure,
@@ -30,11 +34,7 @@ use {
         saturating_add_assign,
         transaction_context::{BorrowedAccount, InstructionContext},
     },
-    std::{
-        cell::RefCell,
-        rc::Rc,
-        sync::{atomic::Ordering, Arc},
-    },
+    std::{cell::RefCell, rc::Rc},
 };
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;

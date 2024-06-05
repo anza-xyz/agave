@@ -1,3 +1,12 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::{
+    rand::{thread_rng, Rng},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar, Mutex, RwLock,
+    },
+    thread,
+};
 use {
     crate::{
         invoke_context::{BuiltinFunctionWithContext, InvokeContext},
@@ -5,7 +14,6 @@ use {
     },
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
-    rand::{thread_rng, Rng},
     solana_measure::measure::Measure,
     solana_rbpf::{
         elf::Executable,
@@ -23,11 +31,16 @@ use {
     std::{
         collections::{hash_map::Entry, HashMap},
         fmt::{Debug, Formatter},
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc, Condvar, Mutex, RwLock,
-        },
     },
+};
+#[cfg(not(feature = "shuttle-test"))]
+use {
+    rand::{thread_rng, Rng},
+    std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar, Mutex, RwLock,
+    },
+    std::thread,
 };
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static>>>;
@@ -598,7 +611,7 @@ enum IndexImplementation {
         /// It is possible that multiple TX batches from different slots need different versions of a
         /// program. The deployment slot of a program is only known after load tho,
         /// so all loads for a given program key are serialized.
-        loading_entries: Mutex<HashMap<Pubkey, (Slot, std::thread::ThreadId)>>,
+        loading_entries: Mutex<HashMap<Pubkey, (Slot, thread::ThreadId)>>,
     },
 }
 
@@ -1100,7 +1113,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         if let Entry::Vacant(entry) = entry {
                             entry.insert((
                                 loaded_programs_for_tx_batch.slot,
-                                std::thread::current().id(),
+                                thread::current().id(),
                             ));
                             cooperative_loading_task = Some((*key, *usage_count));
                         }
@@ -1134,7 +1147,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 loading_entries, ..
             } => {
                 let loading_thread = loading_entries.get_mut().unwrap().remove(&key);
-                debug_assert_eq!(loading_thread, Some((slot, std::thread::current().id())));
+                debug_assert_eq!(loading_thread, Some((slot, thread::current().id())));
                 // Check that it will be visible to our own fork once inserted
                 if loaded_program.deployment_slot > self.latest_root_slot
                     && !matches!(

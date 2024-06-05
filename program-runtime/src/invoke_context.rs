@@ -1,3 +1,7 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::{atomic::Ordering, Arc};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{atomic::Ordering, Arc};
 use {
     crate::{
         ic_msg,
@@ -41,7 +45,6 @@ use {
         cell::RefCell,
         fmt::{self, Debug},
         rc::Rc,
-        sync::{atomic::Ordering, Arc},
     },
 };
 
@@ -669,13 +672,16 @@ macro_rules! with_mock_invoke_context {
         $transaction_context:ident,
         $transaction_accounts:expr $(,)?
     ) => {
+        #[cfg(feature = "shuttle-test")]
+        use shuttle::sync::Arc;
+        #[cfg(not(feature = "shuttle-test"))]
+        use std::sync::Arc;
         use {
             solana_compute_budget::compute_budget::ComputeBudget,
             solana_sdk::{
                 account::ReadableAccount, feature_set::FeatureSet, hash::Hash, sysvar::rent::Rent,
                 transaction_context::TransactionContext,
             },
-            std::sync::Arc,
             $crate::{
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
@@ -683,6 +689,7 @@ macro_rules! with_mock_invoke_context {
                 sysvar_cache::SysvarCache,
             },
         };
+
         let compute_budget = ComputeBudget::default();
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,

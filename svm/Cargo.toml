@@ -15,6 +15,7 @@ log = { workspace = true }
 percentage = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
@@ -57,3 +58,4 @@ frozen-abi = [
     "solana-program-runtime/frozen-abi",
     "solana-sdk/frozen-abi",
 ]
+shuttle-test = ["dep:shuttle"]

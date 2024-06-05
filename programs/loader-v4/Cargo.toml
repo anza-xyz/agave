@@ -10,6 +10,7 @@ edition = { workspace = true }
 
 [dependencies]
 log = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-compute-budget = { workspace = true }
 solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -25,3 +26,6 @@ name = "solana_loader_v4_program"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+shuttle-test = ["dep:shuttle"]

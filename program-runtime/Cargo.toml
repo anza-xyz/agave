@@ -22,6 +22,7 @@ num-traits = { workspace = true }
 percentage = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+shuttle = { workspace = true, optional = true }
 solana-compute-budget = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
@@ -54,3 +55,4 @@ frozen-abi = [
     "solana-compute-budget/frozen-abi",
     "solana-sdk/frozen-abi",
 ]
+shuttle-test = ["dep:shuttle"]

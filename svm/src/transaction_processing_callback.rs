@@ -1,10 +1,13 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::Arc;
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::Arc;
 use {
     solana_program_runtime::loaded_programs::ProgramCacheMatchCriteria,
     solana_sdk::{
         account::AccountSharedData, feature_set::FeatureSet, hash::Hash, pubkey::Pubkey,
         rent_collector::RentCollector,
     },
-    std::sync::Arc,
 };
 
 /// Runtime callbacks for transaction processing.

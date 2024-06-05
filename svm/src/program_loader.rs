@@ -1,3 +1,7 @@
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::Arc;
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::Arc;
 use {
     crate::transaction_processing_callback::TransactionProcessingCallback,
     solana_program_runtime::{
@@ -18,7 +22,6 @@ use {
         loader_v4::{self, LoaderV4State, LoaderV4Status},
         pubkey::Pubkey,
     },
-    std::sync::Arc,
 };
 
 #[derive(Debug)]

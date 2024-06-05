@@ -4,6 +4,10 @@
 pub mod serialization;
 pub mod syscalls;
 
+#[cfg(feature = "shuttle-test")]
+use shuttle::sync::{atomic::Ordering, Arc};
+#[cfg(not(feature = "shuttle-test"))]
+use std::sync::{atomic::Ordering, Arc};
 use {
     solana_measure::measure::Measure,
     solana_program_runtime::{
@@ -46,12 +50,7 @@ use {
         system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
         transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
-    std::{
-        cell::RefCell,
-        mem,
-        rc::Rc,
-        sync::{atomic::Ordering, Arc},
-    },
+    std::{cell::RefCell, mem, rc::Rc},
     syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
 };
 
@@ -324,7 +323,12 @@ macro_rules! create_vm {
 #[macro_export]
 macro_rules! mock_create_vm {
     ($vm:ident, $additional_regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
+        #[cfg(not(feature = "shuttle-test"))]
         let loader = std::sync::Arc::new(BuiltinProgram::new_mock());
+
+        #[cfg(feature = "shuttle-test")]
+        let loader = shuttle::sync::Arc::new(BuiltinProgram::new_mock());
+
         let function_registry = solana_rbpf::program::FunctionRegistry::default();
         let executable = solana_rbpf::elf::Executable::<InvokeContext>::from_text_bytes(
             &[0x95, 0, 0, 0, 0, 0, 0, 0],
