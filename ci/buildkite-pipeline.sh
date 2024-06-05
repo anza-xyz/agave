@@ -162,6 +162,28 @@ all_test_steps() {
     annotate --style info --context test-docs \
       "Docs skipped as no .rs files were modified"
   fi
+
+  # trigger macos clippy
+  if affects \
+    .rs$ \
+    Cargo.lock$ \
+    Cargo.toml$ \
+    .github/scripts/cargo-clippy-before-script.sh \
+    .github/workflows/cargo.yml \
+  ; then
+    cat >> "$output_file" <<"EOF"
+  - command: "./ci/trigger-macos-clippy-test.sh"
+    name: "trigger macos clippy"
+    timeout_in_minutes: 5
+    soft_fail: true
+    agents:
+      queue: "solana"
+EOF
+  else
+    annotate --style info \
+      "macos clippy skipped as no relevant files were modified"
+  fi
+
   wait_step
 
   # SBF test suite

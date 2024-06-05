@@ -1,23 +1,17 @@
 name: Cargo
 
 on:
-  push:
-    branches:
-      - master
-      - v[0-9]+.[0-9]+
-  pull_request:
-    branches:
-      - master
-      - v[0-9]+.[0-9]+
-    paths:
-      - "**.rs"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      - ".github/scripts/cargo-clippy-before-script.sh"
-      - ".github/workflows/cargo.yml"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "commit hash"
+        required: true
+      ref:
+        description: "branch"
+        required: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.ref || github.event.inputs.sha }}
   cancel-in-progress: true
 
 env:
@@ -26,7 +20,26 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  setup-status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          retries: 3
+          script: |
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              context: "macos-clippy",
+              description: "triggered by buildkite",
+              sha: "${{ github.event.inputs.sha }}",
+              state: "pending",
+              target_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            })
+
   clippy-stable:
+    needs: setup-status
     strategy:
       matrix:
         os:
@@ -50,6 +63,7 @@ jobs:
           scripts/cargo-clippy-stable.sh
 
   clippy-nightly:
+    needs: setup-status
     strategy:
       matrix:
         os:
@@ -71,3 +85,27 @@ jobs:
           source ci/rust-version.sh nightly
           rustup component add clippy --toolchain "$rust_nightly"
           scripts/cargo-clippy-nightly.sh
+
+  update-status:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - clippy-stable
+      - clippy-nightly
+    env:
+      STATE: ${{ (contains(needs.clippy-stable.result, 'success') && contains(needs.clippy-nightly.result, 'success')) && 'success' || 'failure' }}
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          retries: 3
+          script: |
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              context: "macos-clippy",
+              description: "triggered by buildkite",
+              sha: "${{ github.event.inputs.sha }}",
+              state: process.env.STATE,
+              target_url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            })
