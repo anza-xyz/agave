@@ -12,9 +12,10 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_poseidon as poseidon,
     solana_program_runtime::{
-        compute_budget::ComputeBudget, ic_logger_msg, ic_msg, invoke_context::InvokeContext,
-        stable_log, timings::ExecuteTimings,
+        ic_logger_msg, ic_msg, invoke_context::InvokeContext, stable_log, timings::ExecuteTimings,
     },
     solana_rbpf::{
         declare_builtin_function,
@@ -45,7 +46,7 @@ use {
         },
         hash::{Hash, Hasher},
         instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
-        keccak, native_loader, poseidon,
+        keccak, native_loader,
         precompiles::is_precompile,
         program::MAX_RETURN_DATA,
         program_stubs::is_nonoverlapping,

@@ -9,15 +9,14 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
+    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
         BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
-    solana_program_runtime::{
-        compute_budget_processor::process_compute_budget_instructions, timings::ExecuteTimings,
-    },
+    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         bank::{Bank, LoadAndExecuteTransactionsOutput},
         compute_budget_details::GetComputeBudgetDetails,
@@ -34,7 +33,7 @@ use {
     solana_svm::{
         account_loader::{validate_fee_payer, TransactionCheckResult},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processor::ExecutionRecordingConfig,
+        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     std::{
         sync::{atomic::Ordering, Arc},
@@ -413,12 +412,20 @@ impl Consumer {
         let pre_results = vec![Ok(()); txs.len()];
         let check_results =
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
-        let check_results = check_results.into_iter().map(|result| result.map(|_| ()));
+        // If checks passed, verify pre-compiles and continue processing on success.
+        let check_results: Vec<_> = txs
+            .iter()
+            .zip(check_results)
+            .map(|(tx, result)| match result {
+                Ok(_) => tx.verify_precompiles(&bank.feature_set),
+                Err(err) => Err(err),
+            })
+            .collect();
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
             chunk_offset,
-            check_results,
+            check_results.into_iter(),
         );
 
         // Accumulate error counters from the initial checks into final results
@@ -435,11 +442,13 @@ impl Consumer {
         txs: &[SanitizedTransaction],
         max_slot_ages: &[Slot],
     ) -> ProcessTransactionBatchOutput {
+        // Verify pre-compiles.
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
         //  or account lookup tables may have been closed.
         let pre_results = txs.iter().zip(max_slot_ages).map(|(tx, max_slot_age)| {
             if *max_slot_age < bank.slot() {
+                // Pre-compiles are verified here.
                 // Attempt re-sanitization after epoch-cross.
                 // Re-sanitized transaction should be equal to the original transaction,
                 // but whether it will pass sanitization needs to be checked.
@@ -450,6 +459,8 @@ impl Consumer {
                     return Err(TransactionError::ResanitizationNeeded);
                 }
             } else {
+                // Verify pre-compiles.
+                tx.verify_precompiles(&bank.feature_set)?;
                 // Any transaction executed between sanitization time and now may have closed the lookup table(s).
                 // Above re-sanitization already loads addresses, so don't need to re-check in that case.
                 let lookup_tables = tx.message().message_address_table_lookups();
@@ -592,11 +603,15 @@ impl Consumer {
             .load_and_execute_transactions(
                 batch,
                 MAX_PROCESSING_AGE,
-                ExecutionRecordingConfig::new_single_setting(transaction_status_sender_enabled),
                 &mut execute_and_commit_timings.execute_timings,
-                None, // account_overrides
-                self.log_messages_bytes_limit,
-                true,
+                TransactionProcessingConfig {
+                    account_overrides: None,
+                    log_messages_bytes_limit: self.log_messages_bytes_limit,
+                    limit_to_load_programs: true,
+                    recording_config: ExecutionRecordingConfig::new_single_setting(
+                        transaction_status_sender_enabled
+                    ),
+                }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
 

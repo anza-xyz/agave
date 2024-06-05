@@ -6003,7 +6003,6 @@ impl AccountsDb {
         );
     }
 
-    #[allow(clippy::needless_collect)]
     fn purge_slots<'a>(&self, slots: impl Iterator<Item = &'a Slot> + Clone) {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
@@ -9619,6 +9618,7 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
 }
 
 /// A set of utility functions used for testing and benchmarking
+#[cfg(feature = "dev-context-only-utils")]
 pub mod test_utils {
     use {
         super::*,

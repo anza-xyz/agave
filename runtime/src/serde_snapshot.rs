@@ -9,9 +9,7 @@ use {
         epoch_stakes::{EpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
         serde_snapshot::storage::SerializableAccountStorageEntry,
-        snapshot_utils::{
-            self, SnapshotError, StorageAndNextAccountsFileId, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
-        },
+        snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stakes::{serde_stakes_enum_compat, Stakes, StakesEnum},
     },
     bincode::{self, config::Options, Error},
@@ -25,7 +23,7 @@ use {
             AccountsFileId, AtomicAccountsFileId, BankHashStats, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
-        accounts_hash::AccountsHash,
+        accounts_hash::{AccountsDeltaHash, AccountsHash},
         accounts_index::AccountSecondaryIndexes,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
@@ -155,7 +153,7 @@ struct DeserializableVersionedBank {
     block_height: u64,
     collector_id: Pubkey,
     collector_fees: u64,
-    fee_calculator: FeeCalculator,
+    _fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
     collected_rent: u64,
     rent_collector: RentCollector,
@@ -193,7 +191,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             block_height: dvb.block_height,
             collector_id: dvb.collector_id,
             collector_fees: dvb.collector_fees,
-            fee_calculator: dvb.fee_calculator,
             fee_rate_governor: dvb.fee_rate_governor,
             collected_rent: dvb.collected_rent,
             rent_collector: dvb.rent_collector,
@@ -272,7 +269,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             block_height: rhs.block_height,
             collector_id: rhs.collector_id,
             collector_fees: rhs.collector_fees,
-            fee_calculator: rhs.fee_calculator,
+            fee_calculator: FeeCalculator::default(),
             fee_rate_governor: rhs.fee_rate_governor,
             collected_rent: rhs.collected_rent,
             rent_collector: rhs.rent_collector,
@@ -544,6 +541,7 @@ where
     )
 }
 
+#[cfg(test)]
 pub(crate) fn bank_to_stream<W>(
     stream: &mut BufWriter<W>,
     bank: &Bank,
@@ -579,130 +577,105 @@ where
     )
 }
 
-/// deserialize the bank from 'stream_reader'
-/// modify the accounts_hash
-/// reserialize the bank to 'stream_writer'
-fn reserialize_bank_fields_with_new_hash<W, R>(
-    stream_reader: &mut BufReader<R>,
-    stream_writer: &mut BufWriter<W>,
-    accounts_hash: &AccountsHash,
+/// Serializes bank snapshot into `stream` with bincode
+pub fn serialize_bank_snapshot_into<W>(
+    stream: &mut BufWriter<W>,
+    bank_fields: BankFieldsToSerialize,
+    bank_hash_stats: BankHashStats,
+    accounts_delta_hash: AccountsDeltaHash,
+    accounts_hash: AccountsHash,
+    account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
+    epoch_accounts_hash: Option<EpochAccountsHash>,
+    write_version: StoredMetaWriteVersion,
 ) -> Result<(), Error>
 where
     W: Write,
-    R: Read,
 {
-    let (bank_fields, mut accounts_db_fields) = deserialize_bank_fields(stream_reader).unwrap();
-    accounts_db_fields.3.accounts_hash = (*accounts_hash).into();
-    let rhs = bank_fields;
-    let lamports_per_signature = rhs.fee_rate_governor.lamports_per_signature;
-    let epoch_accounts_hash = rhs.epoch_accounts_hash.as_ref();
+    let mut serializer = bincode::Serializer::new(
+        stream,
+        bincode::DefaultOptions::new().with_fixint_encoding(),
+    );
+    serialize_bank_snapshot_with(
+        &mut serializer,
+        bank_fields,
+        bank_hash_stats,
+        accounts_delta_hash,
+        accounts_hash,
+        account_storage_entries,
+        incremental_snapshot_persistence,
+        epoch_accounts_hash,
+        write_version,
+    )
+}
 
-    let bank = SerializableVersionedBank {
-        blockhash_queue: rhs.blockhash_queue,
-        ancestors: rhs.ancestors,
-        hash: rhs.hash,
-        parent_hash: rhs.parent_hash,
-        parent_slot: rhs.parent_slot,
-        hard_forks: rhs.hard_forks,
-        transaction_count: rhs.transaction_count,
-        tick_height: rhs.tick_height,
-        signature_count: rhs.signature_count,
-        capitalization: rhs.capitalization,
-        max_tick_height: rhs.max_tick_height,
-        hashes_per_tick: rhs.hashes_per_tick,
-        ticks_per_slot: rhs.ticks_per_slot,
-        ns_per_slot: rhs.ns_per_slot,
-        genesis_creation_time: rhs.genesis_creation_time,
-        slots_per_year: rhs.slots_per_year,
-        accounts_data_len: rhs.accounts_data_len,
-        slot: rhs.slot,
-        epoch: rhs.epoch,
-        block_height: rhs.block_height,
-        collector_id: rhs.collector_id,
-        collector_fees: rhs.collector_fees,
-        fee_calculator: rhs.fee_calculator,
-        fee_rate_governor: rhs.fee_rate_governor,
-        collected_rent: rhs.collected_rent,
-        rent_collector: rhs.rent_collector,
-        epoch_schedule: rhs.epoch_schedule,
-        inflation: rhs.inflation,
-        stakes: StakesEnum::from(rhs.stakes),
-        unused_accounts: UnusedAccounts::default(),
-        epoch_stakes: rhs.epoch_stakes,
-        is_delta: rhs.is_delta,
+/// Serializes bank snapshot with `serializer`
+pub fn serialize_bank_snapshot_with<S>(
+    serializer: S,
+    bank_fields: BankFieldsToSerialize,
+    bank_hash_stats: BankHashStats,
+    accounts_delta_hash: AccountsDeltaHash,
+    accounts_hash: AccountsHash,
+    account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
+    incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
+    epoch_accounts_hash: Option<EpochAccountsHash>,
+    write_version: StoredMetaWriteVersion,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let slot = bank_fields.slot;
+    let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
+    let serializable_bank = SerializableVersionedBank::from(bank_fields);
+    let serializable_accounts_db = SerializableAccountsDb::<'_> {
+        slot,
+        account_storage_entries,
+        bank_hash_stats,
+        accounts_delta_hash,
+        accounts_hash,
+        write_version,
     };
 
-    let bank_fields_to_serialize = (
-        bank,
-        accounts_db_fields,
+    (
+        serializable_bank,
+        serializable_accounts_db,
         lamports_per_signature,
-        incremental_snapshot_persistence.cloned(),
-        epoch_accounts_hash.copied(),
-    );
-    bincode::serialize_into(stream_writer, &bank_fields_to_serialize)
+        incremental_snapshot_persistence,
+        epoch_accounts_hash,
+    )
+        .serialize(serializer)
 }
 
-/// effectively updates the accounts hash in the serialized bank file on disk
-/// read serialized bank from pre file
-/// update accounts_hash
-/// write serialized bank to post file
-/// return true if pre file found
-pub fn reserialize_bank_with_new_accounts_hash(
-    bank_snapshot_dir: impl AsRef<Path>,
-    slot: Slot,
-    accounts_hash: &AccountsHash,
-    incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
-) -> bool {
-    let bank_post = bank_snapshot_dir
-        .as_ref()
-        .join(snapshot_utils::get_snapshot_file_name(slot));
-    let bank_pre = bank_post.with_extension(BANK_SNAPSHOT_PRE_FILENAME_EXTENSION);
-
-    let mut found = false;
-    {
-        let file = std::fs::File::open(&bank_pre);
-        // some tests don't create the file
-        if let Ok(file) = file {
-            found = true;
-            let file_out = std::fs::File::create(bank_post).unwrap();
-            reserialize_bank_fields_with_new_hash(
-                &mut BufReader::new(file),
-                &mut BufWriter::new(file_out),
-                accounts_hash,
-                incremental_snapshot_persistence,
-            )
-            .unwrap();
-        }
-    }
-    if found {
-        std::fs::remove_file(bank_pre).unwrap();
-    }
-    found
-}
-
+#[cfg(test)]
 struct SerializableBankAndStorage<'a> {
     bank: &'a Bank,
     snapshot_storages: &'a [Vec<Arc<AccountStorageEntry>>],
 }
 
+#[cfg(test)]
 impl<'a> Serialize for SerializableBankAndStorage<'a> {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::ser::Serializer,
     {
+        let slot = self.bank.slot();
         let fields = self.bank.get_fields_to_serialize();
+        let accounts_db = &self.bank.rc.accounts.accounts_db;
+        let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
+        let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
+        let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
+        let write_version = accounts_db.write_version.load(Ordering::Acquire);
         let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
         let bank_fields_to_serialize = (
             SerializableVersionedBank::from(fields),
             SerializableAccountsDb::<'_> {
-                accounts_db: &self.bank.rc.accounts.accounts_db,
-                slot: self.bank.rc.slot,
+                slot,
                 account_storage_entries: self.snapshot_storages,
+                bank_hash_stats,
+                accounts_delta_hash,
+                accounts_hash,
+                write_version,
             },
-            // Additional fields, we manually store the lamps per signature here so that
-            // we can grab it on restart.
-            // TODO: if we do a snapshot version bump, consider moving this out.
             lamports_per_signature,
             None::<BankIncrementalSnapshotPersistence>,
             self.bank
@@ -711,22 +684,6 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
         );
         bank_fields_to_serialize.serialize(serializer)
     }
-}
-
-#[cfg(test)]
-pub fn serialize_test_bank_and_storage<S>(
-    bank: &Bank,
-    storage: &[Vec<Arc<AccountStorageEntry>>],
-    s: S,
-) -> std::result::Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    SerializableBankAndStorage {
-        bank,
-        snapshot_storages: storage,
-    }
-    .serialize(s)
 }
 
 #[cfg(test)]
@@ -741,13 +698,22 @@ impl<'a> Serialize for SerializableBankAndStorageNoExtra<'a> {
     where
         S: serde::ser::Serializer,
     {
+        let slot = self.bank.slot();
         let fields = self.bank.get_fields_to_serialize();
+        let accounts_db = &self.bank.rc.accounts.accounts_db;
+        let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
+        let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
+        let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
+        let write_version = accounts_db.write_version.load(Ordering::Acquire);
         (
             SerializableVersionedBank::from(fields),
             SerializableAccountsDb::<'_> {
-                accounts_db: &self.bank.rc.accounts.accounts_db,
-                slot: self.bank.rc.slot,
+                slot,
                 account_storage_entries: self.snapshot_storages,
+                bank_hash_stats,
+                accounts_delta_hash,
+                accounts_hash,
+                write_version,
             },
         )
             .serialize(serializer)
@@ -769,9 +735,12 @@ impl<'a> From<SerializableBankAndStorageNoExtra<'a>> for SerializableBankAndStor
 }
 
 struct SerializableAccountsDb<'a> {
-    accounts_db: &'a AccountsDb,
     slot: Slot,
     account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
+    bank_hash_stats: BankHashStats,
+    accounts_delta_hash: AccountsDeltaHash,
+    accounts_hash: AccountsHash,
+    write_version: StoredMetaWriteVersion,
 }
 
 impl<'a> Serialize for SerializableAccountsDb<'a> {
@@ -779,9 +748,6 @@ impl<'a> Serialize for SerializableAccountsDb<'a> {
     where
         S: serde::ser::Serializer,
     {
-        // sample write version before serializing storage entries
-        let version = self.accounts_db.write_version.load(Ordering::Acquire);
-
         // (1st of 3 elements) write the list of account storage entry lists out as a map
         let entry_count = RefCell::<usize>::new(0);
         let entries = utils::serialize_iter_as_map(self.account_storage_entries.iter().map(|x| {
@@ -794,29 +760,10 @@ impl<'a> Serialize for SerializableAccountsDb<'a> {
                 ),
             )
         }));
-        let slot = self.slot;
-        let accounts_delta_hash = self
-            .accounts_db
-            .get_accounts_delta_hash(slot)
-            .map(Into::into)
-            .unwrap_or_else(|| panic!("Missing accounts delta hash entry for slot {slot}"));
-        // NOTE: The accounts hash is calculated in AHV, which is *after* a bank snapshot is taken
-        // (and serialized here).  Thus it is expected that an accounts hash is *not* found for
-        // this slot, and a placeholder value will be used instead.  The real accounts hash will be
-        // set by `reserialize_bank_with_new_accounts_hash` from AHV.
-        let accounts_hash = self
-            .accounts_db
-            .get_accounts_hash(slot)
-            .map(|(accounts_hash, _)| accounts_hash.into())
-            .unwrap_or_default();
-        let stats = self
-            .accounts_db
-            .get_bank_hash_stats(slot)
-            .unwrap_or_else(|| panic!("Missing bank hash stats entry for slot {slot}"));
         let bank_hash_info = BankHashInfo {
-            accounts_delta_hash,
-            accounts_hash,
-            stats,
+            accounts_delta_hash: self.accounts_delta_hash.into(),
+            accounts_hash: self.accounts_hash.into(),
+            stats: self.bank_hash_stats.clone(),
         };
 
         let historical_roots = Vec::<Slot>::default();
@@ -825,8 +772,8 @@ impl<'a> Serialize for SerializableAccountsDb<'a> {
         let mut serialize_account_storage_timer = Measure::start("serialize_account_storage_ms");
         let result = (
             entries,
-            version,
-            slot,
+            self.write_version,
+            self.slot,
             bank_hash_info,
             historical_roots,
             historical_roots_with_hash,
@@ -891,7 +838,7 @@ where
         bank_fields.incremental_snapshot_persistence.as_ref(),
     )?;
 
-    let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)), bank_fields.slot);
+    let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
 
     // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call

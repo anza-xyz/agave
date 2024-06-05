@@ -89,15 +89,15 @@ use {
         storable_accounts::StorableAccounts,
     },
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_cost_model::cost_tracker::CostTracker,
     solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_measure::{measure, measure::Measure, measure_us},
     solana_perf::perf_libs,
     solana_program_runtime::{
-        compute_budget_processor::process_compute_budget_instructions,
         invoke_context::BuiltinFunctionWithContext,
         loaded_programs::{
-            ProgramCache, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheMatchCriteria,
         },
         timings::{ExecuteTimingType, ExecuteTimings},
@@ -124,7 +124,7 @@ use {
             remove_rounding_in_fee_calculation, reward_full_priority_fee, FeatureSet,
         },
         fee::{FeeDetails, FeeStructure},
-        fee_calculator::{FeeCalculator, FeeRateGovernor},
+        fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         hard_forks::HardForks,
         hash::{extend_and_hash, hashv, Hash},
@@ -140,8 +140,7 @@ use {
         packet::PACKET_DATA_SIZE,
         precompiles::get_precompiles,
         pubkey::Pubkey,
-        rent::RentDue,
-        rent_collector::{CollectedInfo, RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
         reserved_account_keys::ReservedAccountKeys,
         reward_info::RewardInfo,
@@ -165,7 +164,8 @@ use {
     },
     solana_svm::{
         account_loader::{
-            CheckedTransactionDetails, TransactionCheckResult, TransactionLoadResult,
+            collect_rent_from_account, CheckedTransactionDetails, TransactionCheckResult,
+            TransactionLoadResult,
         },
         account_overrides::AccountOverrides,
         nonce_info::NoncePartial,
@@ -177,7 +177,8 @@ use {
             TransactionProcessingConfig,
         },
         transaction_results::{
-            TransactionExecutionDetails, TransactionExecutionResult, TransactionResults,
+            TransactionExecutionDetails, TransactionExecutionResult,
+            TransactionLoadedAccountsStats, TransactionResults,
         },
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
@@ -311,9 +312,6 @@ pub struct BankRc {
     /// Previous checkpoint of this bank
     pub(crate) parent: RwLock<Option<Arc<Bank>>>,
 
-    /// Current slot
-    pub(crate) slot: Slot,
-
     pub(crate) bank_id_generator: Arc<AtomicU64>,
 }
 
@@ -328,18 +326,16 @@ impl AbiExample for BankRc {
             parent: RwLock::new(None),
             // AbiExample for Accounts is specially implemented to contain a storage example
             accounts: AbiExample::example(),
-            slot: AbiExample::example(),
             bank_id_generator: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
 impl BankRc {
-    pub(crate) fn new(accounts: Accounts, slot: Slot) -> Self {
+    pub(crate) fn new(accounts: Accounts) -> Self {
         Self {
             accounts: Arc::new(accounts),
             parent: RwLock::new(None),
-            slot,
             bank_id_generator: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -477,7 +473,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) block_height: u64,
     pub(crate) collector_id: Pubkey,
     pub(crate) collector_fees: u64,
-    pub(crate) fee_calculator: FeeCalculator,
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) collected_rent: u64,
     pub(crate) rent_collector: RentCollector,
@@ -500,38 +495,37 @@ pub struct BankFieldsToDeserialize {
 /// new fields can be optionally serialized and optionally deserialized. At some point, the serialization and
 /// deserialization will use a new mechanism or otherwise be in sync more clearly.
 #[derive(Debug)]
-pub(crate) struct BankFieldsToSerialize {
-    pub(crate) blockhash_queue: BlockhashQueue,
-    pub(crate) ancestors: AncestorsForSerialization,
-    pub(crate) hash: Hash,
-    pub(crate) parent_hash: Hash,
-    pub(crate) parent_slot: Slot,
-    pub(crate) hard_forks: HardForks,
-    pub(crate) transaction_count: u64,
-    pub(crate) tick_height: u64,
-    pub(crate) signature_count: u64,
-    pub(crate) capitalization: u64,
-    pub(crate) max_tick_height: u64,
-    pub(crate) hashes_per_tick: Option<u64>,
-    pub(crate) ticks_per_slot: u64,
-    pub(crate) ns_per_slot: u128,
-    pub(crate) genesis_creation_time: UnixTimestamp,
-    pub(crate) slots_per_year: f64,
-    pub(crate) slot: Slot,
-    pub(crate) epoch: Epoch,
-    pub(crate) block_height: u64,
-    pub(crate) collector_id: Pubkey,
-    pub(crate) collector_fees: u64,
-    pub(crate) fee_calculator: FeeCalculator,
-    pub(crate) fee_rate_governor: FeeRateGovernor,
-    pub(crate) collected_rent: u64,
-    pub(crate) rent_collector: RentCollector,
-    pub(crate) epoch_schedule: EpochSchedule,
-    pub(crate) inflation: Inflation,
-    pub(crate) stakes: StakesEnum,
-    pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
-    pub(crate) is_delta: bool,
-    pub(crate) accounts_data_len: u64,
+pub struct BankFieldsToSerialize {
+    pub blockhash_queue: BlockhashQueue,
+    pub ancestors: AncestorsForSerialization,
+    pub hash: Hash,
+    pub parent_hash: Hash,
+    pub parent_slot: Slot,
+    pub hard_forks: HardForks,
+    pub transaction_count: u64,
+    pub tick_height: u64,
+    pub signature_count: u64,
+    pub capitalization: u64,
+    pub max_tick_height: u64,
+    pub hashes_per_tick: Option<u64>,
+    pub ticks_per_slot: u64,
+    pub ns_per_slot: u128,
+    pub genesis_creation_time: UnixTimestamp,
+    pub slots_per_year: f64,
+    pub slot: Slot,
+    pub epoch: Epoch,
+    pub block_height: u64,
+    pub collector_id: Pubkey,
+    pub collector_fees: u64,
+    pub fee_rate_governor: FeeRateGovernor,
+    pub collected_rent: u64,
+    pub rent_collector: RentCollector,
+    pub epoch_schedule: EpochSchedule,
+    pub inflation: Inflation,
+    pub stakes: StakesEnum,
+    pub epoch_stakes: HashMap<Epoch, EpochStakes>,
+    pub is_delta: bool,
+    pub accounts_data_len: u64,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -634,6 +628,46 @@ impl PartialEq for Bank {
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
             && epoch_stakes == &other.epoch_stakes
             && is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl BankFieldsToSerialize {
+    /// Create a new BankFieldsToSerialize where basically every field is defaulted.
+    /// Only use for tests; many of the fields are invalid!
+    pub fn default_for_tests() -> Self {
+        Self {
+            blockhash_queue: BlockhashQueue::default(),
+            ancestors: AncestorsForSerialization::default(),
+            hash: Hash::default(),
+            parent_hash: Hash::default(),
+            parent_slot: Slot::default(),
+            hard_forks: HardForks::default(),
+            transaction_count: u64::default(),
+            tick_height: u64::default(),
+            signature_count: u64::default(),
+            capitalization: u64::default(),
+            max_tick_height: u64::default(),
+            hashes_per_tick: Option::default(),
+            ticks_per_slot: u64::default(),
+            ns_per_slot: u128::default(),
+            genesis_creation_time: UnixTimestamp::default(),
+            slots_per_year: f64::default(),
+            slot: Slot::default(),
+            epoch: Epoch::default(),
+            block_height: u64::default(),
+            collector_id: Pubkey::default(),
+            collector_fees: u64::default(),
+            fee_rate_governor: FeeRateGovernor::default(),
+            collected_rent: u64::default(),
+            rent_collector: RentCollector::default(),
+            epoch_schedule: EpochSchedule::default(),
+            inflation: Inflation::default(),
+            stakes: Stakes::<Delegation>::default().into(),
+            epoch_stakes: HashMap::default(),
+            is_delta: bool::default(),
+            accounts_data_len: u64::default(),
+        }
     }
 }
 
@@ -898,7 +932,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             incremental_snapshot_persistence: None,
-            rc: BankRc::new(accounts, Slot::default()),
+            rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
@@ -962,10 +996,6 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             Arc::new(RuntimeConfig::default()),
-            Arc::new(RwLock::new(ProgramCache::new(
-                Slot::default(),
-                Epoch::default(),
-            ))),
             HashSet::default(),
         );
 
@@ -1099,7 +1129,6 @@ impl Bank {
             BankRc {
                 accounts: Arc::new(Accounts::new(accounts_db)),
                 parent: RwLock::new(Some(Arc::clone(&parent))),
-                slot,
                 bank_id_generator: Arc::clone(&parent.rc.bank_id_generator),
             }
         });
@@ -1494,7 +1523,6 @@ impl Bank {
     }
 
     /// Create a bank from explicit arguments and deserialized fields from snapshot
-    #[allow(clippy::float_cmp)]
     pub(crate) fn new_from_fields(
         bank_rc: BankRc,
         genesis_config: &GenesisConfig,
@@ -1598,7 +1626,6 @@ impl Bank {
             bank.epoch,
             bank.epoch_schedule.clone(),
             runtime_config,
-            Arc::new(RwLock::new(ProgramCache::new(fields.slot, fields.epoch))),
             HashSet::default(),
         );
 
@@ -1689,7 +1716,6 @@ impl Bank {
             block_height: self.block_height,
             collector_id: self.collector_id,
             collector_fees: self.collector_fees.load(Relaxed),
-            fee_calculator: FeeCalculator::default(),
             fee_rate_governor: self.fee_rate_governor.clone(),
             collected_rent: self.collected_rent.load(Relaxed),
             rent_collector: self.rent_collector.clone(),
@@ -3360,15 +3386,17 @@ impl Bank {
             // for processing. During forwarding, the transaction could expire if the
             // delay is not accounted for.
             MAX_PROCESSING_AGE - MAX_TRANSACTION_FORWARDING_DELAY,
-            ExecutionRecordingConfig {
-                enable_cpi_recording,
-                enable_log_recording: true,
-                enable_return_data_recording: true,
-            },
             &mut timings,
-            Some(&account_overrides),
-            None,
-            true,
+            TransactionProcessingConfig {
+                account_overrides: Some(&account_overrides),
+                log_messages_bytes_limit: None,
+                limit_to_load_programs: true,
+                recording_config: ExecutionRecordingConfig {
+                    enable_cpi_recording,
+                    enable_log_recording: true,
+                    enable_return_data_recording: true,
+                },
+            },
         );
 
         let post_simulation_accounts = loaded_transactions
@@ -3611,16 +3639,12 @@ impl Bank {
         balances
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch,
         max_age: usize,
-        recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
-        account_overrides: Option<&AccountOverrides>,
-        log_messages_bytes_limit: Option<usize>,
-        limit_to_load_programs: bool,
+        processing_config: TransactionProcessingConfig,
     ) -> LoadAndExecuteTransactionsOutput {
         let sanitized_txs = batch.sanitized_transactions();
         debug!("processing transactions: {}", sanitized_txs.len());
@@ -3672,13 +3696,6 @@ impl Bank {
         check_time.stop();
         debug!("check: {}us", check_time.as_us());
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_time.as_us());
-
-        let processing_config = TransactionProcessingConfig {
-            account_overrides,
-            limit_to_load_programs,
-            log_messages_bytes_limit,
-            recording_config,
-        };
 
         let sanitized_output = self
             .transaction_processor
@@ -3889,7 +3906,6 @@ impl Bank {
         txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
-        let hash_queue = self.blockhash_queue.read().unwrap();
         let mut fees = 0;
 
         let results = txs
@@ -3897,21 +3913,16 @@ impl Bank {
             .zip(execution_results)
             .map(|(tx, execution_result)| {
                 let message = tx.message();
-                let (execution_status, is_nonce, lamports_per_signature) =
-                    Self::get_details_from_execution_result(
-                        &hash_queue,
-                        execution_result,
-                        message.recent_blockhash(),
-                    )?;
-                let fee = self.get_fee_for_message_with_lamports_per_signature(
-                    message,
-                    lamports_per_signature,
-                );
+                let details = match &execution_result {
+                    TransactionExecutionResult::Executed { details, .. } => details,
+                    TransactionExecutionResult::NotExecuted(err) => return Err(err.clone()),
+                };
 
+                let fee = details.fee_details.total_fee();
                 self.check_execution_status_and_charge_fee(
                     message,
-                    execution_status,
-                    is_nonce,
+                    &details.status,
+                    details.is_nonce,
                     fee,
                 )?;
 
@@ -3930,7 +3941,6 @@ impl Bank {
         txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
-        let hash_queue = self.blockhash_queue.read().unwrap();
         let mut accumulated_fee_details = FeeDetails::default();
 
         let results = txs
@@ -3938,34 +3948,20 @@ impl Bank {
             .zip(execution_results)
             .map(|(tx, execution_result)| {
                 let message = tx.message();
-                let (execution_status, is_nonce, lamports_per_signature) =
-                    Self::get_details_from_execution_result(
-                        &hash_queue,
-                        execution_result,
-                        message.recent_blockhash(),
-                    )?;
+                let details = match &execution_result {
+                    TransactionExecutionResult::Executed { details, .. } => details,
+                    TransactionExecutionResult::NotExecuted(err) => return Err(err.clone()),
+                };
 
-                if !FeeStructure::to_clear_transaction_fee(lamports_per_signature) {
-                    let fee_details = self.fee_structure().calculate_fee_details(
-                        message,
-                        &process_compute_budget_instructions(message.program_instructions_iter())
-                            .unwrap_or_default()
-                            .into(),
-                        self.feature_set
-                            .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-                        self.feature_set
-                            .is_active(&remove_rounding_in_fee_calculation::id()),
-                    );
+                self.check_execution_status_and_charge_fee(
+                    message,
+                    &details.status,
+                    details.is_nonce,
+                    details.fee_details.total_fee(),
+                )?;
 
-                    self.check_execution_status_and_charge_fee(
-                        message,
-                        execution_status,
-                        is_nonce,
-                        fee_details.total_fee(),
-                    )?;
+                accumulated_fee_details.accumulate(&details.fee_details);
 
-                    accumulated_fee_details.accumulate(&fee_details);
-                }
                 Ok(())
             })
             .collect();
@@ -3975,33 +3971,6 @@ impl Bank {
             .unwrap()
             .accumulate(&accumulated_fee_details);
         results
-    }
-
-    fn get_details_from_execution_result<'a>(
-        hash_queue_readonly: &RwLockReadGuard<'a, BlockhashQueue>,
-        execution_result: &'a TransactionExecutionResult,
-        transaction_blockhash: &Hash,
-    ) -> Result<(&'a transaction::Result<()>, bool, u64)> {
-        let (execution_status, durable_nonce_fee) = match &execution_result {
-            TransactionExecutionResult::Executed { details, .. } => {
-                Ok((&details.status, details.durable_nonce_fee.as_ref()))
-            }
-            TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
-        }?;
-
-        let (lamports_per_signature, is_nonce) = durable_nonce_fee
-            .map(|durable_nonce_fee| durable_nonce_fee.lamports_per_signature())
-            .map(|maybe_lamports_per_signature| (maybe_lamports_per_signature, true))
-            .unwrap_or_else(|| {
-                (
-                    hash_queue_readonly.get_lamports_per_signature(transaction_blockhash),
-                    false,
-                )
-            });
-
-        let lamports_per_signature =
-            lamports_per_signature.ok_or(TransactionError::BlockhashNotFound)?;
-        Ok((execution_status, is_nonce, lamports_per_signature))
     }
 
     fn check_execution_status_and_charge_fee(
@@ -4153,11 +4122,34 @@ impl Bank {
             update_transaction_statuses_time.as_us(),
         );
 
+        let loaded_accounts_stats = Self::collect_loaded_accounts_stats(loaded_txs);
+        assert_eq!(
+            loaded_accounts_stats.len(),
+            execution_results.len(),
+            "loaded_account_stats and execution_results are not the same size"
+        );
+
         TransactionResults {
             fee_collection_results,
+            loaded_accounts_stats,
             execution_results,
             rent_debits,
         }
+    }
+
+    fn collect_loaded_accounts_stats(
+        loaded_txs: &[TransactionLoadResult],
+    ) -> Vec<Result<TransactionLoadedAccountsStats>> {
+        loaded_txs
+            .iter()
+            .map(|load_result| match load_result {
+                Ok(loaded_tx) => Ok(TransactionLoadedAccountsStats {
+                    loaded_accounts_data_size: loaded_tx.loaded_accounts_data_size,
+                    loaded_accounts_count: loaded_tx.accounts.len(),
+                }),
+                Err(err) => Err(err.clone()),
+            })
+            .collect()
     }
 
     fn collect_rent(
@@ -4416,28 +4408,14 @@ impl Bank {
                 .test_skip_rewrites_but_include_in_bank_hash;
         let mut skipped_rewrites = Vec::default();
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
-            let rent_collected_info = if self.should_collect_rent() {
-                let (rent_collected_info, measure) = measure!(self
-                    .rent_collector
-                    .collect_from_existing_account(pubkey, account));
-                time_collecting_rent_us += measure.as_us();
-                rent_collected_info
-            } else {
-                // When rent fee collection is disabled, we won't collect rent for any account. If there
-                // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
-                // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
-                // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
-                if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
-                    && self.rent_collector.get_rent_due(
-                        account.lamports(),
-                        account.data().len(),
-                        account.rent_epoch(),
-                    ) == RentDue::Exempt
-                {
-                    account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                }
-                CollectedInfo::default()
-            };
+            let (rent_collected_info, measure) = measure!(collect_rent_from_account(
+                &self.feature_set,
+                &self.rent_collector,
+                pubkey,
+                account
+            ));
+            time_collecting_rent_us += measure.as_us();
+
             // only store accounts where we collected rent
             // but get the hash for all these accounts even if collected rent is 0 (= not updated).
             // Also, there's another subtle side-effect from rewrites: this
@@ -4829,11 +4807,13 @@ impl Bank {
         } = self.load_and_execute_transactions(
             batch,
             max_age,
-            recording_config,
             timings,
-            None,
-            log_messages_bytes_limit,
-            false,
+            TransactionProcessingConfig {
+                account_overrides: None,
+                log_messages_bytes_limit,
+                limit_to_load_programs: false,
+                recording_config,
+            },
         );
 
         let (last_blockhash, lamports_per_signature) =
@@ -5034,7 +5014,7 @@ impl Bank {
         new_account: &AccountSharedData,
     ) {
         let old_account_data_size =
-            if let Some(old_account) = self.get_account_with_fixed_root(pubkey) {
+            if let Some(old_account) = self.get_account_with_fixed_root_no_cache(pubkey) {
                 match new_account.lamports().cmp(&old_account.lamports()) {
                     std::cmp::Ordering::Greater => {
                         let increased = new_account.lamports() - old_account.lamports();
@@ -5076,7 +5056,7 @@ impl Bank {
     }
 
     fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
-        match self.get_account_with_fixed_root(pubkey) {
+        match self.get_account_with_fixed_root_no_cache(pubkey) {
             Some(mut account) => {
                 let min_balance = match get_system_account_kind(&account) {
                     Some(SystemAccountKind::Nonce) => self
@@ -5200,6 +5180,25 @@ impl Bank {
                 .unwrap()
                 .register(new_hard_fork_slot);
         }
+    }
+
+    pub fn get_account_with_fixed_root_no_cache(
+        &self,
+        pubkey: &Pubkey,
+    ) -> Option<AccountSharedData> {
+        self.load_account_with(pubkey, |_| false)
+            .map(|(acc, _slot)| acc)
+    }
+
+    fn load_account_with(
+        &self,
+        pubkey: &Pubkey,
+        callback: impl for<'local> Fn(&'local AccountSharedData) -> bool,
+    ) -> Option<(AccountSharedData, Slot)> {
+        self.rc
+            .accounts
+            .accounts_db
+            .load_account_with(&self.ancestors, pubkey, callback)
     }
 
     // Hi! leaky abstraction here....
@@ -6747,13 +6746,14 @@ impl Bank {
         reload: bool,
         effective_epoch: Epoch,
     ) -> Option<Arc<ProgramCacheEntry>> {
-        let program_cache = self.transaction_processor.program_cache.read().unwrap();
+        let environments = self
+            .transaction_processor
+            .get_environments_for_epoch(effective_epoch);
         load_program_with_pubkey(
             self,
-            &program_cache,
+            &environments,
             pubkey,
             self.slot(),
-            effective_epoch,
             self.epoch_schedule(),
             reload,
         )
@@ -7314,7 +7314,9 @@ pub mod test_utils {
     ) -> std::result::Result<u64, LamportsError> {
         // This doesn't collect rents intentionally.
         // Rents should only be applied to actual TXes
-        let mut account = bank.get_account_with_fixed_root(pubkey).unwrap_or_default();
+        let mut account = bank
+            .get_account_with_fixed_root_no_cache(pubkey)
+            .unwrap_or_default();
         account.checked_add_lamports(lamports)?;
         bank.store_account(pubkey, &account);
         Ok(account.lamports())

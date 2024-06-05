@@ -10,21 +10,19 @@ use {
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
-        transaction_results::{
-            DurableNonceFee, TransactionExecutionDetails, TransactionExecutionResult,
-        },
+        transaction_results::{TransactionExecutionDetails, TransactionExecutionResult},
     },
     log::debug,
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        compute_budget::ComputeBudget,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironments,
         },
         log_collector::LogCollector,
         sysvar_cache::SysvarCache,
@@ -166,7 +164,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         epoch: Epoch,
         epoch_schedule: EpochSchedule,
         runtime_config: Arc<RuntimeConfig>,
-        program_cache: Arc<RwLock<ProgramCache<FG>>>,
         builtin_program_ids: HashSet<Pubkey>,
     ) -> Self {
         Self {
@@ -176,7 +173,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_structure: FeeStructure::default(),
             runtime_config,
             sysvar_cache: RwLock::<SysvarCache>::default(),
-            program_cache,
+            program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
             builtin_program_ids: RwLock::new(builtin_program_ids),
         }
     }
@@ -192,6 +189,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache: self.program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
         }
+    }
+
+    /// Returns the current environments depending on the given epoch
+    pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
+        self.program_cache
+            .read()
+            .unwrap()
+            .get_environments_for_epoch(epoch)
     }
 
     /// Main entrypoint to the SVM.
@@ -419,10 +424,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
                         callback,
-                        &program_cache,
+                        &self.get_environments_for_epoch(self.epoch),
                         &key,
                         self.slot,
-                        self.epoch,
                         &self.epoch_schedule,
                         false,
                     )
@@ -460,10 +464,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Once a task completes we'll wake up and try to load the
                 // missing programs inside the tx batch again.
                 let _new_cookie = task_waiter.wait(task_cookie);
-
-                // This branch is not tested in the SVM because it requires concurrent threads.
-                // In addition, one of them must be holding the mutex while the other must be
-                // trying to lock it.
             }
         }
 
@@ -488,17 +488,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
                 let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
                 drop(program_cache);
-                let program_cache_read = self.program_cache.read().unwrap();
                 if let Some(recompiled) = load_program_with_pubkey(
                     callbacks,
-                    &program_cache_read,
+                    &self.get_environments_for_epoch(effective_epoch),
                     &key,
                     self.slot,
-                    effective_epoch,
                     &self.epoch_schedule,
                     false,
                 ) {
-                    drop(program_cache_read);
                     recompiled
                         .tx_usage_counter
                         .fetch_add(program_to_recompile.tx_usage_counter.load(Relaxed), Relaxed);
@@ -727,7 +724,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 status,
                 log_messages,
                 inner_instructions,
-                durable_nonce_fee: loaded_transaction.nonce.as_ref().map(DurableNonceFee::from),
+                fee_details: loaded_transaction.fee_details,
+                is_nonce: loaded_transaction.nonce.is_some(),
                 return_data,
                 executed_units,
                 accounts_data_len_delta,
@@ -837,7 +835,9 @@ mod tests {
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
             bpf_loader,
+            bpf_loader_upgradeable::{self, UpgradeableLoaderState},
             feature_set::FeatureSet,
+            fee::FeeDetails,
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader},
@@ -848,6 +848,12 @@ mod tests {
             sysvar::{self, rent::Rent},
             transaction::{SanitizedTransaction, Transaction, TransactionError},
             transaction_context::TransactionContext,
+        },
+        std::{
+            env,
+            fs::{self, File},
+            io::Read,
+            thread,
         },
     };
 
@@ -870,12 +876,12 @@ mod tests {
     pub struct MockBankCallback {
         rent_collector: RentCollector,
         feature_set: Arc<FeatureSet>,
-        pub account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
+        pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
     }
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.borrow().get(account) {
+            if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
                 if data.lamports() == 0 {
                     None
                 } else {
@@ -887,7 +893,11 @@ mod tests {
         }
 
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-            self.account_shared_data.borrow().get(pubkey).cloned()
+            self.account_shared_data
+                .read()
+                .unwrap()
+                .get(pubkey)
+                .cloned()
         }
 
         fn get_last_blockhash_and_lamports_per_signature(&self) -> (Hash, u64) {
@@ -906,7 +916,8 @@ mod tests {
             let mut account_data = AccountSharedData::default();
             account_data.set_data(name.as_bytes().to_vec());
             self.account_shared_data
-                .borrow_mut()
+                .write()
+                .unwrap()
                 .insert(*program_id, account_data);
         }
     }
@@ -990,8 +1001,10 @@ mod tests {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
             program_indices: vec![vec![0]],
             nonce: None,
+            fee_details: FeeDetails::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 32,
         };
 
         let mut processing_config = TransactionProcessingConfig::default();
@@ -1114,8 +1127,10 @@ mod tests {
             ],
             program_indices: vec![vec![0]],
             nonce: None,
+            fee_details: FeeDetails::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
         };
 
         let processing_config = TransactionProcessingConfig {
@@ -1165,7 +1180,8 @@ mod tests {
         account_data.set_owner(bpf_loader::id());
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(key, account_data);
 
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
@@ -1197,7 +1213,8 @@ mod tests {
         data.set_lamports(93);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(key1, data);
 
         let message = Message {
@@ -1227,7 +1244,8 @@ mod tests {
         account_data.set_lamports(90);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(key2, account_data);
 
         let message = Message {
@@ -1296,35 +1314,35 @@ mod tests {
         let account5_pubkey = Pubkey::new_unique();
 
         let bank = MockBankCallback::default();
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey1,
             AccountSharedData::new(1, 10, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey2,
             AccountSharedData::new(1, 10, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             program1_pubkey,
             AccountSharedData::new(40, 1, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             program2_pubkey,
             AccountSharedData::new(40, 1, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account1_pubkey,
             AccountSharedData::new(1, 10, &non_program_pubkey1),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account2_pubkey,
             AccountSharedData::new(1, 10, &non_program_pubkey2),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account3_pubkey,
             AccountSharedData::new(40, 1, &program1_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account4_pubkey,
             AccountSharedData::new(40, 1, &program2_pubkey),
         );
@@ -1398,35 +1416,35 @@ mod tests {
         let account5_pubkey = Pubkey::new_unique();
 
         let bank = MockBankCallback::default();
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey1,
             AccountSharedData::new(1, 10, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey2,
             AccountSharedData::new(1, 10, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             program1_pubkey,
             AccountSharedData::new(40, 1, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             program2_pubkey,
             AccountSharedData::new(40, 1, &account5_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account1_pubkey,
             AccountSharedData::new(1, 10, &non_program_pubkey1),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account2_pubkey,
             AccountSharedData::new(1, 10, &non_program_pubkey2),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account3_pubkey,
             AccountSharedData::new(40, 1, &program1_pubkey),
         );
-        bank.account_shared_data.borrow_mut().insert(
+        bank.account_shared_data.write().unwrap().insert(
             account4_pubkey,
             AccountSharedData::new(40, 1, &program2_pubkey),
         );
@@ -1491,14 +1509,16 @@ mod tests {
         let clock_account = create_account_shared_data_for_test(&clock);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::clock::id(), clock_account);
 
         let epoch_schedule = EpochSchedule::custom(64, 2, true);
         let epoch_schedule_account = create_account_shared_data_for_test(&epoch_schedule);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
 
         let fees = sysvar::fees::Fees {
@@ -1509,14 +1529,16 @@ mod tests {
         let fees_account = create_account_shared_data_for_test(&fees);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::fees::id(), fees_account);
 
         let rent = Rent::with_slots_per_epoch(2048);
         let rent_account = create_account_shared_data_for_test(&rent);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::rent::id(), rent_account);
 
         let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1563,14 +1585,16 @@ mod tests {
         let clock_account = create_account_shared_data_for_test(&clock);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::clock::id(), clock_account);
 
         let epoch_schedule = EpochSchedule::custom(64, 2, true);
         let epoch_schedule_account = create_account_shared_data_for_test(&epoch_schedule);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
 
         let fees = sysvar::fees::Fees {
@@ -1581,14 +1605,16 @@ mod tests {
         let fees_account = create_account_shared_data_for_test(&fees);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::fees::id(), fees_account);
 
         let rent = Rent::with_slots_per_epoch(2048);
         let rent_account = create_account_shared_data_for_test(&rent);
         mock_bank
             .account_shared_data
-            .borrow_mut()
+            .write()
+            .unwrap()
             .insert(sysvar::rent::id(), rent_account);
 
         let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1655,7 +1681,7 @@ mod tests {
         batch_processor.add_builtin(&mock_bank, key, name, program);
 
         assert_eq!(
-            mock_bank.account_shared_data.borrow()[&key].data(),
+            mock_bank.account_shared_data.read().unwrap()[&key].data(),
             name.as_bytes()
         );
 
@@ -1678,5 +1704,115 @@ mod tests {
             |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
         );
         assert_eq!(entry, Arc::new(program));
+    }
+
+    #[test]
+    fn fast_concur_test() {
+        let mut mock_bank = MockBankCallback::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::new(
+            5,
+            5,
+            EpochSchedule::default(),
+            Arc::new(RuntimeConfig::default()),
+            HashSet::new(),
+        );
+        batch_processor.program_cache.write().unwrap().fork_graph =
+            Some(Arc::new(RwLock::new(TestForkGraph {})));
+
+        let programs = vec![
+            deploy_program("hello-solana".to_string(), &mut mock_bank),
+            deploy_program("simple-transfer".to_string(), &mut mock_bank),
+            deploy_program("clock-sysvar".to_string(), &mut mock_bank),
+        ];
+
+        let account_maps: HashMap<Pubkey, u64> = programs
+            .iter()
+            .enumerate()
+            .map(|(idx, key)| (*key, idx as u64))
+            .collect();
+
+        for _ in 0..10 {
+            let ths: Vec<_> = (0..4)
+                .map(|_| {
+                    let local_bank = mock_bank.clone();
+                    let processor = TransactionBatchProcessor::new_from(
+                        &batch_processor,
+                        batch_processor.slot,
+                        batch_processor.epoch,
+                    );
+                    let maps = account_maps.clone();
+                    let programs = programs.clone();
+                    thread::spawn(move || {
+                        let result = processor.replenish_program_cache(&local_bank, &maps, true);
+                        for key in &programs {
+                            let cache_entry = result.find(key);
+                            assert!(matches!(
+                                cache_entry.unwrap().program,
+                                ProgramCacheEntryType::Loaded(_)
+                            ));
+                        }
+                    })
+                })
+                .collect();
+
+            for th in ths {
+                th.join().unwrap();
+            }
+        }
+    }
+
+    fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
+        let program_account = Pubkey::new_unique();
+        let program_data_account = Pubkey::new_unique();
+        let state = UpgradeableLoaderState::Program {
+            programdata_address: program_data_account,
+        };
+
+        // The program account must have funds and hold the executable binary
+        let mut account_data = AccountSharedData::default();
+        account_data.set_data(bincode::serialize(&state).unwrap());
+        account_data.set_lamports(25);
+        account_data.set_owner(bpf_loader_upgradeable::id());
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(program_account, account_data);
+
+        let mut account_data = AccountSharedData::default();
+        let state = UpgradeableLoaderState::ProgramData {
+            slot: 0,
+            upgrade_authority_address: None,
+        };
+        let mut header = bincode::serialize(&state).unwrap();
+        let mut complement = vec![
+            0;
+            std::cmp::max(
+                0,
+                UpgradeableLoaderState::size_of_programdata_metadata().saturating_sub(header.len())
+            )
+        ];
+
+        let mut dir = env::current_dir().unwrap();
+        dir.push("tests");
+        dir.push("example-programs");
+        dir.push(name.as_str());
+        let name = name.replace('-', "_");
+        dir.push(name + "_program.so");
+        let mut file = File::open(dir.clone()).expect("file not found");
+        let metadata = fs::metadata(dir).expect("Unable to read metadata");
+        let mut buffer = vec![0; metadata.len() as usize];
+        file.read_exact(&mut buffer).expect("Buffer overflow");
+
+        header.append(&mut complement);
+        header.append(&mut buffer);
+        account_data.set_data(header);
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(program_data_account, account_data);
+
+        program_account
     }
 }
