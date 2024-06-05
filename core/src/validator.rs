@@ -67,7 +67,9 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{
-        datapoint_info, metrics::metrics_config_sanity_check, poh_timing_point::PohTimingSender,
+        datapoint_info,
+        metrics::{metrics_config_sanity_check, MetricsError},
+        poh_timing_point::PohTimingSender,
     },
     solana_poh::{
         poh_recorder::PohRecorder,
@@ -511,7 +513,7 @@ impl Validator {
         tpu_connection_pool_size: usize,
         tpu_enable_udp: bool,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ValidatorError> {
         let start_time = Instant::now();
 
         let id = identity_keypair.pubkey();
@@ -579,7 +581,8 @@ impl Validator {
         if !ledger_path.is_dir() {
             return Err(format!(
                 "ledger directory does not exist or is not accessible: {ledger_path:?}"
-            ));
+            )
+            .into());
         }
         let genesis_config =
             open_genesis_config(ledger_path, config.max_genesis_archive_unpacked_size)
@@ -746,7 +749,8 @@ impl Validator {
                     "shred version mismatch: expected {} found: {}",
                     expected_shred_version,
                     node.info.shred_version(),
-                ));
+                )
+                .into());
             }
         }
 
@@ -1130,8 +1134,7 @@ impl Validator {
             &cluster_info,
             rpc_override_health_check,
             &start_progress,
-        )
-        .map_err(|err| format!("wait_for_supermajority failed: {err:?}"))?;
+        )?;
 
         let blockstore_metric_report_service =
             BlockstoreMetricReportService::new(blockstore.clone(), exit.clone());
@@ -1355,9 +1358,9 @@ impl Validator {
                 exit: exit.clone(),
             }) {
                 Ok(()) => {
-                    return Err("wen_restart phase one completedy".to_string());
+                    return Err("wen_restart phase one completedy".to_string().into());
                 }
-                Err(e) => return Err(format!("wait_for_wen_restart failed: {e:?}")),
+                Err(e) => return Err(format!("wait_for_wen_restart failed: {e:?}").into()),
             };
         }
 
@@ -2294,11 +2297,25 @@ fn initialize_rpc_transaction_history_services(
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ValidatorError {
+#[derive(Debug, Display, PartialEq, Eq)]
+pub enum ValidatorError {
     BadExpectedBankHash,
     NotEnoughLedgerData,
     Error(String),
+}
+
+impl std::error::Error for ValidatorError {}
+
+impl From<String> for ValidatorError {
+    fn from(err: String) -> Self {
+        ValidatorError::Error(err)
+    }
+}
+
+impl From<MetricsError> for ValidatorError {
+    fn from(err: MetricsError) -> Self {
+        ValidatorError::Error(err.to_string())
+    }
 }
 
 // Return if the validator waited on other nodes to start. In this case
