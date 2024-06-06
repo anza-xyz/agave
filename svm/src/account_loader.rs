@@ -1,8 +1,7 @@
 use {
     crate::{
-        account_overrides::AccountOverrides,
-        account_rent_state::RentState,
-        nonce_info::{NonceFull, NoncePartial},
+        account_overrides::AccountOverrides, account_rent_state::RentState,
+        nonce_info::NoncePartial, rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
     },
@@ -45,7 +44,7 @@ pub struct CheckedTransactionDetails {
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct ValidatedTransactionDetails {
-    pub nonce: Option<NonceFull>,
+    pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
     pub fee_payer_account: AccountSharedData,
     pub fee_payer_rent_debit: u64,
@@ -55,17 +54,11 @@ pub struct ValidatedTransactionDetails {
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
     pub program_indices: TransactionProgramIndices,
-    pub nonce: Option<NonceFull>,
     pub fee_details: FeeDetails,
+    pub rollback_accounts: RollbackAccounts,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
     pub loaded_accounts_data_size: usize,
-}
-
-impl LoadedTransaction {
-    pub fn fee_payer_account(&self) -> Option<&TransactionAccount> {
-        self.accounts.first()
-    }
 }
 
 /// Collect rent from an account if rent is still enabled and regardless of
@@ -363,8 +356,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     Ok(LoadedTransaction {
         accounts,
         program_indices,
-        nonce: tx_details.nonce,
         fee_details: tx_details.fee_details,
+        rollback_accounts: tx_details.rollback_accounts,
         rent: tx_rent,
         rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size,

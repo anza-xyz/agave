@@ -9,8 +9,8 @@ use {
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
-        nonce_info::NonceFull,
         program_loader::load_program_with_pubkey,
+        rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
@@ -416,30 +416,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                          lamports_per_signature,
                      }| {
                         let message = sanitized_tx.borrow().message();
-                        let (fee_details, fee_payer_account, fee_payer_rent_debit) = self
-                            .validate_transaction_fee_payer(
-                                callbacks,
-                                message,
-                                feature_set,
-                                fee_structure,
-                                lamports_per_signature,
-                                rent_collector,
-                                error_counters,
-                            )?;
+                        let (
+                            fee_details,
+                            fee_payer_account,
+                            fee_payer_rent_debit,
+                            fee_payer_rent_epoch,
+                        ) = self.validate_transaction_fee_payer(
+                            callbacks,
+                            message,
+                            feature_set,
+                            fee_structure,
+                            lamports_per_signature,
+                            rent_collector,
+                            error_counters,
+                        )?;
 
-                        // Update nonce with fee-subtracted accounts
-                        let fee_payer_address = message.fee_payer();
-                        let nonce = nonce.map(|nonce| {
-                            NonceFull::from_partial(
-                                nonce,
-                                fee_payer_address,
-                                fee_payer_account.clone(),
-                                fee_payer_rent_debit,
-                            )
-                        });
+                        // Capture fee-subtracted fee payer account and original nonce account state
+                        // to rollback to if transaction execution fails.
+                        let rollback_accounts = RollbackAccounts::new(
+                            nonce,
+                            *message.fee_payer(),
+                            fee_payer_account.clone(),
+                            fee_payer_rent_debit,
+                            fee_payer_rent_epoch,
+                        );
 
                         Ok(ValidatedTransactionDetails {
-                            nonce,
+                            rollback_accounts,
                             fee_details,
                             fee_payer_account,
                             fee_payer_rent_debit,
@@ -462,7 +465,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         lamports_per_signature: u64,
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<(FeeDetails, AccountSharedData, u64)> {
+    ) -> transaction::Result<(FeeDetails, AccountSharedData, u64, u64)> {
         let fee_payer_address = message.fee_payer();
         let Some(mut fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
         else {
@@ -470,6 +473,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             return Err(TransactionError::AccountNotFound);
         };
 
+        let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
         let fee_payer_rent_debit = collect_rent_from_account(
             feature_set,
             rent_collector,
@@ -498,7 +502,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_details.total_fee(),
         )?;
 
-        Ok((fee_details, fee_payer_account, fee_payer_rent_debit))
+        Ok((
+            fee_details,
+            fee_payer_account,
+            fee_payer_rent_debit,
+            fee_payer_rent_epoch,
+        ))
     }
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
@@ -885,7 +894,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 log_messages,
                 inner_instructions,
                 fee_details: loaded_transaction.fee_details,
-                is_nonce: loaded_transaction.nonce.is_some(),
+                is_nonce: loaded_transaction.rollback_accounts.nonce().is_some(),
                 return_data,
                 executed_units,
                 accounts_data_len_delta,

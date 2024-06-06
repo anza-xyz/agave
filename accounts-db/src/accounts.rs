@@ -29,9 +29,8 @@ use {
         transaction_context::TransactionAccount,
     },
     solana_svm::{
-        account_loader::TransactionLoadResult,
-        nonce_info::{NonceFull, NonceInfo},
-        transaction_results::TransactionExecutionResult,
+        account_loader::TransactionLoadResult, nonce_info::NonceInfo,
+        rollback_accounts::RollbackAccounts, transaction_results::TransactionExecutionResult,
     },
     std::{
         cmp::Reverse,
@@ -723,21 +722,6 @@ impl Accounts {
                 TransactionExecutionResult::NotExecuted(_) => continue,
             };
 
-            enum AccountCollectionMode<'a> {
-                Normal,
-                FailedWithNonce { nonce: &'a NonceFull },
-            }
-
-            let collection_mode = match (execution_status, &loaded_transaction.nonce) {
-                (Ok(_), _) => AccountCollectionMode::Normal,
-                (Err(_), Some(nonce)) => AccountCollectionMode::FailedWithNonce { nonce },
-                (Err(_), None) => {
-                    // Fees for failed transactions which don't use durable nonces are
-                    // deducted in Bank::filter_program_errors_and_collect_fee
-                    continue;
-                }
-            };
-
             // Accounts that are invoked and also not passed as an instruction
             // account to a program don't need to be stored because it's assumed
             // to be impossible for a committable transaction to modify an
@@ -755,21 +739,24 @@ impl Accounts {
             };
 
             let message = tx.message();
+            let rollback_accounts = &loaded_transaction.rollback_accounts;
+            let maybe_nonce_address = rollback_accounts.nonce().map(|account| account.address());
+
             for (i, (address, account)) in (0..message.account_keys().len())
                 .zip(loaded_transaction.accounts.iter_mut())
                 .filter(|(i, _)| is_storable_account(message, *i))
             {
                 if message.is_writable(i) {
-                    let should_collect_account = match collection_mode {
-                        AccountCollectionMode::Normal => true,
-                        AccountCollectionMode::FailedWithNonce { nonce } => {
+                    let should_collect_account = match execution_status {
+                        Ok(()) => true,
+                        Err(_) => {
                             let is_fee_payer = i == 0;
-                            let is_nonce_account = address == nonce.address();
-                            post_process_failed_nonce(
+                            let is_nonce_account = Some(&*address) == maybe_nonce_address;
+                            post_process_failed_tx(
                                 account,
                                 is_fee_payer,
                                 is_nonce_account,
-                                nonce,
+                                rollback_accounts,
                                 durable_nonce,
                                 lamports_per_signature,
                             );
@@ -790,41 +777,41 @@ impl Accounts {
     }
 }
 
-fn post_process_failed_nonce(
+fn post_process_failed_tx(
     account: &mut AccountSharedData,
     is_fee_payer: bool,
     is_nonce_account: bool,
-    nonce: &NonceFull,
+    rollback_accounts: &RollbackAccounts,
     &durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
 ) {
     if is_nonce_account {
-        // The transaction failed which would normally drop the account
-        // processing changes, since this account is now being included
-        // in the accounts written back to the db, roll it back to
-        // pre-processing state.
-        *account = nonce.account().clone();
+        if let Some(nonce) = rollback_accounts.nonce() {
+            // The transaction failed which would normally drop the account
+            // processing changes, since this account is now being included
+            // in the accounts written back to the db, roll it back to
+            // pre-processing state.
+            *account = nonce.account().clone();
 
-        // Advance the stored blockhash to prevent fee theft by someone
-        // replaying nonce transactions that have failed with an
-        // `InstructionError`.
-        //
-        // Since we know we are dealing with a valid nonce account,
-        // unwrap is safe here
-        let nonce_versions = StateMut::<NonceVersions>::state(account).unwrap();
-        if let NonceState::Initialized(ref data) = nonce_versions.state() {
-            let nonce_state =
-                NonceState::new_initialized(&data.authority, durable_nonce, lamports_per_signature);
-            let nonce_versions = NonceVersions::new(nonce_state);
-            account.set_state(&nonce_versions).unwrap();
+            // Advance the stored blockhash to prevent fee theft by someone
+            // replaying nonce transactions that have failed with an
+            // `InstructionError`.
+            //
+            // Since we know we are dealing with a valid nonce account,
+            // unwrap is safe here
+            let nonce_versions = StateMut::<NonceVersions>::state(account).unwrap();
+            if let NonceState::Initialized(ref data) = nonce_versions.state() {
+                let nonce_state = NonceState::new_initialized(
+                    &data.authority,
+                    durable_nonce,
+                    lamports_per_signature,
+                );
+                let nonce_versions = NonceVersions::new(nonce_state);
+                account.set_state(&nonce_versions).unwrap();
+            }
         }
     } else if is_fee_payer {
-        if let Some(fee_payer_account) = nonce.fee_payer_account() {
-            // Instruction error and fee-payer for this nonce tx is not
-            // the nonce account itself, rollback the fee payer to the
-            // fee-paid original state.
-            *account = fee_payer_account.clone();
-        }
+        *account = rollback_accounts.fee_payer_account().clone();
     }
 }
 
