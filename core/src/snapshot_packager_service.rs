@@ -1,7 +1,9 @@
 mod snapshot_gossip_manager;
 use {
     crossbeam_channel::{Receiver, Sender},
+    itertools::Itertools,
     snapshot_gossip_manager::SnapshotGossipManager,
+    solana_accounts_db::accounts_db::AccountStorageEntry,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::{measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
@@ -45,9 +47,20 @@ impl SnapshotPackagerService {
                 renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
-
+                let mut last_snapshot_storages: Option<Vec<Arc<AccountStorageEntry>>> = None;
                 loop {
                     if exit.load(Ordering::Relaxed) {
+                        info!("SnapshotPackagerService exiting, flushing last snapshot storages ... ");
+                        let (_, measure_flush) = measure_us!({
+                            if let Some(last_snapshot_storages) = last_snapshot_storages {
+                                for storage in last_snapshot_storages {
+                                    if let Err(e) = storage.flush() {
+                                        error!("error flushing {:?} {}", storage.path().to_path_buf(), e);
+                                    }
+                                }
+                        }
+                        });
+                        info!("Done flushing snapshot storages - {}us. SnapshotPackagerService exit.", measure_flush);
                         break;
                     }
 
@@ -70,7 +83,7 @@ impl SnapshotPackagerService {
                     let snapshot_kind = snapshot_package.snapshot_kind;
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
-
+                    last_snapshot_storages = Some(snapshot_package.snapshot_storages.iter().cloned().collect_vec());
                     // Archiving the snapshot package is not allowed to fail.
                     // AccountsBackgroundService calls `clean_accounts()` with a value for
                     // last_full_snapshot_slot that requires this archive call to succeed.
