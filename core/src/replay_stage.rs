@@ -3464,6 +3464,13 @@ impl ReplayStage {
                                 // Since we are updating our tower we need to update associated caches for previously computed
                                 // slots as well.
                                 for slot in frozen_banks.iter().map(|b| b.slot()) {
+                                    if !progress
+                                        .get_fork_stats(slot)
+                                        .expect("All frozen banks must exist in fork stats")
+                                        .computed
+                                    {
+                                        continue;
+                                    }
                                     Self::cache_tower_stats(progress, tower, slot, ancestors);
                                 }
                             }
