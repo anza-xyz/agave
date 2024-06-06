@@ -29,6 +29,7 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-sdk = { workspace = true }
 solana-vote = { workspace = true }
+solana-type-overrides = { workspace = true }
 solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
 
@@ -55,3 +56,4 @@ frozen-abi = [
     "solana-compute-budget/frozen-abi",
     "solana-sdk/frozen-abi",
 ]
+shuttle-test = ["solana-type-overrides/shuttle-test"]

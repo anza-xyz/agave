@@ -37,12 +37,12 @@ use {
         },
     },
     solana_vote::vote_account::VoteAccountsHashMap,
+    solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{
         alloc::Layout,
         cell::RefCell,
         fmt::{self, Debug},
         rc::Rc,
-        sync::{atomic::Ordering, Arc},
     },
 };
 
@@ -692,7 +692,7 @@ macro_rules! with_mock_invoke_context {
                 account::ReadableAccount, feature_set::FeatureSet, hash::Hash, sysvar::rent::Rent,
                 transaction_context::TransactionContext,
             },
-            std::sync::Arc,
+            solana_type_overrides::sync::Arc,
             $crate::{
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,

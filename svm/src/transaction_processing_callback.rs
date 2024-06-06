@@ -1,6 +1,8 @@
 use {
     solana_program_runtime::loaded_programs::ProgramCacheMatchCriteria,
     solana_sdk::{account::AccountSharedData, pubkey::Pubkey},
+    solana_vote::vote_account::VoteAccountsHashMap,
+    solana_type_overrides::sync::Arc,
 };
 
 /// Runtime callbacks for transaction processing.
