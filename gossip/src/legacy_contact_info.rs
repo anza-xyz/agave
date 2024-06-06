@@ -191,7 +191,6 @@ impl LegacyContactInfo {
         self.shred_version
     }
 
-<<<<<<< HEAD
     pub fn set_pubkey(&mut self, pubkey: Pubkey) {
         self.id = pubkey
     }
@@ -206,14 +205,6 @@ impl LegacyContactInfo {
     }
 
     get_socket!(gossip);
-=======
-    pub(crate) fn gossip(&self) -> Result<SocketAddr, Error> {
-        let socket = &self.gossip;
-        crate::contact_info::sanitize_socket(socket)?;
-        Ok(socket).copied()
-    }
-
->>>>>>> 329a186c50 (pings received contact-infos on gossip socket address (#1615))
     get_socket!(tvu, tvu_quic);
     get_socket!(@quic tpu);
     get_socket!(@quic tpu_forwards);

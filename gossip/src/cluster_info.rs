@@ -39,14 +39,7 @@ use {
         epoch_slots::EpochSlots,
         gossip_error::GossipError,
         ping_pong::{self, PingCache, Pong},
-<<<<<<< HEAD
         restart_crds_values::{RestartLastVotedForkSlots, RestartLastVotedForkSlotsError},
-        socketaddr, socketaddr_any,
-=======
-        restart_crds_values::{
-            RestartHeaviestFork, RestartLastVotedForkSlots, RestartLastVotedForkSlotsError,
-        },
->>>>>>> 329a186c50 (pings received contact-infos on gossip socket address (#1615))
         weighted_shuffle::WeightedShuffle,
     },
     bincode::{serialize, serialized_size},
