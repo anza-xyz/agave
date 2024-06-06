@@ -6757,7 +6757,7 @@ impl Bank {
     ) -> Option<Arc<ProgramCacheEntry>> {
         let environments = self
             .transaction_processor
-            .get_environments_for_epoch(effective_epoch);
+            .get_environments_for_epoch(effective_epoch)?;
         load_program_with_pubkey(
             self,
             &environments,
