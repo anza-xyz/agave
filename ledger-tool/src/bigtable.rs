@@ -1359,6 +1359,32 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             );
 
             let bank = bank_forks.read().unwrap().working_bank();
+            // If mock PoH is allowed, ensure that the requested slots are in
+            // the same epoch as the working bank. This will ensure the values
+            // extracted from the Bank are accurate for the slot range
+            if allow_mock_poh {
+                let working_bank_epoch = bank.epoch();
+                let epoch_schedule = bank.epoch_schedule();
+                let starting_epoch = epoch_schedule.get_epoch(starting_slot);
+                let ending_epoch = epoch_schedule.get_epoch(ending_slot);
+                if starting_epoch != ending_epoch {
+                    eprintln!(
+                        "The specified --starting-slot and --ending-slot must be in the\
+                        same epoch. --starting-slot {starting_slot} is in epoch {starting_epoch},\
+                        but --ending-slot {ending_slot} is in epoch {ending_epoch}."
+                    );
+                    exit(1);
+                }
+                if starting_epoch != working_bank_epoch {
+                    eprintln!(
+                        "The range of slots between --starting-slot and --ending-slot are in a \
+                        different epoch than the working bank. The specified range is in epoch \
+                        {starting_epoch}, but the working bank is in {working_bank_epoch}."
+                    );
+                    exit(1);
+                }
+            }
+
             let shred_version =
                 compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
             let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
