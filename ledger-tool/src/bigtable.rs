@@ -2,10 +2,12 @@
 use {
     crate::{
         ledger_path::canonicalize_ledger_path,
+        load_and_process_ledger_or_exit, open_genesis_config_by,
         output::{
             encode_confirmed_block, CliBlockWithEntries, CliEntries,
             EncodedConfirmedBlockWithEntries,
         },
+        parse_process_options,
     },
     clap::{
         value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
@@ -30,14 +32,15 @@ use {
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
     solana_sdk::{
-        clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signature, signer::keypair::Keypair,
+        clock::Slot, hash::Hash, pubkey::Pubkey, shred_version::compute_shred_version,
+        signature::Signature, signer::keypair::Keypair,
     },
     solana_storage_bigtable::CredentialType,
     solana_transaction_status::{ConfirmedBlock, UiTransactionEncoding, VersionedConfirmedBlock},
     std::{
         cmp::min,
         collections::HashSet,
-        path::Path,
+        path::{Path, PathBuf},
         process::exit,
         result::Result,
         str::FromStr,
@@ -169,11 +172,18 @@ async fn entries(
     Ok(())
 }
 
+struct ShredConfig {
+    shred_version: u16,
+    num_hashes_per_tick: u64,
+    num_ticks_per_slot: u64,
+    allow_mock_poh: bool,
+}
+
 async fn shreds(
     blockstore: Arc<Blockstore>,
     starting_slot: Slot,
     ending_slot: Slot,
-    allow_mock_poh: bool,
+    shred_config: ShredConfig,
     config: solana_storage_bigtable::LedgerStorageConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bigtable = solana_storage_bigtable::LedgerStorage::new_with_config(config)
@@ -186,12 +196,12 @@ async fn shreds(
     slots.retain(|&slot| slot <= ending_slot);
 
     let keypair = Keypair::from_bytes(&[0; 64])?;
-    // TODO: parse this from CLI ?
-    let shred_version = 0;
-    // TODO: parse from CLI OR extract from genesis
-    let num_ticks_per_slot = 64;
-    // TODO: parse from CLI OR extract from Bank; tick rate changed recently
-    let num_hashes_per_tick = 12500;
+    let ShredConfig {
+        shred_version,
+        num_hashes_per_tick,
+        num_ticks_per_slot,
+        allow_mock_poh,
+    } = shred_config;
 
     for slot in slots.iter() {
         let block = bigtable.get_confirmed_block(*slot).await?;
@@ -1240,6 +1250,13 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     let verbose = matches.is_present("verbose");
     let output_format = OutputFormat::from_matches(matches, "output_format", verbose);
+    let snapshot_archive_path = value_t!(matches, "snapshots", String)
+        .ok()
+        .map(PathBuf::from);
+    let incremental_snapshot_archive_path =
+        value_t!(matches, "incremental_snapshot_archive_path", String)
+            .ok()
+            .map(PathBuf::from);
 
     let (subcommand, sub_matches) = matches.subcommand();
     let instance_name = get_global_subcommand_arg(
@@ -1323,11 +1340,35 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
             let allow_mock_poh = arg_matches.is_present("allow_mock_poh");
+
+            let ledger_path = canonicalize_ledger_path(ledger_path);
+            let process_options = parse_process_options(&ledger_path, arg_matches);
+            let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
             let blockstore = Arc::new(crate::open_blockstore(
-                &canonicalize_ledger_path(ledger_path),
+                &ledger_path,
                 arg_matches,
                 AccessType::Primary,
             ));
+            let (bank_forks, _) = load_and_process_ledger_or_exit(
+                arg_matches,
+                &genesis_config,
+                blockstore.clone(),
+                process_options,
+                snapshot_archive_path,
+                incremental_snapshot_archive_path,
+            );
+
+            let bank = bank_forks.read().unwrap().working_bank();
+            let shred_version =
+                compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
+            let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
+            let num_ticks_per_slot = bank.ticks_per_slot();
+            let shred_config = ShredConfig {
+                shred_version,
+                num_hashes_per_tick,
+                num_ticks_per_slot,
+                allow_mock_poh,
+            };
 
             let config = solana_storage_bigtable::LedgerStorageConfig {
                 read_only: true,
@@ -1335,11 +1376,12 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 app_profile_id,
                 ..solana_storage_bigtable::LedgerStorageConfig::default()
             };
+
             runtime.block_on(shreds(
                 blockstore,
                 starting_slot,
                 ending_slot,
-                allow_mock_poh,
+                shred_config,
                 config,
             ))
         }
