@@ -5717,9 +5717,9 @@ dependencies = [
  "solana-measure",
  "solana-program-runtime",
  "solana-runtime",
- "solana-sbf-rust-invoke",
- "solana-sbf-rust-realloc",
- "solana-sbf-rust-realloc-invoke",
+ "solana-sbf-rust-invoke-dep",
+ "solana-sbf-rust-realloc-dep",
+ "solana-sbf-rust-realloc-invoke-dep",
  "solana-sdk",
  "solana-svm",
  "solana-transaction-status",
@@ -5878,8 +5878,9 @@ version = "2.0.0"
 dependencies = [
  "rustversion",
  "solana-program",
- "solana-sbf-rust-invoked",
- "solana-sbf-rust-realloc",
+ "solana-sbf-rust-invoke-dep",
+ "solana-sbf-rust-invoked-dep",
+ "solana-sbf-rust-realloc-dep",
 ]
 
 [[package]]
@@ -5904,7 +5905,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-rust-invoke-dep"
+version = "2.0.0"
+
+[[package]]
 name = "solana-sbf-rust-invoked"
+version = "2.0.0"
+dependencies = [
+ "solana-program",
+ "solana-sbf-rust-invoked-dep",
+]
+
+[[package]]
+name = "solana-sbf-rust-invoked-dep"
 version = "2.0.0"
 dependencies = [
  "solana-program",
@@ -6009,6 +6022,14 @@ name = "solana-sbf-rust-realloc"
 version = "2.0.0"
 dependencies = [
  "solana-program",
+ "solana-sbf-rust-realloc-dep",
+]
+
+[[package]]
+name = "solana-sbf-rust-realloc-dep"
+version = "2.0.0"
+dependencies = [
+ "solana-program",
 ]
 
 [[package]]
@@ -6016,8 +6037,13 @@ name = "solana-sbf-rust-realloc-invoke"
 version = "2.0.0"
 dependencies = [
  "solana-program",
- "solana-sbf-rust-realloc",
+ "solana-sbf-rust-realloc-dep",
+ "solana-sbf-rust-realloc-invoke-dep",
 ]
+
+[[package]]
+name = "solana-sbf-rust-realloc-invoke-dep"
+version = "2.0.0"
 
 [[package]]
 name = "solana-sbf-rust-remaining-compute-units"
