@@ -440,9 +440,6 @@ pub enum AddBankSnapshotError {
     #[error("failed to create snapshot dir '{1}': {0}")]
     CreateSnapshotDir(#[source] IoError, PathBuf),
 
-    #[error("failed to flush storage '{1}': {0}")]
-    FlushStorage(#[source] AccountsFileError, PathBuf),
-
     #[error("failed to hard link storages: {0}")]
     HardLinkStorages(#[source] HardLinkStoragesToSnapshotError),
 
