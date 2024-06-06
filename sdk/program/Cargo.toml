@@ -14,9 +14,8 @@ rust-version = "1.75.0" # solana platform-tools rust version
 [dependencies]
 bincode = { workspace = true }
 blake3 = { workspace = true, features = ["digest", "traits-preview"] }
-borsh = { workspace = true }
-borsh0-10 = { package = "borsh", version = "0.10.3" }
-borsh0-9 = { package = "borsh", version = "0.9.3" }
+borsh = { workspace = true, optional = true }
+borsh0-10 = { package = "borsh", version = "0.10.3", optional = true }
 bs58 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true, features = ["derive"] }
@@ -27,7 +26,7 @@ memoffset = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true, features = ["i128"] }
 rustversion = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 sha2 = { workspace = true }
@@ -53,15 +52,12 @@ ark-ff = { workspace = true }
 ark-serialize = { workspace = true }
 base64 = { workspace = true, features = ["alloc", "std"] }
 bitflags = { workspace = true }
-curve25519-dalek = { workspace = true, features = ["serde"] }
+curve25519-dalek = { workspace = true }
 itertools = { workspace = true }
-libc = { workspace = true, features = ["extra_traits"] }
 libsecp256k1 = { workspace = true }
-light-poseidon = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
 wasm-bindgen = { workspace = true }
-zeroize = { workspace = true, features = ["default", "zeroize_derive"] }
 
 [target.'cfg(not(target_os = "solana"))'.dev-dependencies]
 arbitrary = { workspace = true, features = ["derive"] }
@@ -96,5 +92,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["borsh"]
+borsh = ["dep:borsh", "dep:borsh0-10"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]

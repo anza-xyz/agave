@@ -10,6 +10,7 @@ use {
     },
     solana_cli_output::CliAccount,
     solana_client::rpc_request::MAX_MULTIPLE_ACCOUNTS,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         consensus::tower_storage::TowerStorage,
@@ -29,7 +30,6 @@ use {
         create_new_tmp_ledger,
     },
     solana_net_utils::PortRange,
-    solana_program_runtime::compute_budget::ComputeBudget,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_runtime::{
@@ -1053,6 +1053,7 @@ impl TestValidator {
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
             config.tpu_enable_udp,
+            32, // max connections per IpAddr per minute for test
             config.admin_rpc_service_post_init.clone(),
         )?);
 

@@ -836,9 +836,13 @@ impl<'a> AccountsHasher<'a> {
                 accum
             })
             .reduce(
-                || DedupResult {
-                    hashes_files: Vec::with_capacity(max_bin),
-                    ..Default::default()
+                || {
+                    DedupResult {
+                        // Allocate with Vec::new() so that no allocation actually happens. See
+                        // https://github.com/anza-xyz/agave/pull/1308.
+                        hashes_files: Vec::new(),
+                        ..Default::default()
+                    }
                 },
                 |mut a, mut b| {
                     a.lamports_sum = a
@@ -1224,7 +1228,8 @@ pub enum ZeroLamportAccounts {
 
 /// Hash of an account
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Pod, Zeroable, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Pod, Zeroable)]
 pub struct AccountHash(pub Hash);
 
 // Ensure the newtype wrapper never changes size from the underlying Hash
@@ -1269,7 +1274,8 @@ pub struct IncrementalAccountsHash(pub Hash);
 pub struct AccountsDeltaHash(pub Hash);
 
 /// Snapshot serde-safe accounts delta hash
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeAccountsDeltaHash(pub Hash);
 
 impl From<SerdeAccountsDeltaHash> for AccountsDeltaHash {
@@ -1284,7 +1290,8 @@ impl From<AccountsDeltaHash> for SerdeAccountsDeltaHash {
 }
 
 /// Snapshot serde-safe accounts hash
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeAccountsHash(pub Hash);
 
 impl From<SerdeAccountsHash> for AccountsHash {
@@ -1299,7 +1306,8 @@ impl From<AccountsHash> for SerdeAccountsHash {
 }
 
 /// Snapshot serde-safe incremental accounts hash
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeIncrementalAccountsHash(pub Hash);
 
 impl From<SerdeIncrementalAccountsHash> for IncrementalAccountsHash {
@@ -1643,7 +1651,7 @@ mod tests {
         let (hashes, lamports) =
             accounts_hash.de_dup_accounts(vec, &mut HashStats::default(), one_range());
         assert_eq!(
-            vec![Hash::default(); 0],
+            Vec::<Hash>::new(),
             get_vec_vec(hashes)
                 .into_iter()
                 .flatten()
@@ -1659,12 +1667,12 @@ mod tests {
 
         let (hashes, lamports) =
             accounts_hash.de_dup_accounts_in_parallel(&[], 1, 1, &HashStats::default());
-        assert_eq!(vec![Hash::default(); 0], get_vec(hashes));
+        assert_eq!(Vec::<Hash>::new(), get_vec(hashes));
         assert_eq!(lamports, 0);
 
         let (hashes, lamports) =
             accounts_hash.de_dup_accounts_in_parallel(&[], 2, 1, &HashStats::default());
-        assert_eq!(vec![Hash::default(); 0], get_vec(hashes));
+        assert_eq!(Vec::<Hash>::new(), get_vec(hashes));
         assert_eq!(lamports, 0);
     }
 

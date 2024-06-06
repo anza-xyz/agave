@@ -8,7 +8,7 @@ use {
         errors::AuthenticatedEncryptionError,
     },
     aes_gcm_siv::{
-        aead::{Aead, NewAead},
+        aead::{Aead, KeyInit},
         Aes128GcmSiv,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
@@ -34,7 +34,7 @@ use {
 /// Byte length of an authenticated encryption nonce component
 const NONCE_LEN: usize = 12;
 
-/// Byte lenth of an authenticated encryption ciphertext component
+/// Byte length of an authenticated encryption ciphertext component
 const CIPHERTEXT_LEN: usize = 24;
 
 struct AuthenticatedEncryption;

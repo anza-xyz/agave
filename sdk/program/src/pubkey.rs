@@ -4,9 +4,10 @@
 
 #[cfg(test)]
 use arbitrary::Arbitrary;
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use {
     crate::{decode_error::DecodeError, hash::hashv, wasm_bindgen},
-    borsh::{BorshDeserialize, BorshSchema, BorshSerialize},
     bytemuck::{Pod, Zeroable},
     num_derive::{FromPrimitive, ToPrimitive},
     std::{
@@ -70,10 +71,12 @@ impl From<u64> for PubkeyError {
 #[wasm_bindgen]
 #[repr(transparent)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "borsh",
+    derive(BorshSerialize, BorshDeserialize, BorshSchema),
+    borsh(crate = "borsh")
+)]
 #[derive(
-    BorshDeserialize,
-    BorshSchema,
-    BorshSerialize,
     Clone,
     Copy,
     Default,
@@ -87,7 +90,6 @@ impl From<u64> for PubkeyError {
     Serialize,
     Zeroable,
 )]
-#[borsh(crate = "borsh")]
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct Pubkey(pub(crate) [u8; 32]);
 
@@ -504,8 +506,8 @@ impl Pubkey {
         // not supported
         #[cfg(not(target_os = "solana"))]
         {
-            let mut bump_seed = [std::u8::MAX];
-            for _ in 0..std::u8::MAX {
+            let mut bump_seed = [u8::MAX];
+            for _ in 0..u8::MAX {
                 {
                     let mut seeds_with_bump = seeds.to_vec();
                     seeds_with_bump.push(&bump_seed);
@@ -523,7 +525,7 @@ impl Pubkey {
         #[cfg(target_os = "solana")]
         {
             let mut bytes = [0; 32];
-            let mut bump_seed = std::u8::MAX;
+            let mut bump_seed = u8::MAX;
             let result = unsafe {
                 crate::syscalls::sol_try_find_program_address(
                     seeds as *const _ as *const u8,
@@ -675,6 +677,7 @@ impl fmt::Display for Pubkey {
     }
 }
 
+#[cfg(feature = "borsh")]
 impl borsh0_10::de::BorshDeserialize for Pubkey {
     fn deserialize_reader<R: borsh0_10::maybestd::io::Read>(
         reader: &mut R,
@@ -684,12 +687,8 @@ impl borsh0_10::de::BorshDeserialize for Pubkey {
         )?))
     }
 }
-impl borsh0_9::de::BorshDeserialize for Pubkey {
-    fn deserialize(buf: &mut &[u8]) -> ::core::result::Result<Self, borsh0_9::maybestd::io::Error> {
-        Ok(Self(borsh0_9::BorshDeserialize::deserialize(buf)?))
-    }
-}
 
+#[cfg(feature = "borsh")]
 macro_rules! impl_borsh_schema {
     ($borsh:ident) => {
         impl $borsh::BorshSchema for Pubkey
@@ -721,9 +720,10 @@ macro_rules! impl_borsh_schema {
         }
     };
 }
+#[cfg(feature = "borsh")]
 impl_borsh_schema!(borsh0_10);
-impl_borsh_schema!(borsh0_9);
 
+#[cfg(feature = "borsh")]
 macro_rules! impl_borsh_serialize {
     ($borsh:ident) => {
         impl $borsh::ser::BorshSerialize for Pubkey {
@@ -737,8 +737,8 @@ macro_rules! impl_borsh_serialize {
         }
     };
 }
+#[cfg(feature = "borsh")]
 impl_borsh_serialize!(borsh0_10);
-impl_borsh_serialize!(borsh0_9);
 
 #[cfg(test)]
 mod tests {
@@ -971,6 +971,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "borsh")]
     fn pubkey_from_seed_by_marker(marker: &[u8]) -> Result<Pubkey, PubkeyError> {
         let key = Pubkey::new_unique();
         let owner = Pubkey::default();
@@ -984,6 +985,7 @@ mod tests {
         Pubkey::create_with_seed(&key, seed, base)
     }
 
+    #[cfg(feature = "borsh")]
     #[test]
     fn test_create_with_seed_rejects_illegal_owner() {
         assert_eq!(

@@ -797,8 +797,24 @@ pub mod reward_full_priority_fee {
     solana_sdk::declare_id!("3opE3EzAKnUftUDURkzMgwpNgimBAypW1mNDYH4x4Zg7");
 }
 
+pub mod get_sysvar_syscall_enabled {
+    solana_sdk::declare_id!("CLCoTADvV64PSrnR6QXty6Fwrt9Xc6EdxSJE4wLRePjq");
+}
+
 pub mod abort_on_invalid_curve {
     solana_sdk::declare_id!("FuS3FPfJDKSNot99ECLXtp3rueq36hMNStJkPJwWodLh");
+}
+
+pub mod migrate_feature_gate_program_to_core_bpf {
+    solana_sdk::declare_id!("4eohviozzEeivk1y9UbrnekbAFMDQyJz5JjA9Y6gyvky");
+}
+
+pub mod vote_only_full_fec_sets {
+    solana_sdk::declare_id!("ffecLRhhakKSGhMuc6Fz2Lnfq4uT9q3iu9ZsNaPLxPc");
+}
+
+pub mod migrate_config_program_to_core_bpf {
+    solana_sdk::declare_id!("2Fr57nzzkLYXW695UdDxDeR5fhnZWSttZeZYemrnpGFV");
 }
 
 lazy_static! {
@@ -995,7 +1011,11 @@ lazy_static! {
         (enable_tower_sync_ix::id(), "Enable tower sync vote instruction"),
         (chained_merkle_conflict_duplicate_proofs::id(), "generate duplicate proofs for chained merkle root conflicts"),
         (reward_full_priority_fee::id(), "Reward full priority fee to validators #34731"),
-        (abort_on_invalid_curve::id(), "Abort when elliptic curve syscalls invoked on invalid curve id SIMD-0137")
+        (abort_on_invalid_curve::id(), "Abort when elliptic curve syscalls invoked on invalid curve id SIMD-0137"),
+        (get_sysvar_syscall_enabled::id(), "Enable syscall for fetching Sysvar bytes #615"),
+        (migrate_feature_gate_program_to_core_bpf::id(), "Migrate Feature Gate program to Core BPF (programify) #1003"),
+        (vote_only_full_fec_sets::id(), "vote only full fec sets"),
+        (migrate_config_program_to_core_bpf::id(), "Migrate Config program to Core BPF #1378"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
@@ -1034,7 +1054,8 @@ lazy_static! {
 }
 
 /// `FeatureSet` holds the set of currently active/inactive runtime features
-#[derive(AbiExample, Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
     pub active: HashMap<Pubkey, Slot>,
     pub inactive: HashSet<Pubkey>,

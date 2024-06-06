@@ -1111,6 +1111,19 @@ impl AccountStorageEntry {
         }
     }
 
+    /// open a new instance of the storage that is readonly
+    fn reopen_as_readonly(&self) -> Option<Self> {
+        let count_and_status = self.count_and_status.lock_write();
+        self.accounts.reopen_as_readonly().map(|accounts| Self {
+            id: self.id,
+            slot: self.slot,
+            count_and_status: SeqLock::new(*count_and_status),
+            approx_store_count: AtomicUsize::new(self.approx_stored_count()),
+            alive_bytes: AtomicUsize::new(self.alive_bytes()),
+            accounts,
+        })
+    }
+
     pub fn new_existing(
         slot: Slot,
         id: AccountsFileId,
@@ -1273,7 +1286,8 @@ pub fn get_temp_accounts_paths(count: u32) -> IoResult<(Vec<TempDir>, Vec<PathBu
     Ok((temp_dirs, paths))
 }
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BankHashStats {
     pub num_updated_accounts: u64,
     pub num_removed_accounts: u64,
@@ -1464,6 +1478,10 @@ pub struct AccountsDb {
 
     /// storage format to use for new storages
     accounts_file_provider: AccountsFileProvider,
+
+    /// method to use for accessing storages
+    #[allow(dead_code)]
+    storage_access: StorageAccess,
 
     /// this will live here until the feature for partitioned epoch rewards is activated.
     /// At that point, this and other code can be deleted.
@@ -1924,6 +1942,7 @@ pub(crate) struct ShrinkAncientStats {
     pub(crate) slots_considered: AtomicU64,
     pub(crate) ancient_scanned: AtomicU64,
     pub(crate) bytes_ancient_created: AtomicU64,
+    pub(crate) many_ref_slots_skipped: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -2213,6 +2232,11 @@ impl ShrinkAncientStats {
                 self.bytes_ancient_created.swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
+            (
+                "many_ref_slots_skipped",
+                self.many_ref_slots_skipped.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -2231,7 +2255,7 @@ pub fn make_min_priority_thread_pool() -> ThreadPool {
         .unwrap()
 }
 
-#[cfg(RUSTC_WITH_SPECIALIZATION)]
+#[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
 impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     fn example() -> Self {
         let accounts_db = AccountsDb::new_single_for_tests();
@@ -2446,6 +2470,7 @@ impl AccountsDb {
             log_dead_slots: AtomicBool::new(true),
             exhaustively_verify_refcounts: false,
             accounts_file_provider: AccountsFileProvider::default(),
+            storage_access: StorageAccess::default(),
             partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
             epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             test_skip_rewrites_but_include_in_bank_hash: false,
@@ -2546,6 +2571,11 @@ impl AccountsDb {
                 Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
             ));
 
+        let storage_access = accounts_db_config
+            .as_ref()
+            .map(|config| config.storage_access)
+            .unwrap_or_default();
+
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
             paths,
@@ -2567,6 +2597,7 @@ impl AccountsDb {
             partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts,
             test_skip_rewrites_but_include_in_bank_hash,
+            storage_access,
             ..Self::default_with_accounts_index(
                 accounts_index,
                 base_working_path,
@@ -3991,6 +4022,8 @@ impl AccountsDb {
         let (_, drop_storage_entries_elapsed) = measure_us!(drop(dead_storages));
         time.stop();
 
+        self.reopen_storage_as_readonly_shrinking_in_progress_ok(shrink_collect.slot);
+
         self.stats
             .dropped_stores
             .fetch_add(dead_storages_len as u64, Ordering::Relaxed);
@@ -4180,6 +4213,26 @@ impl AccountsDb {
         }
 
         dead_storages
+    }
+
+    /// we are done writing to the storage at `slot`. It can be re-opened as read-only if that would help
+    /// system performance.
+    pub(crate) fn reopen_storage_as_readonly_shrinking_in_progress_ok(&self, slot: Slot) {
+        if let Some(storage) = self
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+        {
+            if let Some(new_storage) = storage.reopen_as_readonly() {
+                // consider here the race condition of tx processing having looked up something in the index,
+                // which could return (slot, append vec id). We want the lookup for the storage to get a storage
+                // that works whether the lookup occurs before or after the replace call here.
+                // So, the two storages have to be exactly equivalent wrt offsets, counts, len, id, etc.
+                assert_eq!(storage.append_vec_id(), new_storage.append_vec_id());
+                assert_eq!(storage.accounts.len(), new_storage.accounts.len());
+                self.storage
+                    .replace_storage_with_equivalent(slot, Arc::new(new_storage));
+            }
+        }
     }
 
     /// return a store that can contain 'aligned_total' bytes
@@ -4457,8 +4510,12 @@ impl AccountsDb {
                     .fetch_add(1, Ordering::Relaxed);
                 return true;
             }
-            // this slot is ancient and can become the 'current' ancient for other slots to be squashed into
-            *current_ancient = CurrentAncientAccountsFile::new(slot, Arc::clone(storage));
+            if storage.accounts.can_append() {
+                // this slot is ancient and can become the 'current' ancient for other slots to be squashed into
+                *current_ancient = CurrentAncientAccountsFile::new(slot, Arc::clone(storage));
+            } else {
+                *current_ancient = CurrentAncientAccountsFile::default();
+            }
             return false; // we're done with this slot - this slot IS the ancient append vec
         }
 
@@ -4588,6 +4645,9 @@ impl AccountsDb {
             // Assert: it cannot be the case that we already had an ancient append vec at this slot and
             // yet that ancient append vec does not have room for the accounts stored at this slot currently
             assert_ne!(slot, current_ancient.slot());
+
+            // we filled one up
+            self.reopen_storage_as_readonly_shrinking_in_progress_ok(current_ancient.slot());
 
             // Now we create an ancient append vec at `slot` to store the overflows.
             let (shrink_in_progress_overflow, time_us) = measure_us!(current_ancient
@@ -5407,6 +5467,70 @@ impl AccountsDb {
         )
     }
 
+    /// Load account with `pubkey` and maybe put into read cache.
+    ///
+    /// If the account is not already cached, invoke `should_put_in_read_cache_fn`.
+    /// The caller can inspect the account and indicate if it should be put into the read cache or not.
+    ///
+    /// Return the account and the slot when the account was last stored.
+    /// Return None for ZeroLamport accounts.
+    pub fn load_account_with(
+        &self,
+        ancestors: &Ancestors,
+        pubkey: &Pubkey,
+        should_put_in_read_cache_fn: impl Fn(&AccountSharedData) -> bool,
+    ) -> Option<(AccountSharedData, Slot)> {
+        let (slot, storage_location, _maybe_account_accesor) =
+            self.read_index_for_accessor_or_load_slow(ancestors, pubkey, None, false)?;
+        // Notice the subtle `?` at previous line, we bail out pretty early if missing.
+
+        let in_write_cache = storage_location.is_cached();
+        if !in_write_cache {
+            let result = self.read_only_accounts_cache.load(*pubkey, slot);
+            if let Some(account) = result {
+                if account.is_zero_lamport() {
+                    return None;
+                }
+                return Some((account, slot));
+            }
+        }
+
+        let (mut account_accessor, slot) = self.retry_to_get_account_accessor(
+            slot,
+            storage_location,
+            ancestors,
+            pubkey,
+            None,
+            LoadHint::Unspecified,
+        )?;
+
+        // note that the account being in the cache could be different now than it was previously
+        // since the cache could be flushed in between the 2 calls.
+        let in_write_cache = matches!(account_accessor, LoadedAccountAccessor::Cached(_));
+        let account = account_accessor.check_and_get_loaded_account_shared_data();
+        if account.is_zero_lamport() {
+            return None;
+        }
+
+        if !in_write_cache && should_put_in_read_cache_fn(&account) {
+            /*
+            We show this store into the read-only cache for account 'A' and future loads of 'A' from the read-only cache are
+            safe/reflect 'A''s latest state on this fork.
+            This safety holds if during replay of slot 'S', we show we only read 'A' from the write cache,
+            not the read-only cache, after it's been updated in replay of slot 'S'.
+            Assume for contradiction this is not true, and we read 'A' from the read-only cache *after* it had been updated in 'S'.
+            This means an entry '(S, A)' was added to the read-only cache after 'A' had been updated in 'S'.
+            Now when '(S, A)' was being added to the read-only cache, it must have been true that  'is_cache == false',
+            which means '(S', A)' does not exist in the write cache yet.
+            However, by the assumption for contradiction above ,  'A' has already been updated in 'S' which means '(S, A)'
+            must exist in the write cache, which is a contradiction.
+            */
+            self.read_only_accounts_cache
+                .store(*pubkey, slot, account.clone());
+        }
+        Some((account, slot))
+    }
+
     /// if 'load_into_read_cache_only', then return value is meaningless.
     ///   The goal is to get the account into the read-only cache.
     fn do_load_with_populate_read_cache(
@@ -5885,7 +6009,6 @@ impl AccountsDb {
         );
     }
 
-    #[allow(clippy::needless_collect)]
     fn purge_slots<'a>(&self, slots: impl Iterator<Item = &'a Slot> + Clone) {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
@@ -6389,6 +6512,7 @@ impl AccountsDb {
             // If the above sizing function is correct, just one AppendVec is enough to hold
             // all the data for the slot
             assert!(self.storage.get_slot_storage_entry(slot).is_some());
+            self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
         }
 
         // Remove this slot from the cache, which will to AccountsDb's new readers should look like an
@@ -6557,7 +6681,7 @@ impl AccountsDb {
     fn report_store_stats(&self) {
         let mut total_count = 0;
         let mut newest_slot = 0;
-        let mut oldest_slot = std::u64::MAX;
+        let mut oldest_slot = u64::MAX;
         let mut total_bytes = 0;
         let mut total_alive_bytes = 0;
         for (slot, store) in self.storage.iter() {
@@ -8583,9 +8707,8 @@ impl AccountsDb {
             .collect::<Vec<_>>();
         m.stop();
         let mut m2 = Measure::start("filter");
-
         let chunk_size = 5_000;
-        let wide = self.thread_pool_clean.install(|| {
+        let (result, slots): (Vec<_>, Vec<_>) = self.thread_pool_clean.install(|| {
             slots_and_storages
                 .par_chunks_mut(chunk_size)
                 .map(|slots_and_storages| {
@@ -8598,28 +8721,16 @@ impl AccountsDb {
                         })
                         .collect::<Vec<(Arc<AccountStorageEntry>, Slot)>>()
                 })
-                .collect::<Vec<_>>()
+                .flatten()
+                .unzip()
         });
+
         m2.stop();
-        let mut m3 = Measure::start("flatten");
-        // some slots we found above may not have been a root or met the slot # constraint.
-        // So the resulting 'slots' vector we return will be a subset of the raw keys we got initially.
-        let mut slots = Vec::with_capacity(slots_and_storages.len());
-        let result = wide
-            .into_iter()
-            .flatten()
-            .map(|(storage, slot)| {
-                slots.push(slot);
-                storage
-            })
-            .collect::<Vec<_>>();
-        m3.stop();
 
         debug!(
-            "hash_total: get slots: {}, filter: {}, flatten: {}",
+            "hash_total: get slots: {}, filter: {}",
             m.as_us(),
             m2.as_us(),
-            m3.as_us()
         );
         (result, slots)
     }
@@ -9513,6 +9624,7 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
 }
 
 /// A set of utility functions used for testing and benchmarking
+#[cfg(feature = "dev-context-only-utils")]
 pub mod test_utils {
     use {
         super::*,
@@ -13248,7 +13360,7 @@ pub mod tests {
     #[should_panic(expected = "overflow is detected while summing capitalization")]
     fn test_checked_sum_for_capitalization_overflow() {
         assert_eq!(
-            AccountsDb::checked_sum_for_capitalization(vec![1, u64::max_value()].into_iter()),
+            AccountsDb::checked_sum_for_capitalization(vec![1, u64::MAX].into_iter()),
             3
         );
     }
@@ -13604,6 +13716,70 @@ pub mod tests {
             .map(|(account, _)| account);
         assert!(account.is_none());
         assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+    }
+
+    #[test]
+    fn test_load_with_read_only_accounts_cache() {
+        let db = Arc::new(AccountsDb::new_single_for_tests());
+
+        let account_key = Pubkey::new_unique();
+        let zero_lamport_account =
+            AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+        let slot1_account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
+        db.store_cached((0, &[(&account_key, &zero_lamport_account)][..]), None);
+        db.store_cached((1, &[(&account_key, &slot1_account)][..]), None);
+
+        db.add_root(0);
+        db.add_root(1);
+        db.clean_accounts_for_tests();
+        db.flush_accounts_cache(true, None);
+        db.clean_accounts_for_tests();
+        db.add_root(2);
+
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        let (account, slot) = db
+            .load_account_with(&Ancestors::default(), &account_key, |_| false)
+            .unwrap();
+        assert_eq!(account.lamports(), 1);
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        assert_eq!(slot, 1);
+
+        let (account, slot) = db
+            .load_account_with(&Ancestors::default(), &account_key, |_| true)
+            .unwrap();
+        assert_eq!(account.lamports(), 1);
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+        assert_eq!(slot, 1);
+
+        db.store_cached((2, &[(&account_key, &zero_lamport_account)][..]), None);
+        let account = db.load_account_with(&Ancestors::default(), &account_key, |_| false);
+        assert!(account.is_none());
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+
+        db.read_only_accounts_cache.reset_for_tests();
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        let account = db.load_account_with(&Ancestors::default(), &account_key, |_| true);
+        assert!(account.is_none());
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+
+        let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+        db.store_cached((2, &[(&account_key, &slot2_account)][..]), None);
+        let (account, slot) = db
+            .load_account_with(&Ancestors::default(), &account_key, |_| false)
+            .unwrap();
+        assert_eq!(account.lamports(), 2);
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        assert_eq!(slot, 2);
+
+        let slot2_account = AccountSharedData::new(2, 1, AccountSharedData::default().owner());
+        db.store_cached((2, &[(&account_key, &slot2_account)][..]), None);
+        let (account, slot) = db
+            .load_account_with(&Ancestors::default(), &account_key, |_| true)
+            .unwrap();
+        assert_eq!(account.lamports(), 2);
+        // The account shouldn't be added to read_only_cache because it is in write_cache.
+        assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+        assert_eq!(slot, 2);
     }
 
     #[test]
@@ -16881,8 +17057,8 @@ pub mod tests {
         let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
         let fat_account_size = (1.5 * ideal_av_size as f64) as u64;
 
-        // Prepare 4 appendvec to combine [small, big, small, small]
-        let account_data_sizes = vec![100, fat_account_size, 100, 100];
+        // Prepare 3 append vecs to combine [small, big, small]
+        let account_data_sizes = vec![100, fat_account_size, 100];
         let (db, slot1) = create_db_with_storages_and_index_with_customized_account_size_per_slot(
             true,
             num_normal_slots + 1,
@@ -16893,11 +17069,11 @@ pub mod tests {
 
         // Adjust alive_ratio for slot2 to test it is shrinkable and is a
         // candidate for squashing into the previous ancient append vec.
-        // However, due to the fact that this appendvec is `oversized`, it can't
+        // However, due to the fact that this append vec is `oversized`, it can't
         // be squashed into the ancient append vec at previous slot (exceeds the
-        // size limit). Therefore, a new "oversized" ancient append vec are
+        // size limit). Therefore, a new "oversized" ancient append vec is
         // created at slot2 as the overflow. This is where the "min_bytes" in
-        // `fn create_ancient_append_vec` used for.
+        // `fn create_ancient_append_vec` is used.
         let slot2 = slot1 + 1;
         let storage2 = db.storage.get_slot_storage_entry(slot2).unwrap();
         let original_cap_slot2 = storage2.accounts.capacity();
@@ -16905,7 +17081,7 @@ pub mod tests {
             .accounts
             .set_current_len_for_tests(original_cap_slot2 as usize);
 
-        // Combine appendvec into ancient append vec.
+        // Combine append vec into ancient append vec.
         let slots_to_combine: Vec<Slot> = (slot1..slot1 + (num_normal_slots + 1) as Slot).collect();
         db.combine_ancient_slots(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
 
@@ -16925,8 +17101,8 @@ pub mod tests {
         assert_eq!(created_accounts.stored_accounts.len(), 1);
         assert_eq!(after_stored_accounts.len(), 1);
 
-        // slot2, even after shrinking, it is still oversized. Therefore, there
-        // exists as an ancient append vec at slot2.
+        // slot2, even after shrinking, is still oversized. Therefore, slot 2
+        // exists as an ancient append vec.
         let storage2_after = db.storage.get_slot_storage_entry(slot2).unwrap();
         assert!(is_ancient(&storage2_after.accounts));
         assert!(storage2_after.capacity() > ideal_av_size);
@@ -17261,7 +17437,7 @@ pub mod tests {
         if num_slots == 0 {
             return;
         }
-        assert!(account_data_sizes.len() == num_slots + 1);
+        assert!(account_data_sizes.len() == num_slots);
         let local_tf = (tf.is_none()).then(|| {
             crate::append_vec::test_utils::get_append_vec_path("create_storages_and_update_index")
         });

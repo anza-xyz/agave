@@ -15,7 +15,10 @@ use {
         account_utils::StateMut,
         address_lookup_table::{self, error::AddressLookupError, state::AddressLookupTable},
         clock::{BankId, Slot},
-        message::v0::{LoadedAddresses, MessageAddressTableLookup},
+        message::{
+            v0::{LoadedAddresses, MessageAddressTableLookup},
+            SanitizedMessage,
+        },
         nonce::{
             state::{DurableNonce, Versions as NonceVersions},
             State as NonceState,
@@ -32,10 +35,7 @@ use {
     },
     std::{
         cmp::Reverse,
-        collections::{
-            hash_map::{self},
-            BinaryHeap, HashMap, HashSet,
-        },
+        collections::{hash_map, BinaryHeap, HashMap, HashSet},
         ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -46,7 +46,8 @@ use {
 
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
-#[derive(Debug, Default, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug, Default)]
 pub struct AccountLocks {
     write_locks: HashSet<Pubkey>,
     readonly_locks: HashMap<Pubkey, u64>,
@@ -99,7 +100,8 @@ impl AccountLocks {
 }
 
 /// This structure handles synchronization for db
-#[derive(Debug, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug)]
 pub struct Accounts {
     /// Single global AccountsDb
     pub accounts_db: Arc<AccountsDb>,
@@ -594,7 +596,6 @@ impl Accounts {
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time
     #[must_use]
-    #[allow(clippy::needless_collect)]
     pub fn lock_accounts<'a>(
         &self,
         txs: impl Iterator<Item = &'a SanitizedTransaction>,
@@ -607,7 +608,6 @@ impl Accounts {
     }
 
     #[must_use]
-    #[allow(clippy::needless_collect)]
     pub fn lock_accounts_with_results<'a>(
         &self,
         txs: impl Iterator<Item = &'a SanitizedTransaction>,
@@ -644,7 +644,6 @@ impl Accounts {
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
-    #[allow(clippy::needless_collect)]
     pub fn unlock_accounts<'a>(
         &self,
         txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)>,
@@ -705,11 +704,11 @@ impl Accounts {
     ) {
         let mut accounts = Vec::with_capacity(load_results.len());
         let mut transactions = Vec::with_capacity(load_results.len());
-        for (i, ((tx_load_result, nonce), tx)) in load_results.iter_mut().zip(txs).enumerate() {
-            if tx_load_result.is_err() {
+        for (i, (tx_load_result, tx)) in load_results.iter_mut().zip(txs).enumerate() {
+            let Ok(loaded_transaction) = tx_load_result else {
                 // Don't store any accounts if tx failed to load
                 continue;
-            }
+            };
 
             let execution_status = match &execution_results[i] {
                 TransactionExecutionResult::Executed { details, .. } => &details.status,
@@ -717,7 +716,7 @@ impl Accounts {
                 TransactionExecutionResult::NotExecuted(_) => continue,
             };
 
-            let maybe_nonce = match (execution_status, &*nonce) {
+            let maybe_nonce = match (execution_status, &loaded_transaction.nonce) {
                 (Ok(_), _) => None, // Success, don't do any additional nonce processing
                 (Err(_), Some(nonce)) => {
                     Some((nonce, true /* rollback */))
@@ -729,11 +728,26 @@ impl Accounts {
                 }
             };
 
+            // Accounts that are invoked and also not passed as an instruction
+            // account to a program don't need to be stored because it's assumed
+            // to be impossible for a committable transaction to modify an
+            // invoked account if said account isn't passed to some program.
+            //
+            // Note that this assumption might not hold in the future after
+            // SIMD-0082 is implemented because we may decide to commit
+            // transactions that incorrectly attempt to invoke a fee payer or
+            // durable nonce account. If that happens, we would NOT want to use
+            // this filter because we always NEED to store those accounts even
+            // if they aren't passed to any programs (because they are mutated
+            // outside of the VM).
+            let is_storable_account = |message: &SanitizedMessage, key_index: usize| -> bool {
+                !message.is_invoked(key_index) || message.is_instruction_account(key_index)
+            };
+
             let message = tx.message();
-            let loaded_transaction = tx_load_result.as_mut().unwrap();
             for (i, (address, account)) in (0..message.account_keys().len())
                 .zip(loaded_transaction.accounts.iter_mut())
-                .filter(|(i, _)| message.is_non_loader_key(*i))
+                .filter(|(i, _)| is_storable_account(message, *i))
             {
                 if message.is_writable(i) {
                     let is_fee_payer = i == 0;
@@ -821,6 +835,7 @@ mod tests {
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             address_lookup_table::state::LookupTableMeta,
+            fee::FeeDetails,
             hash::Hash,
             instruction::{CompiledInstruction, InstructionError},
             message::{Message, MessageHeader},
@@ -831,8 +846,7 @@ mod tests {
             transaction::{Transaction, MAX_TX_ACCOUNT_LOCKS},
         },
         solana_svm::{
-            account_loader::LoadedTransaction,
-            transaction_results::{DurableNonceFee, TransactionExecutionDetails},
+            account_loader::LoadedTransaction, transaction_results::TransactionExecutionDetails,
         },
         std::{
             borrow::Cow,
@@ -863,7 +877,8 @@ mod tests {
                 status,
                 log_messages: None,
                 inner_instructions: None,
-                durable_nonce_fee: nonce.map(DurableNonceFee::from),
+                fee_details: FeeDetails::default(),
+                is_nonce: nonce.is_some(),
                 return_data: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
@@ -1557,25 +1572,25 @@ mod tests {
         ];
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
 
-        let loaded0 = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts0,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            None,
-        );
+        let loaded0 = Ok(LoadedTransaction {
+            accounts: transaction_accounts0,
+            program_indices: vec![],
+            nonce: None,
+            fee_details: FeeDetails::default(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
+        });
 
-        let loaded1 = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts1,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            None,
-        );
+        let loaded1 = Ok(LoadedTransaction {
+            accounts: transaction_accounts1,
+            program_indices: vec![],
+            nonce: None,
+            fee_details: FeeDetails::default(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
+        });
 
         let mut loaded = vec![loaded0, loaded1];
 
@@ -1945,15 +1960,15 @@ mod tests {
             Some(from_account_pre.clone()),
         ));
 
-        let loaded = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            nonce.clone(),
-        );
+        let loaded = Ok(LoadedTransaction {
+            accounts: transaction_accounts,
+            program_indices: vec![],
+            nonce: nonce.clone(),
+            fee_details: FeeDetails::default(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
+        });
 
         let mut loaded = vec![loaded];
 
@@ -2051,15 +2066,15 @@ mod tests {
             None,
         ));
 
-        let loaded = (
-            Ok(LoadedTransaction {
-                accounts: transaction_accounts,
-                program_indices: vec![],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-            }),
-            nonce.clone(),
-        );
+        let loaded = Ok(LoadedTransaction {
+            accounts: transaction_accounts,
+            program_indices: vec![],
+            nonce: nonce.clone(),
+            fee_details: FeeDetails::default(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 0,
+        });
 
         let mut loaded = vec![loaded];
 

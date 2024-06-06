@@ -33,14 +33,16 @@ use {
         accounts_partition::{self, PartitionIndex, RentPayingAccountsByPartition},
         ancestors::Ancestors,
     },
+    solana_compute_budget::{
+        compute_budget::ComputeBudget,
+        compute_budget_processor::{self, MAX_COMPUTE_UNIT_LIMIT},
+        prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
+    },
     solana_inline_spl::token,
     solana_logger,
     solana_program_runtime::{
-        compute_budget::ComputeBudget,
-        compute_budget_processor::{self, MAX_COMPUTE_UNIT_LIMIT},
         declare_process_instruction,
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch},
-        prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
         timings::ExecuteTimings,
     },
     solana_sdk::{
@@ -101,7 +103,7 @@ use {
         transaction_context::TransactionAccount,
     },
     solana_stake_program::stake_state::{self, StakeStateV2},
-    solana_svm::{nonce_info::NonceFull, transaction_results::DurableNonceFee},
+    solana_svm::nonce_info::NonceFull,
     solana_vote_program::{
         vote_instruction,
         vote_state::{
@@ -231,13 +233,15 @@ fn test_race_register_tick_freeze() {
 fn new_execution_result(
     status: Result<()>,
     nonce: Option<&NonceFull>,
+    fee_details: FeeDetails,
 ) -> TransactionExecutionResult {
     TransactionExecutionResult::Executed {
         details: TransactionExecutionDetails {
             status,
             log_messages: None,
             inner_instructions: None,
-            durable_nonce_fee: nonce.map(DurableNonceFee::from),
+            fee_details,
+            is_nonce: nonce.is_some(),
             return_data: None,
             executed_units: 0,
             accounts_data_len_delta: 0,
@@ -273,7 +277,6 @@ fn test_bank_unix_timestamp_from_genesis() {
 }
 
 #[test]
-#[allow(clippy::float_cmp)]
 fn test_bank_new() {
     let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
     let dummy_leader_stake_lamports = bootstrap_validator_stake_lamports();
@@ -330,6 +333,7 @@ fn test_bank_block_height() {
 
 #[test]
 fn test_bank_update_epoch_stakes() {
+    #[allow(non_local_definitions)]
     impl Bank {
         fn epoch_stake_keys(&self) -> Vec<Epoch> {
             let mut keys: Vec<Epoch> = self.epoch_stakes.keys().copied().collect();
@@ -2863,11 +2867,10 @@ fn test_bank_blockhash_compute_unit_fee_structure() {
 fn test_filter_program_errors_and_collect_fee() {
     let leader = solana_sdk::pubkey::new_rand();
     let GenesisConfigInfo {
-        mut genesis_config,
+        genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(100_000, &leader, 3);
-    genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
     let mut bank = Bank::new_for_tests(&genesis_config);
     // this test is only for when `feature_set::reward_full_priority_fee` inactivated
     bank.deactivate_feature(&feature_set::reward_full_priority_fee::id());
@@ -2886,14 +2889,17 @@ fn test_filter_program_errors_and_collect_fee() {
         genesis_config.hash(),
     ));
 
+    let tx_fee = 42;
+    let fee_details = FeeDetails::new_for_tests(tx_fee, 0, false);
     let results = vec![
-        new_execution_result(Ok(()), None),
+        new_execution_result(Ok(()), None, fee_details),
         new_execution_result(
             Err(TransactionError::InstructionError(
                 1,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
             None,
+            fee_details,
         ),
     ];
     let initial_balance = bank.get_balance(&leader);
@@ -2902,25 +2908,20 @@ fn test_filter_program_errors_and_collect_fee() {
     bank.freeze();
     assert_eq!(
         bank.get_balance(&leader),
-        initial_balance
-            + bank
-                .fee_rate_governor
-                .burn(bank.fee_rate_governor.lamports_per_signature * 2)
-                .0
+        initial_balance + bank.fee_rate_governor.burn(tx_fee * 2).0
     );
     assert_eq!(results[0], Ok(()));
     assert_eq!(results[1], Ok(()));
 }
 
 #[test]
-fn test_filter_program_errors_and_collect_compute_unit_fee() {
+fn test_filter_program_errors_and_collect_priority_fee() {
     let leader = solana_sdk::pubkey::new_rand();
     let GenesisConfigInfo {
-        mut genesis_config,
+        genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(1000000, &leader, 3);
-    genesis_config.fee_rate_governor = FeeRateGovernor::new(2, 0);
     let mut bank = Bank::new_for_tests(&genesis_config);
     // this test is only for when `feature_set::reward_full_priority_fee` inactivated
     bank.deactivate_feature(&feature_set::reward_full_priority_fee::id());
@@ -2939,14 +2940,17 @@ fn test_filter_program_errors_and_collect_compute_unit_fee() {
         genesis_config.hash(),
     ));
 
+    let priority_fee = 42;
+    let fee_details: FeeDetails = FeeDetails::new_for_tests(0, priority_fee, false);
     let results = vec![
-        new_execution_result(Ok(()), None),
+        new_execution_result(Ok(()), None, fee_details),
         new_execution_result(
             Err(TransactionError::InstructionError(
                 1,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
             None,
+            fee_details,
         ),
     ];
     let initial_balance = bank.get_balance(&leader);
@@ -2955,20 +2959,7 @@ fn test_filter_program_errors_and_collect_compute_unit_fee() {
     bank.freeze();
     assert_eq!(
         bank.get_balance(&leader),
-        initial_balance
-            + bank
-                .fee_rate_governor
-                .burn(
-                    calculate_test_fee(
-                        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-                        genesis_config
-                            .fee_rate_governor
-                            .create_fee_calculator()
-                            .lamports_per_signature,
-                        bank.fee_structure(),
-                    ) * 2
-                )
-                .0
+        initial_balance + bank.fee_rate_governor.burn(priority_fee * 2).0
     );
     assert_eq!(results[0], Ok(()));
     assert_eq!(results[1], Ok(()));
@@ -3961,7 +3952,7 @@ fn test_bank_epoch_vote_accounts() {
     let leader_stake = Stake {
         delegation: Delegation {
             stake: leader_lamports,
-            activation_epoch: std::u64::MAX, // bootstrap
+            activation_epoch: u64::MAX, // bootstrap
             ..Delegation::default()
         },
         ..Stake::default()
@@ -4033,7 +4024,7 @@ fn test_zero_signatures() {
     let mut transfer_instruction = system_instruction::transfer(&mint_keypair.pubkey(), &key, 0);
     transfer_instruction.accounts[0].is_signer = false;
     let message = Message::new(&[transfer_instruction], None);
-    let tx = Transaction::new(&[&Keypair::new(); 0], message, bank.last_blockhash());
+    let tx = Transaction::new(&Vec::<&Keypair>::new(), message, bank.last_blockhash());
 
     assert_eq!(
         bank.process_transaction(&tx),
@@ -4883,10 +4874,16 @@ fn test_banks_leak() {
 
 fn get_nonce_blockhash(bank: &Bank, nonce_pubkey: &Pubkey) -> Option<Hash> {
     let account = bank.get_account(nonce_pubkey)?;
-    let nonce_versions = StateMut::<nonce::state::Versions>::state(&account);
-    match nonce_versions.ok()?.state() {
-        nonce::State::Initialized(ref data) => Some(data.blockhash()),
-        _ => None,
+    let nonce_data = get_nonce_data_from_account(&account)?;
+    Some(nonce_data.blockhash())
+}
+
+fn get_nonce_data_from_account(account: &AccountSharedData) -> Option<nonce::state::Data> {
+    let nonce_versions = StateMut::<nonce::state::Versions>::state(account).ok()?;
+    if let nonce::State::Initialized(nonce_data) = nonce_versions.state() {
+        Some(nonce_data.clone())
+    } else {
+        None
     }
 }
 
@@ -4980,7 +4977,7 @@ impl Bank {
 }
 
 #[test]
-fn test_check_transaction_for_nonce_ok() {
+fn test_check_and_load_message_nonce_account_ok() {
     let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
         10_000_000,
         |_| {},
@@ -4994,27 +4991,24 @@ fn test_check_transaction_for_nonce_ok() {
     let nonce_pubkey = nonce_keypair.pubkey();
 
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-    let tx = Transaction::new_signed_with_payer(
+    let message = new_sanitized_message(Message::new_with_blockhash(
         &[
             system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
             system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
         ],
         Some(&custodian_pubkey),
-        &[&custodian_keypair, &nonce_keypair],
-        nonce_hash,
-    );
+        &nonce_hash,
+    ));
     let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+    let nonce_data = get_nonce_data_from_account(&nonce_account).unwrap();
     assert_eq!(
-        bank.check_transaction_for_nonce(
-            &SanitizedTransaction::from_transaction_for_tests(tx),
-            &bank.next_durable_nonce(),
-        ),
-        Some((nonce_pubkey, nonce_account))
+        bank.check_and_load_message_nonce_account(&message, &bank.next_durable_nonce()),
+        Some((NoncePartial::new(nonce_pubkey, nonce_account), nonce_data))
     );
 }
 
 #[test]
-fn test_check_transaction_for_nonce_not_nonce_fail() {
+fn test_check_and_load_message_nonce_account_not_nonce_fail() {
     let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
         10_000_000,
         |_| {},
@@ -5028,25 +5022,21 @@ fn test_check_transaction_for_nonce_not_nonce_fail() {
     let nonce_pubkey = nonce_keypair.pubkey();
 
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-    let tx = Transaction::new_signed_with_payer(
+    let message = new_sanitized_message(Message::new_with_blockhash(
         &[
             system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
             system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
         ],
         Some(&custodian_pubkey),
-        &[&custodian_keypair, &nonce_keypair],
-        nonce_hash,
-    );
+        &nonce_hash,
+    ));
     assert!(bank
-        .check_transaction_for_nonce(
-            &SanitizedTransaction::from_transaction_for_tests(tx,),
-            &bank.next_durable_nonce(),
-        )
+        .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
         .is_none());
 }
 
 #[test]
-fn test_check_transaction_for_nonce_missing_ix_pubkey_fail() {
+fn test_check_and_load_message_nonce_account_missing_ix_pubkey_fail() {
     let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
         10_000_000,
         |_| {},
@@ -5060,26 +5050,25 @@ fn test_check_transaction_for_nonce_missing_ix_pubkey_fail() {
     let nonce_pubkey = nonce_keypair.pubkey();
 
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-    let mut tx = Transaction::new_signed_with_payer(
+    let mut message = Message::new_with_blockhash(
         &[
             system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
             system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
         ],
         Some(&custodian_pubkey),
-        &[&custodian_keypair, &nonce_keypair],
-        nonce_hash,
+        &nonce_hash,
     );
-    tx.message.instructions[0].accounts.clear();
+    message.instructions[0].accounts.clear();
     assert!(bank
-        .check_transaction_for_nonce(
-            &SanitizedTransaction::from_transaction_for_tests(tx),
+        .check_and_load_message_nonce_account(
+            &new_sanitized_message(message),
             &bank.next_durable_nonce(),
         )
         .is_none());
 }
 
 #[test]
-fn test_check_transaction_for_nonce_nonce_acc_does_not_exist_fail() {
+fn test_check_and_load_message_nonce_account_nonce_acc_does_not_exist_fail() {
     let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
         10_000_000,
         |_| {},
@@ -5095,25 +5084,21 @@ fn test_check_transaction_for_nonce_nonce_acc_does_not_exist_fail() {
     let missing_pubkey = missing_keypair.pubkey();
 
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
-    let tx = Transaction::new_signed_with_payer(
+    let message = new_sanitized_message(Message::new_with_blockhash(
         &[
             system_instruction::advance_nonce_account(&missing_pubkey, &nonce_pubkey),
             system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
         ],
         Some(&custodian_pubkey),
-        &[&custodian_keypair, &nonce_keypair],
-        nonce_hash,
-    );
+        &nonce_hash,
+    ));
     assert!(bank
-        .check_transaction_for_nonce(
-            &SanitizedTransaction::from_transaction_for_tests(tx),
-            &bank.next_durable_nonce(),
-        )
+        .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
         .is_none());
 }
 
 #[test]
-fn test_check_transaction_for_nonce_bad_tx_hash_fail() {
+fn test_check_and_load_message_nonce_account_bad_tx_hash_fail() {
     let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
         10_000_000,
         |_| {},
@@ -5126,20 +5111,16 @@ fn test_check_transaction_for_nonce_bad_tx_hash_fail() {
     let custodian_pubkey = custodian_keypair.pubkey();
     let nonce_pubkey = nonce_keypair.pubkey();
 
-    let tx = Transaction::new_signed_with_payer(
+    let message = new_sanitized_message(Message::new_with_blockhash(
         &[
             system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
             system_instruction::transfer(&custodian_pubkey, &nonce_pubkey, 100_000),
         ],
         Some(&custodian_pubkey),
-        &[&custodian_keypair, &nonce_keypair],
-        Hash::default(),
-    );
+        &Hash::default(),
+    ));
     assert!(bank
-        .check_transaction_for_nonce(
-            &SanitizedTransaction::from_transaction_for_tests(tx),
-            &bank.next_durable_nonce(),
-        )
+        .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
         .is_none());
 }
 
@@ -5837,8 +5818,8 @@ fn test_check_ro_durable_nonce_fails() {
         Err(TransactionError::BlockhashNotFound)
     );
     assert_eq!(
-        bank.check_transaction_for_nonce(
-            &SanitizedTransaction::from_transaction_for_tests(tx),
+        bank.check_and_load_message_nonce_account(
+            &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
         ),
         None
@@ -11964,7 +11945,7 @@ fn test_is_in_slot_hashes_history() {
 }
 
 #[test]
-fn test_feature_activation_loaded_programs_recompilation_phase() {
+fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     solana_logger::setup();
 
     // Bank Setup
@@ -12025,16 +12006,14 @@ fn test_feature_activation_loaded_programs_recompilation_phase() {
         .read()
         .unwrap()
         .get_environments_for_epoch(0)
-        .program_runtime_v1
-        .clone();
+        .program_runtime_v1;
     let upcoming_env = bank
         .transaction_processor
         .program_cache
         .read()
         .unwrap()
         .get_environments_for_epoch(1)
-        .program_runtime_v1
-        .clone();
+        .program_runtime_v1;
 
     // Advance the bank to recompile the program.
     {
@@ -12896,21 +12875,13 @@ fn test_filter_program_errors_and_collect_fee_details() {
     //
     let initial_payer_balance = 7_000;
     let additional_payer_withdraw = 6_000;
+    let tx_fee = 5000;
+    let priority_fee = 1000;
+    let tx_fee_details = FeeDetails::new_for_tests(tx_fee, priority_fee, false);
     let expected_collected_fee_details = CollectorFeeDetails {
-        transaction_fee: 15_000,
-        priority_fee: 3_000,
+        transaction_fee: 3 * tx_fee,
+        priority_fee: 3 * priority_fee,
     };
-    let lamports_per_signature = 9;
-    let nonce_account = AccountSharedData::new_data(
-        99,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::new(
-            Pubkey::default(),
-            DurableNonce::from_blockhash(&Hash::new_unique()),
-            lamports_per_signature,
-        ))),
-        &system_program::id(),
-    )
-    .unwrap();
 
     let expected_collect_results = vec![
         Err(TransactionError::AccountNotFound),
@@ -12921,19 +12892,18 @@ fn test_filter_program_errors_and_collect_fee_details() {
     ];
 
     let GenesisConfigInfo {
-        mut genesis_config,
+        genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(initial_payer_balance, &Pubkey::new_unique(), 3);
-    genesis_config.fee_rate_governor = FeeRateGovernor::new(lamports_per_signature, 0);
     let bank = Bank::new_for_tests(&genesis_config);
 
     let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
-        &[
-            system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 2),
-            ComputeBudgetInstruction::set_compute_unit_limit(1_000),
-            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
-        ],
+        &[system_instruction::transfer(
+            &mint_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            2,
+        )],
         Some(&mint_keypair.pubkey()),
         &[&mint_keypair],
         genesis_config.hash(),
@@ -12942,22 +12912,28 @@ fn test_filter_program_errors_and_collect_fee_details() {
 
     let results = vec![
         TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
-        new_execution_result(Ok(()), None),
+        new_execution_result(Ok(()), None, tx_fee_details),
         new_execution_result(
             Err(TransactionError::InstructionError(
-                1,
+                0,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
-            Some(&NonceFull::new(Pubkey::new_unique(), nonce_account, None)),
+            Some(&NonceFull::new(
+                Pubkey::new_unique(),
+                AccountSharedData::default(),
+                None,
+            )),
+            tx_fee_details,
         ),
         new_execution_result(
             Err(TransactionError::InstructionError(
-                1,
+                0,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
             None,
+            tx_fee_details,
         ),
-        new_execution_result(Err(TransactionError::AccountNotFound), None),
+        new_execution_result(Err(TransactionError::AccountNotFound), None, tx_fee_details),
     ];
 
     let results = bank.filter_program_errors_and_collect_fee_details(&txs, &results);

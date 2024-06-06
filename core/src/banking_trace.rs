@@ -62,17 +62,23 @@ pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
 
-#[frozen_abi(digest = "Eq6YrAFtTbtPrCEvh6Et1mZZDCARUg1gcK2qiZdqyjUz")]
-#[derive(Serialize, Deserialize, Debug, AbiExample)]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "Eq6YrAFtTbtPrCEvh6Et1mZZDCARUg1gcK2qiZdqyjUz")
+)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
 
-#[derive(Serialize, Deserialize, Debug, AbiExample, AbiEnumVisitor)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum TracedEvent {
     PacketBatch(ChannelLabel, BankingPacketBatch),
     BlockAndBankHash(Slot, Hash, Hash),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, AbiExample, AbiEnumVisitor)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ChannelLabel {
     NonVote,
     TpuVote,
@@ -432,7 +438,7 @@ mod tests {
         let path = temp_dir.path().join("banking-trace");
         let exit = Arc::<AtomicBool>::default();
         let (tracer, tracer_thread) =
-            BankingTracer::new(Some((&path, exit.clone(), DirByteLimit::max_value()))).unwrap();
+            BankingTracer::new(Some((&path, exit.clone(), DirByteLimit::MAX))).unwrap();
         let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
 
         let exit_for_dummy_thread = Arc::<AtomicBool>::default();
@@ -473,7 +479,7 @@ mod tests {
         let path = temp_dir.path().join("banking-trace");
         let exit = Arc::<AtomicBool>::default();
         let (tracer, tracer_thread) =
-            BankingTracer::new(Some((&path, exit.clone(), DirByteLimit::max_value()))).unwrap();
+            BankingTracer::new(Some((&path, exit.clone(), DirByteLimit::MAX))).unwrap();
         let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
 
         let dummy_main_thread = thread::spawn(move || {

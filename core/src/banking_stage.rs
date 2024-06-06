@@ -68,6 +68,7 @@ mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
 mod multi_iterator_scanner;
 mod packet_deserializer;
+mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
 #[allow(dead_code)]
@@ -285,6 +286,7 @@ pub struct BatchedTransactionCostDetails {
     pub batched_signature_cost: u64,
     pub batched_write_lock_cost: u64,
     pub batched_data_bytes_cost: u64,
+    pub batched_loaded_accounts_data_size_cost: u64,
     pub batched_programs_execute_cost: u64,
 }
 

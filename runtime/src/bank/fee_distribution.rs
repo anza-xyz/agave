@@ -85,24 +85,19 @@ impl Bank {
         transaction: &SanitizedTransaction,
         fee_budget_limits: &FeeBudgetLimits,
     ) -> u64 {
+        let fee_details = self.fee_structure().calculate_fee_details(
+            transaction.message(),
+            self.get_lamports_per_signature(),
+            fee_budget_limits,
+            self.feature_set
+                .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+            self.feature_set
+                .is_active(&remove_rounding_in_fee_calculation::id()),
+        );
         let (reward, _burn) = if self.feature_set.is_active(&reward_full_priority_fee::id()) {
-            let fee_details = self.fee_structure().calculate_fee_details(
-                transaction.message(),
-                fee_budget_limits,
-                self.feature_set
-                    .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-            );
             self.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))
         } else {
-            let fee = self.fee_structure().calculate_fee(
-                transaction.message(),
-                5_000, // this just needs to be non-zero
-                fee_budget_limits,
-                self.feature_set
-                    .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-                self.feature_set
-                    .is_active(&remove_rounding_in_fee_calculation::id()),
-            );
+            let fee = fee_details.total_fee();
             self.calculate_reward_and_burn_fees(fee)
         };
         reward
@@ -168,7 +163,9 @@ impl Bank {
         fees: u64,
         options: DepositFeeOptions,
     ) -> Result<u64, DepositFeeError> {
-        let mut account = self.get_account_with_fixed_root(pubkey).unwrap_or_default();
+        let mut account = self
+            .get_account_with_fixed_root_no_cache(pubkey)
+            .unwrap_or_default();
 
         if options.check_account_owner && !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
@@ -213,7 +210,6 @@ impl Bank {
     // fees
     //
     // Ref: distribute_transaction_fees
-    #[allow(clippy::needless_collect)]
     fn distribute_rent_to_validators(
         &self,
         vote_accounts: &VoteAccountsHashMap,

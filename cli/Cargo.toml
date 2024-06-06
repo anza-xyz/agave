@@ -34,19 +34,24 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-config-program = { workspace = true }
 solana-faucet = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubsub-client = { workspace = true }
+solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
 solana-sdk = { workspace = true }
+solana-streamer = { workspace = true }
+solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction-status = { workspace = true }
+solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 solana_rbpf = { workspace = true }

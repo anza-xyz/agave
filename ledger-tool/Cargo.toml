@@ -23,19 +23,21 @@ log = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
+serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-core = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
-solana-ledger = { workspace = true }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true }

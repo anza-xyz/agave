@@ -55,7 +55,8 @@ const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
 pub const FALSE_RATE: f64 = 0.1f64;
 pub const KEYS: f64 = 8f64;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct CrdsFilter {
     pub filter: Bloom<Hash>,
     mask: u64,
@@ -1303,7 +1304,6 @@ pub(crate) mod tests {
         assert_eq!(node_crds.num_purged(), 0);
     }
     #[test]
-    #[allow(clippy::float_cmp)]
     fn test_crds_filter_mask() {
         let filter = CrdsFilter::new_rand(1, 128);
         assert_eq!(filter.mask, !0x0);

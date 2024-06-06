@@ -1,6 +1,5 @@
 use {
     crate::{
-        compute_budget::ComputeBudget,
         ic_msg,
         loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
@@ -11,6 +10,7 @@ use {
         sysvar_cache::SysvarCache,
         timings::{ExecuteDetailsTimings, ExecuteTimings},
     },
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_measure::measure::Measure,
     solana_rbpf::{
         ebpf::MM_HEAP_START,
@@ -185,14 +185,19 @@ pub struct SerializedAccountMetadata {
 pub struct InvokeContext<'a> {
     /// Information about the currently executing transaction.
     pub transaction_context: &'a mut TransactionContext,
+    /// The local program cache for the transaction batch.
+    pub program_cache_for_tx_batch: &'a ProgramCacheForTxBatch,
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig<'a>,
-    log_collector: Option<Rc<RefCell<LogCollector>>>,
+    /// The compute budget for the current invocation.
     compute_budget: ComputeBudget,
-    current_compute_budget: ComputeBudget,
+    /// Instruction compute meter, for tracking compute units consumed against
+    /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
-    pub programs_loaded_for_tx_batch: &'a ProgramCacheForTxBatch,
+    log_collector: Option<Rc<RefCell<LogCollector>>>,
     pub programs_modified_by_tx: &'a mut ProgramCacheForTxBatch,
+    /// Latest measurement not yet accumulated in [ExecuteDetailsTimings::execute_us]
+    pub execute_time: Option<Measure>,
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
@@ -202,21 +207,21 @@ impl<'a> InvokeContext<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         transaction_context: &'a mut TransactionContext,
+        program_cache_for_tx_batch: &'a ProgramCacheForTxBatch,
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
         compute_budget: ComputeBudget,
-        programs_loaded_for_tx_batch: &'a ProgramCacheForTxBatch,
         programs_modified_by_tx: &'a mut ProgramCacheForTxBatch,
     ) -> Self {
         Self {
             transaction_context,
+            program_cache_for_tx_batch,
             environment_config,
             log_collector,
-            current_compute_budget: compute_budget,
             compute_budget,
             compute_meter: RefCell::new(compute_budget.compute_unit_limit),
-            programs_loaded_for_tx_batch,
             programs_modified_by_tx,
+            execute_time: None,
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             traces: Vec::new(),
@@ -228,7 +233,7 @@ impl<'a> InvokeContext<'a> {
         // the cache of the cache of the programs that are loaded for the transaction batch.
         self.programs_modified_by_tx
             .find(pubkey)
-            .or_else(|| self.programs_loaded_for_tx_batch.find(pubkey))
+            .or_else(|| self.program_cache_for_tx_batch.find(pubkey))
     }
 
     pub fn get_environments_for_slot(
@@ -238,7 +243,7 @@ impl<'a> InvokeContext<'a> {
         let epoch_schedule = self.environment_config.sysvar_cache.get_epoch_schedule()?;
         let epoch = epoch_schedule.get_epoch(effective_slot);
         Ok(self
-            .programs_loaded_for_tx_batch
+            .program_cache_for_tx_batch
             .get_environments_for_epoch(epoch))
     }
 
@@ -255,10 +260,8 @@ impl<'a> InvokeContext<'a> {
         if self
             .transaction_context
             .get_instruction_context_stack_height()
-            == 0
+            != 0
         {
-            self.current_compute_budget = self.compute_budget;
-        } else {
             let contains = (0..self
                 .transaction_context
                 .get_instruction_context_stack_height())
@@ -491,7 +494,7 @@ impl<'a> InvokeContext<'a> {
         // The Murmur3 hash value (used by RBPF) of the string "entrypoint"
         const ENTRYPOINT_KEY: u32 = 0x71E3CF81;
         let entry = self
-            .programs_loaded_for_tx_batch
+            .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
@@ -517,7 +520,7 @@ impl<'a> InvokeContext<'a> {
         let empty_memory_mapping =
             MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
         let mut vm = EbpfVm::new(
-            self.programs_loaded_for_tx_batch
+            self.program_cache_for_tx_batch
                 .environments
                 .program_runtime_v2
                 .clone(),
@@ -591,7 +594,7 @@ impl<'a> InvokeContext<'a> {
 
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &ComputeBudget {
-        &self.current_compute_budget
+        &self.compute_budget
     }
 
     /// Get the current feature set.
@@ -667,13 +670,13 @@ macro_rules! with_mock_invoke_context {
         $transaction_accounts:expr $(,)?
     ) => {
         use {
+            solana_compute_budget::compute_budget::ComputeBudget,
             solana_sdk::{
                 account::ReadableAccount, feature_set::FeatureSet, hash::Hash, sysvar::rent::Rent,
                 transaction_context::TransactionContext,
             },
             std::sync::Arc,
             $crate::{
-                compute_budget::ComputeBudget,
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
                 log_collector::LogCollector,
@@ -711,14 +714,14 @@ macro_rules! with_mock_invoke_context {
             0,
             &sysvar_cache,
         );
-        let programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
+        let program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         let mut programs_modified_by_tx = ProgramCacheForTxBatch::default();
         let mut $invoke_context = InvokeContext::new(
             &mut $transaction_context,
+            &program_cache_for_tx_batch,
             environment_config,
             Some(LogCollector::new_ref()),
             compute_budget,
-            &programs_loaded_for_tx_batch,
             &mut programs_modified_by_tx,
         );
     };
@@ -775,12 +778,12 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
         false
     };
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-    let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
-    programs_loaded_for_tx_batch.replenish(
+    let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+    program_cache_for_tx_batch.replenish(
         *loader_id,
         Arc::new(ProgramCacheEntry::new_builtin(0, 0, builtin_function)),
     );
-    invoke_context.programs_loaded_for_tx_batch = &programs_loaded_for_tx_batch;
+    invoke_context.program_cache_for_tx_batch = &program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);
     let result = invoke_context.process_instruction(
         instruction_data,
@@ -803,8 +806,8 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
 mod tests {
     use {
         super::*,
-        crate::compute_budget_processor,
         serde::{Deserialize, Serialize},
+        solana_compute_budget::compute_budget_processor,
         solana_sdk::{account::WritableAccount, instruction::Instruction, rent::Rent},
     };
 
@@ -1032,12 +1035,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
-        programs_loaded_for_tx_batch.replenish(
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        program_cache_for_tx_batch.replenish(
             callee_program_id,
             Arc::new(ProgramCacheEntry::new_builtin(0, 1, MockBuiltin::vm)),
         );
-        invoke_context.programs_loaded_for_tx_batch = &programs_loaded_for_tx_batch;
+        invoke_context.program_cache_for_tx_batch = &program_cache_for_tx_batch;
 
         // Account modification tests
         let cases = vec![
@@ -1181,12 +1184,12 @@ mod tests {
             },
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
-        let mut programs_loaded_for_tx_batch = ProgramCacheForTxBatch::default();
-        programs_loaded_for_tx_batch.replenish(
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        program_cache_for_tx_batch.replenish(
             program_key,
             Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
-        invoke_context.programs_loaded_for_tx_batch = &programs_loaded_for_tx_batch;
+        invoke_context.program_cache_for_tx_batch = &program_cache_for_tx_batch;
 
         // Test: Resize the account to *the same size*, so not consuming any additional size; this must succeed
         {

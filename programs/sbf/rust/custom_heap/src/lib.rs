@@ -2,25 +2,25 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(target_os = "solana")]
 use {
-    solana_program::{
-        account_info::AccountInfo,
-        entrypoint::{ProgramResult, HEAP_LENGTH, HEAP_START_ADDRESS},
-        msg,
-        pubkey::Pubkey,
-    },
+    solana_program::entrypoint::{HEAP_LENGTH, HEAP_START_ADDRESS},
+    std::{mem::size_of, ptr::null_mut},
+};
+use {
+    solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, msg, pubkey::Pubkey},
     std::{
         alloc::{alloc, Layout},
-        mem::{align_of, size_of},
-        ptr::null_mut,
-        usize,
+        mem::align_of,
     },
 };
 
 /// Developers can implement their own heap by defining their own
 /// `#[global_allocator]`.  The following implements a dummy for test purposes
 /// but can be flushed out with whatever the developer sees fit.
+#[cfg(target_os = "solana")]
 struct BumpAllocator;
+#[cfg(target_os = "solana")]
 unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -51,12 +51,11 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
         // I'm a bump allocator, I don't free
     }
 }
-#[cfg(not(test))]
+#[cfg(target_os = "solana")]
 #[global_allocator]
 static A: BumpAllocator = BumpAllocator;
 
 solana_program::entrypoint!(process_instruction);
-#[allow(clippy::unnecessary_wraps)]
 pub fn process_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],

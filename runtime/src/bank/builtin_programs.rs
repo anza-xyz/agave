@@ -147,11 +147,12 @@ mod tests_core_bpf_migration {
         let (builtin_id, config) = prototype.deconstruct();
         let feature_id = &config.feature_id;
         let source_buffer_address = &config.source_buffer_address;
-        let upgrade_authority_address = Some(Pubkey::new_unique());
+        let upgrade_authority_address = config.upgrade_authority_address;
 
         // Add the feature to the bank's inactive feature set.
+        // Note this will add the feature ID if it doesn't exist.
         let mut feature_set = FeatureSet::all_enabled();
-        feature_set.inactive.insert(*feature_id);
+        feature_set.deactivate(feature_id);
         root_bank.feature_set = Arc::new(feature_set);
 
         // Initialize the source buffer account.
@@ -198,7 +199,7 @@ mod tests_core_bpf_migration {
 
         // Run the post-migration program checks.
         assert!(bank.feature_set.is_active(feature_id));
-        test_context.run_program_checks_post_migration(&bank, migration_slot);
+        test_context.run_program_checks(&bank, migration_slot);
 
         // Advance one slot so that the new BPF builtin program becomes
         // effective in the program cache.
@@ -230,7 +231,7 @@ mod tests_core_bpf_migration {
 
         // Run the post-migration program checks again.
         assert!(bank.feature_set.is_active(feature_id));
-        test_context.run_program_checks_post_migration(&bank, migration_slot);
+        test_context.run_program_checks(&bank, migration_slot);
 
         // Again, successfully invoke the new BPF builtin program.
         bank.process_transaction(&Transaction::new(

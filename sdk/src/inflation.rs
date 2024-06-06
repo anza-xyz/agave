@@ -1,6 +1,7 @@
 //! configuration for network inflation
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Copy, AbiExample)]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct Inflation {
     /// Initial inflation percentage, from time=0
@@ -112,7 +113,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::float_cmp)]
     fn test_inflation_basic() {
         let inflation = Inflation::default();
 
@@ -132,7 +132,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
     fn test_inflation_fixed() {
         let inflation = Inflation::new_fixed(0.001);
         for year in &[0.1, 0.5, 1.0, DEFAULT_FOUNDATION_TERM, 100.0] {

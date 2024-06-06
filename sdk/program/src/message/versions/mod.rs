@@ -10,8 +10,8 @@ use {
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
         ser::{SerializeTuple, Serializer},
-        Deserialize, Serialize,
     },
+    serde_derive::{Deserialize, Serialize},
     std::{collections::HashSet, fmt},
 };
 
@@ -92,9 +92,14 @@ impl VersionedMessage {
         }
     }
 
+    #[deprecated(since = "2.0.0", note = "Please use `is_instruction_account` instead")]
+    pub fn is_key_passed_to_program(&self, key_index: usize) -> bool {
+        self.is_instruction_account(key_index)
+    }
+
     /// Returns true if the account at the specified index is an input to some
     /// program instruction in this message.
-    fn is_key_passed_to_program(&self, key_index: usize) -> bool {
+    fn is_instruction_account(&self, key_index: usize) -> bool {
         if let Ok(key_index) = u8::try_from(key_index) {
             self.instructions()
                 .iter()
@@ -114,7 +119,7 @@ impl VersionedMessage {
     /// Returns true if the account at the specified index is not invoked as a
     /// program or, if invoked, is passed to a program.
     pub fn is_non_loader_key(&self, key_index: usize) -> bool {
-        !self.is_invoked(key_index) || self.is_key_passed_to_program(key_index)
+        !self.is_invoked(key_index) || self.is_instruction_account(key_index)
     }
 
     pub fn recent_blockhash(&self) -> &Hash {
@@ -166,7 +171,7 @@ impl Default for VersionedMessage {
     }
 }
 
-impl Serialize for VersionedMessage {
+impl serde::Serialize for VersionedMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -192,7 +197,7 @@ enum MessagePrefix {
     Versioned(u8),
 }
 
-impl<'de> Deserialize<'de> for MessagePrefix {
+impl<'de> serde::Deserialize<'de> for MessagePrefix {
     fn deserialize<D>(deserializer: D) -> Result<MessagePrefix, D::Error>
     where
         D: Deserializer<'de>,
@@ -228,7 +233,7 @@ impl<'de> Deserialize<'de> for MessagePrefix {
     }
 }
 
-impl<'de> Deserialize<'de> for VersionedMessage {
+impl<'de> serde::Deserialize<'de> for VersionedMessage {
     fn deserialize<D>(deserializer: D) -> Result<VersionedMessage, D::Error>
     where
         D: Deserializer<'de>,
