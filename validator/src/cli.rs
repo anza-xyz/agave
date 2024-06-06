@@ -350,8 +350,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .value_name("DIR")
                 .takes_value(true)
                 .help(
-                    "Use DIR as separate location for incremental snapshot archives \
-                     [default: --snapshots value]",
+                    "Use DIR as incremental snapshot archives location [default: --ledger value]"
                 ),
         )
         .arg(
