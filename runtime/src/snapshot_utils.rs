@@ -451,9 +451,6 @@ pub enum AddBankSnapshotError {
 
     #[error("failed to write snapshot version file '{1}': {0}")]
     WriteSnapshotVersionFile(#[source] IoError, PathBuf),
-
-    #[error("failed to mark snapshot as 'complete': failed to create file '{1}': {0}")]
-    CreateStateCompleteFile(#[source] IoError, PathBuf),
 }
 
 /// Errors that can happen in `archive_snapshot_package()`
@@ -895,13 +892,6 @@ fn serialize_snapshot(
         )
         .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?);
 
-        // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-        let state_complete_path = bank_snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-        let (_, measure_write_state_complete_file) =
-            measure!(fs::File::create(&state_complete_path).map_err(|err| {
-                AddBankSnapshotError::CreateStateCompleteFile(err, state_complete_path)
-            })?);
-
         measure_everything.stop();
 
         // Monitor sizes because they're capped to MAX_SNAPSHOT_DATA_FILE_SIZE
@@ -920,11 +910,6 @@ fn serialize_snapshot(
             (
                 "write_version_file_us",
                 measure_write_version_file.as_us(),
-                i64
-            ),
-            (
-                "write_state_complete_file_us",
-                measure_write_state_complete_file.as_us(),
                 i64
             ),
             ("total_us", measure_everything.as_us(), i64),

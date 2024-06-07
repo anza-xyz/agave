@@ -10,10 +10,12 @@ use {
     solana_runtime::{
         snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
-        snapshot_package::{self, SnapshotKind, SnapshotPackage},
+        snapshot_package::{self, SnapshotPackage},
         snapshot_utils,
     },
     std::{
+        fs,
+        path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -47,22 +49,31 @@ impl SnapshotPackagerService {
                 renice_this_thread(snapshot_config.packager_thread_niceness_adj).unwrap();
                 let mut snapshot_gossip_manager = enable_gossip_push
                     .then(|| SnapshotGossipManager::new(cluster_info, starting_snapshot_hashes));
-                let mut last_full_snapshot_storages: Vec<Arc<AccountStorageEntry>> = vec![];
-                let mut last_incremental_snapshot_storages: Vec<Arc<AccountStorageEntry>> = vec![];
+                let mut snapshot_errored = false;
+                let mut last_snapshot_storages: Vec<Arc<AccountStorageEntry>> = vec![];
+                let mut last_bank_snapshot_dir: PathBuf = PathBuf::default();
                 loop {
                     if exit.load(Ordering::Relaxed) {
+                        // When last snapshot archive fails, skip flushing and don't mark the 'complete' for the bad archive.
+                        if snapshot_errored {
+                            break;
+                        }
                         info!("SnapshotPackagerService exiting, flushing last snapshot storages ... ");
                         let (_, measure_flush) = measure_us!({
-                            for storage in itertools::chain(last_full_snapshot_storages, last_incremental_snapshot_storages) {
+                            for storage in last_snapshot_storages {
                                 if let Err(e) = storage.flush() {
                                     error!("error flushing {:?} {}", storage.path().to_path_buf(), e);
                                 }
                             }
                         });
+                        // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
+                        let state_complete_path = last_bank_snapshot_dir.join(snapshot_utils::SNAPSHOT_STATE_COMPLETE_FILENAME);
+                        if let Err(e) = fs::File::create(&state_complete_path) {
+                            error!("error creating snapshot state complete file {:?} {}", state_complete_path, e);
+                        }
                         info!("Done flushing snapshot storages - {}us. SnapshotPackagerService exit.", measure_flush);
                         break;
                     }
-
                     let Some((
                         snapshot_package,
                         num_outstanding_snapshot_packages,
@@ -82,14 +93,9 @@ impl SnapshotPackagerService {
                     let snapshot_kind = snapshot_package.snapshot_kind;
                     let snapshot_slot = snapshot_package.slot;
                     let snapshot_hash = snapshot_package.hash;
-                    match snapshot_kind {
-                        SnapshotKind::FullSnapshot => {
-                            last_full_snapshot_storages = snapshot_package.snapshot_storages.iter().cloned().collect_vec();
-                        }
-                        SnapshotKind::IncrementalSnapshot(_) => {
-                            last_incremental_snapshot_storages = snapshot_package.snapshot_storages.iter().cloned().collect_vec();
-                        }
-                    }
+
+                    last_bank_snapshot_dir.clone_from(&snapshot_config.bank_snapshots_dir);
+                    last_snapshot_storages = snapshot_package.snapshot_storages.iter().cloned().collect_vec();
                     // Archiving the snapshot package is not allowed to fail.
                     // AccountsBackgroundService calls `clean_accounts()` with a value for
                     // last_full_snapshot_slot that requires this archive call to succeed.
@@ -97,13 +103,14 @@ impl SnapshotPackagerService {
                         snapshot_package,
                         &snapshot_config,
                     ));
+
+                    #[allow(unused_assignments)]
                     if let Err(err) = archive_result {
+                        snapshot_errored = true;
                         error!("Stopping SnapshotPackagerService! Fatal error while archiving snapshot package: {err}");
                         exit.store(true, Ordering::Relaxed);
                         break;
                     }
-
-
                     if let Some(snapshot_gossip_manager) = snapshot_gossip_manager.as_mut() {
                         snapshot_gossip_manager.push_snapshot_hash(snapshot_kind, (snapshot_slot, snapshot_hash));
                     }
