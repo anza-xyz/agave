@@ -803,19 +803,6 @@ pub struct WenRestartConfig {
     pub exit: Arc<AtomicBool>,
 }
 
-pub fn wen_restart_is_in_phase_one(records_path: &Option<PathBuf>) -> bool {
-    if let Some(path) = records_path {
-        if let Ok(progress) = read_wen_restart_records(path) {
-            progress.state() != RestartState::Done
-        } else {
-            // When wen_restart has just begin the proto file might not exist yet.
-            true
-        }
-    } else {
-        false
-    }
-}
-
 // Returns whether a restart is needed if there is no error.
 pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
     let (mut state, mut progress) = initialize(
@@ -2581,26 +2568,6 @@ mod tests {
             .unwrap(),
             WenRestartError::BlockNotFound(empty_slot),
         );
-    }
-
-    #[test]
-    fn test_wen_restart_is_in_phase_one() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        // Proto path not given means wen_restart is not configured.
-        assert!(!wen_restart_is_in_phase_one(&None));
-        let proto_path = ledger_path.into_path().join("wen_restart_status.proto");
-        let proto_path_option = Some(proto_path.clone());
-        // No file means in init phase.
-        assert!(wen_restart_is_in_phase_one(&proto_path_option));
-        let mut progress = WenRestartProgress {
-            state: RestartState::LastVotedForkSlots.into(),
-            ..Default::default()
-        };
-        assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
-        assert!(wen_restart_is_in_phase_one(&proto_path_option));
-        progress.set_state(RestartState::Done);
-        assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
-        assert!(!wen_restart_is_in_phase_one(&proto_path_option));
     }
 
     #[test]
