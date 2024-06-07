@@ -121,10 +121,7 @@ use {
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
-    solana_wen_restart::wen_restart::{
-        wait_for_wen_restart_phase_one, wen_restart_is_in_phase_one, wen_restart_mark_done,
-        WenRestartConfig,
-    },
+    solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -1289,9 +1286,8 @@ impl Validator {
                 .unwrap()
             };
 
-        let in_wen_restart_phase_one = !waited_for_supermajority
-            && wen_restart_is_in_phase_one(&config.wen_restart_proto_path);
-        let wen_restart_repair_slots = if in_wen_restart_phase_one {
+        let in_wen_restart = config.wen_restart_proto_path.is_some() && !waited_for_supermajority;
+        let wen_restart_repair_slots = if in_wen_restart {
             Some(Arc::new(RwLock::new(Vec::new())))
         } else {
             None
@@ -1374,9 +1370,9 @@ impl Validator {
             wen_restart_repair_slots.clone(),
         )?;
 
-        if in_wen_restart_phase_one {
+        if in_wen_restart {
             info!("Waiting for wen_restart phase one to finish");
-            match wait_for_wen_restart_phase_one(WenRestartConfig {
+            match wait_for_wen_restart(WenRestartConfig {
                 wen_restart_path: config.wen_restart_proto_path.clone().unwrap(),
                 last_vote,
                 blockstore: blockstore.clone(),
@@ -1390,8 +1386,8 @@ impl Validator {
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
             }) {
-                Ok((slot, hash, shred_version)) => {
-                    return Err(ValidatorError::WenRestartReset(slot, hash, shred_version));
+                Ok(()) => {
+                    return Err(ValidatorError::WenRestartReset);
                 }
                 Err(e) => {
                     return Err(ValidatorError::Error(format!(
@@ -2341,7 +2337,7 @@ pub enum ValidatorError {
     BadExpectedBankHash,
     NotEnoughLedgerData,
     Error(String),
-    WenRestartReset(Slot, Hash, u16),
+    WenRestartReset,
 }
 
 impl std::error::Error for ValidatorError {}
@@ -2432,11 +2428,6 @@ fn wait_for_supermajority(
                 sleep(Duration::new(1, 0));
             }
             rpc_override_health_check.store(false, Ordering::Relaxed);
-            if let Some(proto_path) = &config.wen_restart_proto_path {
-                if let Err(e) = wen_restart_mark_done(proto_path) {
-                    return Err(ValidatorError::Error(e.to_string()));
-                }
-            }
             Ok(true)
         }
     }

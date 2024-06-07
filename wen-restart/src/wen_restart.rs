@@ -84,6 +84,7 @@ pub enum WenRestartError {
     MalformedLastVotedForkSlotsProtobuf(Option<LastVotedForkSlotsRecord>),
     MissingLastVotedForkSlots,
     MissingFullSnapshot(String),
+    MissingSnapshotInProtobuf,
     NotEnoughStakeAgreeingWithUs(Slot, Hash, HashMap<(Slot, Hash), u64>),
     UnexpectedState(wen_restart_proto::State),
 }
@@ -141,6 +142,9 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::MissingFullSnapshot(directory) => {
                 write!(f, "Missing full snapshot, please check whether correct directory is supplied {directory}")
             }
+            WenRestartError::MissingSnapshotInProtobuf => {
+                write!(f, "Missing snapshot in protobuf")
+            }
             WenRestartError::NotEnoughStakeAgreeingWithUs(slot, hash, block_stake_map) => {
                 write!(
                     f,
@@ -181,12 +185,12 @@ pub(crate) enum WenRestartProgressInternalState {
         new_root_slot: Slot,
         my_snapshot: Option<GenerateSnapshotRecord>,
     },
-    WaitingForSupermajority {
+    Done {
         slot: Slot,
         hash: Hash,
         shred_version: u16,
+        snapshot_path: String,
     },
-    Done,
 }
 
 pub(crate) fn send_restart_last_voted_fork_slots(
@@ -812,14 +816,8 @@ pub fn wen_restart_is_in_phase_one(records_path: &Option<PathBuf>) -> bool {
     }
 }
 
-pub fn wen_restart_mark_done(records_path: &PathBuf) -> Result<()> {
-    let mut progress = read_wen_restart_records(records_path)?;
-    progress.set_state(RestartState::Done);
-    write_wen_restart_records(records_path, &progress)
-}
-
 // Returns whether a restart is needed if there is no error.
-pub fn wait_for_wen_restart_phase_one(config: WenRestartConfig) -> Result<(Slot, Hash, u16)> {
+pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
     let (mut state, mut progress) = initialize(
         &config.wen_restart_path,
         config.last_vote.clone(),
@@ -926,14 +924,15 @@ pub fn wait_for_wen_restart_phase_one(config: WenRestartConfig) -> Result<(Slot,
                 }
             }
             // Proceed to restart if we are ready to wait for supermajority.
-            WenRestartProgressInternalState::WaitingForSupermajority {
+            WenRestartProgressInternalState::Done {
                 slot,
                 hash,
                 shred_version,
-            } => return Ok((slot, hash, shred_version)),
-            // If everything is done, do not restart and proceed.
-            WenRestartProgressInternalState::Done => {
-                return Err(WenRestartError::UnexpectedState(RestartState::Done).into())
+                snapshot_path,
+            } => {
+                error!("Wen start finished, restart with snapshot: slot: {}, hash: {}, shred_version: {}, snapshot_path: {}",
+                    slot, hash, shred_version, snapshot_path);
+                return Ok(());
             }
         };
         state = increment_and_write_wen_restart_records(
@@ -1007,24 +1006,19 @@ pub(crate) fn increment_and_write_wen_restart_records(
             my_snapshot,
         } => {
             if let Some(my_snapshot) = my_snapshot {
-                progress.set_state(RestartState::WaitingForSupermajority);
+                progress.set_state(RestartState::Done);
                 progress.my_snapshot = Some(my_snapshot.clone());
-                WenRestartProgressInternalState::WaitingForSupermajority {
+                WenRestartProgressInternalState::Done {
                     slot: my_snapshot.slot,
-                    hash: Hash::from_str(&my_snapshot.bankhash)?,
+                    hash: Hash::from_str(&my_snapshot.bankhash).unwrap(),
                     shred_version: my_snapshot.shred_version as u16,
+                    snapshot_path: my_snapshot.path.clone(),
                 }
             } else {
-                return Err(WenRestartError::UnexpectedState(RestartState::Done).into());
+                return Err(WenRestartError::MissingSnapshotInProtobuf.into());
             }
         }
-        // WaitingForSupermajority should be handled earlier in wait_for_supermajority()
-        WenRestartProgressInternalState::WaitingForSupermajority { .. } => {
-            return Err(
-                WenRestartError::UnexpectedState(RestartState::WaitingForSupermajority).into(),
-            )
-        }
-        WenRestartProgressInternalState::Done => {
+        WenRestartProgressInternalState::Done { .. } => {
             return Err(WenRestartError::UnexpectedState(RestartState::Done).into())
         }
     };
@@ -1058,7 +1052,21 @@ pub(crate) fn initialize(
         }
     };
     match progress.state() {
-        RestartState::Done => Ok((WenRestartProgressInternalState::Done, progress)),
+        RestartState::Done => {
+            if let Some(my_snapshot) = progress.my_snapshot.as_ref() {
+                Ok((
+                    WenRestartProgressInternalState::Done {
+                        slot: my_snapshot.slot,
+                        hash: Hash::from_str(&my_snapshot.bankhash).unwrap(),
+                        shred_version: my_snapshot.shred_version as u16,
+                        snapshot_path: my_snapshot.path.clone(),
+                    },
+                    progress,
+                ))
+            } else {
+                Err(WenRestartError::UnexpectedState(progress.state()).into())
+            }
+        }
         RestartState::Init => {
             let last_voted_fork_slots;
             let last_vote_bankhash;
@@ -1158,23 +1166,6 @@ pub(crate) fn write_wen_restart_records(
     new_progress.encode(&mut buf)?;
     file.write_all(&buf)?;
     Ok(())
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-pub fn write_wen_restart_wait_for_supermajority_record(
-    records_path: &PathBuf,
-    slot: Slot,
-    hash: Hash,
-) {
-    let mut progress = WenRestartProgress::default();
-    progress.set_state(RestartState::WaitingForSupermajority);
-    progress.my_snapshot = Some(GenerateSnapshotRecord {
-        slot,
-        bankhash: hash.to_string(),
-        path: "/fake/snapshot/path".to_string(),
-        shred_version: 101,
-    });
-    write_wen_restart_records(records_path, &progress).unwrap();
 }
 
 #[cfg(test)]
@@ -1458,7 +1449,7 @@ mod tests {
         let wen_restart_thread_handle = Builder::new()
             .name("solana-wen-restart".to_string())
             .spawn(move || {
-                let _ = wait_for_wen_restart_phase_one(wen_restart_config).is_ok();
+                let _ = wait_for_wen_restart(wen_restart_config).is_ok();
             })
             .unwrap();
         wait_on_expected_progress_with_timeout(
@@ -1525,7 +1516,7 @@ mod tests {
         let wen_restart_thread_handle = Builder::new()
             .name("solana-wen-restart".to_string())
             .spawn(move || {
-                assert!(wait_for_wen_restart_phase_one(wen_restart_config).is_ok());
+                assert!(wait_for_wen_restart(wen_restart_config).is_ok());
             })
             .unwrap();
         let mut rng = rand::thread_rng();
@@ -1626,7 +1617,7 @@ mod tests {
         assert_eq!(
             progress,
             WenRestartProgress {
-                state: RestartState::WaitingForSupermajority.into(),
+                state: RestartState::Done.into(),
                 my_last_voted_fork_slots: Some(LastVotedForkSlotsRecord {
                     last_voted_fork_slots: test_state.last_voted_fork_slots,
                     last_vote_bankhash: last_vote_bankhash.to_string(),
@@ -1754,7 +1745,7 @@ mod tests {
         assert!(write_wen_restart_records(
             &test_state.wen_restart_proto_path,
             &WenRestartProgress {
-                state: RestartState::WaitingForSupermajority.into(),
+                state: RestartState::Done.into(),
                 ..Default::default()
             },
         )
@@ -1768,7 +1759,7 @@ mod tests {
             .err()
             .unwrap()
             .to_string(),
-            "Unexpected state: WaitingForSupermajority"
+            "Unexpected state: Done"
         );
     }
 
@@ -2149,10 +2140,11 @@ mod tests {
                     new_root_slot: 1,
                     my_snapshot: my_snapshot.clone(),
                 },
-                WenRestartProgressInternalState::WaitingForSupermajority {
+                WenRestartProgressInternalState::Done {
                     slot: 1,
                     hash: my_bankhash,
                     shred_version: new_shred_version,
+                    snapshot_path: "snapshot_1".to_string(),
                 },
                 WenRestartProgress {
                     state: RestartState::HeaviestFork.into(),
@@ -2163,7 +2155,7 @@ mod tests {
                     ..Default::default()
                 },
                 WenRestartProgress {
-                    state: RestartState::WaitingForSupermajority.into(),
+                    state: RestartState::Done.into(),
                     my_last_voted_fork_slots: my_last_voted_fork_slots.clone(),
                     last_voted_fork_slots_aggregate: last_voted_fork_slots_aggregate.clone(),
                     my_heaviest_fork: my_heaviest_fork.clone(),
@@ -2191,22 +2183,12 @@ mod tests {
         assert_eq!(
             increment_and_write_wen_restart_records(
                 &wen_restart_proto_path,
-                WenRestartProgressInternalState::WaitingForSupermajority {
+                WenRestartProgressInternalState::Done {
                     slot: 1,
                     hash: my_bankhash,
                     shred_version: new_shred_version,
+                    snapshot_path: "snapshot_1".to_string(),
                 },
-                &mut progress
-            )
-            .unwrap_err()
-            .downcast::<WenRestartError>()
-            .unwrap(),
-            WenRestartError::UnexpectedState(RestartState::WaitingForSupermajority),
-        );
-        assert_eq!(
-            increment_and_write_wen_restart_records(
-                &wen_restart_proto_path,
-                WenRestartProgressInternalState::Done,
                 &mut progress
             )
             .unwrap_err()
@@ -2616,38 +2598,9 @@ mod tests {
         };
         assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
         assert!(wen_restart_is_in_phase_one(&proto_path_option));
-        progress.set_state(RestartState::WaitingForSupermajority);
-        assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
-        assert!(wen_restart_is_in_phase_one(&proto_path_option));
         progress.set_state(RestartState::Done);
         assert!(write_wen_restart_records(&proto_path, &progress).is_ok());
         assert!(!wen_restart_is_in_phase_one(&proto_path_option));
-    }
-
-    #[test]
-    fn test_wen_restart_mark_done() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        // Fail if proto file doesn't exist
-        let proto_path = ledger_path.into_path().join("wen_restart_status.proto");
-        assert_eq!(
-            wen_restart_mark_done(&proto_path)
-                .unwrap_err()
-                .downcast::<std::io::Error>()
-                .unwrap()
-                .kind(),
-            std::io::ErrorKind::NotFound
-        );
-        assert!(write_wen_restart_records(
-            &proto_path,
-            &WenRestartProgress {
-                state: RestartState::WaitingForSupermajority.into(),
-                ..Default::default()
-            }
-        )
-        .is_ok());
-        assert!(wen_restart_mark_done(&proto_path).is_ok());
-        let progress = read_wen_restart_records(&proto_path).unwrap();
-        assert_eq!(progress.state(), RestartState::Done);
     }
 
     #[test]
@@ -2672,17 +2625,17 @@ mod tests {
         assert!(write_wen_restart_records(
             &test_state.wen_restart_proto_path,
             &WenRestartProgress {
-                state: RestartState::WaitingForSupermajority.into(),
+                state: RestartState::Done.into(),
                 ..Default::default()
             }
         )
         .is_ok());
         assert_eq!(
-            wait_for_wen_restart_phase_one(config.clone())
+            wait_for_wen_restart(config.clone())
                 .unwrap_err()
                 .downcast::<WenRestartError>()
                 .unwrap(),
-            WenRestartError::UnexpectedState(RestartState::WaitingForSupermajority)
+            WenRestartError::UnexpectedState(RestartState::Done)
         );
         assert!(write_wen_restart_records(
             &test_state.wen_restart_proto_path,
@@ -2693,7 +2646,7 @@ mod tests {
         )
         .is_ok());
         assert_eq!(
-            wait_for_wen_restart_phase_one(config)
+            wait_for_wen_restart(config)
                 .unwrap_err()
                 .downcast::<WenRestartError>()
                 .unwrap(),

@@ -1986,60 +1986,26 @@ pub fn main() {
 
     let validator = match Validator::new(
         node,
-        identity_keypair.clone(),
+        identity_keypair,
         &ledger_path,
         &vote_account,
-        authorized_voter_keypairs.clone(),
-        cluster_entrypoints.clone(),
+        authorized_voter_keypairs,
+        cluster_entrypoints,
         &validator_config,
         should_check_duplicate_instance,
-        rpc_to_plugin_manager_receiver.clone(),
-        start_progress.clone(),
+        rpc_to_plugin_manager_receiver,
+        start_progress,
         socket_addr_space,
         tpu_use_quic,
         tpu_connection_pool_size,
         tpu_enable_udp,
         tpu_max_connections_per_ipaddr_per_minute,
-        admin_service_post_init.clone(),
+        admin_service_post_init,
     ) {
         Ok(validator) => validator,
-        Err(ValidatorError::WenRestartReset(slot, hash, shred_version)) => {
-            // Entering second phase of wen_restart, change param and try again.
-            validator_config.wait_for_supermajority = Some(slot);
-            validator_config.expected_bank_hash = Some(hash);
-            validator_config.expected_shred_version = Some(shred_version);
-            Validator::new(
-                Node::new_with_external_ip(
-                    &identity_keypair.pubkey(),
-                    NodeConfig {
-                        gossip_addr,
-                        port_range: dynamic_port_range,
-                        bind_ip_addr: bind_address,
-                        public_tpu_addr,
-                        public_tpu_forwards_addr,
-                        num_tvu_sockets: tvu_receive_threads,
-                    },
-                ),
-                identity_keypair,
-                &ledger_path,
-                &vote_account,
-                authorized_voter_keypairs,
-                cluster_entrypoints,
-                &validator_config,
-                should_check_duplicate_instance,
-                rpc_to_plugin_manager_receiver,
-                start_progress,
-                socket_addr_space,
-                tpu_use_quic,
-                tpu_connection_pool_size,
-                tpu_enable_udp,
-                tpu_max_connections_per_ipaddr_per_minute,
-                admin_service_post_init,
-            )
-            .unwrap_or_else(|err| {
-                error!("Failed to complete wen_restart: {:?}", err);
-                exit(1);
-            })
+        Err(ValidatorError::WenRestartReset) => {
+            error!("Please remove --wen_restart and use --wait_for_supermajority now");
+            exit(200);
         }
         Err(err) => {
             error!("Failed to start validator: {:?}", err);
