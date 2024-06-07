@@ -428,16 +428,23 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             addr,
             invoke_context.get_check_aligned(),
         )?;
-
-        check_instruction_size(ix.accounts.len(), ix.data.len(), invoke_context)?;
-
         let account_metas = translate_slice::<AccountMeta>(
             memory_mapping,
             ix.accounts.as_ptr() as u64,
             ix.accounts.len() as u64,
             invoke_context.get_check_aligned(),
         )?;
-        let mut accounts = Vec::with_capacity(ix.accounts.len());
+        let data = translate_slice::<u8>(
+            memory_mapping,
+            ix.data.as_ptr() as u64,
+            ix.data.len() as u64,
+            invoke_context.get_check_aligned(),
+        )?
+        .to_vec();
+
+        check_instruction_size(accounts.len(), data.len(), invoke_context)?;
+
+        let mut accounts = Vec::with_capacity(accounts.len());
         #[allow(clippy::needless_range_loop)]
         for account_index in 0..ix.accounts.len() {
             #[allow(clippy::indexing_slicing)]
@@ -464,14 +471,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
                     .unwrap_or(u64::MAX),
             )?;
         }
-
-        let data = translate_slice::<u8>(
-            memory_mapping,
-            ix.data.as_ptr() as u64,
-            ix_data_len,
-            invoke_context.get_check_aligned(),
-        )?
-        .to_vec();
 
         Ok(StableInstruction {
             accounts: accounts.into(),
