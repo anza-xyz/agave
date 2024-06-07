@@ -23,7 +23,7 @@ use {
             state::{Authorized, Lockup, Meta, Stake, StakeStateV2},
         },
         system_instruction, system_program,
-        sysvar::{clock::Clock, stake_history::StakeHistory},
+        sysvar::{clock::Clock, stake_history::StakeHistory, SysvarId},
         transaction::{Transaction, TransactionError},
     },
     solana_vote_program::{
@@ -952,7 +952,14 @@ async fn test_move_general_fail(
         return;
     }
 
-    let mut context = program_test().start_with_context().await;
+    let fake_clock = Pubkey::new_unique();
+    let fake_stake_history = Pubkey::new_unique();
+
+    let mut program_test = program_test();
+    program_test.add_sysvar_account(fake_clock, &Clock::default());
+    program_test.add_sysvar_account(fake_stake_history, &StakeHistory::default());
+
+    let mut context = program_test.start_with_context().await;
     let accounts = Accounts::default();
     accounts.initialize(&mut context).await;
 
@@ -1033,6 +1040,34 @@ async fn test_move_general_fail(
             .await
             .unwrap_err();
         assert_eq!(e, ProgramError::MissingRequiredSignature);
+
+        // spoofed clock fails
+        let mut instruction = mk_ixn(
+            &move_source,
+            &move_dest,
+            &staker_keypair.pubkey(),
+            minimum_delegation,
+        );
+        assert_eq!(instruction.accounts[2].pubkey, Clock::id());
+        instruction.accounts[2].pubkey = fake_clock;
+        let e = process_instruction(&mut context, &instruction, &vec![&staker_keypair])
+            .await
+            .unwrap_err();
+        assert_eq!(e, ProgramError::InvalidArgument);
+
+        // spoofed stake history fails
+        let mut instruction = mk_ixn(
+            &move_source,
+            &move_dest,
+            &staker_keypair.pubkey(),
+            minimum_delegation,
+        );
+        assert_eq!(instruction.accounts[3].pubkey, StakeHistory::id());
+        instruction.accounts[3].pubkey = fake_stake_history;
+        let e = process_instruction(&mut context, &instruction, &vec![&staker_keypair])
+            .await
+            .unwrap_err();
+        assert_eq!(e, ProgramError::InvalidArgument);
 
         // good place to test source lockup
         let move_locked_source_keypair = Keypair::new();
