@@ -1524,7 +1524,7 @@ pub fn main() {
         replay_transactions_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
-        wen_restart_proto_path: value_t!(matches, "wen_restart_proto_path", PathBuf).ok(),
+        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         ..ValidatorConfig::default()
     };
 
