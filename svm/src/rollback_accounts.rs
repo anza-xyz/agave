@@ -90,3 +90,139 @@ impl RollbackAccounts {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_sdk::{
+            account::{ReadableAccount, WritableAccount},
+            hash::Hash,
+            nonce::state::{
+                Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
+            },
+            system_program,
+        },
+    };
+
+    #[test]
+    fn test_new_fee_payer_only() {
+        let fee_payer_address = Pubkey::new_unique();
+        let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
+        let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
+
+        const TEST_RENT_DEBIT: u64 = 1;
+        let rent_collected_fee_payer_account = {
+            let mut account = fee_payer_account.clone();
+            account.set_lamports(fee_payer_account.lamports() - TEST_RENT_DEBIT);
+            account.set_rent_epoch(fee_payer_rent_epoch + 1);
+            account
+        };
+
+        let rollback_accounts = RollbackAccounts::new(
+            None,
+            fee_payer_address,
+            rent_collected_fee_payer_account,
+            TEST_RENT_DEBIT,
+            fee_payer_rent_epoch,
+        );
+
+        let expected_fee_payer_account = fee_payer_account;
+        match rollback_accounts {
+            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+                assert_eq!(expected_fee_payer_account, fee_payer_account);
+            }
+            _ => panic!("Expected FeePayerOnly variant"),
+        }
+    }
+
+    #[test]
+    fn test_new_same_nonce_and_fee_payer() {
+        let nonce_address = Pubkey::new_unique();
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
+        let lamports_per_signature = 42;
+        let nonce_account = AccountSharedData::new_data(
+            43,
+            &NonceVersions::new(NonceState::Initialized(NonceData::new(
+                Pubkey::default(),
+                durable_nonce,
+                lamports_per_signature,
+            ))),
+            &system_program::id(),
+        )
+        .unwrap();
+
+        const TEST_RENT_DEBIT: u64 = 1;
+        let rent_collected_nonce_account = {
+            let mut account = nonce_account.clone();
+            account.set_lamports(nonce_account.lamports() - TEST_RENT_DEBIT);
+            account
+        };
+
+        let nonce = NoncePartial::new(nonce_address, rent_collected_nonce_account.clone());
+        let rollback_accounts = RollbackAccounts::new(
+            Some(nonce),
+            nonce_address,
+            rent_collected_nonce_account,
+            TEST_RENT_DEBIT,
+            u64::MAX, // ignored
+        );
+
+        match rollback_accounts {
+            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+                assert_eq!(nonce.address(), &nonce_address);
+                assert_eq!(nonce.account(), &nonce_account);
+            }
+            _ => panic!("Expected SameNonceAndFeePayer variant"),
+        }
+    }
+
+    #[test]
+    fn test_separate_nonce_and_fee_payer() {
+        let nonce_address = Pubkey::new_unique();
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
+        let lamports_per_signature = 42;
+        let nonce_account = AccountSharedData::new_data(
+            43,
+            &NonceVersions::new(NonceState::Initialized(NonceData::new(
+                Pubkey::default(),
+                durable_nonce,
+                lamports_per_signature,
+            ))),
+            &system_program::id(),
+        )
+        .unwrap();
+
+        let fee_payer_address = Pubkey::new_unique();
+        let fee_payer_account = AccountSharedData::new(44, 0, &Pubkey::default());
+
+        const TEST_RENT_DEBIT: u64 = 1;
+        let rent_collected_fee_payer_account = {
+            let mut account = fee_payer_account.clone();
+            account.set_lamports(fee_payer_account.lamports() - TEST_RENT_DEBIT);
+            account
+        };
+
+        let nonce = NoncePartial::new(nonce_address, nonce_account.clone());
+        let rollback_accounts = RollbackAccounts::new(
+            Some(nonce),
+            fee_payer_address,
+            rent_collected_fee_payer_account.clone(),
+            TEST_RENT_DEBIT,
+            u64::MAX, // ignored
+        );
+
+        let expected_fee_payer_account = fee_payer_account;
+        match rollback_accounts {
+            RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce,
+                fee_payer_account,
+            } => {
+                assert_eq!(nonce.address(), &nonce_address);
+                assert_eq!(nonce.account(), &nonce_account);
+                assert_eq!(expected_fee_payer_account, fee_payer_account);
+            }
+            _ => panic!("Expected SeparateNonceAndFeePayer variant"),
+        }
+    }
+}

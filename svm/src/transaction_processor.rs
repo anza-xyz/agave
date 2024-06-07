@@ -999,7 +999,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 mod tests {
     use {
         super::*,
-        crate::account_loader::ValidatedTransactionDetails,
+        crate::{account_loader::ValidatedTransactionDetails, rollback_accounts::RollbackAccounts},
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
@@ -1158,8 +1158,8 @@ mod tests {
         let mut loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
             program_indices: vec![vec![0]],
-            nonce: None,
             fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 32,
@@ -1285,8 +1285,8 @@ mod tests {
                 (key2, AccountSharedData::default()),
             ],
             program_indices: vec![vec![0]],
-            nonce: None,
             fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -1966,7 +1966,11 @@ mod tests {
             &Hash::new_unique(),
         ));
         let fee_payer_address = message.fee_payer();
-        let rent_collector = RentCollector::default();
+        let current_epoch = 42;
+        let rent_collector = RentCollector {
+            epoch: current_epoch,
+            ..RentCollector::default()
+        };
         let min_balance = rent_collector.rent.minimum_balance(nonce::State::size());
         let transaction_fee = lamports_per_signature;
         let priority_fee = 2_000_000u64;
@@ -1977,7 +1981,13 @@ mod tests {
         so ensure that the starting balance is more than the min balance"
         );
 
-        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
+        let fee_payer_rent_epoch = current_epoch;
+        let fee_payer_account = AccountSharedData::new_rent_epoch(
+            starting_balance,
+            0,
+            &Pubkey::default(),
+            fee_payer_rent_epoch,
+        );
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mock_bank = MockBankCallback {
@@ -2008,7 +2018,8 @@ mod tests {
             Ok((
                 FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
                 post_validation_fee_payer_account,
-                0 // rent due
+                0, // rent due
+                fee_payer_rent_epoch,
             ))
         );
     }
@@ -2068,6 +2079,7 @@ mod tests {
                 FeeDetails::new_for_tests(transaction_fee, 0, false),
                 post_validation_fee_payer_account,
                 rent_due,
+                0, // rent epoch
             ))
         );
     }
@@ -2248,7 +2260,8 @@ mod tests {
                 Ok((
                     FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
                     post_validation_fee_payer_account,
-                    0 // rent due
+                    0, // rent due
+                    0, // rent epoch
                 ))
             );
         }

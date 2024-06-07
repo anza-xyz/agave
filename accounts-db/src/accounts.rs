@@ -827,14 +827,17 @@ mod tests {
             hash::Hash,
             instruction::{CompiledInstruction, InstructionError},
             message::{Message, MessageHeader},
-            native_loader, nonce, nonce_account,
+            native_loader,
+            nonce::state::Data as NonceData,
+            nonce_account,
             rent_debits::RentDebits,
             signature::{keypair_from_seed, signers::Signers, Keypair, Signer},
             system_instruction, system_program,
             transaction::{Transaction, MAX_TX_ACCOUNT_LOCKS},
         },
         solana_svm::{
-            account_loader::LoadedTransaction, transaction_results::TransactionExecutionDetails,
+            account_loader::LoadedTransaction, nonce_info::NoncePartial,
+            transaction_results::TransactionExecutionDetails,
         },
         std::{
             borrow::Cow,
@@ -858,7 +861,7 @@ mod tests {
 
     fn new_execution_result(
         status: Result<()>,
-        nonce: Option<&NonceFull>,
+        nonce: Option<&NoncePartial>,
     ) -> TransactionExecutionResult {
         TransactionExecutionResult::Executed {
             details: TransactionExecutionDetails {
@@ -1563,8 +1566,8 @@ mod tests {
         let loaded0 = Ok(LoadedTransaction {
             accounts: transaction_accounts0,
             program_indices: vec![],
-            nonce: None,
             fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -1573,8 +1576,8 @@ mod tests {
         let loaded1 = Ok(LoadedTransaction {
             accounts: transaction_accounts1,
             program_indices: vec![],
-            nonce: None,
             fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -1649,34 +1652,26 @@ mod tests {
         accounts.accounts_db.clean_accounts_for_tests();
     }
 
-    fn create_accounts_post_process_failed_nonce() -> (
+    fn create_accounts_post_process_failed_tx() -> (
         Pubkey,
         AccountSharedData,
         AccountSharedData,
         DurableNonce,
         u64,
-        Option<AccountSharedData>,
     ) {
-        let data = NonceVersions::new(NonceState::Initialized(nonce::state::Data::default()));
+        let data = NonceVersions::new(NonceState::Initialized(NonceData::default()));
         let account = AccountSharedData::new_data(42, &data, &system_program::id()).unwrap();
         let mut pre_account = account.clone();
         pre_account.set_lamports(43);
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new(&[1u8; 32]));
-        (
-            Pubkey::default(),
-            pre_account,
-            account,
-            durable_nonce,
-            1234,
-            None,
-        )
+        (Pubkey::default(), pre_account, account, durable_nonce, 1234)
     }
 
-    fn run_post_process_failed_nonce_test(
+    fn run_post_process_failed_tx_test(
         account: &mut AccountSharedData,
         is_fee_payer: bool,
         is_nonce_account: bool,
-        nonce: &NonceFull,
+        rollback_accounts: &RollbackAccounts,
         durable_nonce: &DurableNonce,
         lamports_per_signature: u64,
         expect_account: &AccountSharedData,
@@ -1684,17 +1679,17 @@ mod tests {
         // Verify expect_account's relationship
         if !is_fee_payer {
             if is_nonce_account {
-                assert_ne!(expect_account, nonce.account());
+                assert_ne!(expect_account, rollback_accounts.nonce().unwrap().account());
             } else {
                 assert_eq!(expect_account, account);
             }
         }
 
-        post_process_failed_nonce(
+        post_process_failed_tx(
             account,
             is_fee_payer,
             is_nonce_account,
-            nonce,
+            rollback_accounts,
             durable_nonce,
             lamports_per_signature,
         );
@@ -1703,33 +1698,25 @@ mod tests {
     }
 
     #[test]
-    fn test_post_process_failed_nonce_expected() {
-        let (
-            pre_account_address,
-            pre_account,
-            mut post_account,
-            blockhash,
-            lamports_per_signature,
-            maybe_fee_payer_account,
-        ) = create_accounts_post_process_failed_nonce();
-        let nonce = NonceFull::new(
-            pre_account_address,
-            pre_account.clone(),
-            maybe_fee_payer_account,
-        );
+    fn test_post_process_failed_tx_expected() {
+        let (pre_account_address, pre_account, mut post_account, blockhash, lamports_per_signature) =
+            create_accounts_post_process_failed_tx();
+        let rollback_accounts = RollbackAccounts::SameNonceAndFeePayer {
+            nonce: NoncePartial::new(pre_account_address, pre_account.clone()),
+        };
 
         let mut expect_account = pre_account;
         expect_account
             .set_state(&NonceVersions::new(NonceState::Initialized(
-                nonce::state::Data::new(Pubkey::default(), blockhash, lamports_per_signature),
+                NonceData::new(Pubkey::default(), blockhash, lamports_per_signature),
             )))
             .unwrap();
 
-        assert!(run_post_process_failed_nonce_test(
+        assert!(run_post_process_failed_tx_test(
             &mut post_account,
             false, // is_fee_payer
             true,  // is_nonce_account
-            &nonce,
+            &rollback_accounts,
             &blockhash,
             lamports_per_signature,
             &expect_account,
@@ -1737,24 +1724,20 @@ mod tests {
     }
 
     #[test]
-    fn test_post_process_failed_nonce_not_nonce_address() {
-        let (
-            pre_account_address,
-            pre_account,
-            mut post_account,
-            blockhash,
-            lamports_per_signature,
-            maybe_fee_payer_account,
-        ) = create_accounts_post_process_failed_nonce();
+    fn test_post_process_failed_tx_not_nonce_address() {
+        let (pre_account_address, pre_account, mut post_account, blockhash, lamports_per_signature) =
+            create_accounts_post_process_failed_tx();
 
-        let nonce = NonceFull::new(pre_account_address, pre_account, maybe_fee_payer_account);
+        let rollback_accounts = RollbackAccounts::SameNonceAndFeePayer {
+            nonce: NoncePartial::new(pre_account_address, pre_account.clone()),
+        };
 
         let expect_account = post_account.clone();
-        assert!(run_post_process_failed_nonce_test(
+        assert!(run_post_process_failed_tx_test(
             &mut post_account,
             false, // is_fee_payer
             false, // is_nonce_account
-            &nonce,
+            &rollback_accounts,
             &blockhash,
             lamports_per_signature,
             &expect_account,
@@ -1768,27 +1751,26 @@ mod tests {
             AccountSharedData::new_data(42, &(), &system_program::id()).unwrap();
         let post_fee_payer_account =
             AccountSharedData::new_data(84, &[1, 2, 3, 4], &system_program::id()).unwrap();
-        let nonce = NonceFull::new(
-            Pubkey::new_unique(),
-            nonce_account,
-            Some(pre_fee_payer_account.clone()),
-        );
+        let rollback_accounts = RollbackAccounts::SeparateNonceAndFeePayer {
+            nonce: NoncePartial::new(Pubkey::new_unique(), nonce_account),
+            fee_payer_account: pre_fee_payer_account.clone(),
+        };
 
-        assert!(run_post_process_failed_nonce_test(
+        assert!(run_post_process_failed_tx_test(
             &mut post_fee_payer_account.clone(),
             false, // is_fee_payer
             false, // is_nonce_account
-            &nonce,
+            &rollback_accounts,
             &DurableNonce::default(),
             1,
             &post_fee_payer_account,
         ));
 
-        assert!(run_post_process_failed_nonce_test(
+        assert!(run_post_process_failed_tx_test(
             &mut post_fee_payer_account.clone(),
             true,  // is_fee_payer
             false, // is_nonce_account
-            &nonce,
+            &rollback_accounts,
             &DurableNonce::default(),
             1,
             &pre_fee_payer_account,
@@ -1803,7 +1785,7 @@ mod tests {
         let from_address = from.pubkey();
         let to_address = Pubkey::new_unique();
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(nonce::state::Data::new(
+        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
             nonce_authority.pubkey(),
             durable_nonce,
             0,
@@ -1831,7 +1813,7 @@ mod tests {
         let tx = new_sanitized_tx(&[&nonce_authority, &from], message, blockhash);
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(nonce::state::Data::new(
+        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
             nonce_authority.pubkey(),
             durable_nonce,
             0,
@@ -1840,17 +1822,15 @@ mod tests {
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
-        let nonce = Some(NonceFull::new(
-            nonce_address,
-            nonce_account_pre.clone(),
-            Some(from_account_pre.clone()),
-        ));
-
+        let nonce = NoncePartial::new(nonce_address, nonce_account_pre.clone());
         let loaded = Ok(LoadedTransaction {
             accounts: transaction_accounts,
             program_indices: vec![],
-            nonce: nonce.clone(),
             fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce: nonce.clone(),
+                fee_payer_account: from_account_pre.clone(),
+            },
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -1867,7 +1847,7 @@ mod tests {
                 1,
                 InstructionError::InvalidArgument,
             )),
-            nonce.as_ref(),
+            Some(&nonce),
         )];
         let (collected_accounts, _) = accounts.collect_accounts_to_store(
             &txs,
@@ -1910,7 +1890,7 @@ mod tests {
         let from_address = from.pubkey();
         let to_address = Pubkey::new_unique();
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(nonce::state::Data::new(
+        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
             nonce_authority.pubkey(),
             durable_nonce,
             0,
@@ -1938,7 +1918,7 @@ mod tests {
         let tx = new_sanitized_tx(&[&nonce_authority, &from], message, blockhash);
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = NonceVersions::new(NonceState::Initialized(nonce::state::Data::new(
+        let nonce_state = NonceVersions::new(NonceState::Initialized(NonceData::new(
             nonce_authority.pubkey(),
             durable_nonce,
             0,
@@ -1946,17 +1926,14 @@ mod tests {
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
 
-        let nonce = Some(NonceFull::new(
-            nonce_address,
-            nonce_account_pre.clone(),
-            None,
-        ));
-
+        let nonce = NoncePartial::new(nonce_address, nonce_account_pre.clone());
         let loaded = Ok(LoadedTransaction {
             accounts: transaction_accounts,
             program_indices: vec![],
-            nonce: nonce.clone(),
             fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
+                nonce: nonce.clone(),
+            },
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -1973,7 +1950,7 @@ mod tests {
                 1,
                 InstructionError::InvalidArgument,
             )),
-            nonce.as_ref(),
+            Some(&nonce),
         )];
         let (collected_accounts, _) = accounts.collect_accounts_to_store(
             &txs,
