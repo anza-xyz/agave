@@ -1,7 +1,6 @@
 [package]
 name = "solana-type-overrides"
 description = "Type overrides for specialized testing"
-publish = false
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
