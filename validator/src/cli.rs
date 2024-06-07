@@ -332,7 +332,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .long("snapshots")
                 .value_name("DIR")
                 .takes_value(true)
-                .help("Use DIR as snapshot location [default: <LEDGER>/snapshots]"),
+                .help(
+                    "Use DIR as the base location for snapshots. \
+                     A subdirectory named \"snapshots\" will be created. \
+                     [default: --ledger value]",
+                 ),
         )
         .arg(
             Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
