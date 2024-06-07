@@ -1051,7 +1051,7 @@ pub(crate) fn initialize(
                     progress,
                 ))
             } else {
-                Err(WenRestartError::UnexpectedState(progress.state()).into())
+                Err(WenRestartError::MissingSnapshotInProtobuf.into())
             }
         }
         RestartState::Init => {
@@ -1740,13 +1740,44 @@ mod tests {
         assert_eq!(
             initialize(
                 &test_state.wen_restart_proto_path,
-                VoteTransaction::from(Vote::new(last_voted_fork_slots, last_vote_bankhash)),
+                VoteTransaction::from(Vote::new(last_voted_fork_slots.clone(), last_vote_bankhash)),
                 test_state.blockstore.clone()
             )
             .err()
             .unwrap()
             .to_string(),
-            "Unexpected state: Done"
+            "Missing snapshot in protobuf"
+        );
+        let new_slot = 55;
+        let new_bankhash = Hash::new_unique();
+        let new_shred_version = 253;
+        let progress = WenRestartProgress {
+            state: RestartState::Done.into(),
+            my_snapshot: Some(GenerateSnapshotRecord {
+                slot: new_slot,
+                bankhash: new_bankhash.to_string(),
+                shred_version: new_shred_version,
+                path: "snapshot".to_string(),
+            }),
+            ..Default::default()
+        };
+        assert!(write_wen_restart_records(&test_state.wen_restart_proto_path, &progress,).is_ok());
+        assert_eq!(
+            initialize(
+                &test_state.wen_restart_proto_path,
+                VoteTransaction::from(Vote::new(last_voted_fork_slots, last_vote_bankhash)),
+                test_state.blockstore.clone()
+            )
+            .unwrap(),
+            (
+                WenRestartProgressInternalState::Done {
+                    slot: new_slot,
+                    hash: new_bankhash,
+                    shred_version: new_shred_version as u16,
+                    snapshot_path: "snapshot".to_string(),
+                },
+                progress
+            )
         );
     }
 
@@ -2571,7 +2602,7 @@ mod tests {
     }
 
     #[test]
-    fn test_second_phase_states_rejected_in_wait_for_phase_one() {
+    fn test_return_ok_after_wait_is_done() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let test_state = wen_restart_test_init(&ledger_path);
         let last_vote_slot = test_state.last_voted_fork_slots[0];
@@ -2602,22 +2633,22 @@ mod tests {
                 .unwrap_err()
                 .downcast::<WenRestartError>()
                 .unwrap(),
-            WenRestartError::UnexpectedState(RestartState::Done)
+            WenRestartError::MissingSnapshotInProtobuf
         );
         assert!(write_wen_restart_records(
             &test_state.wen_restart_proto_path,
             &WenRestartProgress {
                 state: RestartState::Done.into(),
+                my_snapshot: Some(GenerateSnapshotRecord {
+                    slot: 0,
+                    bankhash: Hash::new_unique().to_string(),
+                    shred_version: SHRED_VERSION as u32,
+                    path: "snapshot".to_string(),
+                }),
                 ..Default::default()
             }
         )
         .is_ok());
-        assert_eq!(
-            wait_for_wen_restart(config)
-                .unwrap_err()
-                .downcast::<WenRestartError>()
-                .unwrap(),
-            WenRestartError::UnexpectedState(RestartState::Done)
-        );
+        assert!(wait_for_wen_restart(config).is_ok());
     }
 }
