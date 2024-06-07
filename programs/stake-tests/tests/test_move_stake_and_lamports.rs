@@ -74,13 +74,11 @@ impl Accounts {
 
 impl Default for Accounts {
     fn default() -> Self {
-        let vote_account = Keypair::new();
-
         Self {
             validator: Keypair::new(),
             voter: Keypair::new(),
             withdrawer: Keypair::new(),
-            vote_account,
+            vote_account: Keypair::new(),
         }
     }
 }
@@ -943,7 +941,10 @@ async fn test_move_general_fail(
     move_dest_type: StakeLifecycle,
     move_lamports: bool,
 ) {
-    // clear the states that are only valid for move_lamports
+    // the test_matrix includes all valid source/dest combinations for MoveLamports
+    // we dont test invalid combinations because they would fail regardless of the fail cases we test here
+    // valid source/dest for MoveStake are a strict subset of MoveLamports
+    // source must be active, and dest must be active or inactive. so we skip the additional invalid MoveStake cases
     if !move_lamports
         && (move_source_type != StakeLifecycle::Active
             || move_dest_type == StakeLifecycle::Activating)
@@ -1221,6 +1222,10 @@ async fn test_move_feature_gate_fail(
     move_dest_type: StakeLifecycle,
     move_lamports: bool,
 ) {
+    // the test_matrix includes all valid source/dest combinations for MoveLamports
+    // we dont test invalid combinations because they would fail regardless of the fail cases we test here
+    // valid source/dest for MoveStake are a strict subset of MoveLamports
+    // source must be active, and dest must be active or inactive. so we skip the additional invalid MoveStake cases
     if !move_lamports
         && (move_source_type != StakeLifecycle::Active
             || move_dest_type == StakeLifecycle::Activating)

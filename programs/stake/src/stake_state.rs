@@ -824,95 +824,99 @@ pub fn move_stake(
     // destination must not be activating
     // if active, destination must be delegated to the same vote account as source
     // minimum delegations must be respected for any accounts that become/remain active
-    match source_merge_kind {
-        MergeKind::FullyActive(source_meta, mut source_stake) => {
-            let minimum_delegation =
-                crate::get_minimum_delegation(invoke_context.get_feature_set());
+    let MergeKind::FullyActive(source_meta, mut source_stake) = source_merge_kind else {
+        return Err(InstructionError::InvalidAccountData);
+    };
 
-            let source_effective_stake = source_stake.delegation.stake;
-            let source_final_stake = source_effective_stake
-                .checked_sub(lamports)
-                .ok_or(InstructionError::InvalidArgument)?;
+    let minimum_delegation = crate::get_minimum_delegation(invoke_context.get_feature_set());
 
-            if source_final_stake != 0 && source_final_stake < minimum_delegation {
+    let source_effective_stake = source_stake.delegation.stake;
+    let source_final_stake = source_effective_stake
+        .checked_sub(lamports)
+        .ok_or(InstructionError::InvalidArgument)?;
+
+    if source_final_stake != 0 && source_final_stake < minimum_delegation {
+        return Err(InstructionError::InvalidArgument);
+    }
+
+    let destination_meta = match destination_merge_kind {
+        MergeKind::FullyActive(destination_meta, mut destination_stake) => {
+            if source_stake.delegation.voter_pubkey != destination_stake.delegation.voter_pubkey {
+                return Err(StakeError::VoteAddressMismatch.into());
+            }
+
+            let destination_effective_stake = destination_stake.delegation.stake;
+            let destination_final_stake = destination_effective_stake
+                .checked_add(lamports)
+                .ok_or(InstructionError::ArithmeticOverflow)?;
+
+            if destination_final_stake < minimum_delegation {
                 return Err(InstructionError::InvalidArgument);
             }
 
-            let destination_meta = match destination_merge_kind {
-                MergeKind::FullyActive(destination_meta, mut destination_stake) => {
-                    if source_stake.delegation.voter_pubkey
-                        != destination_stake.delegation.voter_pubkey
-                    {
-                        return Err(StakeError::VoteAddressMismatch.into());
-                    }
+            merge_delegation_stake_and_credits_observed(
+                &mut destination_stake,
+                lamports,
+                source_stake.credits_observed,
+            )?;
 
-                    let destination_effective_stake = destination_stake.delegation.stake;
-                    let destination_final_stake = destination_effective_stake
-                        .checked_add(lamports)
-                        .ok_or(InstructionError::ArithmeticOverflow)?;
+            // StakeFlags::empty() is valid here because the only existing stake flag,
+            // MUST_FULLY_ACTIVATE_BEFORE_DEACTIVATION_IS_PERMITTED, does not apply to active stakes
+            destination_account.set_state(&StakeStateV2::Stake(
+                destination_meta,
+                destination_stake,
+                StakeFlags::empty(),
+            ))?;
 
-                    if destination_final_stake < minimum_delegation {
-                        return Err(InstructionError::InvalidArgument);
-                    }
-
-                    merge_delegation_stake_and_credits_observed(
-                        &mut destination_stake,
-                        lamports,
-                        source_stake.credits_observed,
-                    )?;
-
-                    destination_account.set_state(&StakeStateV2::Stake(
-                        destination_meta,
-                        destination_stake,
-                        StakeFlags::empty(),
-                    ))?;
-
-                    destination_meta
-                }
-                MergeKind::Inactive(destination_meta, _, _) => {
-                    if lamports < minimum_delegation {
-                        return Err(InstructionError::InvalidArgument);
-                    }
-
-                    let mut destination_stake = source_stake;
-                    destination_stake.delegation.stake = lamports;
-                    destination_account.set_state(&StakeStateV2::Stake(
-                        destination_meta,
-                        destination_stake,
-                        StakeFlags::empty(),
-                    ))?;
-
-                    destination_meta
-                }
-                _ => return Err(InstructionError::InvalidAccountData),
-            };
-
-            if source_final_stake == 0 {
-                source_account.set_state(&StakeStateV2::Initialized(source_meta))?;
-            } else {
-                source_stake.delegation.stake = source_final_stake;
-                source_account.set_state(&StakeStateV2::Stake(
-                    source_meta,
-                    source_stake,
-                    StakeFlags::empty(),
-                ))?;
-            }
-
-            source_account.checked_sub_lamports(lamports)?;
-            destination_account.checked_add_lamports(lamports)?;
-
-            // this should be impossible, but because we do all our math with delegations, best to guard it
-            if source_account.get_lamports() < source_meta.rent_exempt_reserve
-                || destination_account.get_lamports() < destination_meta.rent_exempt_reserve
-            {
-                ic_msg!(
-                    invoke_context,
-                    "Delegation calculations violated lamport balance assumptions"
-                );
+            destination_meta
+        }
+        MergeKind::Inactive(destination_meta, _, _) => {
+            if lamports < minimum_delegation {
                 return Err(InstructionError::InvalidArgument);
             }
+
+            let mut destination_stake = source_stake;
+            destination_stake.delegation.stake = lamports;
+
+            // StakeFlags::empty() is valid here because the only existing stake flag,
+            // MUST_FULLY_ACTIVATE_BEFORE_DEACTIVATION_IS_PERMITTED, is cleared when a stake is activated
+            destination_account.set_state(&StakeStateV2::Stake(
+                destination_meta,
+                destination_stake,
+                StakeFlags::empty(),
+            ))?;
+
+            destination_meta
         }
         _ => return Err(InstructionError::InvalidAccountData),
+    };
+
+    if source_final_stake == 0 {
+        source_account.set_state(&StakeStateV2::Initialized(source_meta))?;
+    } else {
+        source_stake.delegation.stake = source_final_stake;
+
+        // StakeFlags::empty() is valid here because the only existing stake flag,
+        // MUST_FULLY_ACTIVATE_BEFORE_DEACTIVATION_IS_PERMITTED, does not apply to active stakes
+        source_account.set_state(&StakeStateV2::Stake(
+            source_meta,
+            source_stake,
+            StakeFlags::empty(),
+        ))?;
+    }
+
+    source_account.checked_sub_lamports(lamports)?;
+    destination_account.checked_add_lamports(lamports)?;
+
+    // this should be impossible, but because we do all our math with delegations, best to guard it
+    if source_account.get_lamports() < source_meta.rent_exempt_reserve
+        || destination_account.get_lamports() < destination_meta.rent_exempt_reserve
+    {
+        ic_msg!(
+            invoke_context,
+            "Delegation calculations violated lamport balance assumptions"
+        );
+        return Err(InstructionError::InvalidArgument);
     }
 
     Ok(())

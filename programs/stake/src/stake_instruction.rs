@@ -359,7 +359,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 .get_feature_set()
                 .is_active(&feature_set::move_stake_and_move_lamports_ixs::id())
             {
-                instruction_context.check_number_of_instruction_accounts(2)?;
                 let clock =
                     get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
                 let stake_history = get_sysvar_with_account_check::stake_history(
@@ -390,7 +389,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 .get_feature_set()
                 .is_active(&feature_set::move_stake_and_move_lamports_ixs::id())
             {
-                instruction_context.check_number_of_instruction_accounts(2)?;
                 let clock =
                     get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
                 let stake_history = get_sysvar_with_account_check::stake_history(
