@@ -444,6 +444,18 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
 
+        if invoke_context
+            .get_feature_set()
+            .is_active(&feature_set::loosen_cpi_size_restriction::id())
+        {
+            consume_compute_meter(
+                invoke_context,
+                (data.len() as u64)
+                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .unwrap_or(u64::MAX),
+            )?;
+        }
+
         let mut accounts = Vec::with_capacity(account_metas.len());
         #[allow(clippy::needless_range_loop)]
         for account_index in 0..account_metas.len() {
@@ -457,18 +469,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
                 return Err(Box::new(InstructionError::InvalidArgument));
             }
             accounts.push(account_meta.clone());
-        }
-
-        if invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::loosen_cpi_size_restriction::id())
-        {
-            consume_compute_meter(
-                invoke_context,
-                (data.len() as u64)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
         }
 
         Ok(StableInstruction {
