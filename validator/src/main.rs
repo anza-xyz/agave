@@ -936,6 +936,14 @@ pub fn main() {
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
 
+    if rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("solRayonGlob{i:02}"))
+        .build_global()
+        .is_err()
+    {
+        warn!("Rayon global thread pool already initialized");
+    }
+
     let cuda = matches.is_present("cuda");
     if cuda {
         solana_perf::perf_libs::init_cuda();
