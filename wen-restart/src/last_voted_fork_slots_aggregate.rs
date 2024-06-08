@@ -93,7 +93,7 @@ impl LastVotedForkSlotsAggregate {
         let total_stake = self.epoch_stakes.total_stake();
         let threshold_stake = (total_stake as f64 * self.repair_threshold) as u64;
         let from = &new_slots.from;
-        if *from == self.my_pubkey {
+        if from == &self.my_pubkey {
             return None;
         }
         let sender_stake = Self::validator_stake(&self.epoch_stakes, from);

@@ -118,6 +118,10 @@ impl HeaviestForkAggregate {
             );
             return None;
         }
+        if from == &self.my_pubkey {
+            warn!("Gossip should not accept RestartLastVotedFork from self");
+            return None;
+        }
         if received_heaviest_fork.shred_version != self.my_shred_version {
             warn!(
                 "Gossip should not accept RestartLastVotedFork with different shred version {} from {:?}",
