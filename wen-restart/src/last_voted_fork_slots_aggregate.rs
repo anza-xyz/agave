@@ -20,6 +20,7 @@ pub(crate) struct LastVotedForkSlotsAggregate {
     slots_stake_map: HashMap<Slot, u64>,
     active_peers: HashSet<Pubkey>,
     slots_to_repair: HashSet<Slot>,
+    my_pubkey: Pubkey,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +54,7 @@ impl LastVotedForkSlotsAggregate {
             slots_stake_map,
             active_peers,
             slots_to_repair: HashSet::new(),
+            my_pubkey: *my_pubkey,
         }
     }
 
@@ -70,6 +72,9 @@ impl LastVotedForkSlotsAggregate {
         record: &LastVotedForkSlotsRecord,
     ) -> Result<Option<LastVotedForkSlotsRecord>> {
         let from = Pubkey::from_str(key_string)?;
+        if from == self.my_pubkey {
+            return Ok(None);
+        }
         let last_voted_hash = Hash::from_str(&record.last_vote_bankhash)?;
         let converted_record = RestartLastVotedForkSlots::new(
             from,
@@ -88,6 +93,9 @@ impl LastVotedForkSlotsAggregate {
         let total_stake = self.epoch_stakes.total_stake();
         let threshold_stake = (total_stake as f64 * self.repair_threshold) as u64;
         let from = &new_slots.from;
+        if *from == self.my_pubkey {
+            return None;
+        }
         let sender_stake = Self::validator_stake(&self.epoch_stakes, from);
         if sender_stake == 0 {
             warn!(
