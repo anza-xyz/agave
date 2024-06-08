@@ -685,9 +685,10 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             let total_active_stake_seen_supermajority =
                 heaviest_fork_aggregate.total_active_stake_seen_supermajority();
             info!(
-                "Total active stake seeing supermajority: {} Total active stake: {} Total stake {}",
+                "Total active stake seeing supermajority: {} Total active stake: {} Required to exit {} Total stake {}",
                 total_active_stake_seen_supermajority,
                 heaviest_fork_aggregate.total_active_stake(),
+                majority_stake_required,
                 total_stake
             );
             let can_exit = total_active_stake_seen_supermajority >= majority_stake_required;
