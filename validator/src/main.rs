@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
+use mimalloc::MiMalloc;
 use {
     agave_validator::{
         admin_rpc_service,
@@ -89,7 +89,7 @@ use {
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
