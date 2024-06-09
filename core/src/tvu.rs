@@ -230,7 +230,7 @@ impl Tvu {
                 repair_whitelist: tvu_config.repair_whitelist,
                 cluster_info: cluster_info.clone(),
                 cluster_slots: cluster_slots.clone(),
-                wen_restart_repair_slots,
+                wen_restart_repair_slots: wen_restart_repair_slots.clone(),
             };
             WindowService::new(
                 blockstore.clone(),
@@ -282,6 +282,7 @@ impl Tvu {
             wait_to_vote_slot,
             replay_forks_threads: tvu_config.replay_forks_threads,
             replay_transactions_threads: tvu_config.replay_transactions_threads,
+            in_wen_restart: wen_restart_repair_slots.is_some(),
         };
 
         let (voting_sender, voting_receiver) = unbounded();

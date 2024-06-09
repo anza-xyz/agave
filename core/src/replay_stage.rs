@@ -291,6 +291,7 @@ pub struct ReplayStageConfig {
     pub wait_to_vote_slot: Option<Slot>,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub in_wen_restart: bool,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -575,6 +576,7 @@ impl ReplayStage {
             wait_to_vote_slot,
             replay_forks_threads,
             replay_transactions_threads,
+            in_wen_restart,
         } = config;
 
         trace!("replay stage");
@@ -585,6 +587,10 @@ impl ReplayStage {
             rpc_subscriptions.clone(),
         );
         let run_replay = move || {
+            if in_wen_restart {
+                warn!("wen_restart detected, skipping replay");
+                return;
+            }
             let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
             let mut identity_keypair = cluster_info.keypair().clone();
