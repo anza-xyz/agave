@@ -587,10 +587,6 @@ impl ReplayStage {
             rpc_subscriptions.clone(),
         );
         let run_replay = move || {
-            if in_wen_restart {
-                warn!("wen_restart detected, skipping replay");
-                return;
-            }
             let verify_recyclers = VerifyRecyclers::default();
             let _exit = Finalizer::new(exit.clone());
             let mut identity_keypair = cluster_info.keypair().clone();
@@ -704,6 +700,10 @@ impl ReplayStage {
                     &mut replay_timing,
                 );
                 generate_new_bank_forks_time.stop();
+
+                if in_wen_restart {
+                    continue;
+                }
 
                 let mut tpu_has_bank = poh_recorder.read().unwrap().has_bank();
 
