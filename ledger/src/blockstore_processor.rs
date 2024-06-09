@@ -4919,6 +4919,8 @@ pub mod tests {
             transaction_indexes: (0..txs.len()).collect(),
         };
 
+        let self_conflicting_batches = vec![];
+
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut batch_execution_timing = BatchExecutionTiming::default();
         let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
@@ -4926,6 +4928,7 @@ pub mod tests {
             &bank,
             &replay_tx_thread_pool,
             &[batch_with_indexes],
+            &self_conflicting_batches,
             None,
             None,
             &mut batch_execution_timing,
