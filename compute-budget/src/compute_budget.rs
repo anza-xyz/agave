@@ -13,6 +13,14 @@ impl ::solana_frozen_abi::abi_example::AbiExample for ComputeBudget {
     }
 }
 
+/// Roughly 0.5us/page, where page is 32K; given roughly 15CU/us, the
+/// default heap page cost = 0.5 * 15 ~= 8CU/page
+pub const DEFAULT_HEAP_COST: u64 = 8;
+
+/// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
+/// a transaction.
+pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {
     /// Number of compute units that a transaction or individual instruction is
@@ -26,11 +34,11 @@ pub struct ComputeBudget {
     /// Number of compute units consumed by an invoke call (not including the cost incurred by
     /// the called program)
     pub invoke_units: u64,
-    /// Maximum program instruction invocation stack height. Invocation stack
-    /// height starts at 1 for transaction instructions and the stack height is
+    /// Maximum program instruction invocation stack depth. Invocation stack
+    /// depth starts at 1 for transaction instructions and the stack depth is
     /// incremented each time a program invokes an instruction and decremented
     /// when a program returns.
-    pub max_invoke_stack_height: usize,
+    pub max_instruction_stack_depth: usize,
     /// Maximum cross-program invocation and instructions per transaction
     pub max_instruction_trace_length: usize,
     /// Base number of compute units consumed to call SHA256
@@ -133,7 +141,7 @@ impl ComputeBudget {
             log_64_units: 100,
             create_program_address_units: 1500,
             invoke_units: 1000,
-            max_invoke_stack_height: 5,
+            max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
             max_instruction_trace_length: 64,
             sha256_base_cost: 85,
             sha256_byte_cost: 1,
