@@ -689,6 +689,10 @@ impl ReplayStage {
                     break;
                 }
 
+                if in_wen_restart {
+                    continue;
+                }
+
                 let mut generate_new_bank_forks_time =
                     Measure::start("generate_new_bank_forks_time");
                 Self::generate_new_bank_forks(
@@ -700,10 +704,6 @@ impl ReplayStage {
                     &mut replay_timing,
                 );
                 generate_new_bank_forks_time.stop();
-
-                if in_wen_restart {
-                    continue;
-                }
 
                 let mut tpu_has_bank = poh_recorder.read().unwrap().has_bank();
 
