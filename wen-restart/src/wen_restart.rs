@@ -683,20 +683,22 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 total_stake
             );
             let can_exit = total_active_stake_seen_supermajority >= majority_stake_required;
-            let saw_supermajority_first_time = if current_total_active_stake > majority_stake_required {
-                if !total_active_stake_higher_than_supermajority {
-                    total_active_stake_higher_than_supermajority = true;
-                    true
+            let saw_supermajority_first_time =
+                if current_total_active_stake > majority_stake_required {
+                    if !total_active_stake_higher_than_supermajority {
+                        total_active_stake_higher_than_supermajority = true;
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
-                }
-            } else {
-                false
-            };
+                };
             // Only send out updates every minute or when we can exit or active stake passes supermajority
             // the first time.
             if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
-                || can_exit || saw_supermajority_first_time
+                || can_exit
+                || saw_supermajority_first_time
             {
                 cluster_info.push_restart_heaviest_fork(
                     heaviest_fork_slot,
