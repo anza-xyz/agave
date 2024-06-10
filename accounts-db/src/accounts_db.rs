@@ -8872,7 +8872,7 @@ impl AccountsDb {
         }
     }
 
-    pub fn generate_index(
+    fn do_generate_index(
         &self,
         limit_load_slot_count_from_snapshot: Option<usize>,
         verify: bool,
@@ -9175,6 +9175,17 @@ impl AccountsDb {
                 .into_inner()
                 .unwrap(),
         }
+    }
+
+    pub fn generate_index(
+        &self,
+        limit_load_slot_count_from_snapshot: Option<usize>,
+        verify: bool,
+        genesis_config: &GenesisConfig,
+    ) -> IndexGenerationInfo {
+        self.thread_pool.install(|| {
+            self.do_generate_index(limit_load_slot_count_from_snapshot, verify, genesis_config)
+        })
     }
 
     /// Startup processes can consume large amounts of memory while inserting accounts into the index as fast as possible.
