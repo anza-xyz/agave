@@ -34,6 +34,12 @@ pub mod rand {
     pub use shuttle::rand::{thread_rng, Rng, RngCore};
 }
 
+pub mod rand_original {
+    pub use rand::{
+        distributions::*, random, rngs::*, seq::*, CryptoRng, Error, Fill, SeedableRng,
+    };
+}
+
 pub mod sync {
     #[cfg(feature = "shuttle-test")]
     pub use shuttle::sync::*;
