@@ -195,6 +195,14 @@ async fn shreds(
     let mut slots = bigtable.get_confirmed_blocks(starting_slot, limit).await?;
     slots.retain(|&slot| slot <= ending_slot);
 
+    // Create a "dummy" keypair to sign the shreds that will later be created.
+    //
+    // The validator shred ingestion path sigverifies shreds from the network
+    // using the known leader for any given slot. It is unlikely that a user of
+    // this tool will have access to these leader identity keypairs. However,
+    // shred sigverify occurs prior to Blockstore::insert_shreds(). Thus, the
+    // shreds being signed with the "dummy" keyapir can still be inserted and
+    // later read/replayed/etc
     let keypair = Keypair::from_bytes(&[0; 64])?;
     let ShredConfig {
         shred_version,
