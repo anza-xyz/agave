@@ -170,6 +170,7 @@ pub fn bytes_are_curve_point<T: AsRef<[u8]>>(_bytes: T) -> bool {
     #[cfg(not(target_os = "solana"))]
     {
         curve25519_dalek::edwards::CompressedEdwardsY::from_slice(_bytes.as_ref())
+            .expect("Input slice should have a length of 32")
             .decompress()
             .is_some()
     }
@@ -948,6 +949,7 @@ mod tests {
                 let is_on_curve = curve25519_dalek::edwards::CompressedEdwardsY::from_slice(
                     &program_address.to_bytes(),
                 )
+                .expect("Input slice should have a length of 32")
                 .decompress()
                 .is_some();
                 assert!(!is_on_curve);
