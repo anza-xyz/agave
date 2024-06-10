@@ -68,8 +68,8 @@ const REPAIR_THRESHOLD: f64 = 0.42;
 const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 // We allow at most 5% of the stake to disagree with us.
 const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
-// We update HeaviestFork every 30 minutes or when we can exit.
-const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 1800;
+// We update HeaviestFork every minute at least.
+const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 60;
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -642,6 +642,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let mut progress_changed = false;
     let majority_stake_required =
         (total_stake as f64 / 100.0 * adjusted_threshold_percent as f64).round() as u64;
+    let mut total_active_stake_higher_than_supermajority = false;
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
@@ -682,9 +683,20 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 total_stake
             );
             let can_exit = total_active_stake_seen_supermajority >= majority_stake_required;
-            // Only send out updates every 30 minutes or when we can exit.
+            let saw_supermajority_first_time = if current_total_active_stake > majority_stake_required {
+                if !total_active_stake_higher_than_supermajority {
+                    total_active_stake_higher_than_supermajority = true;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            // Only send out updates every minute or when we can exit or active stake passes supermajority
+            // the first time.
             if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
-                || can_exit
+                || can_exit || saw_supermajority_first_time
             {
                 cluster_info.push_restart_heaviest_fork(
                     heaviest_fork_slot,
