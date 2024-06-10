@@ -1152,7 +1152,13 @@ pub(crate) fn initialize(
             },
             progress,
         )),
-        _ => Err(WenRestartError::UnexpectedState(progress.state()).into()),
+        RestartState::GenerateSnapshot => Ok((
+            WenRestartProgressInternalState::GenerateSnapshot {
+                new_root_slot: progress.my_heaviest_fork.as_ref().unwrap().slot,
+                my_snapshot: progress.my_snapshot.clone(),
+            },
+            progress,
+        )),
     }
 }
 
