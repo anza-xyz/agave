@@ -191,7 +191,7 @@ async fn shreds(
         .map_err(|err| format!("Failed to connect to storage: {err:?}"))?;
 
     // Make the range inclusive of both starting and ending slot
-    let limit = (ending_slot - starting_slot + 1) as usize;
+    let limit = ending_slot.saturating_sub(starting_slot).saturating_add(1) as usize;
     let mut slots = bigtable.get_confirmed_blocks(starting_slot, limit).await?;
     slots.retain(|&slot| slot <= ending_slot);
 
@@ -1361,6 +1361,13 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ("shreds", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
+            if starting_slot > ending_slot {
+                eprintln!(
+                    "The specified --starting-slot {starting_slot} must be less than or equal to \
+                    the specified --ending-slot {ending_slot}."
+                );
+                exit(1);
+            }
             let allow_mock_poh = arg_matches.is_present("allow_mock_poh");
 
             let ledger_path = canonicalize_ledger_path(ledger_path);
