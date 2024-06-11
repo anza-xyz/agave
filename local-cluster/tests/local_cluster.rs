@@ -222,7 +222,7 @@ fn test_local_cluster_signature_subscribe() {
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
 
-    let mut transaction = system_transaction::transfer(
+    let transaction = system_transaction::transfer(
         &cluster.funding_keypair,
         &solana_sdk::pubkey::new_rand(),
         10,
@@ -240,12 +240,7 @@ fn test_local_cluster_signature_subscribe() {
     .unwrap();
 
     tx_client
-        .send_and_confirm_transaction_with_retries(
-            &[&cluster.funding_keypair],
-            &mut transaction,
-            5,
-            0,
-        )
+        .send_transaction_to_upcoming_leaders(&transaction)
         .unwrap();
 
     let mut got_received_notification = false;
@@ -2674,7 +2669,6 @@ fn test_oc_bad_signatures() {
 
     // 3) Start up a spy to listen for and push votes to leader TPU
     let client = cluster.build_tpu_quic_client().unwrap();
-    let cluster_funding_keypair = cluster.funding_keypair.insecure_clone();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2709,7 +2703,7 @@ fn test_oc_bad_signatures() {
                 let vote_slots: Vec<Slot> = vec![vote_slot];
 
                 let bad_authorized_signer_keypair = Keypair::new();
-                let mut vote_tx = vote_transaction::new_vote_transaction(
+                let vote_tx = vote_transaction::new_vote_transaction(
                     vote_slots,
                     vote_hash,
                     leader_vote_tx.message.recent_blockhash,
@@ -2720,12 +2714,7 @@ fn test_oc_bad_signatures() {
                     None,
                 );
                 client
-                    .send_and_confirm_transaction_with_retries(
-                        &[&cluster_funding_keypair],
-                        &mut vote_tx,
-                        5,
-                        0,
-                    )
+                    .send_transaction_to_upcoming_leaders(&vote_tx)
                     .unwrap();
 
                 num_votes_simulated.fetch_add(1, Ordering::Relaxed);

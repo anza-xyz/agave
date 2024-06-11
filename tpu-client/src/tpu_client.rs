@@ -1,7 +1,6 @@
 pub use crate::nonblocking::tpu_client::TpuSenderError;
 use {
     crate::nonblocking::tpu_client::TpuClient as NonblockingTpuClient,
-    log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_connection_cache::{
         client_connection::ClientConnection,
@@ -12,7 +11,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         client::AsyncClient,
-        clock::{Slot, MAX_PROCESSING_AGE},
+        clock::Slot,
         signature::Signature,
         transaction::{Transaction, VersionedTransaction},
         transport::Result as TransportResult,
@@ -21,7 +20,6 @@ use {
         collections::VecDeque,
         net::UdpSocket,
         sync::{Arc, RwLock},
-        time::Instant,
     },
 };
 #[cfg(feature = "spinner")]
@@ -107,67 +105,29 @@ where
     }
 
     /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// size
-    /// Attempt to send and confirm tx "attempts" times
-    /// Wait for signature confirmation before returning
-    /// Return the transaction signature
     /// NOTE: send_wire_transaction() and try_send_transaction() above both fail in a specific case when used in LocalCluster
     /// They both invoke the nonblocking TPUClient and both fail when calling "transfer_with_client()" multiple times
     /// I do not full understand WHY the nonblocking TPUClient fails in this specific case. But the method defined below
     /// does work although it has only been tested in LocalCluster integration tests
-    pub fn send_and_confirm_transaction_with_retries<T: Signers + ?Sized>(
+    pub fn send_transaction_to_upcoming_leaders(
         &self,
-        keypairs: &T,
-        transaction: &mut Transaction,
-        attempts: usize,
-        pending_confirmations: usize,
-    ) -> TransportResult<Signature> {
-        for attempt in 0..attempts {
-            let now = Instant::now();
-            let mut num_confirmed = 0;
-            let mut wait_time = MAX_PROCESSING_AGE;
-            // resend the same transaction until the transaction has no chance of succeeding
-            let wire_transaction =
-                bincode::serialize(&transaction).expect("should serialize transaction");
+        transaction: &Transaction,
+    ) -> TransportResult<()> {
+        let wire_transaction =
+            bincode::serialize(&transaction).expect("should serialize transaction");
 
-            while now.elapsed().as_secs() < wait_time as u64 {
-                let leaders = self
-                    .tpu_client
-                    .get_leader_tpu_service()
-                    .leader_tpu_sockets(self.tpu_client.get_fanout_slots());
-                if num_confirmed == 0 {
-                    for tpu_address in &leaders {
-                        let cache = self.tpu_client.get_connection_cache();
-                        let conn = cache.get_connection(tpu_address);
-                        conn.send_data_async(wire_transaction.clone())?;
-                    }
-                }
+        let leaders = self
+            .tpu_client
+            .get_leader_tpu_service()
+            .leader_tpu_sockets(self.tpu_client.get_fanout_slots());
 
-                if let Ok(confirmed_blocks) = self.rpc_client().poll_for_signature_confirmation(
-                    &transaction.signatures[0],
-                    pending_confirmations,
-                ) {
-                    num_confirmed = confirmed_blocks;
-                    if confirmed_blocks >= pending_confirmations {
-                        return Ok(transaction.signatures[0]);
-                    }
-                    // Since network has seen the transaction, wait longer to receive
-                    // all pending confirmations. Resending the transaction could result into
-                    // extra transaction fees
-                    wait_time = wait_time.max(
-                        MAX_PROCESSING_AGE * pending_confirmations.saturating_sub(num_confirmed),
-                    );
-                }
-            }
-            info!("{attempt} tries failed transfer");
-            let blockhash = self.rpc_client().get_latest_blockhash()?;
-            transaction.sign(keypairs, blockhash);
+        for tpu_address in &leaders {
+            let cache = self.tpu_client.get_connection_cache();
+            let conn = cache.get_connection(tpu_address);
+            conn.send_data_async(wire_transaction.clone())?;
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to confirm transaction".to_string(),
-        )
-        .into())
+
+        Ok(())
     }
 
     /// Serialize and send a batch of transactions to the current and upcoming leader TPUs according

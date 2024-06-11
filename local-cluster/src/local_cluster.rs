@@ -674,15 +674,16 @@ impl LocalCluster {
             .rpc_client()
             .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap();
-        let mut tx = system_transaction::transfer(source_keypair, dest_pubkey, lamports, blockhash);
+        let tx = system_transaction::transfer(source_keypair, dest_pubkey, lamports, blockhash);
         info!(
             "executing transfer of {} from {} to {}",
             lamports,
             source_keypair.pubkey(),
             *dest_pubkey
         );
+
         client
-            .send_and_confirm_transaction_with_retries(&[source_keypair], &mut tx, 10, 0)
+            .send_transaction_to_upcoming_leaders(&tx)
             .expect("client transfer should succeed");
         client
             .rpc_client()
@@ -746,7 +747,7 @@ impl LocalCluster {
                 },
             );
             let message = Message::new(&instructions, Some(&from_account.pubkey()));
-            let mut transaction = Transaction::new(
+            let transaction = Transaction::new(
                 &[from_account.as_ref(), vote_account],
                 message,
                 client
@@ -756,7 +757,7 @@ impl LocalCluster {
                     .0,
             );
             client
-                .send_and_confirm_transaction_with_retries(&[from_account], &mut transaction, 10, 0)
+                .send_transaction_to_upcoming_leaders(&transaction)
                 .expect("fund vote");
             client
                 .rpc_client()
@@ -776,7 +777,7 @@ impl LocalCluster {
                 amount,
             );
             let message = Message::new(&instructions, Some(&from_account.pubkey()));
-            let mut transaction = Transaction::new(
+            let transaction = Transaction::new(
                 &[from_account.as_ref(), &stake_account_keypair],
                 message,
                 client
@@ -787,12 +788,7 @@ impl LocalCluster {
             );
 
             client
-                .send_and_confirm_transaction_with_retries(
-                    &[from_account.as_ref(), &stake_account_keypair],
-                    &mut transaction,
-                    5,
-                    0,
-                )
+                .send_transaction_to_upcoming_leaders(&transaction)
                 .expect("delegate stake");
             client
                 .rpc_client()
