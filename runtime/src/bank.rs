@@ -169,7 +169,6 @@ use {
         },
         account_overrides::AccountOverrides,
         nonce_info::NoncePartial,
-        program_loader::load_program_with_pubkey,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
@@ -209,6 +208,7 @@ use {
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
+    solana_svm::program_loader::load_program_with_pubkey,
 };
 
 /// params to `verify_accounts_hash`
