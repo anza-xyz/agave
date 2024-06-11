@@ -258,6 +258,13 @@ lazy_static! {
 impl Drop for AppendVec {
     fn drop(&mut self) {
         APPEND_VEC_MMAPPED_FILES_OPEN.fetch_sub(1, Ordering::Relaxed);
+        match &self.backing {
+            AppendVecFileBacking::MmapOnly(mmap_only) => {
+                if mmap_only.is_dirty.load(Ordering::Acquire) {
+                    APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_sub(1, Ordering::Relaxed);
+                }
+            }
+        }
         if let Err(_err) = remove_file(&self.path) {
             // promote this to panic soon.
             // disabled due to many false positive warnings while running tests.
@@ -840,13 +847,18 @@ impl AppendVec {
             });
         }
 
-        if !offsets.is_empty() {
-            match &self.backing {
-                AppendVecFileBacking::MmapOnly(mmap_only) => {
+        match &self.backing {
+            AppendVecFileBacking::MmapOnly(mmap_only) => {
+                if !offsets.is_empty() {
                     // If we've actually written to the AppendVec, make sure we mark it as dirty.
                     // This ensures we properly flush it later.
-                    mmap_only.is_dirty.store(true, Ordering::Release);
-                    APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_add(1, Ordering::Relaxed);
+                    // As an optimization to reduce unnecessary cache line invalidations,
+                    // only write the `is_dirty` atomic if currently *not* dirty.
+                    // (This also ensures the 'dirty counter' datapoint is correct.)
+                    if !mmap_only.is_dirty.load(Ordering::Acquire) {
+                        mmap_only.is_dirty.store(true, Ordering::Release);
+                        APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
