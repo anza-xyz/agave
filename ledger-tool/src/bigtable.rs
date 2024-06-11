@@ -232,22 +232,36 @@ async fn shreds(
 
         let entries = match entry_summaries {
             Some(entry_summaries) => entry_summaries
-                .map(|entry_summary| {
+                .enumerate()
+                .map(|(i, entry_summary)| {
                     let num_hashes = entry_summary.num_hashes;
                     let hash = entry_summary.hash;
-                    let transactions = block.transactions[entry_summary.starting_transaction_index
-                        ..entry_summary.starting_transaction_index
-                            + entry_summary.num_transactions as usize]
+                    let starting_transaction_index = entry_summary.starting_transaction_index;
+                    let num_transactions = entry_summary.num_transactions as usize;
+
+                    let Some(transactions) = block.transactions.get(
+                        starting_transaction_index..starting_transaction_index + num_transactions,
+                    ) else {
+                        let num_block_transactions = block.transactions.len();
+                        return Err(format!(
+                            "Entry summary {i} for slot {slot} with starting_transaction_index \
+                             {starting_transaction_index} and num_transactions {num_transactions} \
+                             is in conflict with the block has {num_block_transactions} \
+                             transactions"
+                        ));
+                    };
+                    let transactions = transactions
                         .iter()
                         .map(|tx_with_meta| tx_with_meta.get_transaction())
                         .collect();
-                    Entry {
+
+                    Ok(Entry {
                         num_hashes,
                         hash,
                         transactions,
-                    }
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<Entry>, std::string::String>>()?,
             None => {
                 let num_total_ticks = ((slot - block.parent_slot) * num_ticks_per_slot) as usize;
                 let num_total_entries = num_total_ticks + block.transactions.len();
