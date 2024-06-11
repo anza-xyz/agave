@@ -252,6 +252,7 @@ pub struct AppendVec {
 
 lazy_static! {
     pub static ref APPEND_VEC_MMAPPED_FILES_OPEN: AtomicU64 = AtomicU64::default();
+    pub static ref APPEND_VEC_MMAPPED_FILES_DIRTY: AtomicU64 = AtomicU64::default();
 }
 
 impl Drop for AppendVec {
@@ -354,7 +355,8 @@ impl AppendVec {
                 // Check to see if the mmap is actually dirty before flushing.
                 if mmap_only.is_dirty.load(Ordering::Acquire) {
                     mmap_only.mmap.flush()?;
-                    mmap_only.is_dirty.store(false, Ordering::Release)
+                    mmap_only.is_dirty.store(false, Ordering::Release);
+                    APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_sub(1, Ordering::Relaxed);
                 }
                 Ok(())
             }
@@ -843,7 +845,8 @@ impl AppendVec {
                 AppendVecFileBacking::MmapOnly(mmap_only) => {
                     // If we've actually written to the AppendVec, make sure we mark it as dirty.
                     // This ensures we properly flush it later.
-                    mmap_only.is_dirty.store(true, Ordering::Release)
+                    mmap_only.is_dirty.store(true, Ordering::Release);
+                    APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
