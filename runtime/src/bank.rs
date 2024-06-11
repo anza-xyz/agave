@@ -4281,7 +4281,7 @@ impl Bank {
 
     /// Returns the accounts, sorted by pubkey, that were part of accounts delta hash calculation
     /// This is used when writing a bank hash details file.
-    pub fn get_accounts_for_bank_hash_details(&self) -> Vec<PubkeyHashAccount> {
+    pub(crate) fn get_accounts_for_bank_hash_details(&self) -> Vec<PubkeyHashAccount> {
         let accounts_db = &self.rc.accounts.accounts_db;
 
         let mut accounts_written_this_slot =
