@@ -3290,10 +3290,13 @@ impl Bank {
             })
             .collect::<Result<Vec<_>>>()?;
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(sanitized_txs.iter(), tx_account_lock_limit);
+        let feature_set: Arc<FeatureSet> = self.feature_set.clone();
+        let allow_self_conflicting_txns = feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
+        let (lock_results, _self_conflicting_batch) = self.rc.accounts.lock_accounts(
+            sanitized_txs.iter(),
+            tx_account_lock_limit,
+            allow_self_conflicting_txns,
+        );
         Ok(TransactionBatch::new(
             lock_results,
             self,
@@ -3305,13 +3308,20 @@ impl Bank {
     pub fn prepare_sanitized_batch<'a, 'b>(
         &'a self,
         txs: &'b [SanitizedTransaction],
-    ) -> TransactionBatch<'a, 'b> {
+    ) -> (TransactionBatch<'a, 'b>, bool) {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(txs.iter(), tx_account_lock_limit);
-        TransactionBatch::new(lock_results, self, Cow::Borrowed(txs))
+        let feature_set: Arc<FeatureSet> = self.feature_set.clone();
+        let allow_self_conflicting_txns = feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
+
+        let (lock_results, self_conflicting_batch) = self.rc.accounts.lock_accounts(
+            txs.iter(),
+            tx_account_lock_limit,
+            allow_self_conflicting_txns,
+        );
+        (
+            TransactionBatch::new(lock_results, self, Cow::Borrowed(txs)),
+            self_conflicting_batch,
+        )
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
@@ -3323,10 +3333,14 @@ impl Bank {
     ) -> TransactionBatch<'a, 'b> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
+        let feature_set: Arc<FeatureSet> = self.feature_set.clone();
+        let allow_self_conflicting_txns = feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
+
         let lock_results = self.rc.accounts.lock_accounts_with_results(
             transactions.iter(),
             transaction_results,
             tx_account_lock_limit,
+            allow_self_conflicting_txns,
         );
         TransactionBatch::new(lock_results, self, Cow::Borrowed(transactions))
     }
@@ -7010,10 +7024,14 @@ impl Bank {
             .into_iter()
             .map(SanitizedTransaction::from_transaction_for_tests)
             .collect::<Vec<_>>();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(sanitized_txs.iter(), transaction_account_lock_limit);
+        let feature_set: Arc<FeatureSet> = self.feature_set.clone();
+        let allow_self_conflicting_txns = feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
+
+        let (lock_results, _) = self.rc.accounts.lock_accounts(
+            sanitized_txs.iter(),
+            transaction_account_lock_limit,
+            allow_self_conflicting_txns,
+        );
         TransactionBatch::new(lock_results, self, Cow::Owned(sanitized_txs))
     }
 
