@@ -4298,8 +4298,7 @@ impl Bank {
                 .collect();
 
             let rent_collection_accounts = self.get_accounts_for_skipped_rewrites();
-            for rent_collection_account in rent_collection_accounts {
-                let (pubkey, hash, account) = rent_collection_account;
+            for (pubkey, hash, account) in rent_collection_accounts {
                 if !pubkeys_written_this_slot.contains(&pubkey) {
                     accounts_written_this_slot.push(PubkeyHashAccount {
                         pubkey,
