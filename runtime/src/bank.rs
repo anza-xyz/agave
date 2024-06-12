@@ -233,6 +233,7 @@ pub(crate) mod tests;
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
+const DEFAULT_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 #[derive(Default)]
 struct RentMetrics {
@@ -3446,20 +3447,28 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
-        let mut dedup_nonce_lookup: HashSet<Hash> = HashSet::new();
+        let mut entry_level_dedup_map = HashSet::with_capacity(DEFAULT_NUM_TRANSACTIONS_PER_BATCH);
 
         sanitized_txs
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
-                Ok(()) => self.check_transaction_age(
-                    tx.borrow(),
-                    max_age,
-                    &next_durable_nonce,
-                    &hash_queue,
-                    error_counters,
-                    &mut dedup_nonce_lookup,
-                ),
+                Ok(()) => {
+                    let msg_hash = tx.borrow().message_hash();
+                    if entry_level_dedup_map.contains(msg_hash) {
+                        return Err(TransactionError::AlreadyProcessed);
+                    } else {
+                        entry_level_dedup_map.insert(msg_hash);
+                    }
+                    
+                    self.check_transaction_age(
+                        tx.borrow(),
+                        max_age,
+                        &next_durable_nonce,
+                        &hash_queue,
+                        error_counters,
+                    )
+                },
                 Err(e) => Err(e.clone()),
             })
             .collect()
@@ -3472,7 +3481,6 @@ impl Bank {
         next_durable_nonce: &DurableNonce,
         hash_queue: &BlockhashQueue,
         error_counters: &mut TransactionErrorMetrics,
-        dedup_nonce_lookup: &mut HashSet<Hash>,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.message().recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {

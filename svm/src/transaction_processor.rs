@@ -61,8 +61,6 @@ use {
     },
 };
 
-const MAX_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
-
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
 
@@ -286,6 +284,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         });
 
         let (loaded_transactions, load_accounts_us) = measure_us!(load_accounts(
+        let mut load_time = Measure::start("accounts_load");
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
+        let mut loaded_transactions = load_accounts(
             callbacks,
             sanitized_txs,
             validation_results,
@@ -296,6 +297,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
             &program_cache_for_tx_batch.borrow(),
+            &mut unique_loaded_accounts
         );
         load_time.stop();
 
@@ -802,6 +804,17 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             compute_budget,
         );
 
+        // check for duplicate nonces at this point as beyond this point there will be
+        // not non-recordable errors
+        if let Some(_) = tx.get_durable_nonce() {
+            let nonce_hash = tx.message().recent_blockhash();
+            if dedup_nonce_lookup.contains(nonce_hash) {
+                return TransactionExecutionResult::NotExecuted(TransactionError::BlockhashNotFound);
+            } else {
+                dedup_nonce_lookup.insert(*nonce_hash);
+            }
+        }
+
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = MessageProcessor::process_message(
             tx,
@@ -1239,6 +1252,7 @@ mod tests {
             unique_loaded_accounts.insert(acct.0, acct.1.clone());
         }
 
+        let mut dedup_nonce_lookup: HashSet<Hash> = HashSet::default();
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             loaded_transaction.clone(),
@@ -1268,7 +1282,8 @@ mod tests {
         processing_config.recording_config.enable_cpi_recording = true;
         processing_config.log_messages_bytes_limit = None;
 
-        let executed_tx = batch_processor.execute_loaded_transaction(
+        let mut dedup_nonce_lookup: HashSet<Hash> = HashSet::default();
+        let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             loaded_transaction,
             &mut ExecuteTimings::default(),
@@ -1337,6 +1352,7 @@ mod tests {
             unique_loaded_accounts.insert(acct.0, acct.1.clone());
         }
 
+        let mut dedup_nonce_lookup: HashSet<Hash> = HashSet::default();
         let _ = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             loaded_transaction,

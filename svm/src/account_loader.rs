@@ -51,6 +51,8 @@ pub enum TransactionLoadResult {
     /// loaded
     NotLoaded(TransactionError),
 }
+pub type TransactionLoadResult = Result<LoadedTransaction>;
+pub type UniqueLoadedAccounts = HashMap<Pubkey, AccountSharedData>;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CheckedTransactionDetails {
@@ -195,6 +197,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
+    unique_loaded_accounts: &mut UniqueLoadedAccounts
 ) -> Vec<TransactionLoadResult> {
     txs.iter()
         .zip(validation_results)
@@ -678,6 +681,7 @@ mod tests {
             feature_set,
             rent_collector,
             &ProgramCacheForTxBatch::default(),
+            &mut unique_loaded_accounts,
         )
     }
 
@@ -964,6 +968,7 @@ mod tests {
             &FeatureSet::all_enabled(),
             &RentCollector::default(),
             &ProgramCacheForTxBatch::default(),
+            &mut unique_loaded_accounts,
         )
     }
 
@@ -1311,6 +1316,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1324,6 +1330,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(
@@ -1375,6 +1382,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1385,6 +1393,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
@@ -1420,6 +1429,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1430,6 +1440,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -1465,6 +1476,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1475,6 +1487,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(
@@ -1519,6 +1532,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1532,6 +1546,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(
@@ -1585,6 +1600,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1595,6 +1611,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -1639,6 +1656,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1649,6 +1667,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(
@@ -1700,6 +1719,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1713,6 +1733,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         assert_eq!(
@@ -1788,6 +1809,7 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
@@ -1801,6 +1823,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         let mut account_data = AccountSharedData::default();
@@ -1866,6 +1889,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &ProgramCacheForTxBatch::default(),
+            &mut unique_loaded_accounts,
         );
 
         let TransactionLoadResult::Loaded(loaded_transaction) = load_results.swap_remove(0) else {
@@ -1953,7 +1977,8 @@ mod tests {
             ..ValidatedTransactionDetails::default()
         });
 
-        let mut load_results = load_accounts(
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
+        let results = load_accounts(
             &mock_bank,
             &[sanitized_transaction],
             vec![validation_result],
@@ -1962,6 +1987,7 @@ mod tests {
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
+            &mut unique_loaded_accounts,
         );
 
         let mut account_data = AccountSharedData::default();
@@ -2034,6 +2060,7 @@ mod tests {
             &feature_set,
             &rent_collector,
             &ProgramCacheForTxBatch::default(),
+            &mut unique_loaded_accounts,
         );
 
         assert!(matches!(
@@ -2046,7 +2073,8 @@ mod tests {
 
         let validation_result = Err(TransactionError::InvalidWritableAccount);
 
-        let load_results = load_accounts(
+        let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
+        let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
             vec![validation_result],
@@ -2055,6 +2083,7 @@ mod tests {
             &feature_set,
             &rent_collector,
             &ProgramCacheForTxBatch::default(),
+            &mut unique_loaded_accounts,
         );
 
         assert!(matches!(

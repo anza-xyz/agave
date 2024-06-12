@@ -3054,6 +3054,38 @@ fn test_readonly_accounts() {
 }
 
 #[test]
+fn test_check_transaction_age() {
+    let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
+    let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+    let alice = Keypair::new();
+    let amount = genesis_config.rent.minimum_balance(0);
+
+    let tx1 = system_transaction::transfer(
+        &mint_keypair,
+        &alice.pubkey(),
+        amount,
+        genesis_config.hash(),
+    );
+
+    let tx2 = system_transaction::transfer(
+        &mint_keypair,
+        &alice.pubkey(),
+        amount,
+        genesis_config.hash(),
+    );
+    let pay_alice = vec![tx1,tx2];
+
+    let batch = bank.prepare_batch_for_tests(pay_alice);
+    let mut error_counters = TransactionErrorMetrics::default();
+    let lock_result = vec![Ok(()), Ok(())];
+    let check_age_results = bank.check_age(batch.sanitized_transactions(), &lock_result, MAX_PROCESSING_AGE, &mut error_counters);
+
+    assert_eq!(check_age_results[1], Err(TransactionError::AlreadyProcessed)); //Duplicate transactions in check_age should give AlreadyProcessed error
+
+   
+}
+
+#[test]
 fn test_interleaving_locks() {
     let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);

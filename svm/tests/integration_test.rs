@@ -1002,8 +1002,4 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         .status
         .is_ok());
 
-    assert!(matches!(
-        result.execution_results[9],
-        TransactionExecutionResult::NotExecuted(TransactionError::AlreadyProcessed)
-    ));
 }
