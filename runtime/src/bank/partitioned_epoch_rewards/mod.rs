@@ -167,9 +167,11 @@ impl Bank {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         // If partitioned epoch rewards are active and this Bank is the
         // epoch-boundary block, populate num_partitions
-        let num_partitions = (epoch_rewards_sysvar.active
-            && (self.block_height().saturating_add(1)
-                == epoch_rewards_sysvar.distribution_starting_block_height))
+        let epoch_schedule = self.epoch_schedule();
+        let parent_epoch = epoch_schedule.get_epoch(self.parent_slot());
+        let is_first_block_in_epoch = self.epoch() > parent_epoch;
+
+        let num_partitions = (epoch_rewards_sysvar.active && is_first_block_in_epoch)
             .then_some(epoch_rewards_sysvar.num_partitions);
         KeyedRewardsAndNumPartitions {
             keyed_rewards,
