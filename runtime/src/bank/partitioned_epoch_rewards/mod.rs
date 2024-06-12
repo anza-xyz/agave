@@ -156,8 +156,8 @@ pub struct KeyedRewardsAndNumPartitions {
 }
 
 impl KeyedRewardsAndNumPartitions {
-    pub fn is_empty(&self) -> bool {
-        self.keyed_rewards.is_empty() && self.num_partitions.is_none()
+    pub fn should_record(&self) -> bool {
+        !self.keyed_rewards.is_empty() || self.num_partitions.is_some()
     }
 }
 

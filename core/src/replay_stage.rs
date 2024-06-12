@@ -4394,7 +4394,7 @@ impl ReplayStage {
     fn record_rewards(bank: &Bank, rewards_recorder_sender: &Option<RewardsRecorderSender>) {
         if let Some(rewards_recorder_sender) = rewards_recorder_sender {
             let rewards = bank.get_rewards_and_num_partitions();
-            if !rewards.is_empty() {
+            if rewards.should_record() {
                 rewards_recorder_sender
                     .send(RewardsMessage::Batch((bank.slot(), rewards)))
                     .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
