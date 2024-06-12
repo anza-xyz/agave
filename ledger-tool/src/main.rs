@@ -1812,12 +1812,11 @@ fn main() {
                         transaction_status_sender,
                     );
 
+                    let working_bank = bank_forks.read().unwrap().working_bank();
                     if print_accounts_stats {
-                        let working_bank = bank_forks.read().unwrap().working_bank();
                         working_bank.print_accounts_stats();
                     }
                     if print_bank_hash {
-                        let working_bank = bank_forks.read().unwrap().working_bank();
                         println!(
                             "Bank hash for slot {}: {}",
                             working_bank.slot(),
@@ -1825,7 +1824,6 @@ fn main() {
                         );
                     }
                     if write_bank_file {
-                        let working_bank = bank_forks.read().unwrap().working_bank();
                         bank_hash_details::write_bank_hash_details_file(&working_bank)
                             .map_err(|err| {
                                 warn!("Unable to write bank hash_details file: {err}");
