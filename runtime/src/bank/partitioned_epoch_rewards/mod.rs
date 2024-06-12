@@ -163,7 +163,7 @@ impl KeyedRewardsAndNumPartitions {
 
 impl Bank {
     pub fn get_rewards_and_num_partitions(&self) -> KeyedRewardsAndNumPartitions {
-        let rewards = self.rewards.read().unwrap();
+        let keyed_rewards = self.rewards.read().unwrap().clone();
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         // If partitioned epoch rewards are active and this Bank is the
         // epoch-boundary block, populate num_partitions
@@ -172,7 +172,7 @@ impl Bank {
                 == epoch_rewards_sysvar.distribution_starting_block_height))
             .then_some(epoch_rewards_sysvar.num_partitions);
         KeyedRewardsAndNumPartitions {
-            keyed_rewards: rewards.clone(),
+            keyed_rewards,
             num_partitions,
         }
     }
