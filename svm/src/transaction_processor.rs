@@ -978,6 +978,7 @@ mod tests {
             account_loader::ValidatedTransactionDetails, nonce_info::NoncePartial,
             rollback_accounts::RollbackAccounts,
         },
+        solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
@@ -1138,6 +1139,7 @@ mod tests {
             program_indices: vec![vec![0]],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
+            compute_budget_limits: ComputeBudgetLimits::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 32,
@@ -1151,7 +1153,6 @@ mod tests {
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             &mut loaded_transaction,
-            ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1173,7 +1174,6 @@ mod tests {
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             &mut loaded_transaction,
-            ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1203,7 +1203,6 @@ mod tests {
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             &mut loaded_transaction,
-            ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1265,6 +1264,7 @@ mod tests {
             program_indices: vec![vec![0]],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
+            compute_budget_limits: ComputeBudgetLimits::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -1279,7 +1279,6 @@ mod tests {
         let _ = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
             &mut loaded_transaction,
-            ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut error_metrics,
             &mut program_cache_for_tx_batch,
@@ -1943,6 +1942,8 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
+        let compute_budget_limits =
+            process_compute_budget_instructions(message.program_instructions_iter()).unwrap();
         let fee_payer_address = message.fee_payer();
         let current_epoch = 42;
         let rent_collector = RentCollector {
@@ -2005,6 +2006,7 @@ mod tests {
                     fee_payer_rent_debit,
                     fee_payer_rent_epoch
                 ),
+                compute_budget_limits,
                 fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
@@ -2020,6 +2022,8 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
+        let compute_budget_limits =
+            process_compute_budget_instructions(message.program_instructions_iter()).unwrap();
         let fee_payer_address = message.fee_payer();
         let mut rent_collector = RentCollector::default();
         rent_collector.rent.lamports_per_byte_year = 1_000_000;
@@ -2074,6 +2078,7 @@ mod tests {
                     fee_payer_rent_debit,
                     0, // rent epoch
                 ),
+                compute_budget_limits,
                 fee_details: FeeDetails::new_for_tests(transaction_fee, 0, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
@@ -2210,6 +2215,37 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_transaction_fee_payer_invalid_compute_budget() {
+        let lamports_per_signature = 5000;
+        let message = new_unchecked_sanitized_message(Message::new(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
+                ComputeBudgetInstruction::set_compute_unit_limit(42u32),
+            ],
+            Some(&Pubkey::new_unique()),
+        ));
+
+        let mock_bank = MockBankCallback::default();
+        let mut error_counters = TransactionErrorMetrics::default();
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let result = batch_processor.validate_transaction_fee_payer(
+            &mock_bank,
+            &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
+            &FeatureSet::default(),
+            &FeeStructure::default(),
+            &RentCollector::default(),
+            &mut error_counters,
+        );
+
+        assert_eq!(error_counters.invalid_compute_budget, 1);
+        assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
+    }
+
+    #[test]
     fn test_validate_transaction_fee_payer_is_nonce() {
         let feature_set = FeatureSet::default();
         let lamports_per_signature = 5000;
@@ -2223,6 +2259,8 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
+        let compute_budget_limits =
+            process_compute_budget_instructions(message.program_instructions_iter()).unwrap();
         let fee_payer_address = message.fee_payer();
         let min_balance = Rent::default().minimum_balance(nonce::State::size());
         let transaction_fee = lamports_per_signature;
@@ -2281,6 +2319,7 @@ mod tests {
                         0, // fee_payer_rent_debit
                         0, // fee_payer_rent_epoch
                     ),
+                    compute_budget_limits,
                     fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
                     fee_payer_rent_debit: 0, // rent due
                     fee_payer_account: post_validation_fee_payer_account,

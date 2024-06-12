@@ -1145,10 +1145,9 @@ mod tests {
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                rollback_accounts: RollbackAccounts::default(),
-                fee_details: FeeDetails::default(),
                 fee_payer_account: fee_payer_account_data.clone(),
                 fee_payer_rent_debit,
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1169,6 +1168,7 @@ mod tests {
                 program_indices: vec![],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: fee_payer_rent_debit,
                 rent_debits: expected_rent_debits,
                 loaded_accounts_data_size: 0,
@@ -1213,10 +1213,8 @@ mod tests {
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                rollback_accounts: RollbackAccounts::default(),
-                fee_details: FeeDetails::default(),
                 fee_payer_account: fee_payer_account_data.clone(),
-                fee_payer_rent_debit: 0,
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1238,6 +1236,7 @@ mod tests {
                 program_indices: vec![vec![]],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1421,10 +1420,8 @@ mod tests {
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                rollback_accounts: RollbackAccounts::default(),
-                fee_details: FeeDetails::default(),
                 fee_payer_account: fee_payer_account_data.clone(),
-                fee_payer_rent_debit: 0,
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1445,6 +1442,7 @@ mod tests {
                 ],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 program_indices: vec![vec![1]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
@@ -1603,10 +1601,8 @@ mod tests {
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                rollback_accounts: RollbackAccounts::default(),
-                fee_details: FeeDetails::default(),
                 fee_payer_account: fee_payer_account_data.clone(),
-                fee_payer_rent_debit: 0,
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1632,6 +1628,7 @@ mod tests {
                 program_indices: vec![vec![2, 1]],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1694,10 +1691,8 @@ mod tests {
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                rollback_accounts: RollbackAccounts::default(),
-                fee_details: FeeDetails::default(),
                 fee_payer_account: fee_payer_account_data.clone(),
-                fee_payer_rent_debit: 0,
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1726,6 +1721,7 @@ mod tests {
                 program_indices: vec![vec![3, 1], vec![3, 1]],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1846,10 +1842,8 @@ mod tests {
             false,
         );
         let validation_result = Ok(ValidatedTransactionDetails {
-            rollback_accounts: RollbackAccounts::default(),
-            fee_details: FeeDetails::default(),
             fee_payer_account: fee_payer_account_data,
-            fee_payer_rent_debit: 0,
+            ..ValidatedTransactionDetails::default()
         });
 
         let results = load_accounts(
@@ -1889,6 +1883,7 @@ mod tests {
                 program_indices: vec![vec![3, 1], vec![3, 1]],
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1920,13 +1915,7 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails {
-            rollback_accounts: RollbackAccounts::default(),
-            fee_details: FeeDetails::default(),
-            fee_payer_account: AccountSharedData::default(),
-            fee_payer_rent_debit: 0,
-        });
-
+        let validation_result = Ok(ValidatedTransactionDetails::default());
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
