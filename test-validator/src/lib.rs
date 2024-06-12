@@ -188,8 +188,8 @@ impl Default for TestValidatorGenesis {
 
 fn try_transform_program_data(
     address: &Pubkey,
-    mut account: AccountSharedData,
-) -> Result<AccountSharedData, String> {
+    account: &mut AccountSharedData,
+) -> Result<(), String> {
     if account.owner() == &solana_sdk::bpf_loader_upgradeable::id() {
         let programdata_offset = UpgradeableLoaderState::size_of_programdata_metadata();
         let programdata_meta = account.data().get(0..programdata_offset).ok_or(format!(
@@ -211,12 +211,7 @@ fn try_transform_program_data(
                     upgrade_authority_address,
                 },
             )
-            .map(|()| Ok(account))
-            .unwrap_or_else(|_| {
-                Err(format!(
-                    "Failed to write to upgradeable programdata account {address}",
-                ))
-            })
+            .map_err(|_| format!("Failed to write to upgradeable programdata account {address}"))
         } else {
             Err(format!(
                 "Failed to read upgradeable programdata account {address}"
@@ -390,12 +385,10 @@ impl TestValidatorGenesis {
             rpc_client,
             skip_missing,
             |address, account| {
-                let account_shared_data = AccountSharedData::from(account);
+                let mut account_shared_data = AccountSharedData::from(account);
                 // ignore the error
-                Ok(
-                    try_transform_program_data(address, account_shared_data.clone())
-                        .unwrap_or(account_shared_data),
-                )
+                try_transform_program_data(address, &mut account_shared_data).ok();
+                Ok(account_shared_data)
             },
         )
     }
@@ -414,7 +407,9 @@ impl TestValidatorGenesis {
             rpc_client,
             skip_missing,
             |address, account| {
-                try_transform_program_data(address, AccountSharedData::from(account))
+                let mut account_shared_data = AccountSharedData::from(account);
+                try_transform_program_data(address, &mut account_shared_data)?;
+                Ok(account_shared_data)
             },
         )
     }
