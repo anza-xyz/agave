@@ -10,7 +10,6 @@ use {
     toml::value::{Array, Value},
 };
 
-
 /// Macro for accessing data from the `package.metadata` section of the Cargo manifest
 ///
 /// # Arguments
