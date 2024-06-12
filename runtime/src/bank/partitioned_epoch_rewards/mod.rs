@@ -712,7 +712,7 @@ mod tests {
 
     /// Test that program execution that attempts to mutate a stake account
     /// incorrectly should fail during reward period. A credit should succeed,
-    /// but a withdrawal shoudl fail.
+    /// but a withdrawal should fail.
     #[test]
     fn test_program_execution_restricted_for_stake_account_in_reward_period() {
         use solana_sdk::transaction::TransactionError::InstructionError;
