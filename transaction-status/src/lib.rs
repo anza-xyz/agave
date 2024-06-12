@@ -777,7 +777,7 @@ impl ConfirmedBlock {
             } else {
                 None
             },
-            num_partitions: self.num_partitions,
+            num_reward_partitions: self.num_partitions,
             block_time: self.block_time,
             block_height: self.block_height,
         })
@@ -805,7 +805,7 @@ impl From<UiConfirmedBlock> for EncodedConfirmedBlock {
             parent_slot: block.parent_slot,
             transactions: block.transactions.unwrap_or_default(),
             rewards: block.rewards.unwrap_or_default(),
-            num_partitions: block.num_partitions,
+            num_partitions: block.num_reward_partitions,
             block_time: block.block_time,
             block_height: block.block_height,
         }
@@ -825,7 +825,7 @@ pub struct UiConfirmedBlock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewards: Option<Rewards>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub num_partitions: Option<u64>,
+    pub num_reward_partitions: Option<u64>,
     pub block_time: Option<UnixTimestamp>,
     pub block_height: Option<u64>,
 }
