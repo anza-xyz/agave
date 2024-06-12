@@ -36,8 +36,8 @@ use {
             IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
         },
     },
-    solana_vote::vote_account::VoteAccountsHashMap,
     solana_type_overrides::sync::{atomic::Ordering, Arc},
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         alloc::Layout,
         cell::RefCell,

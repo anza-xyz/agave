@@ -28,11 +28,7 @@ pub mod lazy_static {
 }
 
 pub mod rand {
-    pub use rand::{
-        distributions::*, random, rngs::*, seq::*, CryptoRng, Error, Fill, SeedableRng,
-    };
-    #[cfg(not(feature = "shuttle-test"))]
-    pub use rand::{thread_rng, Rng, RngCore};
+    pub use rand::*;
     #[cfg(feature = "shuttle-test")]
     pub use shuttle::rand::{thread_rng, Rng, RngCore};
 }
