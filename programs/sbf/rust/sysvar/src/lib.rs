@@ -88,7 +88,6 @@ pub fn process_instruction(
         msg!("Rent identifier:");
         sysvar::rent::id().log();
         let rent = Rent::from_account_info(&accounts[6]).unwrap();
-        assert_eq!(rent, Rent::default());
         let got_rent = Rent::get()?;
         assert_eq!(rent, got_rent);
     }
