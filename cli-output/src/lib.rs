@@ -4,14 +4,9 @@ pub mod cli_version;
 pub mod display;
 pub use cli_output::*;
 
-pub trait QuietDisplay: std::fmt::Display {
-    fn write_str(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
-        write!(w, "{self}")
-    }
-}
-
-pub trait VerboseDisplay: std::fmt::Display {
-    fn write_str(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
-        write!(w, "{self}")
-    }
+#[doc(hidden)]
+// Crates used by macros.  Reexporting them here allows macros to be invoked in any context, without
+// requiring the users to import specific crates and/or modules.
+pub mod reexport {
+    pub use serde_json;
 }
