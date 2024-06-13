@@ -324,9 +324,7 @@ pub enum StakeInstruction {
     /// # Account references
     ///   0. `[WRITE]` Active source stake account
     ///   1. `[WRITE]` Active or inactive destination stake account
-    ///   2. `[]` Clock sysvar
-    ///   3. `[]` Stake history sysvar that carries stake warmup/cooldown history
-    ///   4. `[SIGNER]` Stake authority
+    ///   2. `[SIGNER]` Stake authority
     ///
     /// The u64 is the portion of the stake to move, which may be the entire delegation
     MoveStake(u64),
@@ -341,9 +339,7 @@ pub enum StakeInstruction {
     /// # Account references
     ///   0. `[WRITE]` Active or inactive source stake account
     ///   1. `[WRITE]` Mergeable destination stake account
-    ///   2. `[]` Clock sysvar
-    ///   3. `[]` Stake history sysvar that carries stake warmup/cooldown history
-    ///   4. `[SIGNER]` Stake authority
+    ///   2. `[SIGNER]` Stake authority
     ///
     /// The u64 is the portion of available lamports to move
     MoveLamports(u64),
@@ -893,13 +889,13 @@ pub fn move_stake(
     authorized_pubkey: &Pubkey,
     lamports: u64,
 ) -> Instruction {
-    move_stake_or_lamports(
-        source_stake_pubkey,
-        destination_stake_pubkey,
-        authorized_pubkey,
-        lamports,
-        &(StakeInstruction::MoveStake as fn(u64) -> StakeInstruction),
-    )
+    let account_metas = vec![
+        AccountMeta::new(*source_stake_pubkey, false),
+        AccountMeta::new(*destination_stake_pubkey, false),
+        AccountMeta::new_readonly(*authorized_pubkey, true),
+    ];
+
+    Instruction::new_with_bincode(id(), &StakeInstruction::MoveStake(lamports), account_metas)
 }
 
 pub fn move_lamports(
@@ -908,31 +904,17 @@ pub fn move_lamports(
     authorized_pubkey: &Pubkey,
     lamports: u64,
 ) -> Instruction {
-    move_stake_or_lamports(
-        source_stake_pubkey,
-        destination_stake_pubkey,
-        authorized_pubkey,
-        lamports,
-        &(StakeInstruction::MoveLamports as fn(u64) -> StakeInstruction),
-    )
-}
-
-fn move_stake_or_lamports(
-    source_stake_pubkey: &Pubkey,
-    destination_stake_pubkey: &Pubkey,
-    authorized_pubkey: &Pubkey,
-    lamports: u64,
-    value_constructor: &fn(u64) -> StakeInstruction,
-) -> Instruction {
     let account_metas = vec![
         AccountMeta::new(*source_stake_pubkey, false),
         AccountMeta::new(*destination_stake_pubkey, false),
-        AccountMeta::new_readonly(sysvar::clock::id(), false),
-        AccountMeta::new_readonly(sysvar::stake_history::id(), false),
         AccountMeta::new_readonly(*authorized_pubkey, true),
     ];
 
-    Instruction::new_with_bincode(id(), &value_constructor(lamports), account_metas)
+    Instruction::new_with_bincode(
+        id(),
+        &StakeInstruction::MoveLamports(lamports),
+        account_metas,
+    )
 }
 
 #[cfg(test)]

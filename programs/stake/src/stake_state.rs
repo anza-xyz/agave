@@ -139,8 +139,6 @@ fn move_stake_or_lamports_shared_checks(
     source_account: &BorrowedAccount,
     lamports: u64,
     destination_account: &BorrowedAccount,
-    clock: &Clock,
-    stake_history: &StakeHistory,
     stake_authority_index: IndexOfAccount,
 ) -> Result<(MergeKind, MergeKind), InstructionError> {
     // authority must sign
@@ -175,14 +173,17 @@ fn move_stake_or_lamports_shared_checks(
         return Err(InstructionError::InvalidArgument);
     }
 
+    let clock = invoke_context.get_sysvar_cache().get_clock()?;
+    let stake_history = invoke_context.get_sysvar_cache().get_stake_history()?;
+
     // get_if_mergeable ensures accounts are not partly activated or in any form of deactivating
     // we still need to exclude activating state ourselves
     let source_merge_kind = MergeKind::get_if_mergeable(
         invoke_context,
         &source_account.get_state()?,
         source_account.get_lamports(),
-        clock,
-        stake_history,
+        &clock,
+        &stake_history,
     )?;
 
     // Authorized staker is allowed to move stake
@@ -196,8 +197,8 @@ fn move_stake_or_lamports_shared_checks(
         invoke_context,
         &destination_account.get_state()?,
         destination_account.get_lamports(),
-        clock,
-        stake_history,
+        &clock,
+        &stake_history,
     )?;
 
     // ensure all authorities match and lockups match if lockup is in force
@@ -205,7 +206,7 @@ fn move_stake_or_lamports_shared_checks(
         invoke_context,
         source_merge_kind.meta(),
         destination_merge_kind.meta(),
-        clock,
+        &clock,
     )?;
 
     Ok((source_merge_kind, destination_merge_kind))
@@ -791,8 +792,6 @@ pub fn move_stake(
     source_account_index: IndexOfAccount,
     lamports: u64,
     destination_account_index: IndexOfAccount,
-    clock: &Clock,
-    stake_history: &StakeHistory,
     stake_authority_index: IndexOfAccount,
 ) -> Result<(), InstructionError> {
     let mut source_account = instruction_context
@@ -808,8 +807,6 @@ pub fn move_stake(
         &source_account,
         lamports,
         &destination_account,
-        clock,
-        stake_history,
         stake_authority_index,
     )?;
 
@@ -929,8 +926,6 @@ pub fn move_lamports(
     source_account_index: IndexOfAccount,
     lamports: u64,
     destination_account_index: IndexOfAccount,
-    clock: &Clock,
-    stake_history: &StakeHistory,
     stake_authority_index: IndexOfAccount,
 ) -> Result<(), InstructionError> {
     let mut source_account = instruction_context
@@ -946,8 +941,6 @@ pub fn move_lamports(
         &source_account,
         lamports,
         &destination_account,
-        clock,
-        stake_history,
         stake_authority_index,
     )?;
 

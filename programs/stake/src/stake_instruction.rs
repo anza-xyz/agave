@@ -359,14 +359,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 .get_feature_set()
                 .is_active(&feature_set::move_stake_and_move_lamports_ixs::id())
             {
-                let clock =
-                    get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
-                let stake_history = get_sysvar_with_account_check::stake_history(
-                    invoke_context,
-                    instruction_context,
-                    3,
-                )?;
-                instruction_context.check_number_of_instruction_accounts(5)?;
+                instruction_context.check_number_of_instruction_accounts(3)?;
                 drop(me);
                 move_stake(
                     invoke_context,
@@ -375,9 +368,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                     0,
                     lamports,
                     1,
-                    &clock,
-                    &stake_history,
-                    4,
+                    2,
                 )
             } else {
                 Err(InstructionError::InvalidInstructionData)
@@ -389,14 +380,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 .get_feature_set()
                 .is_active(&feature_set::move_stake_and_move_lamports_ixs::id())
             {
-                let clock =
-                    get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
-                let stake_history = get_sysvar_with_account_check::stake_history(
-                    invoke_context,
-                    instruction_context,
-                    3,
-                )?;
-                instruction_context.check_number_of_instruction_accounts(5)?;
+                instruction_context.check_number_of_instruction_accounts(3)?;
                 drop(me);
                 move_lamports(
                     invoke_context,
@@ -405,9 +389,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                     0,
                     lamports,
                     1,
-                    &clock,
-                    &stake_history,
-                    4,
+                    2,
                 )
             } else {
                 Err(InstructionError::InvalidInstructionData)
@@ -537,6 +519,7 @@ mod tests {
             .collect();
         pubkeys.insert(clock::id());
         pubkeys.insert(epoch_schedule::id());
+        pubkeys.insert(stake_history::id());
         #[allow(deprecated)]
         pubkeys
             .iter()
