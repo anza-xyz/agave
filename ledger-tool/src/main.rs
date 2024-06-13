@@ -1056,6 +1056,14 @@ fn main() {
                         ),
                 )
                 .arg(
+                    Arg::with_name("print_shred_version")
+                        .long("print-shred-version")
+                        .takes_value(false)
+                        .help(
+                            "After verifying the ledger, print the working current shred version"
+                        ),
+                )
+                .arg(
                     Arg::with_name("write_bank_file")
                         .long("write-bank-file")
                         .takes_value(false)
@@ -1597,35 +1605,10 @@ fn main() {
 
                     println!("{}", open_genesis_config_by(&output_directory, arg_matches));
                 }
-                ("shred-version", Some(arg_matches)) => {
-                    let mut process_options = parse_process_options(&ledger_path, arg_matches);
-                    // Respect a user-set --halt-at-slot; otherwise, set Some(0) to avoid
-                    // processing any additional banks and just use the snapshot bank
-                    if process_options.halt_at_slot.is_none() {
-                        process_options.halt_at_slot = Some(0);
-                    }
-                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let blockstore = open_blockstore(
-                        &ledger_path,
-                        arg_matches,
-                        get_access_type(&process_options),
-                    );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                        None,
-                    );
-
-                    println!(
-                        "{}",
-                        compute_shred_version(
-                            &genesis_config.hash(),
-                            Some(&bank_forks.read().unwrap().working_bank().hard_forks())
-                        )
+                ("shred-version", Some(_)) => {
+                    eprintln!(
+                        "The shred-version command has been deprecated, use \
+                        agave-ledger-tool verify --print-shred-version ... instead"
                     );
                 }
                 ("bank-hash", Some(_)) => {
@@ -1793,6 +1776,7 @@ fn main() {
 
                     let print_accounts_stats = arg_matches.is_present("print_accounts_stats");
                     let print_bank_hash = arg_matches.is_present("print_bank_hash");
+                    let print_shred_version = arg_matches.is_present("print_shred_version");
                     let write_bank_file = arg_matches.is_present("write_bank_file");
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     info!("genesis hash: {}", genesis_config.hash());
@@ -1821,6 +1805,15 @@ fn main() {
                             "Bank hash for slot {}: {}",
                             working_bank.slot(),
                             working_bank.hash()
+                        );
+                    }
+                    if print_shred_version {
+                        println!(
+                            "Shred version is: {}",
+                            compute_shred_version(
+                                &genesis_config.hash(),
+                                Some(&working_bank.hard_forks())
+                            )
                         );
                     }
                     if write_bank_file {
