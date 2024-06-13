@@ -294,18 +294,18 @@ pub struct RpcContactInfo {
     pub pubkey: String,
     /// Gossip port
     pub gossip: Option<SocketAddr>,
-    /// Tpu UDP port
-    pub tpu: Option<SocketAddr>,
-    /// Tpu UDP forwards port
-    pub tpu_forwards: Option<SocketAddr>,
-    /// Tpu QUIC port
-    pub tpu_quic: Option<SocketAddr>,
-    /// Tpu QUIC forwards port
-    pub tpu_forwards_quic: Option<SocketAddr>,
     /// Tvu UDP port
     pub tvu: Option<SocketAddr>,
     /// Tvu QUIC port
     pub tvu_quic: Option<SocketAddr>,
+    /// Tpu UDP port
+    pub tpu: Option<SocketAddr>,
+    /// Tpu QUIC port
+    pub tpu_quic: Option<SocketAddr>,
+    /// Tpu UDP forwards port
+    pub tpu_forwards: Option<SocketAddr>,
+    /// Tpu QUIC forwards port
+    pub tpu_forwards_quic: Option<SocketAddr>,
     /// JSON RPC port
     pub rpc: Option<SocketAddr>,
     /// WebSocket PubSub port
