@@ -789,6 +789,10 @@ pub mod deprecate_unused_legacy_vote_plumbing {
     solana_sdk::declare_id!("6Uf8S75PVh91MYgPQSHnjRAPQq6an5BDv9vomrCwDqLe");
 }
 
+pub mod vote_only_full_fec_sets {
+    solana_sdk::declare_id!("ffecLRhhakKSGhMuc6Fz2Lnfq4uT9q3iu9ZsNaPLxPc");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -981,6 +985,7 @@ lazy_static! {
         (enable_chained_merkle_shreds::id(), "Enable chained Merkle shreds #34916"),
         (deprecate_unused_legacy_vote_plumbing::id(), "Deprecate unused legacy vote tx plumbing"),
         (chained_merkle_conflict_duplicate_proofs::id(), "generate duplicate proofs for chained merkle root conflicts"),
+        (vote_only_full_fec_sets::id(), "vote only full fec sets"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
