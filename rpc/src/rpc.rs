@@ -3576,6 +3576,10 @@ pub mod rpc_full {
                                 .tpu_forwards(Protocol::QUIC)
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
+                            tpu_vote: contact_info
+                                .tpu_vote()
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info
                                 .rpc()
                                 .ok()

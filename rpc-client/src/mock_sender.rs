@@ -382,6 +382,7 @@ impl RpcSender for MockSender {
                 tpu_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8862))),
                 tpu_forwards: Some(SocketAddr::from(([10, 239, 6, 48], 8857))),
                 tpu_forwards_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8863))),
+                tpu_vote: Some(SocketAddr::from(([10, 239, 6, 48], 8870))),
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
                 version: Some("1.0.0 c375ce1f".to_string()),

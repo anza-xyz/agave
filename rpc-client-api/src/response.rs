@@ -306,6 +306,8 @@ pub struct RpcContactInfo {
     pub tpu_forwards: Option<SocketAddr>,
     /// Tpu QUIC forwards port
     pub tpu_forwards_quic: Option<SocketAddr>,
+    /// Tpu UDP vote port
+    pub tpu_vote: Option<SocketAddr>,
     /// JSON RPC port
     pub rpc: Option<SocketAddr>,
     /// WebSocket PubSub port
