@@ -3580,6 +3580,14 @@ pub mod rpc_full {
                                 .tpu_vote()
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
+                            serve_repair: contact_info
+                                .serve_repair(Protocol::UDP)
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
+                            serve_repair_quic: contact_info
+                                .serve_repair(Protocol::QUIC)
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info
                                 .rpc()
                                 .ok()
