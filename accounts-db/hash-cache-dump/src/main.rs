@@ -1,10 +1,10 @@
 //! A tool to dump accounts_hash_cache files.
 //!
-//! If there are multiple files provided in the commandline, the tool will dump them in parallel.
+//! If there are multiple files provided in the command line, the tool will dump them in parallel.
 //!
 //! For example, the following command will dump all accounts_hash_cache files in the `accounts_hash_cache_directory`.
-//!  > $ find  /home/sol/ledger/accounts_hash_cache/ -type f -print0 | xargs -0 ~/src/solana/target/debug/agave-hash-cache-dump -i
-
+//!  >$ find  /home/sol/ledger/accounts_hash_cache/ -type f -print0 | xargs -0 ~/src/solana/target/debug/agave-hash-cache-dump -i
+//!
 use {
     clap::{crate_description, crate_name, App, Arg},
     rayon::prelude::*,
