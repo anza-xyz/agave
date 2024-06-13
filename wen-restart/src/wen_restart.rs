@@ -316,7 +316,7 @@ pub(crate) fn find_heaviest_fork(
     bank_forks: Arc<RwLock<BankForks>>,
     blockstore: Arc<Blockstore>,
     exit: Arc<AtomicBool>,
-    accounts_background_request_sender: AbsRequestSender,
+    accounts_background_request_sender: &AbsRequestSender,
 ) -> Result<(Slot, Hash)> {
     let root_bank = bank_forks.read().unwrap().root_bank();
     let root_slot = root_bank.slot();
@@ -375,7 +375,7 @@ pub(crate) fn find_heaviest_fork(
         bank_forks.clone(),
         root_bank,
         &exit,
-        &accounts_background_request_sender,
+        accounts_background_request_sender,
     )?;
     info!(
         "Heaviest fork found: slot: {}, bankhash: {:?}",
@@ -538,6 +538,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
     let mut timing = ExecuteTimings::default();
     let opts = ProcessOptions::default();
     // Now replay all the missing blocks.
+    let mut cur_root_bank = root_bank.clone();
     let mut parent_bank = root_bank;
     for slot in slots {
         if exit.load(Ordering::Relaxed) {
@@ -590,20 +591,12 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 {
                     cur_bank = bank_forks.read().unwrap().get(slot).unwrap();
                 }
-                let mut banks = vec![&cur_bank];
-                let parents = cur_bank.parents();
-                banks.extend(parents.iter());
-                {
-                    let mut my_bank_forks = bank_forks.write().unwrap();
-                    let (need_to_be_rooted, _) = my_bank_forks.send_eah_request_if_needed(
-                        slot,
-                        &banks,
-                        accounts_background_request_sender,
-                    )?;
-                    if need_to_be_rooted {
-                        let _ =
-                            my_bank_forks.set_root(slot, accounts_background_request_sender, None);
-                    }
+                if slot.saturating_sub(cur_root_bank.slot()) > 100 {
+                    // We don't want to keep too many banks in memory, and need to send EAH requests.
+                    let mut new_bank_forks = bank_forks.write().unwrap();
+                    // All slots here would be super majority root if confirmed.
+                    let _ = new_bank_forks.set_root(slot, accounts_background_request_sender, None);
+                    cur_root_bank = cur_bank.clone();
                 }
                 cur_bank
             }
@@ -900,7 +893,7 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                             config.bank_forks.clone(),
                             config.blockstore.clone(),
                             config.exit.clone(),
-                            config.accounts_background_request_sender.clone(),
+                            &config.accounts_background_request_sender,
                         )?;
                         info!(
                             "Heaviest fork found: slot: {}, bankhash: {}",
@@ -2283,7 +2276,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
                 exit.clone(),
-                AbsRequestSender::default(),
+                &AbsRequestSender::default(),
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
@@ -2300,7 +2293,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
                 exit.clone(),
-                AbsRequestSender::default(),
+                &AbsRequestSender::default(),
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
@@ -2322,7 +2315,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
                 exit.clone(),
-                AbsRequestSender::default(),
+                &AbsRequestSender::default(),
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
@@ -2367,7 +2360,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
                 exit.clone(),
-                AbsRequestSender::default(),
+                &AbsRequestSender::default(),
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
@@ -2408,7 +2401,7 @@ mod tests {
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
                 exit.clone(),
-                AbsRequestSender::default(),
+                &AbsRequestSender::default(),
             )
             .unwrap_err()
             .downcast::<WenRestartError>()
