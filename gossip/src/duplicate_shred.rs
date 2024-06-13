@@ -94,14 +94,19 @@ pub enum Error {
 /// Check that `shred1` and `shred2` indicate a valid duplicate proof
 ///     - Must be for the same slot
 ///     - Must both sigverify for the correct leader
-///     - Must have a merkle root conflict, otherwise `shred1` and `shred2` must have the same `shred_type`
+///     - Must have a merkle or chained merkle root conflict, otherwise `shred1` and `shred2` must have the same `shred_type`
 ///     - If `shred1` and `shred2` share the same index they must be not equal
 ///     - If `shred1` and `shred2` do not share the same index and are data shreds
 ///       verify that they indicate an index conflict. One of them must be the
 ///       LAST_SHRED_IN_SLOT, however the other shred must have a higher index.
 ///     - If `shred1` and `shred2` do not share the same index and are coding shreds
 ///       verify that they have conflicting erasure metas
-fn check_shreds<F>(leader_schedule: Option<F>, shred1: &Shred, shred2: &Shred) -> Result<(), Error>
+fn check_shreds<F>(
+    leader_schedule: Option<F>,
+    shred1: &Shred,
+    shred2: &Shred,
+    allow_chained_duplicate_proofs: bool,
+) -> Result<(), Error>
 where
     F: FnOnce(Slot) -> Option<Pubkey>,
 {
@@ -125,6 +130,24 @@ where
         // as well as merkle shreds with different roots in the
         // same fec set
         return Ok(());
+    }
+
+    // Chained merkle root conflict check
+    let first_shred = std::cmp::min_by(shred1, shred2, |s1, s2| {
+        s1.fec_set_index().cmp(&s2.fec_set_index())
+    });
+    let second_shred = std::cmp::max_by(shred1, shred2, |s1, s2| {
+        s1.fec_set_index().cmp(&s2.fec_set_index())
+    });
+
+    if let Some(erasure_meta) = ErasureMeta::from_coding_shred(first_shred) {
+        if allow_chained_duplicate_proofs
+            && erasure_meta.next_fec_set_index() == Some(second_shred.fec_set_index())
+            && first_shred.merkle_root().ok() != second_shred.chained_merkle_root().ok()
+        {
+            // This catches a mixture of legacy and merkle shreds as well as improper chaining
+            return Ok(());
+        }
     }
 
     if shred1.shred_type() != shred2.shred_type() {
@@ -176,7 +199,12 @@ where
         return Err(Error::InvalidDuplicateShreds);
     }
     let other_shred = Shred::new_from_serialized_shred(other_payload)?;
-    check_shreds(leader_schedule, &shred, &other_shred)?;
+    check_shreds(
+        leader_schedule,
+        &shred,
+        &other_shred,
+        /* allow_chained_duplicate_proofs */ true,
+    )?;
     let slot = shred.slot();
     let proof = DuplicateSlotProof {
         shred1: shred.into_payload(),
@@ -229,6 +257,7 @@ fn check_chunk(slot: Slot, num_chunks: u8) -> impl Fn(&DuplicateShred) -> Result
 pub(crate) fn into_shreds(
     slot_leader: &Pubkey,
     chunks: impl IntoIterator<Item = DuplicateShred>,
+    allow_chained_duplicate_proofs: bool,
 ) -> Result<(Shred, Shred), Error> {
     let mut chunks = chunks.into_iter();
     let DuplicateShred {
@@ -267,7 +296,12 @@ pub(crate) fn into_shreds(
     if shred1.slot() != slot || shred2.slot() != slot {
         Err(Error::SlotMismatch)
     } else {
-        check_shreds(Some(|_| Some(slot_leader).copied()), &shred1, &shred2)?;
+        check_shreds(
+            Some(|_| Some(slot_leader).copied()),
+            &shred1,
+            &shred2,
+            allow_chained_duplicate_proofs,
+        )?;
         Ok((shred1, shred2))
     }
 }
@@ -335,6 +369,7 @@ pub(crate) mod tests {
             shredder,
             keypair,
             true,
+            None,
         );
         data_shreds.pop().unwrap()
     }
@@ -346,6 +381,7 @@ pub(crate) mod tests {
         keypair: &Keypair,
         merkle_variant: bool,
         is_last_in_slot: bool,
+        chained_merkle_root: Option<Hash>,
     ) -> Shred {
         let (mut data_shreds, _) = new_rand_shreds(
             rng,
@@ -356,6 +392,7 @@ pub(crate) mod tests {
             shredder,
             keypair,
             is_last_in_slot,
+            chained_merkle_root,
         );
         data_shreds.pop().unwrap()
     }
@@ -367,6 +404,7 @@ pub(crate) mod tests {
         shredder: &Shredder,
         keypair: &Keypair,
         merkle_variant: bool,
+        chained_merkle_root: Option<Hash>,
     ) -> Vec<Shred> {
         let (_, coding_shreds) = new_rand_shreds(
             rng,
@@ -377,6 +415,7 @@ pub(crate) mod tests {
             shredder,
             keypair,
             true,
+            chained_merkle_root,
         );
         coding_shreds
     }
@@ -390,6 +429,7 @@ pub(crate) mod tests {
         shredder: &Shredder,
         keypair: &Keypair,
         is_last_in_slot: bool,
+        chained_merkle_root: Option<Hash>,
     ) -> (Vec<Shred>, Vec<Shred>) {
         let entries: Vec<_> = std::iter::repeat_with(|| {
             let tx = system_transaction::transfer(
@@ -410,8 +450,7 @@ pub(crate) mod tests {
             keypair,
             &entries,
             is_last_in_slot,
-            // chained_merkle_root
-            Some(Hash::new_from_array(rng.gen())),
+            chained_merkle_root,
             next_shred_index,
             next_code_index, // next_code_index
             merkle_variant,
@@ -467,6 +506,7 @@ pub(crate) mod tests {
             &leader,
             merkle_variant,
             true,
+            None,
         );
         let shred2 = new_rand_data_shred(
             &mut rng,
@@ -475,6 +515,7 @@ pub(crate) mod tests {
             &leader,
             merkle_variant,
             true,
+            None,
         );
         let leader_schedule = |s| {
             if s == slot {
@@ -494,7 +535,7 @@ pub(crate) mod tests {
         .unwrap()
         .collect();
         assert!(chunks.len() > 4);
-        let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks).unwrap();
+        let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, true).unwrap();
         assert_eq!(shred1, shred3);
         assert_eq!(shred2, shred4);
     }
@@ -521,6 +562,7 @@ pub(crate) mod tests {
             &leader,
             merkle_variant,
             true,
+            None,
         );
         let coding_shreds = new_rand_coding_shreds(
             &mut rng,
@@ -529,6 +571,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            None,
         );
         let test_cases = vec![
             // Same data_shred
@@ -563,7 +606,7 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks).err().unwrap(),
+                into_shreds(&leader.pubkey(), chunks, true).err().unwrap(),
                 Error::InvalidDuplicateSlotProof
             );
         }
@@ -584,16 +627,19 @@ pub(crate) mod tests {
                 None
             }
         };
+        let data_shred = new_rand_data_shred(
+            &mut rng,
+            next_shred_index,
+            &shredder,
+            &leader,
+            merkle_variant,
+            true,
+            None,
+        );
+        let merkle_root = merkle_variant.then(|| data_shred.merkle_root().unwrap());
         let test_cases = vec![
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
+                data_shred.clone(),
                 new_rand_data_shred(
                     &mut rng,
                     // With Merkle shreds, last erasure batch is padded with
@@ -603,6 +649,7 @@ pub(crate) mod tests {
                     &leader,
                     merkle_variant,
                     false,
+                    merkle_root,
                 ),
             ),
             (
@@ -612,16 +659,10 @@ pub(crate) mod tests {
                     &shredder,
                     &leader,
                     merkle_variant,
-                    true,
+                    false,
+                    merkle_root,
                 ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
+                data_shred.clone(),
             ),
         ];
         for (shred1, shred2) in test_cases.iter().flat_map(|(a, b)| [(a, b), (b, a)]) {
@@ -636,7 +677,7 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks).unwrap();
+            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, true).unwrap();
             assert_eq!(shred1, &shred3);
             assert_eq!(shred2, &shred4);
         }
@@ -657,79 +698,40 @@ pub(crate) mod tests {
                 None
             }
         };
+
+        let data_shred = new_rand_data_shred(
+            &mut rng,
+            next_shred_index,
+            &shredder,
+            &leader,
+            merkle_variant,
+            false,
+            None,
+        );
+        let merkle_root = merkle_variant.then(|| data_shred.merkle_root().unwrap());
+        let next_data_shred = new_rand_data_shred(
+            &mut rng,
+            next_shred_index + 100,
+            &shredder,
+            &leader,
+            merkle_variant,
+            false,
+            merkle_root,
+        );
+        let last_data_shred = new_rand_data_shred(
+            &mut rng,
+            next_shred_index + 1,
+            &shredder,
+            &leader,
+            merkle_variant,
+            true,
+            merkle_root,
+        );
         let test_cases = vec![
-            (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 1,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
-            ),
-            (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 1,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-            ),
-            (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 100,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-            ),
-            (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 100,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-            ),
+            (data_shred.clone(), last_data_shred.clone()),
+            (last_data_shred.clone(), data_shred.clone()),
+            (next_data_shred.clone(), data_shred.clone()),
+            (data_shred.clone(), next_data_shred.clone()),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
             assert_matches!(
@@ -758,7 +760,7 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks).err().unwrap(),
+                into_shreds(&leader.pubkey(), chunks, true).err().unwrap(),
                 Error::InvalidLastIndexConflict
             );
         }
@@ -786,6 +788,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            None,
         );
         let coding_shreds_bigger = new_rand_coding_shreds(
             &mut rng,
@@ -794,6 +797,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            None,
         );
         let coding_shreds_smaller = new_rand_coding_shreds(
             &mut rng,
@@ -802,6 +806,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            None,
         );
 
         // Same fec-set, different index, different erasure meta
@@ -821,7 +826,7 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks).unwrap();
+            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, true).unwrap();
             assert_eq!(shred1, shred3);
             assert_eq!(shred2, shred4);
         }
@@ -849,7 +854,9 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            None,
         );
+        let merkle_root = merkle_variant.then(|| coding_shreds[0].merkle_root().unwrap());
         let coding_shreds_different_fec = new_rand_coding_shreds(
             &mut rng,
             next_shred_index + 1,
@@ -857,6 +864,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            merkle_root,
         );
         let coding_shreds_different_fec_and_size = new_rand_coding_shreds(
             &mut rng,
@@ -865,6 +873,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             merkle_variant,
+            merkle_root,
         );
 
         let test_cases = vec![
@@ -916,7 +925,7 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks).err().unwrap(),
+                into_shreds(&leader.pubkey(), chunks, true).err().unwrap(),
                 Error::InvalidErasureMetaConflict
             );
         }
@@ -946,6 +955,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             false,
+            None,
         );
 
         let (legacy_data_shreds, legacy_coding_shreds) = new_rand_shreds(
@@ -957,6 +967,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             true,
+            None,
         );
 
         let (diff_data_shreds, diff_coding_shreds) = new_rand_shreds(
@@ -968,6 +979,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             false,
+            None,
         );
 
         let test_cases = vec![
@@ -993,7 +1005,7 @@ pub(crate) mod tests {
             .unwrap()
             .collect();
             assert!(chunks.len() > 4);
-            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks).unwrap();
+            let (shred3, shred4) = into_shreds(&leader.pubkey(), chunks, true).unwrap();
             assert_eq!(shred1, shred3);
             assert_eq!(shred2, shred4);
         }
@@ -1023,7 +1035,9 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             true,
+            None,
         );
+        let merkle_root = data_shreds[0].merkle_root().unwrap();
 
         let (next_data_shreds, next_coding_shreds) = new_rand_shreds(
             &mut rng,
@@ -1034,6 +1048,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             true,
+            Some(merkle_root),
         );
 
         let (legacy_data_shreds, legacy_coding_shreds) = new_rand_shreds(
@@ -1045,6 +1060,7 @@ pub(crate) mod tests {
             &shredder,
             &leader,
             true,
+            None,
         );
 
         let test_cases = vec![
@@ -1065,11 +1081,6 @@ pub(crate) mod tests {
                 legacy_data_shreds[0].clone(),
                 legacy_coding_shreds[0].clone(),
             ),
-            // Mix of legacy and merkle with different fec index
-            (legacy_coding_shreds[0].clone(), next_data_shreds[0].clone()),
-            (next_coding_shreds[0].clone(), legacy_data_shreds[0].clone()),
-            (legacy_data_shreds[0].clone(), next_coding_shreds[0].clone()),
-            (next_data_shreds[0].clone(), legacy_coding_shreds[0].clone()),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
             assert_matches!(
@@ -1098,9 +1109,223 @@ pub(crate) mod tests {
             assert!(chunks.len() > 4);
 
             assert_matches!(
-                into_shreds(&leader.pubkey(), chunks).err().unwrap(),
+                into_shreds(&leader.pubkey(), chunks, true).err().unwrap(),
                 Error::ShredTypeMismatch
             );
+        }
+    }
+
+    #[test_case(false; "feature off")]
+    #[test_case(true; "feature on")]
+    fn test_chained_merkle_root_conflict_round_trip(feature_on: bool) {
+        let mut rng = rand::thread_rng();
+        let leader = Arc::new(Keypair::new());
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = rng.gen_range(0..31_000);
+        let leader_schedule = |s| {
+            if s == slot {
+                Some(leader.pubkey())
+            } else {
+                None
+            }
+        };
+
+        let (data_shreds, coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            true, /* merkle_variant */
+            &shredder,
+            &leader,
+            false,
+            None,
+        );
+
+        let next_shred_index = next_shred_index + data_shreds.len() as u32;
+        let (legacy_data_shreds, legacy_coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            false, /* merkle_variant */
+            &shredder,
+            &leader,
+            true,
+            None,
+        );
+
+        let (diff_data_shreds, diff_coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            true, /* merkle_variant */
+            &shredder,
+            &leader,
+            false,
+            Some(Hash::new_unique()),
+        );
+
+        let test_cases = vec![
+            // Improper chaining
+            (coding_shreds[0].clone(), diff_coding_shreds[1].clone()),
+            (coding_shreds[0].clone(), diff_data_shreds[0].clone()),
+            // Mix of legacy and merkle in same slot
+            (coding_shreds[0].clone(), legacy_data_shreds[0].clone()),
+            (coding_shreds[0].clone(), legacy_coding_shreds[0].clone()),
+            // Order doesn't matter
+            (diff_coding_shreds[0].clone(), coding_shreds[1].clone()),
+            (diff_data_shreds[0].clone(), coding_shreds[0].clone()),
+            (legacy_data_shreds[0].clone(), coding_shreds[0].clone()),
+            (legacy_coding_shreds[0].clone(), coding_shreds[0].clone()),
+        ];
+
+        for (shred1, shred2) in test_cases.into_iter() {
+            let chunks: Vec<_> = from_shred(
+                shred1.clone(),
+                Pubkey::new_unique(), // self_pubkey
+                shred2.payload().clone(),
+                Some(leader_schedule),
+                rng.gen(), // wallclock
+                512,       // max_size
+            )
+            .unwrap()
+            .collect();
+            assert!(chunks.len() > 4);
+            let result = into_shreds(&leader.pubkey(), chunks, feature_on);
+            if feature_on {
+                let (shred3, shred4) = result.unwrap();
+                assert_eq!(shred1, shred3);
+                assert_eq!(shred2, shred4);
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn test_chained_merkle_root_conflict_invalid() {
+        let mut rng = rand::thread_rng();
+        let leader = Arc::new(Keypair::new());
+        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
+        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
+        let next_shred_index = rng.gen_range(0..31_000);
+        let leader_schedule = |s| {
+            if s == slot {
+                Some(leader.pubkey())
+            } else {
+                None
+            }
+        };
+
+        let (data_shreds, coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            true,
+            &shredder,
+            &leader,
+            false,
+            None,
+        );
+        let (legacy_data_shreds, legacy_coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            false,
+            &shredder,
+            &leader,
+            false,
+            None,
+        );
+
+        let next_shred_index = next_shred_index + data_shreds.len() as u32;
+        let merkle_root = data_shreds[0].merkle_root().unwrap();
+
+        let (next_data_shreds, next_coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            true,
+            &shredder,
+            &leader,
+            true,
+            Some(merkle_root),
+        );
+        let (next_legacy_data_shreds, next_legacy_coding_shreds) = new_rand_shreds(
+            &mut rng,
+            next_shred_index,
+            next_shred_index,
+            10,
+            false,
+            &shredder,
+            &leader,
+            false,
+            None,
+        );
+
+        let test_cases = vec![
+            // Proper chaining
+            (coding_shreds[0].clone(), next_coding_shreds[0].clone()),
+            (coding_shreds[0].clone(), next_data_shreds[0].clone()),
+            // Legacy shreds
+            (
+                legacy_coding_shreds[0].clone(),
+                next_legacy_coding_shreds[0].clone(),
+            ),
+            (
+                legacy_coding_shreds[0].clone(),
+                next_legacy_data_shreds[0].clone(),
+            ),
+            // Improper chaining, but lower fec set is a data shred
+            (data_shreds[0].clone(), next_legacy_coding_shreds[0].clone()),
+            (data_shreds[0].clone(), next_legacy_data_shreds[0].clone()),
+            (legacy_data_shreds[0].clone(), next_coding_shreds[0].clone()),
+            (legacy_data_shreds[0].clone(), next_data_shreds[0].clone()),
+            // Order doesn't matter
+            (next_coding_shreds[0].clone(), coding_shreds[0].clone()),
+            (next_data_shreds[0].clone(), coding_shreds[0].clone()),
+            (
+                next_legacy_coding_shreds[0].clone(),
+                legacy_coding_shreds[0].clone(),
+            ),
+            (
+                next_legacy_data_shreds[0].clone(),
+                legacy_coding_shreds[0].clone(),
+            ),
+            (next_legacy_coding_shreds[0].clone(), data_shreds[0].clone()),
+            (next_legacy_data_shreds[0].clone(), data_shreds[0].clone()),
+            (next_coding_shreds[0].clone(), legacy_data_shreds[0].clone()),
+            (next_data_shreds[0].clone(), legacy_data_shreds[0].clone()),
+        ];
+        for (shred1, shred2) in test_cases.into_iter() {
+            assert!(from_shred(
+                shred1.clone(),
+                Pubkey::new_unique(), // self_pubkey
+                shred2.payload().clone(),
+                Some(leader_schedule),
+                rng.gen(), // wallclock
+                512,       // max_size
+            )
+            .is_err());
+
+            let chunks: Vec<_> = from_shred_bypass_checks(
+                shred1.clone(),
+                Pubkey::new_unique(), // self_pubkey
+                shred2.clone(),
+                rng.gen(), // wallclock
+                512,       // max_size
+            )
+            .unwrap()
+            .collect();
+            assert!(chunks.len() > 4);
+
+            assert!(into_shreds(&leader.pubkey(), chunks, true).is_err());
         }
     }
 }
