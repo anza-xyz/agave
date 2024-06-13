@@ -3568,6 +3568,14 @@ pub mod rpc_full {
                                 .tpu_forwards(Protocol::QUIC)
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
+                            tvu: contact_info
+                                .tvu(Protocol::UDP)
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
+                            tvu_quic: contact_info
+                                .tvu(Protocol::QUIC)
+                                .ok()
+                                .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info
                                 .rpc()
                                 .ok()
@@ -5333,6 +5341,8 @@ pub mod tests {
             "tpuForwards": "127.0.0.1:8004",
             "tpuQuic": "127.0.0.1:8009",
             "tpuForwardsQuic": "127.0.0.1:8010",
+            "tvu": "127.0.0.1:8001",
+            "tvu_quic": "127.0.0.1:8002",
             "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
             "version": format!("{version}"),
