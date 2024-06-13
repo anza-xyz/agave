@@ -810,7 +810,8 @@ pub fn move_stake(
         stake_authority_index,
     )?;
 
-    // source and destination will have their data reassigned
+    // ensure source and destination are the right size for the current version of StakeState
+    // this a safeguard in case there is a new version of the struct that cannot fit into an old account
     if source_account.get_data().len() != StakeStateV2::size_of()
         || destination_account.get_data().len() != StakeStateV2::size_of()
     {
@@ -818,26 +819,27 @@ pub fn move_stake(
     }
 
     // source must be fully active
-    // destination must not be activating
-    // if active, destination must be delegated to the same vote account as source
-    // minimum delegations must be respected for any accounts that become/remain active
     let MergeKind::FullyActive(source_meta, mut source_stake) = source_merge_kind else {
         return Err(InstructionError::InvalidAccountData);
     };
 
     let minimum_delegation = crate::get_minimum_delegation(invoke_context.get_feature_set());
-
     let source_effective_stake = source_stake.delegation.stake;
+
+    // source cannot move more stake than it has, regardless of how many lamports it has
     let source_final_stake = source_effective_stake
         .checked_sub(lamports)
         .ok_or(InstructionError::InvalidArgument)?;
 
+    // unless all stake is being moved, source must retain at least the minimum delegation
     if source_final_stake != 0 && source_final_stake < minimum_delegation {
         return Err(InstructionError::InvalidArgument);
     }
 
+    // destination must be fully active or fully inactive
     let destination_meta = match destination_merge_kind {
         MergeKind::FullyActive(destination_meta, mut destination_stake) => {
+            // if active, destination must be delegated to the same vote account as source
             if source_stake.delegation.voter_pubkey != destination_stake.delegation.voter_pubkey {
                 return Err(StakeError::VoteAddressMismatch.into());
             }
@@ -847,6 +849,8 @@ pub fn move_stake(
                 .checked_add(lamports)
                 .ok_or(InstructionError::ArithmeticOverflow)?;
 
+            // ensure destination meets miniumum delegation
+            // since it is already active, this only really applies if the minimum is raised
             if destination_final_stake < minimum_delegation {
                 return Err(InstructionError::InvalidArgument);
             }
@@ -868,6 +872,7 @@ pub fn move_stake(
             destination_meta
         }
         MergeKind::Inactive(destination_meta, _, _) => {
+            // if destination is inactive, it must be given at least the minimum delegation
             if lamports < minimum_delegation {
                 return Err(InstructionError::InvalidArgument);
             }

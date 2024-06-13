@@ -314,7 +314,7 @@ pub enum StakeInstruction {
     /// becomes inactive. Otherwise, at least the minimum delegation of active stake must remain.
     ///
     /// The destination account must be fully active or fully inactive. If it is active, it must
-    /// be delegated to the same vote accouunt as the source. If it is inactive, it
+    /// be delegated to the same vote account as the source. If it is inactive, it
     /// immediately becomes active, and must contain at least the minimum delegation. The
     /// destination must be pre-funded with the rent-exempt reserve.
     ///

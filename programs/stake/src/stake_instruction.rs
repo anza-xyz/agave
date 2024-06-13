@@ -354,13 +354,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
         }
         StakeInstruction::MoveStake(lamports) => {
-            let me = get_stake_account()?;
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::move_stake_and_move_lamports_ixs::id())
             {
                 instruction_context.check_number_of_instruction_accounts(3)?;
-                drop(me);
                 move_stake(
                     invoke_context,
                     transaction_context,
@@ -375,13 +373,11 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
         }
         StakeInstruction::MoveLamports(lamports) => {
-            let me = get_stake_account()?;
             if invoke_context
                 .get_feature_set()
                 .is_active(&feature_set::move_stake_and_move_lamports_ixs::id())
             {
                 instruction_context.check_number_of_instruction_accounts(3)?;
-                drop(me);
                 move_lamports(
                     invoke_context,
                     transaction_context,
@@ -861,26 +857,6 @@ mod tests {
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
             )[2],
-            Err(InstructionError::InvalidAccountOwner),
-        );
-        process_instruction_as_one_arg(
-            Arc::clone(&feature_set),
-            &instruction::move_stake(
-                &spoofed_stake_state_pubkey(),
-                &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                100,
-            ),
-            Err(InstructionError::InvalidAccountOwner),
-        );
-        process_instruction_as_one_arg(
-            Arc::clone(&feature_set),
-            &instruction::move_lamports(
-                &spoofed_stake_state_pubkey(),
-                &Pubkey::new_unique(),
-                &Pubkey::new_unique(),
-                100,
-            ),
             Err(InstructionError::InvalidAccountOwner),
         );
     }
