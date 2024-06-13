@@ -525,79 +525,34 @@ mod tests {
     fn test_rewards_computation_and_partitioned_distribution_one_block() {
         solana_logger::setup();
 
-        // setup the expected number of stake delegations
-        let expected_num_delegations = 100;
-
-        let validator_keypairs = (0..expected_num_delegations)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![2_000_000_000; expected_num_delegations],
-        );
-        let slots_per_epoch = 32;
-        genesis_config.epoch_schedule = EpochSchedule::new(slots_per_epoch);
-
-        let bank0 = Bank::new_for_tests(&genesis_config);
-        let num_slots_in_epoch = bank0.get_slots_in_epoch(bank0.epoch());
-        assert_eq!(num_slots_in_epoch, slots_per_epoch);
-
-        let mut previous_bank = Arc::new(Bank::new_from_parent(
-            Arc::new(bank0),
-            &Pubkey::default(),
-            1,
-        ));
+        let starting_slot = SLOTS_PER_EPOCH - 1;
+        let RewardBank {
+            bank: mut previous_bank,
+            ..
+        } = create_default_reward_bank(100, starting_slot - 1);
 
         // simulate block progress
-        for slot in 2..=(2 * slots_per_epoch) + 2 {
+        for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
             let pre_cap = previous_bank.capitalization();
             let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
             let post_cap = curr_bank.capitalization();
 
-            // Fill banks with banks with votes landing in the next slot
-            // Create enough banks such that vote account will root
-            for validator_vote_keypairs in validator_keypairs.iter() {
-                let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-                let mut vote_account = curr_bank.get_account(&vote_id).unwrap();
-                // generate some rewards
-                let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-                for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                    if let Some(v) = vote_state.as_mut() {
-                        vote_state::process_slot_vote_unchecked(v, i as u64)
-                    }
-                    let versioned =
-                        VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
-                    vote_state::to(&versioned, &mut vote_account).unwrap();
-                    match versioned {
-                        VoteStateVersions::Current(v) => {
-                            vote_state = Some(*v);
-                        }
-                        _ => panic!("Has to be of type Current"),
-                    };
-                }
-                curr_bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-            }
-
-            if slot % num_slots_in_epoch == 0 {
-                // This is the first block of epoch 1. Reward computation should happen in this block.
+            if slot % SLOTS_PER_EPOCH == 0 {
+                // This is the first block of the epoch. Reward computation should happen in this block.
                 // assert reward compute status activated at epoch boundary
                 assert_matches!(
                     curr_bank.get_reward_interval(),
                     RewardInterval::InsideInterval
                 );
 
-                if slot == num_slots_in_epoch {
+                if slot == SLOTS_PER_EPOCH {
                     // cap should increase because of new epoch rewards
                     assert!(post_cap > pre_cap);
                 } else {
                     assert_eq!(post_cap, pre_cap);
                 }
-            } else if slot == num_slots_in_epoch + 1 {
-                // 1. when curr_slot == num_slots_in_epoch + 1, the 2nd block of
+            } else if slot == SLOTS_PER_EPOCH + 1 {
+                // 1. when curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block.
                 // however, all stake rewards are paid at this block therefore
                 // reward_status should have transitioned to inactive. The cap
@@ -614,7 +569,7 @@ mod tests {
                     solana_sdk::account::from_account(&account).unwrap();
                 assert_eq!(post_cap, pre_cap + epoch_rewards.distributed_rewards);
             } else {
-                // 2. when curr_slot == num_slots_in_epoch+2, the 3rd block of
+                // 2. when curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
                 // epoch 1 (or any other slot). reward distribution should have
                 // already completed. Therefore, reward_status should stay
                 // inactive and cap should stay the same.
@@ -628,7 +583,7 @@ mod tests {
             }
             // EpochRewards sysvar is created in the first block of epoch 1.
             // Ensure the sysvar persists thereafter.
-            if slot >= num_slots_in_epoch {
+            if slot >= SLOTS_PER_EPOCH {
                 let epoch_rewards_lamports =
                     curr_bank.get_balance(&solana_sdk::sysvar::epoch_rewards::id());
                 assert!(epoch_rewards_lamports > 0);
