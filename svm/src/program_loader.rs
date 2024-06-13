@@ -232,6 +232,7 @@ mod tests {
             account::WritableAccount, bpf_loader, bpf_loader_upgradeable, feature_set::FeatureSet,
             hash::Hash, rent_collector::RentCollector,
         },
+        solana_vote::vote_account::VoteAccountsHashMap,
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -283,6 +284,14 @@ mod tests {
 
         fn get_feature_set(&self) -> Arc<FeatureSet> {
             self.feature_set.clone()
+        }
+
+        fn get_epoch_total_stake(&self) -> Option<u64> {
+            None
+        }
+
+        fn get_epoch_vote_accounts(&self) -> Option<&VoteAccountsHashMap> {
+            None
         }
 
         fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
@@ -508,7 +517,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(50),
+            &batch_processor.get_environments_for_epoch(50).unwrap(),
             &key,
             500,
             &batch_processor.epoch_schedule,
@@ -531,7 +540,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             0, // Slot 0
             &batch_processor.epoch_schedule,
@@ -544,6 +553,7 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(20)
+                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -565,7 +575,7 @@ mod tests {
         // This should return an error
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             200,
             &batch_processor.epoch_schedule,
@@ -577,6 +587,7 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(20)
+                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -592,7 +603,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             200,
             &batch_processor.epoch_schedule,
@@ -646,7 +657,7 @@ mod tests {
         // This should return an error
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(0),
+            &batch_processor.get_environments_for_epoch(0).unwrap(),
             &key1,
             0,
             &batch_processor.epoch_schedule,
@@ -658,6 +669,7 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(0)
+                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -683,7 +695,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key1,
             200,
             &batch_processor.epoch_schedule,
@@ -733,7 +745,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(0),
+            &batch_processor.get_environments_for_epoch(0).unwrap(),
             &key,
             0,
             &batch_processor.epoch_schedule,
@@ -745,6 +757,7 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(
                 batch_processor
                     .get_environments_for_epoch(0)
+                    .unwrap()
                     .program_runtime_v1,
             ),
         );
@@ -766,7 +779,7 @@ mod tests {
 
         let result = load_program_with_pubkey(
             &mock_bank,
-            &batch_processor.get_environments_for_epoch(20),
+            &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             200,
             &batch_processor.epoch_schedule,
@@ -815,7 +828,9 @@ mod tests {
         for is_upcoming_env in [false, true] {
             let result = load_program_with_pubkey(
                 &mock_bank,
-                &batch_processor.get_environments_for_epoch(is_upcoming_env as u64),
+                &batch_processor
+                    .get_environments_for_epoch(is_upcoming_env as u64)
+                    .unwrap(),
                 &key,
                 200,
                 &batch_processor.epoch_schedule,

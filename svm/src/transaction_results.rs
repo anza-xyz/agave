@@ -5,13 +5,16 @@
 )]
 pub use solana_sdk::inner_instruction::{InnerInstruction, InnerInstructionsList};
 use {
-    solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
+    serde::{Deserialize, Serialize},
+    solana_program_runtime::loaded_programs::ProgramCacheEntry,
     solana_sdk::{
         fee::FeeDetails,
+        pubkey::Pubkey,
         rent_debits::RentDebits,
         transaction::{self, TransactionError},
         transaction_context::TransactionReturnData,
     },
+    std::{collections::HashMap, sync::Arc},
 };
 
 pub struct TransactionResults {
@@ -41,7 +44,7 @@ pub struct TransactionLoadedAccountsStats {
 pub enum TransactionExecutionResult {
     Executed {
         details: TransactionExecutionDetails,
-        programs_modified_by_tx: Box<ProgramCacheForTxBatch>,
+        programs_modified_by_tx: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     },
     NotExecuted(TransactionError),
 }
@@ -76,7 +79,7 @@ impl TransactionExecutionResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TransactionExecutionDetails {
     pub status: transaction::Result<()>,
     pub log_messages: Option<Vec<String>>,
