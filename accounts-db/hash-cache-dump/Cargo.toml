@@ -1,0 +1,20 @@
+[package]
+name = "agave-hash-cache-dump"
+description = "Tool to dump hash cache files"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+clap = { workspace = true }
+solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sdk = { workspace = true }
+solana-version = { workspace = true }
+rayon = { workspace = true }
+
+[features]
+dev-context-only-utils = []

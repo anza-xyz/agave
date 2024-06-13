@@ -23,7 +23,7 @@ pub mod blockhash_queue;
 mod bucket_map_holder;
 mod bucket_map_holder_stats;
 mod buffered_reader;
-mod cache_hash_data;
+pub mod cache_hash_data;
 mod cache_hash_data_stats;
 pub mod contains;
 pub mod epoch_accounts_hash;

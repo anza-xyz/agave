@@ -45,7 +45,7 @@ pub(crate) struct CacheHashDataFileReference {
 }
 
 /// mmapped cache hash data file
-pub(crate) struct CacheHashDataFile {
+pub struct CacheHashDataFile {
     cell_size: u64,
     mmap: MmapMut,
     capacity: u64,
@@ -192,7 +192,7 @@ impl CacheHashDataFile {
     }
 }
 
-pub(crate) struct CacheHashData {
+pub struct CacheHashData {
     cache_dir: PathBuf,
     pre_existing_cache_files: Arc<Mutex<HashSet<PathBuf>>>,
     deletion_policy: DeletionPolicy,
@@ -276,6 +276,26 @@ impl CacheHashData {
                     .fetch_add(pre_existing.len(), Ordering::Relaxed);
             }
         }
+    }
+
+    // Used by hash-cache-dump tool
+    pub fn load_from_file(path: impl AsRef<Path>) -> Result<CacheHashDataFile, std::io::Error> {
+        let file_len = std::fs::metadata(&path)?.len();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(&path)?;
+
+        let mut path2 = PathBuf::new();
+        path2.push(path);
+        let reference = CacheHashDataFileReference {
+            file,
+            file_len,
+            path: path2,
+            stats: Arc::new(CacheHashDataStats::default()),
+        };
+        reference.map()
     }
 
     /// open a cache hash file, but don't map it.

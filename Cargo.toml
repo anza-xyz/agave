@@ -11,6 +11,7 @@ members = [
     "accounts-db",
     "accounts-db/accounts-hash-cache-tool",
     "accounts-db/store-tool",
+    "accounts-db/hash-cache-dump",
     "banking-bench",
     "banks-client",
     "banks-interface",

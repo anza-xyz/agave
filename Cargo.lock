@@ -116,6 +116,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-hash-cache-dump"
+version = "2.1.0"
+dependencies = [
+ "clap 2.33.3",
+ "rayon",
+ "solana-accounts-db",
+ "solana-sdk",
+ "solana-version",
+]
+
+[[package]]
 name = "agave-install"
 version = "2.1.0"
 dependencies = [

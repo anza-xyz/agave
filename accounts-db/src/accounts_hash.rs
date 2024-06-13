@@ -6,6 +6,7 @@ use {
         pubkey_bins::PubkeyBinCalculator24,
     },
     bytemuck_derive::{Pod, Zeroable},
+    core::fmt,
     log::*,
     memmap2::MmapMut,
     rayon::prelude::*,
@@ -319,6 +320,12 @@ pub struct CalculateHashIntermediate {
     pub hash: AccountHash,
     pub lamports: u64,
     pub pubkey: Pubkey,
+}
+
+impl fmt::Display for CalculateHashIntermediate {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {} {}", self.pubkey, self.lamports, self.hash.0)
+    }
 }
 
 // In order to safely guarantee CalculateHashIntermediate is Pod, it cannot have any padding
