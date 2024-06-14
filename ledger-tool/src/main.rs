@@ -1817,11 +1817,7 @@ fn main() {
                         working_bank.print_accounts_stats();
                     }
                     if print_bank_hash {
-                        println!(
-                            "Bank hash for slot {}: {}",
-                            working_bank.slot(),
-                            working_bank.hash()
-                        );
+                        println!("{}", working_bank.hash());
                     }
                     if write_bank_file {
                         bank_hash_details::write_bank_hash_details_file(&working_bank)
