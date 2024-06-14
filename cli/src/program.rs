@@ -693,7 +693,7 @@ pub fn parse_program_subcommand(
 
             let auto_extend = !matches.is_present("no_auto_extend");
 
-            let skip_syscall_verification = matches.is_present("skip_feature_verify");
+            let skip_feature_verify = matches.is_present("skip_feature_verify");
 
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Deploy {
@@ -713,7 +713,7 @@ pub fn parse_program_subcommand(
                     max_sign_attempts,
                     use_rpc: matches.is_present("use_rpc"),
                     auto_extend,
-                    skip_feature_verification: skip_syscall_verification,
+                    skip_feature_verification: skip_feature_verify,
                 }),
                 signers: signer_info.signers,
             }
@@ -743,7 +743,7 @@ pub fn parse_program_subcommand(
             let signer_info =
                 default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
 
-            let skip_syscall_verification = matches.is_present("skip_feature_verify");
+            let skip_feature_verify = matches.is_present("skip_feature_verify");
 
             CliCommandInfo {
                 command: CliCommand::Program(ProgramCliCommand::Upgrade {
@@ -756,7 +756,7 @@ pub fn parse_program_subcommand(
                     sign_only,
                     dump_transaction_message,
                     blockhash_query,
-                    skip_feature_verification: skip_syscall_verification,
+                    skip_feature_verification: skip_feature_verify,
                 }),
                 signers: signer_info.signers,
             }
@@ -1296,7 +1296,11 @@ fn process_program_deploy(
         true
     };
 
-    let feature_set = fetch_feature_set(&rpc_client, skip_feature_verification)?;
+    let feature_set = if skip_feature_verification {
+        FeatureSet::all_enabled()
+    } else {
+        fetch_feature_set(&rpc_client)?
+    };
 
     let (program_data, program_len, buffer_program_data) =
         if let Some(program_location) = program_location {
@@ -1532,7 +1536,12 @@ fn process_program_upgrade(
             },
         )
     } else {
-        let feature_set = fetch_feature_set(&rpc_client, skip_feature_verification)?;
+        let feature_set = if skip_feature_verification {
+            FeatureSet::all_enabled()
+        } else {
+            fetch_feature_set(&rpc_client)?
+        };
+
         fetch_verified_buffer_program_data(
             &rpc_client,
             config,
@@ -3022,35 +3031,28 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
     eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
 }
 
-fn fetch_feature_set(
-    rpc_client: &RpcClient,
-    skip_feature_verification: bool,
-) -> Result<FeatureSet, Box<dyn std::error::Error>> {
-    if skip_feature_verification {
-        Ok(FeatureSet::all_enabled())
-    } else {
-        let mut feature_set = FeatureSet::default();
-        for feature_ids in FEATURE_NAMES
-            .keys()
-            .cloned()
-            .collect::<Vec<Pubkey>>()
-            .chunks(MAX_MULTIPLE_ACCOUNTS)
-        {
-            rpc_client
-                .get_multiple_accounts(feature_ids)?
-                .into_iter()
-                .zip(feature_ids)
-                .for_each(|(account, feature_id)| {
-                    let activation_slot = account.and_then(status_from_account);
+fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
+    let mut feature_set = FeatureSet::default();
+    for feature_ids in FEATURE_NAMES
+        .keys()
+        .cloned()
+        .collect::<Vec<Pubkey>>()
+        .chunks(MAX_MULTIPLE_ACCOUNTS)
+    {
+        rpc_client
+            .get_multiple_accounts(feature_ids)?
+            .into_iter()
+            .zip(feature_ids)
+            .for_each(|(account, feature_id)| {
+                let activation_slot = account.and_then(status_from_account);
 
-                    if let Some(CliFeatureStatus::Active(slot)) = activation_slot {
-                        feature_set.activate(feature_id, slot);
-                    }
-                });
-        }
-
-        Ok(feature_set)
+                if let Some(CliFeatureStatus::Active(slot)) = activation_slot {
+                    feature_set.activate(feature_id, slot);
+                }
+            });
     }
+
+    Ok(feature_set)
 }
 
 #[cfg(test)]
