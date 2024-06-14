@@ -290,7 +290,7 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .takes_value(false)
                                 .help("Don't verify program against the activated feature set. \
                                 This setting means a program containing a syscall not yet active on \
-                                mainnet will not fail verification.")
+                                mainnet will succeed local verification, but fail during the last step of deployment.")
                         ),
                 )
                 .subcommand(
