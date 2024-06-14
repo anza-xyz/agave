@@ -4396,11 +4396,9 @@ impl AccountsDb {
 
     /// return all slots that are more than one epoch old and thus could already be an ancient append vec
     /// or which could need to be combined into a new or existing ancient append vec
-    /// offset is used to combine newer slots than we normally would. This is designed to be used for testing.
-    fn get_sorted_potential_ancient_slots(&self, oldest_non_ancient_slot: Slot) -> Vec<Slot> {
-        let mut ancient_slots = self.get_roots_less_than(oldest_non_ancient_slot);
-        ancient_slots.sort_unstable();
-        ancient_slots
+    /// offset is used to combine newer slots than we normally would.
+    fn get_potential_ancient_slots(&self, oldest_non_ancient_slot: Slot) -> Vec<Slot> {
+        self.get_roots_less_than(oldest_non_ancient_slot)
     }
 
     /// get a sorted list of slots older than an epoch
@@ -4412,11 +4410,13 @@ impl AccountsDb {
 
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let can_randomly_shrink = true;
-        let sorted_slots = self.get_sorted_potential_ancient_slots(oldest_non_ancient_slot);
+        let mut ancient_slots = self.get_potential_ancient_slots(oldest_non_ancient_slot);
         if self.create_ancient_storage == CreateAncientStorage::Append {
-            self.combine_ancient_slots(sorted_slots, can_randomly_shrink);
+            // 'Append' require that 'ancient_slots' to be sorted.
+            ancient_slots.sort_unstable();
+            self.combine_ancient_slots(ancient_slots, can_randomly_shrink);
         } else {
-            self.combine_ancient_slots_packed(sorted_slots, can_randomly_shrink);
+            self.combine_ancient_slots_packed(ancient_slots, can_randomly_shrink);
         }
     }
 
@@ -9773,6 +9773,12 @@ pub mod tests {
 
         fn get_storage_for_slot(&self, slot: Slot) -> Option<Arc<AccountStorageEntry>> {
             self.storage.get_slot_storage_entry(slot)
+        }
+
+        fn get_sorted_potential_ancient_slots(&self, oldest_non_ancient_slot: Slot) -> Vec<Slot> {
+            let mut ancient_slots = self.get_potential_ancient_slots(oldest_non_ancient_slot);
+            ancient_slots.sort_unstable();
+            ancient_slots
         }
     }
 

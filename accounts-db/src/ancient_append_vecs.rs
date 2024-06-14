@@ -138,14 +138,17 @@ impl AncientSlotInfos {
         self.filter_by_smallest_capacity(tuning);
     }
 
-    // sort 'shrink_indexes' by most bytes saved, highest to lowest
+    // sort 'shrink_indexes' by most bytes saved descending (i.e. highest to lowest)
+    // then sort by slots ascending.
     fn sort_shrink_indexes_by_bytes_saved(&mut self) {
         self.shrink_indexes.sort_unstable_by(|l, r| {
             let amount_shrunk = |index: &usize| {
                 let item = &self.all_infos[*index];
                 item.capacity - item.alive_bytes
             };
-            amount_shrunk(r).cmp(&amount_shrunk(l))
+            amount_shrunk(r)
+                .cmp(&amount_shrunk(l))
+                .then(self.all_infos[*l].slot.cmp(&self.all_infos[*r].slot))
         });
     }
 
@@ -267,11 +270,7 @@ impl AccountsDb {
     /// After this function the number of alive roots is <= # alive roots when it was called.
     /// In practice, the # of alive roots after will be significantly less than # alive roots when called.
     /// Trying to reduce # roots and storages (one per root) required to store all the data in ancient slots
-    pub(crate) fn combine_ancient_slots_packed(
-        &self,
-        sorted_slots: Vec<Slot>,
-        can_randomly_shrink: bool,
-    ) {
+    pub(crate) fn combine_ancient_slots_packed(&self, slots: Vec<Slot>, can_randomly_shrink: bool) {
         let tuning = PackedAncientStorageTuning {
             // only allow 10k slots old enough to be ancient
             max_ancient_slots: 10_000,
@@ -286,11 +285,8 @@ impl AccountsDb {
 
         let mut stats_sub = ShrinkStatsSub::default();
 
-        let (_, total_us) = measure_us!(self.combine_ancient_slots_packed_internal(
-            sorted_slots,
-            tuning,
-            &mut stats_sub
-        ));
+        let (_, total_us) =
+            measure_us!(self.combine_ancient_slots_packed_internal(slots, tuning, &mut stats_sub));
 
         Self::update_shrink_stats(&self.shrink_ancient_stats.shrink_stats, stats_sub, false);
         self.shrink_ancient_stats
@@ -333,14 +329,14 @@ impl AccountsDb {
 
     fn combine_ancient_slots_packed_internal(
         &self,
-        sorted_slots: Vec<Slot>,
+        slots: Vec<Slot>,
         tuning: PackedAncientStorageTuning,
         metrics: &mut ShrinkStatsSub,
     ) {
         self.shrink_ancient_stats
             .slots_considered
-            .fetch_add(sorted_slots.len() as u64, Ordering::Relaxed);
-        let ancient_slot_infos = self.collect_sort_filter_ancient_slots(sorted_slots, &tuning);
+            .fetch_add(slots.len() as u64, Ordering::Relaxed);
+        let ancient_slot_infos = self.collect_sort_filter_ancient_slots(slots, &tuning);
 
         if ancient_slot_infos.all_infos.is_empty() {
             return; // nothing to do
