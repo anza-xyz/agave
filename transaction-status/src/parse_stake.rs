@@ -298,29 +298,25 @@ pub fn parse_stake(
             })
         }
         StakeInstruction::MoveStake(lamports) => {
-            check_num_stake_accounts(&instruction.accounts, 5)?;
+            check_num_stake_accounts(&instruction.accounts, 3)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "moveStake".to_string(),
                 info: json!({
                     "source": account_keys[instruction.accounts[0] as usize].to_string(),
                     "destination": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "clockSysvar": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "stakeHistorySysvar": account_keys[instruction.accounts[3] as usize].to_string(),
-                    "stakeAuthority": account_keys[instruction.accounts[4] as usize].to_string(),
+                    "stakeAuthority": account_keys[instruction.accounts[2] as usize].to_string(),
                     "lamports": lamports,
                 }),
             })
         }
         StakeInstruction::MoveLamports(lamports) => {
-            check_num_stake_accounts(&instruction.accounts, 5)?;
+            check_num_stake_accounts(&instruction.accounts, 3)?;
             Ok(ParsedInstructionEnum {
                 instruction_type: "moveLamports".to_string(),
                 info: json!({
                     "source": account_keys[instruction.accounts[0] as usize].to_string(),
                     "destination": account_keys[instruction.accounts[1] as usize].to_string(),
-                    "clockSysvar": account_keys[instruction.accounts[2] as usize].to_string(),
-                    "stakeHistorySysvar": account_keys[instruction.accounts[3] as usize].to_string(),
-                    "stakeAuthority": account_keys[instruction.accounts[4] as usize].to_string(),
+                    "stakeAuthority": account_keys[instruction.accounts[2] as usize].to_string(),
                     "lamports": lamports,
                 }),
             })
@@ -1219,8 +1215,6 @@ mod test {
                     info: json!({
                         "source": source_stake_pubkey.to_string(),
                         "destination": destination_stake_pubkey.to_string(),
-                        "clockSysvar": sysvar::clock::ID.to_string(),
-                        "stakeHistorySysvar": sysvar::stake_history::ID.to_string(),
                         "stakeAuthority": authorized_pubkey.to_string(),
                         "lamports": lamports,
                     }),
@@ -1228,7 +1222,7 @@ mod test {
             );
             assert!(parse_stake(
                 &message.instructions[0],
-                &AccountKeys::new(&message.account_keys[0..4], None)
+                &AccountKeys::new(&message.account_keys[0..2], None)
             )
             .is_err());
             let keys = message.account_keys.clone();
