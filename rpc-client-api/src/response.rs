@@ -296,8 +296,6 @@ pub struct RpcContactInfo {
     pub gossip: Option<SocketAddr>,
     /// Tvu UDP port
     pub tvu: Option<SocketAddr>,
-    /// Tvu QUIC port
-    pub tvu_quic: Option<SocketAddr>,
     /// Tpu UDP port
     pub tpu: Option<SocketAddr>,
     /// Tpu QUIC port
@@ -310,8 +308,6 @@ pub struct RpcContactInfo {
     pub tpu_vote: Option<SocketAddr>,
     /// Server repair UDP port
     pub serve_repair: Option<SocketAddr>,
-    /// Server repair QUIC port
-    pub serve_repair_quic: Option<SocketAddr>,
     /// JSON RPC port
     pub rpc: Option<SocketAddr>,
     /// WebSocket PubSub port
