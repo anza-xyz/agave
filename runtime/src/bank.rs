@@ -3455,10 +3455,8 @@ impl Bank {
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => {
                     let msg_hash = tx.borrow().message_hash();
-                    if entry_level_dedup_map.contains(msg_hash) {
+                    if !entry_level_dedup_map.insert(msg_hash) {
                         return Err(TransactionError::AlreadyProcessed);
-                    } else {
-                        entry_level_dedup_map.insert(msg_hash);
                     }
                     
                     self.check_transaction_age(
