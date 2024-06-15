@@ -2774,7 +2774,7 @@ mod tests {
 
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
-        assert_eq!(
+        matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -2782,10 +2782,8 @@ mod tests {
                 &cluster_info,
                 rpc_override_health_check.clone(),
                 &start_progress,
-            )
-            .unwrap_err()
-            .to_string(),
-            "Ledger does not have enough data to wait for supermajority"
+            ),
+            Err(ValidatorError::NotEnoughLedgerData),
         );
 
         // bank=1, wait=0, should pass, bank is past the wait slot
@@ -2808,7 +2806,7 @@ mod tests {
         // bank=1, wait=1, equal, but bad hash provided
         config.wait_for_supermajority = Some(1);
         config.expected_bank_hash = Some(hash(&[1]));
-        assert_eq!(
+        matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -2816,10 +2814,8 @@ mod tests {
                 &cluster_info,
                 rpc_override_health_check,
                 &start_progress,
-            )
-            .unwrap_err()
-            .to_string(),
-            "Bad expected bank hash"
+            ),
+            Err(ValidatorError::BadExpectedBankHash),
         );
     }
 
