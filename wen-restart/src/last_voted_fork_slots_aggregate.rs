@@ -362,6 +362,23 @@ mod tests {
             Vec::from_iter(test_state.slots_aggregate.slots_to_repair_iter().cloned());
         actual_slots.sort();
         assert_eq!(actual_slots, vec![root_slot + 1]);
+
+        // test that message from my pubkey is ignored.
+        assert_eq!(
+            test_state.slots_aggregate.aggregate(
+                RestartLastVotedForkSlots::new(
+                    test_state.validator_voting_keypairs[MY_INDEX]
+                        .node_keypair
+                        .pubkey(),
+                    timestamp(),
+                    &[root_slot + 1, root_slot + 4, root_slot + 5],
+                    Hash::default(),
+                    SHRED_VERSION,
+                )
+                .unwrap(),
+            ),
+            None,
+        );
     }
 
     #[test]
@@ -454,6 +471,26 @@ mod tests {
         );
         // percentage doesn't change since the previous aggregate is ignored.
         assert_eq!(test_state.slots_aggregate.active_percent(), 20.0);
+
+        // Record from my pubkey should be ignored.
+        assert_eq!(
+            test_state
+                .slots_aggregate
+                .aggregate_from_record(
+                    &test_state.validator_voting_keypairs[MY_INDEX]
+                        .node_keypair
+                        .pubkey()
+                        .to_string(),
+                    &LastVotedForkSlotsRecord {
+                        wallclock: timestamp(),
+                        last_voted_fork_slots: vec![root_slot + 10, root_slot + 300],
+                        last_vote_bankhash: Hash::new_unique().to_string(),
+                        shred_version: SHRED_VERSION as u32,
+                    }
+                )
+                .unwrap(),
+            None,
+        );
     }
 
     #[test]
