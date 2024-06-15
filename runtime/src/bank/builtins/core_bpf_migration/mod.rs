@@ -185,7 +185,7 @@ impl Bank {
         // environment, as well as the two `ProgramCacheForTxBatch`
         // instances configured above, then invoke the loader.
         {
-            let compute_budget = self.runtime_config().compute_budget.unwrap_or_default();
+            let compute_budget = self.compute_budget().unwrap_or_default();
             let mut sysvar_cache = SysvarCache::default();
             sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
                 if let Some(account) = self.get_account(pubkey) {
@@ -203,7 +203,14 @@ impl Bank {
             let mut dummy_invoke_context = InvokeContext::new(
                 &mut dummy_transaction_context,
                 &program_cache_for_tx_batch,
-                EnvironmentConfig::new(Hash::default(), self.feature_set.clone(), 0, &sysvar_cache),
+                EnvironmentConfig::new(
+                    Hash::default(),
+                    None,
+                    None,
+                    self.feature_set.clone(),
+                    0,
+                    &sysvar_cache,
+                ),
                 None,
                 compute_budget,
                 &mut programs_modified,
@@ -225,7 +232,7 @@ impl Bank {
             .program_cache
             .write()
             .unwrap()
-            .merge(&programs_modified);
+            .merge(programs_modified.entries());
 
         Ok(())
     }

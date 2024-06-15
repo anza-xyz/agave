@@ -38,10 +38,10 @@ use {
     solana_svm::{
         account_loader::CheckedTransactionDetails,
         program_loader,
-        runtime_config::RuntimeConfig,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            TransactionProcessingEnvironment,
         },
     },
     std::{
@@ -233,7 +233,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
 
     let transactions = vec![transaction];
-    let mut transaction_check = vec![Ok(CheckedTransactionDetails {
+    let transaction_check = vec![Ok(CheckedTransactionDetails {
         nonce: None,
         lamports_per_signature: 30,
     })];
@@ -251,7 +251,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         42,
         2,
         EpochSchedule::default(),
-        Arc::new(RuntimeConfig::default()),
         HashSet::new(),
     );
 
@@ -281,9 +280,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
         .unwrap_or_default();
 
-    mock_bank.lamports_per_sginature = lamports_per_signature;
-    mock_bank.blockhash = blockhash;
-
     let recording_config = ExecutionRecordingConfig {
         enable_log_recording: true,
         enable_return_data_recording: true,
@@ -291,9 +287,11 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
     let processor_config = TransactionProcessingConfig {
         account_overrides: None,
+        compute_budget: None,
         log_messages_bytes_limit: None,
         limit_to_load_programs: true,
         recording_config,
+        transaction_account_lock_limit: None,
     };
 
     if execute_as_instr {
@@ -312,7 +310,12 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        transaction_check.as_mut_slice(),
+        transaction_check,
+        &TransactionProcessingEnvironment {
+            blockhash,
+            lamports_per_signature,
+            ..Default::default()
+        },
         &processor_config,
     );
 
@@ -439,7 +442,7 @@ fn execute_fixture_as_instr(
 
     let loaded_program = program_loader::load_program_with_pubkey(
         mock_bank,
-        &batch_processor.get_environments_for_epoch(2),
+        &batch_processor.get_environments_for_epoch(2).unwrap(),
         &program_id,
         42,
         &batch_processor.epoch_schedule,
@@ -462,9 +465,11 @@ fn execute_fixture_as_instr(
 
     let sysvar_cache = &batch_processor.sysvar_cache.read().unwrap();
     let env_config = EnvironmentConfig::new(
-        mock_bank.blockhash,
+        Hash::default(),
+        None,
+        None,
         mock_bank.feature_set.clone(),
-        mock_bank.lamports_per_sginature,
+        0,
         sysvar_cache,
     );
 
