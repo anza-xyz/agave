@@ -860,6 +860,56 @@ pub fn get_feature_activation_epoch(
         })
 }
 
+pub fn get_active_features(
+    cluster_type: &ClusterType,
+    feature_ids: &[Pubkey],
+) -> Result<Vec<Pubkey>, Box<dyn std::error::Error>> {
+    let url = match cluster_type {
+        ClusterType::MainnetBeta => "https://api.mainnet-beta.solana.com",
+        ClusterType::Testnet => "https://api.testnet.solana.com",
+        ClusterType::Devnet => "https://api.devnet.solana.com",
+        ClusterType::Development => {
+            return Err("Cannot get cluster features for ClusterType::Development".into())
+        }
+    }
+    .to_string();
+    let rpc_client = RpcClient::new(url);
+    let current_slot = rpc_client.get_slot()?;
+    let min_activation_slot = current_slot
+        .checked_sub(DEFAULT_MAX_ACTIVE_DISPLAY_AGE_SLOTS)
+        .ok_or("Underflow error")?;
+
+    let mut active_features = vec![];
+
+    for feature_ids_chunk in feature_ids.chunks(MAX_MULTIPLE_ACCOUNTS) {
+        let feature_chunk = rpc_client
+            .get_multiple_accounts(feature_ids_chunk)?
+            .into_iter()
+            .zip(feature_ids_chunk)
+            .filter_map(|(account, feature_id)| {
+                let feature_name = FEATURE_NAMES.get(feature_id).unwrap();
+                account
+                    .and_then(status_from_account)
+                    .map(|feature_status| CliFeature {
+                        id: feature_id.to_string(),
+                        description: feature_name.to_string(),
+                        status: feature_status,
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        for feature in feature_chunk {
+            if let CliFeatureStatus::Active(activation_slot) = feature.status {
+                if activation_slot > min_activation_slot {
+                    active_features.push(Pubkey::from_str(&feature.id).unwrap());
+                }
+            }
+        }
+    }
+
+    Ok(active_features)
+}
+
 fn process_status(
     rpc_client: &RpcClient,
     config: &CliConfig,

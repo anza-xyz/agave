@@ -7209,6 +7209,7 @@ dependencies = [
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-bucket-map",
+ "solana-cli",
  "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-config-program",

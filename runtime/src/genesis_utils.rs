@@ -1,8 +1,9 @@
 use {
+    solana_cli::feature::get_active_features,
     solana_sdk::{
         account::{Account, AccountSharedData},
         feature::{self, Feature},
-        feature_set::FeatureSet,
+        feature_set::{FeatureSet, FEATURE_NAMES},
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         native_token::sol_to_lamports,
@@ -14,7 +15,7 @@ use {
     },
     solana_stake_program::stake_state,
     solana_vote_program::vote_state,
-    std::borrow::Borrow,
+    std::{borrow::Borrow, collections::HashSet},
 };
 
 // Default amount received by the validator
@@ -202,6 +203,18 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     }
 }
 
+pub fn activate_all_features_except(
+    genesis_config: &mut GenesisConfig,
+    features: &HashSet<Pubkey>,
+) {
+    // Activate all features at genesis in development mode except for those provided in "features" hashset
+    for feature_id in FeatureSet::default().inactive {
+        if !features.contains(&feature_id) {
+            activate_feature(genesis_config, feature_id);
+        }
+    }
+}
+
 pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) {
     genesis_config.accounts.insert(
         feature_id,
@@ -212,6 +225,18 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
             std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1),
         )),
     );
+}
+
+pub fn activate_cluster_features(
+    genesis_config: &mut GenesisConfig,
+    cluster_type: &ClusterType,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let feature_ids: Vec<Pubkey> = FEATURE_NAMES.keys().cloned().collect();
+    let active_features = get_active_features(cluster_type, &feature_ids)?;
+    for feature_id in active_features {
+        activate_feature(genesis_config, feature_id)
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

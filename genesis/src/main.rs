@@ -37,7 +37,7 @@ use {
     solana_stake_program::stake_state,
     solana_vote_program::vote_state::{self, VoteState},
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         error,
         fs::File,
         io::{self, Read},
@@ -364,6 +364,22 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .arg(
+            Arg::with_name("features_to_disable")
+                .long("features-to-disable")
+                .value_name("Vec<Feature Pubkeys>")
+                .takes_value(true)
+                .multiple(true)
+                .help("A list of features in the genesis to disable. Compatable with ClusterType::Development")
+        )
+        .arg(
+            Arg::with_name("enable_feature_set")
+                .long("enable-feature-set")
+                .possible_values(&ClusterType::STRINGS)
+                .takes_value(true)
+                .help("Enable same features enabled on cluster-type. e.g. if you want to enable all features
+                currentl enabled on mainnet-beta, pass in mainnet-beta here")
+        )
+        .arg(
             Arg::with_name("max_genesis_archive_unpacked_size")
                 .long("max-genesis-archive-unpacked-size")
                 .value_name("NUMBER")
@@ -470,6 +486,23 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let cluster_type = cluster_type_of(&matches, "cluster_type").unwrap();
+
+    // Get the features to disable if provided
+    let features_to_disable: HashSet<Pubkey> =
+        matches
+            .values_of("features_to_disable")
+            .map_or(HashSet::new(), |values| {
+                values
+                    .map(|s| Pubkey::from_str(s).expect("Invalid Pubkey"))
+                    .collect()
+            });
+
+    if cluster_type != ClusterType::Development && !features_to_disable.is_empty() {
+        eprintln!("Error: The --features-to-disable argument cannot be used with --cluster-type={cluster_type:?}");
+        std::process::exit(1);
+    }
+
+    let enable_feature_set = cluster_type_of(&matches, "enable_feature_set");
 
     match matches.value_of("hashes_per_tick").unwrap() {
         "auto" => match cluster_type {
@@ -578,8 +611,20 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
-    if genesis_config.cluster_type == ClusterType::Development {
-        solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+    if enable_feature_set.is_some() {
+        solana_runtime::genesis_utils::activate_cluster_features(
+            &mut genesis_config,
+            &enable_feature_set.unwrap(),
+        )?;
+    } else if genesis_config.cluster_type == ClusterType::Development {
+        if features_to_disable.is_empty() {
+            solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+        } else {
+            solana_runtime::genesis_utils::activate_all_features_except(
+                &mut genesis_config,
+                &features_to_disable,
+            );
+        }
     }
 
     if let Some(files) = matches.values_of("primordial_accounts_file") {
