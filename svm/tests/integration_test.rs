@@ -16,7 +16,6 @@ use {
             program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
             vm::Config,
         },
-        timings::ExecuteTimings,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -32,10 +31,10 @@ use {
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
-        runtime_config::RuntimeConfig,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            TransactionProcessingEnvironment,
         },
         transaction_results::TransactionExecutionResult,
     },
@@ -442,12 +441,11 @@ fn prepare_transactions(
 #[test]
 fn svm_integration() {
     let mut mock_bank = MockBankCallback::default();
-    let (transactions, mut check_results) = prepare_transactions(&mut mock_bank);
+    let (transactions, check_results) = prepare_transactions(&mut mock_bank);
     let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
         EXECUTION_SLOT,
         EXECUTION_EPOCH,
         EpochSchedule::default(),
-        Arc::new(RuntimeConfig::default()),
         HashSet::new(),
     );
 
@@ -468,13 +466,12 @@ fn svm_integration() {
         },
         ..Default::default()
     };
-    let mut timings = ExecuteTimings::default();
 
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        check_results.as_mut_slice(),
-        &mut timings,
+        check_results,
+        &TransactionProcessingEnvironment::default(),
         &processing_config,
     );
 

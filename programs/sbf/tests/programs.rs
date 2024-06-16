@@ -1,7 +1,6 @@
 #![cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 #![allow(clippy::clone_on_copy)]
 #![allow(clippy::needless_range_loop)]
-#![allow(clippy::redundant_clone)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::cmp_owned)]
 #![allow(clippy::match_like_matches_macro)]
@@ -29,9 +28,9 @@ use {
             load_upgradeable_program_wrapper, set_upgrade_authority, upgrade_program,
         },
     },
-    solana_sbf_rust_invoke::instructions::*,
-    solana_sbf_rust_realloc::instructions::*,
-    solana_sbf_rust_realloc_invoke::instructions::*,
+    solana_sbf_rust_invoke_dep::*,
+    solana_sbf_rust_realloc_dep::*,
+    solana_sbf_rust_realloc_invoke_dep::*,
     solana_sdk::{
         account::{ReadableAccount, WritableAccount},
         account_utils::StateMut,
@@ -682,7 +681,6 @@ fn test_return_data_and_log_data_syscall() {
 fn test_program_sbf_invoke_sanity() {
     solana_logger::setup();
 
-    #[allow(dead_code)]
     #[derive(Debug)]
     enum Languages {
         C,
