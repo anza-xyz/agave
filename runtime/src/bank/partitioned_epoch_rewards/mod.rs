@@ -150,6 +150,7 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
 
+#[derive(Debug, PartialEq)]
 pub struct KeyedRewardsAndNumPartitions {
     pub keyed_rewards: Vec<(Pubkey, RewardInfo)>,
     pub num_partitions: Option<u64>,
@@ -276,6 +277,7 @@ mod tests {
             account::Account,
             epoch_schedule::EpochSchedule,
             native_token::LAMPORTS_PER_SOL,
+            reward_type::RewardType,
             signature::Signer,
             signer::keypair::Keypair,
             stake::instruction::StakeError,
@@ -827,5 +829,98 @@ mod tests {
             bank.register_unique_recent_blockhash_for_test();
             previous_bank = bank;
         }
+    }
+
+    #[test]
+    fn test_get_rewards_and_partitions() {
+        let starting_slot = SLOTS_PER_EPOCH - 1;
+        let num_rewards = 100;
+        let stake_account_stores_per_block = 50;
+        let RewardBank { bank, .. } =
+            create_reward_bank(num_rewards, stake_account_stores_per_block, starting_slot);
+
+        assert!(bank.is_partitioned_rewards_feature_enabled());
+        // Slot before the epoch boundary contains empty rewards (since fees are
+        // off), and no partitions because not at the epoch boundary
+        assert_eq!(
+            bank.get_rewards_and_num_partitions(),
+            KeyedRewardsAndNumPartitions {
+                keyed_rewards: vec![],
+                num_partitions: None,
+            }
+        );
+
+        let epoch_boundary_bank = Arc::new(Bank::new_from_parent(
+            bank,
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH,
+        ));
+        assert!(epoch_boundary_bank.is_partitioned_rewards_feature_enabled());
+        // Slot at the epoch boundary contains voting rewards only, as well as partition data
+        let KeyedRewardsAndNumPartitions {
+            keyed_rewards,
+            num_partitions,
+        } = epoch_boundary_bank.get_rewards_and_num_partitions();
+        for (_pubkey, reward) in keyed_rewards.iter() {
+            assert_eq!(reward.reward_type, RewardType::Voting);
+        }
+        assert_eq!(keyed_rewards.len(), num_rewards);
+        assert_eq!(
+            num_partitions,
+            Some(num_rewards as u64 / stake_account_stores_per_block)
+        );
+
+        let mut total_staking_rewards = 0;
+
+        let partition0_bank = Arc::new(Bank::new_from_parent(
+            epoch_boundary_bank,
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH + 1,
+        ));
+        assert!(partition0_bank.is_partitioned_rewards_feature_enabled());
+        // Slot after the epoch boundary contains first partition of staking
+        // rewards, and no partitions because not at the epoch boundary
+        let KeyedRewardsAndNumPartitions {
+            keyed_rewards,
+            num_partitions,
+        } = partition0_bank.get_rewards_and_num_partitions();
+        for (_pubkey, reward) in keyed_rewards.iter() {
+            assert_eq!(reward.reward_type, RewardType::Staking);
+        }
+        total_staking_rewards += keyed_rewards.len();
+        assert_eq!(num_partitions, None);
+
+        let partition1_bank = Arc::new(Bank::new_from_parent(
+            partition0_bank,
+            &Pubkey::default(),
+            SLOTS_PER_EPOCH + 2,
+        ));
+        assert!(partition1_bank.is_partitioned_rewards_feature_enabled());
+        // Slot 2 after the epoch boundary contains second partition of staking
+        // rewards, and no partitions because not at the epoch boundary
+        let KeyedRewardsAndNumPartitions {
+            keyed_rewards,
+            num_partitions,
+        } = partition1_bank.get_rewards_and_num_partitions();
+        for (_pubkey, reward) in keyed_rewards.iter() {
+            assert_eq!(reward.reward_type, RewardType::Staking);
+        }
+        total_staking_rewards += keyed_rewards.len();
+        assert_eq!(num_partitions, None);
+
+        // All rewards are recorded
+        assert_eq!(total_staking_rewards, num_rewards);
+
+        let bank = Bank::new_from_parent(partition1_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 3);
+        assert!(bank.is_partitioned_rewards_feature_enabled());
+        // Next slot contains empty rewards (since fees are off), and no
+        // partitions because not at the epoch boundary
+        assert_eq!(
+            bank.get_rewards_and_num_partitions(),
+            KeyedRewardsAndNumPartitions {
+                keyed_rewards: vec![],
+                num_partitions: None,
+            }
+        );
     }
 }
