@@ -203,7 +203,10 @@ impl LatestUnprocessedVotes {
         let pubkey = vote.pubkey();
         let slot = vote.slot();
         let timestamp = vote.timestamp();
-        if let Some(latest_vote) = self.get_entry(pubkey) {
+
+        let with_latest_vote = |latest_vote: &RwLock<LatestValidatorVotePacket>,
+                                vote: LatestValidatorVotePacket|
+         -> Option<LatestValidatorVotePacket> {
             let (latest_slot, latest_timestamp) = latest_vote
                 .read()
                 .map(|vote| (vote.slot(), vote.timestamp()))
@@ -225,15 +228,24 @@ impl LatestUnprocessedVotes {
                     }
                 }
             }
-            return Some(vote);
-        }
+            Some(vote)
+        };
 
-        // Should have low lock contention because this is only hit on the first few blocks of startup
-        // and when a new vote account starts voting.
-        let mut latest_votes_per_pubkey = self.latest_votes_per_pubkey.write().unwrap();
-        latest_votes_per_pubkey.insert(pubkey, Arc::new(RwLock::new(vote)));
-        self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
-        None
+        if let Some(latest_vote) = self.get_entry(pubkey) {
+            with_latest_vote(&latest_vote, vote)
+        } else {
+            // Grab write-lock to insert new vote.
+            match self.latest_votes_per_pubkey.write().unwrap().entry(pubkey) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    with_latest_vote(entry.get(), vote)
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(Arc::new(RwLock::new(vote)));
+                    self.num_unprocessed_votes.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            }
+        }
     }
 
     #[cfg(test)]
