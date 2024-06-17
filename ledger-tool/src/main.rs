@@ -1870,6 +1870,7 @@ fn main() {
                     let LoadAndProcessLedgerOutput {
                         bank_forks,
                         starting_snapshot_hashes,
+                        accounts_background_service,
                     } = load_and_process_ledger_or_exit(
                         arg_matches,
                         &genesis_config,
@@ -1877,6 +1878,12 @@ fn main() {
                         process_options,
                         None,
                     );
+                    // Snapshot creation will implicitly perform AccountsDb
+                    // flush and clean operations. These operations cannot be
+                    // run concurrently, so ensure ABS is stopped to avoid that
+                    // possibility.
+                    accounts_background_service.join().unwrap();
+
                     let mut bank = bank_forks
                         .read()
                         .unwrap()
