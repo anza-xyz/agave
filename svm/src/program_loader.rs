@@ -11,7 +11,7 @@ use {
         account::{AccountSharedData, ReadableAccount},
         account_utils::StateMut,
         bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+        bpf_loader_upgradeable::UpgradeableLoaderState,
         clock::Slot,
         instruction::InstructionError,
         loader_v4::{self, LoaderV4State, LoaderV4Status},
@@ -92,12 +92,6 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     if bpf_loader::check_id(program_account.owner()) {
         return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
     }
-
-    assert!(
-        bpf_loader_upgradeable::check_id(program_account.owner()),
-        "unexpected program account owner {}",
-        program_account.owner(),
-    );
 
     if let Ok(UpgradeableLoaderState::Program {
         programdata_address,
