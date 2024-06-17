@@ -8,6 +8,7 @@ use {
         ledger_utils::*,
         output::{
             output_account, AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer,
+            SlotBankHash,
         },
         program::*,
     },
@@ -1791,9 +1792,12 @@ fn main() {
 
                     process_options.slot_callback = slot_callback;
 
+                    let output_format =
+                        OutputFormat::from_matches(arg_matches, "output_format", false);
                     let print_accounts_stats = arg_matches.is_present("print_accounts_stats");
                     let print_bank_hash = arg_matches.is_present("print_bank_hash");
                     let write_bank_file = arg_matches.is_present("write_bank_file");
+
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     info!("genesis hash: {}", genesis_config.hash());
 
@@ -1817,7 +1821,11 @@ fn main() {
                         working_bank.print_accounts_stats();
                     }
                     if print_bank_hash {
-                        println!("{}", working_bank.hash());
+                        let slot_bank_hash = SlotBankHash {
+                            slot: working_bank.slot(),
+                            hash: working_bank.hash(),
+                        };
+                        println!("{}", output_format.formatted_string(&slot_bank_hash));
                     }
                     if write_bank_file {
                         bank_hash_details::write_bank_hash_details_file(&working_bank)
