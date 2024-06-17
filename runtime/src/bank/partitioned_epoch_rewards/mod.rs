@@ -1034,4 +1034,38 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_rewards_and_partitions_should_record() {
+        let reward = RewardInfo {
+            reward_type: RewardType::Voting,
+            lamports: 55,
+            post_balance: 5555,
+            commission: Some(5),
+        };
+
+        let rewards_and_partitions = KeyedRewardsAndNumPartitions {
+            keyed_rewards: vec![],
+            num_partitions: None,
+        };
+        assert!(!rewards_and_partitions.should_record());
+
+        let rewards_and_partitions = KeyedRewardsAndNumPartitions {
+            keyed_rewards: vec![(Pubkey::new_unique(), reward)],
+            num_partitions: None,
+        };
+        assert!(rewards_and_partitions.should_record());
+
+        let rewards_and_partitions = KeyedRewardsAndNumPartitions {
+            keyed_rewards: vec![],
+            num_partitions: Some(42),
+        };
+        assert!(rewards_and_partitions.should_record());
+
+        let rewards_and_partitions = KeyedRewardsAndNumPartitions {
+            keyed_rewards: vec![(Pubkey::new_unique(), reward)],
+            num_partitions: Some(42),
+        };
+        assert!(rewards_and_partitions.should_record());
+    }
 }
