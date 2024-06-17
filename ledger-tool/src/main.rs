@@ -1337,14 +1337,6 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
-    let snapshot_archive_path = value_t!(matches, "snapshots", String)
-        .ok()
-        .map(PathBuf::from);
-    let incremental_snapshot_archive_path =
-        value_t!(matches, "incremental_snapshot_archive_path", String)
-            .ok()
-            .map(PathBuf::from);
-
     let verbose_level = matches.occurrences_of("verbose");
 
     // Name the rayon global thread pool
@@ -1452,8 +1444,6 @@ fn main() {
                         &genesis_config,
                         Arc::new(blockstore),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
                         None,
                     );
 
@@ -1644,8 +1634,6 @@ fn main() {
                         &genesis_config,
                         Arc::new(blockstore),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
                         transaction_status_sender,
                     );
 
@@ -1712,8 +1700,6 @@ fn main() {
                         &genesis_config,
                         Arc::new(blockstore),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
                         None,
                     );
 
@@ -1738,6 +1724,13 @@ fn main() {
                     let is_minimized = arg_matches.is_present("minimized");
                     let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
                         .unwrap_or_else(|_| {
+                            let snapshot_archive_path = value_t!(matches, "snapshots", String)
+                                .ok()
+                                .map(PathBuf::from);
+                            let incremental_snapshot_archive_path =
+                                value_t!(matches, "incremental_snapshot_archive_path", String)
+                                    .ok()
+                                    .map(PathBuf::from);
                             match (
                                 is_incremental,
                                 &snapshot_archive_path,
@@ -1876,8 +1869,6 @@ fn main() {
                         &genesis_config,
                         blockstore.clone(),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
                         None,
                     );
                     let mut bank = bank_forks
@@ -2266,8 +2257,6 @@ fn main() {
                         &genesis_config,
                         Arc::new(blockstore),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
                         None,
                     );
                     let bank = bank_forks.read().unwrap().working_bank();
@@ -2319,8 +2308,6 @@ fn main() {
                         &genesis_config,
                         Arc::new(blockstore),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
                         None,
                     );
                     let bank_forks = bank_forks.read().unwrap();
