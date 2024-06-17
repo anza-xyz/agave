@@ -105,7 +105,7 @@ impl Display for SlotBounds<'_> {
 #[serde(rename_all = "camelCase")]
 pub struct SlotBankHash {
     pub slot: Slot,
-    pub hash: Hash,
+    pub hash: String,
 }
 
 impl VerboseDisplay for SlotBankHash {}

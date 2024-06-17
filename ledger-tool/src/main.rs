@@ -1823,7 +1823,7 @@ fn main() {
                     if print_bank_hash {
                         let slot_bank_hash = SlotBankHash {
                             slot: working_bank.slot(),
-                            hash: working_bank.hash(),
+                            hash: working_bank.hash().to_string(),
                         };
                         println!("{}", output_format.formatted_string(&slot_bank_hash));
                     }
