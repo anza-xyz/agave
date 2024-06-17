@@ -1,12 +1,10 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
-pub mod mem_pool;
 pub mod serialization;
 pub mod syscalls;
 
 use {
-    mem_pool::VmMemoryPool,
     solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_measure::measure::Measure,
     solana_program_runtime::{
@@ -17,6 +15,7 @@ use {
             DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
+        mem_pool::VmMemoryPool,
         stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
