@@ -230,21 +230,8 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     let pubkeys = pubkeys_of(matches, "node_pubkey");
     let shred_version = value_t_or_exit!(matches, "shred_version", u16);
     let identity_keypair = keypair_of(matches, "identity");
-
     let entrypoint_addr = parse_entrypoint(matches);
-
-    let gossip_host = parse_gossip_host(matches, entrypoint_addr);
-
-    let gossip_addr = SocketAddr::new(
-        gossip_host,
-        value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
-            solana_net_utils::find_available_port_in_range(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                (0, 1),
-            )
-            .expect("unable to find an available gossip port")
-        }),
-    );
+    let gossip_addr = get_gossip_address(matches, entrypoint_addr);
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
     let (_all_peers, validators) = discover(
@@ -285,22 +272,10 @@ fn process_rpc_url(
 ) -> std::io::Result<()> {
     let any = matches.is_present("any");
     let all = matches.is_present("all");
-    let entrypoint_addr = parse_entrypoint(matches);
     let timeout = value_t_or_exit!(matches, "timeout", u64);
     let shred_version = value_t_or_exit!(matches, "shred_version", u16);
-
-    let gossip_host = parse_gossip_host(matches, entrypoint_addr);
-
-    let gossip_addr = SocketAddr::new(
-        gossip_host,
-        value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
-            solana_net_utils::find_available_port_in_range(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                (0, 1),
-            )
-            .expect("unable to find an available gossip port")
-        }),
-    );
+    let entrypoint_addr = parse_entrypoint(matches);
+    let gossip_addr = get_gossip_address(matches, entrypoint_addr);
 
     let (_all_peers, validators) = discover(
         None, // keypair
@@ -340,6 +315,20 @@ fn process_rpc_url(
     }
 
     Ok(())
+}
+
+fn get_gossip_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>) -> SocketAddr {
+    let gossip_host = parse_gossip_host(matches, entrypoint_addr);
+    SocketAddr::new(
+        gossip_host,
+        value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
+            solana_net_utils::find_available_port_in_range(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                (0, 1),
+            )
+            .expect("unable to find an available gossip port")
+        }),
+    )
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
