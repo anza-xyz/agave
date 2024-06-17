@@ -785,6 +785,8 @@ fn post_process_failed_tx(
     &durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
 ) {
+    // For the case of RollbackAccounts::SameNonceAndFeePayer, it's crucial
+    // for `is_nonce_account` to be checked earlier than `is_fee_payer`.
     if is_nonce_account {
         if let Some(nonce) = rollback_accounts.nonce() {
             // The transaction failed which would normally drop the account
@@ -859,17 +861,13 @@ mod tests {
         ))
     }
 
-    fn new_execution_result(
-        status: Result<()>,
-        nonce: Option<&NoncePartial>,
-    ) -> TransactionExecutionResult {
+    fn new_execution_result(status: Result<()>) -> TransactionExecutionResult {
         TransactionExecutionResult::Executed {
             details: TransactionExecutionDetails {
                 status,
                 log_messages: None,
                 inner_instructions: None,
                 fee_details: FeeDetails::default(),
-                is_nonce: nonce.is_some(),
                 return_data: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
@@ -1595,7 +1593,7 @@ mod tests {
                 .insert_new_readonly(&pubkey);
         }
         let txs = vec![tx0.clone(), tx1.clone()];
-        let execution_results = vec![new_execution_result(Ok(()), None); 2];
+        let execution_results = vec![new_execution_result(Ok(())); 2];
         let (collected_accounts, transactions) = accounts.collect_accounts_to_store(
             &txs,
             &execution_results,
@@ -1842,13 +1840,9 @@ mod tests {
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let txs = vec![tx];
-        let execution_results = vec![new_execution_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
-            Some(&nonce),
-        )];
+        let execution_results = vec![new_execution_result(Err(
+            TransactionError::InstructionError(1, InstructionError::InvalidArgument),
+        ))];
         let (collected_accounts, _) = accounts.collect_accounts_to_store(
             &txs,
             &execution_results,
@@ -1945,13 +1939,9 @@ mod tests {
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let txs = vec![tx];
-        let execution_results = vec![new_execution_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
-            Some(&nonce),
-        )];
+        let execution_results = vec![new_execution_result(Err(
+            TransactionError::InstructionError(1, InstructionError::InvalidArgument),
+        ))];
         let (collected_accounts, _) = accounts.collect_accounts_to_store(
             &txs,
             &execution_results,

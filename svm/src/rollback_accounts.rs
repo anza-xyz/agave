@@ -2,6 +2,7 @@ use {
     crate::nonce_info::{NonceInfo, NoncePartial},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
+        clock::Epoch,
         pubkey::Pubkey,
     },
 };
@@ -37,7 +38,7 @@ impl RollbackAccounts {
         fee_payer_address: Pubkey,
         mut fee_payer_account: AccountSharedData,
         fee_payer_rent_debit: u64,
-        fee_payer_loaded_rent_epoch: u64,
+        fee_payer_loaded_rent_epoch: Epoch,
     ) -> Self {
         // When the fee payer account is rolled back due to transaction failure,
         // rent should not be charged so credit the previously debited rent

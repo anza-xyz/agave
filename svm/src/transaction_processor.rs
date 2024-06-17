@@ -465,7 +465,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         lamports_per_signature: u64,
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<(FeeDetails, AccountSharedData, u64, u64)> {
+    ) -> transaction::Result<(FeeDetails, AccountSharedData, u64, Epoch)> {
         let fee_payer_address = message.fee_payer();
         let Some(mut fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
         else {
@@ -894,7 +894,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 log_messages,
                 inner_instructions,
                 fee_details: loaded_transaction.fee_details,
-                is_nonce: loaded_transaction.rollback_accounts.nonce().is_some(),
                 return_data,
                 executed_units,
                 accounts_data_len_delta,

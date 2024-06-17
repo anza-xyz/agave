@@ -231,18 +231,13 @@ fn test_race_register_tick_freeze() {
     }
 }
 
-fn new_execution_result(
-    status: Result<()>,
-    nonce: Option<&NoncePartial>,
-    fee_details: FeeDetails,
-) -> TransactionExecutionResult {
+fn new_execution_result(status: Result<()>, fee_details: FeeDetails) -> TransactionExecutionResult {
     TransactionExecutionResult::Executed {
         details: TransactionExecutionDetails {
             status,
             log_messages: None,
             inner_instructions: None,
             fee_details,
-            is_nonce: nonce.is_some(),
             return_data: None,
             executed_units: 0,
             accounts_data_len_delta: 0,
@@ -2876,13 +2871,12 @@ fn test_filter_program_errors_and_collect_fee() {
     let tx_fee = 42;
     let fee_details = FeeDetails::new_for_tests(tx_fee, 0, false);
     let results = vec![
-        new_execution_result(Ok(()), None, fee_details),
+        new_execution_result(Ok(()), fee_details),
         new_execution_result(
             Err(TransactionError::InstructionError(
                 1,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
-            None,
             fee_details,
         ),
     ];
@@ -2910,13 +2904,12 @@ fn test_filter_program_errors_and_collect_priority_fee() {
     let priority_fee = 42;
     let fee_details: FeeDetails = FeeDetails::new_for_tests(0, priority_fee, false);
     let results = vec![
-        new_execution_result(Ok(()), None, fee_details),
+        new_execution_result(Ok(()), fee_details),
         new_execution_result(
             Err(TransactionError::InstructionError(
                 1,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
-            None,
             fee_details,
         ),
     ];
@@ -12901,29 +12894,23 @@ fn test_failed_simulation_compute_units() {
 
 #[test]
 fn test_filter_program_errors_and_collect_fee_details() {
-    // TX  | EXECUTION RESULT            | is nonce | COLLECT            | COLLECT
-    //     |                             |          | (TX_FEE, PRIO_FEE) | RESULT
+    // TX  | EXECUTION RESULT            | COLLECT            | COLLECT
+    //     |                             | (TX_FEE, PRIO_FEE) | RESULT
     // ---------------------------------------------------------------------------------
-    // tx1 | not executed                | n/a      | (0    , 0)         | Original Err
-    // tx2 | executed and no error       | n/a      | (5_000, 1_000)     | Ok
-    // tx3 | executed has error          | true     | (5_000, 1_000)     | Ok
-    // tx4 | executed has error          | false    | (5_000, 1_000)     | Ok
+    // tx1 | not executed                | (0    , 0)         | Original Err
+    // tx2 | executed and no error       | (5_000, 1_000)     | Ok
+    // tx3 | executed has error          | (5_000, 1_000)     | Ok
     //
     let initial_payer_balance = 7_000;
     let tx_fee = 5000;
     let priority_fee = 1000;
     let tx_fee_details = FeeDetails::new_for_tests(tx_fee, priority_fee, false);
     let expected_collected_fee_details = CollectorFeeDetails {
-        transaction_fee: 3 * tx_fee,
-        priority_fee: 3 * priority_fee,
+        transaction_fee: 2 * tx_fee,
+        priority_fee: 2 * priority_fee,
     };
 
-    let expected_collect_results = vec![
-        Err(TransactionError::AccountNotFound),
-        Ok(()),
-        Ok(()),
-        Ok(()),
-    ];
+    let expected_collect_results = vec![Err(TransactionError::AccountNotFound), Ok(()), Ok(())];
 
     let GenesisConfigInfo {
         genesis_config,
@@ -12934,24 +12921,12 @@ fn test_filter_program_errors_and_collect_fee_details() {
 
     let results = vec![
         TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
-        new_execution_result(Ok(()), None, tx_fee_details),
+        new_execution_result(Ok(()), tx_fee_details),
         new_execution_result(
             Err(TransactionError::InstructionError(
                 0,
                 SystemError::ResultWithNegativeLamports.into(),
             )),
-            Some(&NoncePartial::new(
-                Pubkey::new_unique(),
-                AccountSharedData::default(),
-            )),
-            tx_fee_details,
-        ),
-        new_execution_result(
-            Err(TransactionError::InstructionError(
-                0,
-                SystemError::ResultWithNegativeLamports.into(),
-            )),
-            None,
             tx_fee_details,
         ),
     ];
