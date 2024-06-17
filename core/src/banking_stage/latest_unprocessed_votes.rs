@@ -695,6 +695,47 @@ mod tests {
     }
 
     #[test]
+    fn test_update_latest_vote_race() {
+        // There was a race condition in updating the same pubkey in the hashmap
+        // when the entry does not initially exist.
+        let latest_unprocessed_votes = Arc::new(LatestUnprocessedVotes::new());
+
+        const NUM_VOTES: usize = 100;
+        let keypairs = Arc::new(
+            (0..NUM_VOTES)
+                .map(|_| ValidatorVoteKeypairs::new_rand())
+                .collect_vec(),
+        );
+
+        // Insert votes in parallel
+        let insert_vote = |latest_unprocessed_votes: &LatestUnprocessedVotes,
+                           keypairs: &Arc<Vec<ValidatorVoteKeypairs>>,
+                           i: usize| {
+            let vote = from_slots(vec![(i as u64, 1)], VoteSource::Gossip, &keypairs[i], None);
+            latest_unprocessed_votes.update_latest_vote(vote);
+        };
+
+        let hdl = Builder::new()
+            .spawn({
+                let latest_unprocessed_votes = latest_unprocessed_votes.clone();
+                let keypairs = keypairs.clone();
+                move || {
+                    for i in 0..NUM_VOTES {
+                        insert_vote(&latest_unprocessed_votes, &keypairs, i);
+                    }
+                }
+            })
+            .unwrap();
+
+        for i in 0..NUM_VOTES {
+            insert_vote(&latest_unprocessed_votes, &keypairs, i);
+        }
+
+        hdl.join().unwrap();
+        assert_eq!(NUM_VOTES, latest_unprocessed_votes.len());
+    }
+
+    #[test]
     fn test_simulate_threads() {
         let latest_unprocessed_votes = Arc::new(LatestUnprocessedVotes::new());
         let latest_unprocessed_votes_tpu = latest_unprocessed_votes.clone();
