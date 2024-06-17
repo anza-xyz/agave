@@ -26,7 +26,7 @@ use {
 };
 
 /// Returns the arguments that configure AccountsDb
-pub fn accounts_db_args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
     vec![
         Arg::with_name("account_paths")
             .long("accounts")
@@ -109,6 +109,7 @@ pub fn accounts_db_args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             )
             .hidden(hidden_unless_forced()),
     ]
+    .into_boxed_slice()
 }
 
 /// Parse a `ProcessOptions` from subcommand arguments. This function attempts
