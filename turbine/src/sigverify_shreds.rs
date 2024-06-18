@@ -1,4 +1,8 @@
 use {
+    crate::{
+        cluster_nodes::{self, ClusterNodesCache},
+        retransmit_stage::RetransmitStage,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_gossip::cluster_info::ClusterInfo,
@@ -17,7 +21,10 @@ use {
     },
     std::{
         collections::HashMap,
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, RwLock,
+        },
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
@@ -91,6 +98,7 @@ pub fn spawn_shred_sigverify(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(unused_variables)]
 fn run_shred_sigverify<const K: usize>(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
@@ -128,17 +136,22 @@ fn run_shred_sigverify<const K: usize>(
             .map(|packet| packet.meta_mut().set_discard(true))
             .count()
     });
+    let (working_bank, root_bank) = {
+        let bank_forks = bank_forks.read().unwrap();
+        (bank_forks.working_bank(), bank_forks.root_bank())
+    };
     verify_packets(
         thread_pool,
         &keypair.pubkey(),
-        bank_forks,
+        &working_bank,
         leader_schedule_cache,
         recycler_cache,
         &mut packets,
         cache,
     );
     stats.num_discards_post += count_discards(&packets);
-    // Resign shreds Merkle root as the retransmitter node.
+    // Verify retransmitter's signature, and resign shreds
+    // Merkle root as the retransmitter node.
     let resign_start = Instant::now();
     thread_pool.install(|| {
         packets
@@ -175,18 +188,65 @@ fn run_shred_sigverify<const K: usize>(
     Ok(())
 }
 
+#[must_use]
+#[allow(dead_code)]
+fn verify_retransmitter_signature(
+    shred: &[u8],
+    root_bank: &Bank,
+    working_bank: &Bank,
+    cluster_info: &ClusterInfo,
+    leader_schedule_cache: &LeaderScheduleCache,
+    cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+    stats: &ShredSigVerifyStats,
+) -> bool {
+    let signature = match shred::layout::get_retransmiter_signature(shred) {
+        Ok(signature) => signature,
+        // If the shred is not of resigned variant,
+        // then there is nothing to verify.
+        Err(shred::Error::InvalidShredVariant) => return true,
+        Err(_) => return false,
+    };
+    let Some(merkle_root) = shred::layout::get_merkle_root(shred) else {
+        return false;
+    };
+    let Some(shred) = shred::layout::get_shred_id(shred) else {
+        return false;
+    };
+    let Some(leader) = leader_schedule_cache.slot_leader_at(shred.slot(), Some(working_bank))
+    else {
+        stats
+            .num_unknown_slot_leader
+            .fetch_add(1, Ordering::Relaxed);
+        return false;
+    };
+    let cluster_nodes =
+        cluster_nodes_cache.get(shred.slot(), root_bank, working_bank, cluster_info);
+    let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
+    let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, data_plane_fanout) {
+        Ok(Some(parent)) => parent,
+        Ok(None) => return true,
+        Err(err) => {
+            error!("get_retransmit_parent: {err:?}");
+            stats
+                .num_unknown_turbine_parent
+                .fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+    };
+    signature.verify(parent.as_ref(), merkle_root.as_ref())
+}
+
 fn verify_packets(
     thread_pool: &ThreadPool,
     self_pubkey: &Pubkey,
-    bank_forks: &RwLock<BankForks>,
+    working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
     recycler_cache: &RecyclerCache,
     packets: &mut [PacketBatch],
     cache: &RwLock<LruCache>,
 ) {
-    let working_bank = bank_forks.read().unwrap().working_bank();
     let leader_slots: HashMap<Slot, Pubkey> =
-        get_slot_leaders(self_pubkey, packets, leader_schedule_cache, &working_bank)
+        get_slot_leaders(self_pubkey, packets, leader_schedule_cache, working_bank)
             .into_iter()
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
@@ -262,7 +322,10 @@ struct ShredSigVerifyStats {
     num_discards_post: usize,
     num_discards_pre: usize,
     num_duplicates: usize,
+    num_invalid_retransmitter: AtomicUsize,
     num_retransmit_shreds: usize,
+    num_unknown_slot_leader: AtomicUsize,
+    num_unknown_turbine_parent: AtomicUsize,
     elapsed_micros: u64,
     resign_micros: u64,
 }
@@ -280,7 +343,10 @@ impl ShredSigVerifyStats {
             num_deduper_saturations: 0usize,
             num_discards_post: 0usize,
             num_duplicates: 0usize,
+            num_invalid_retransmitter: AtomicUsize::default(),
             num_retransmit_shreds: 0usize,
+            num_unknown_slot_leader: AtomicUsize::default(),
+            num_unknown_turbine_parent: AtomicUsize::default(),
             elapsed_micros: 0u64,
             resign_micros: 0u64,
         }
@@ -299,7 +365,22 @@ impl ShredSigVerifyStats {
             ("num_deduper_saturations", self.num_deduper_saturations, i64),
             ("num_discards_post", self.num_discards_post, i64),
             ("num_duplicates", self.num_duplicates, i64),
+            (
+                "num_invalid_retransmitter",
+                self.num_invalid_retransmitter.load(Ordering::Relaxed),
+                i64
+            ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
+            (
+                "num_unknown_slot_leader",
+                self.num_unknown_slot_leader.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_unknown_turbine_parent",
+                self.num_unknown_turbine_parent.load(Ordering::Relaxed),
+                i64
+            ),
             ("elapsed_micros", self.elapsed_micros, i64),
             ("resign_micros", self.resign_micros, i64),
         );
@@ -365,10 +446,11 @@ mod tests {
 
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+        let working_bank = bank_forks.read().unwrap().working_bank();
         verify_packets(
             &thread_pool,
             &Pubkey::new_unique(), // self_pubkey
-            &bank_forks,
+            &working_bank,
             &leader_schedule_cache,
             &RecyclerCache::warmed(),
             &mut batches,
