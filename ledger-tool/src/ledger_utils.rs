@@ -54,7 +54,7 @@ use {
     thiserror::Error,
 };
 
-pub(crate) struct LoadAndProcessLedgerOutput {
+pub struct LoadAndProcessLedgerOutput {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub starting_snapshot_hashes: Option<StartingSnapshotHashes>,
     // Typically, we would want to join all threads before returning. However,
