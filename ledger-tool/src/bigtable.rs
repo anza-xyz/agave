@@ -34,7 +34,7 @@ use {
     },
     solana_sdk::{
         clock::Slot, hash::Hash, pubkey::Pubkey, shred_version::compute_shred_version,
-        signature::Signature, signer::keypair::Keypair,
+        signature::Signature, signer::keypair::keypair_from_seed,
     },
     solana_storage_bigtable::CredentialType,
     solana_transaction_status::{ConfirmedBlock, UiTransactionEncoding, VersionedConfirmedBlock},
@@ -204,7 +204,7 @@ async fn shreds(
     // shred sigverify occurs prior to Blockstore::insert_shreds(). Thus, the
     // shreds being signed with the "dummy" keyapir can still be inserted and
     // later read/replayed/etc
-    let keypair = Keypair::from_bytes(&[0; 64])?;
+    let keypair = keypair_from_seed(&[0; 64])?;
     let ShredConfig {
         shred_version,
         num_hashes_per_tick,
