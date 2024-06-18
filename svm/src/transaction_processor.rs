@@ -42,7 +42,7 @@ use {
             include_loaded_accounts_data_size_in_fee_calculation,
             remove_rounding_in_fee_calculation, FeatureSet,
         },
-        fee::{FeeDetails, FeeStructure},
+        fee::FeeStructure,
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
@@ -410,45 +410,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .iter()
             .zip(check_results)
             .map(|(sanitized_tx, check_result)| {
-                check_result.and_then(
-                    |CheckedTransactionDetails {
-                         nonce,
-                         lamports_per_signature,
-                     }| {
-                        let message = sanitized_tx.borrow().message();
-                        let (
-                            fee_details,
-                            fee_payer_account,
-                            fee_payer_rent_debit,
-                            fee_payer_rent_epoch,
-                        ) = self.validate_transaction_fee_payer(
-                            callbacks,
-                            message,
-                            feature_set,
-                            fee_structure,
-                            lamports_per_signature,
-                            rent_collector,
-                            error_counters,
-                        )?;
-
-                        // Capture fee-subtracted fee payer account and original nonce account state
-                        // to rollback to if transaction execution fails.
-                        let rollback_accounts = RollbackAccounts::new(
-                            nonce,
-                            *message.fee_payer(),
-                            fee_payer_account.clone(),
-                            fee_payer_rent_debit,
-                            fee_payer_rent_epoch,
-                        );
-
-                        Ok(ValidatedTransactionDetails {
-                            rollback_accounts,
-                            fee_details,
-                            fee_payer_account,
-                            fee_payer_rent_debit,
-                        })
-                    },
-                )
+                check_result.and_then(|checked_details| {
+                    let message = sanitized_tx.borrow().message();
+                    self.validate_transaction_fee_payer(
+                        callbacks,
+                        message,
+                        checked_details,
+                        feature_set,
+                        fee_structure,
+                        rent_collector,
+                        error_counters,
+                    )
+                })
             })
             .collect()
     }
@@ -460,12 +433,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         callbacks: &CB,
         message: &SanitizedMessage,
+        checked_details: CheckedTransactionDetails,
         feature_set: &FeatureSet,
         fee_structure: &FeeStructure,
-        lamports_per_signature: u64,
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<(FeeDetails, AccountSharedData, u64, Epoch)> {
+    ) -> transaction::Result<ValidatedTransactionDetails> {
         let fee_payer_address = message.fee_payer();
         let Some(mut fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
         else {
@@ -473,7 +446,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             return Err(TransactionError::AccountNotFound);
         };
 
-        let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
+        let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
         let fee_payer_rent_debit = collect_rent_from_account(
             feature_set,
             rent_collector,
@@ -481,6 +454,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut fee_payer_account,
         )
         .rent_amount;
+
+        let CheckedTransactionDetails {
+            nonce,
+            lamports_per_signature,
+        } = checked_details;
 
         let fee_details = fee_structure.calculate_fee_details(
             message,
@@ -502,12 +480,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_details.total_fee(),
         )?;
 
-        Ok((
+        // Capture fee-subtracted fee payer account and original nonce account state
+        // to rollback to if transaction execution fails.
+        let rollback_accounts = RollbackAccounts::new(
+            nonce,
+            *message.fee_payer(),
+            fee_payer_account.clone(),
+            fee_payer_rent_debit,
+            fee_payer_loaded_rent_epoch,
+        );
+
+        Ok(ValidatedTransactionDetails {
             fee_details,
             fee_payer_account,
             fee_payer_rent_debit,
-            fee_payer_rent_epoch,
-        ))
+            rollback_accounts,
+        })
     }
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
@@ -998,7 +986,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 mod tests {
     use {
         super::*,
-        crate::{account_loader::ValidatedTransactionDetails, rollback_accounts::RollbackAccounts},
+        crate::{
+            account_loader::ValidatedTransactionDetails, nonce_info::NoncePartial,
+            rollback_accounts::RollbackAccounts,
+        },
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
@@ -1981,6 +1972,7 @@ mod tests {
         );
 
         let fee_payer_rent_epoch = current_epoch;
+        let fee_payer_rent_debit = 0;
         let fee_payer_account = AccountSharedData::new_rent_epoch(
             starting_balance,
             0,
@@ -1998,9 +1990,12 @@ mod tests {
         let result = batch_processor.validate_transaction_fee_payer(
             &mock_bank,
             &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
             &FeatureSet::default(),
             &FeeStructure::default(),
-            lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2014,12 +2009,18 @@ mod tests {
 
         assert_eq!(
             result,
-            Ok((
-                FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
-                post_validation_fee_payer_account,
-                0, // rent due
-                fee_payer_rent_epoch,
-            ))
+            Ok(ValidatedTransactionDetails {
+                rollback_accounts: RollbackAccounts::new(
+                    None, // nonce
+                    *fee_payer_address,
+                    post_validation_fee_payer_account.clone(),
+                    fee_payer_rent_debit,
+                    fee_payer_rent_epoch
+                ),
+                fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                fee_payer_rent_debit,
+                fee_payer_account: post_validation_fee_payer_account,
+            })
         );
     }
 
@@ -2038,14 +2039,14 @@ mod tests {
         let transaction_fee = lamports_per_signature;
         let starting_balance = min_balance - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
-        let rent_due = rent_collector
+        let fee_payer_rent_debit = rent_collector
             .get_rent_due(
                 fee_payer_account.lamports(),
                 fee_payer_account.data().len(),
                 fee_payer_account.rent_epoch(),
             )
             .lamports();
-        assert!(rent_due > 0);
+        assert!(fee_payer_rent_debit > 0);
 
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
@@ -2058,9 +2059,12 @@ mod tests {
         let result = batch_processor.validate_transaction_fee_payer(
             &mock_bank,
             &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
             &FeatureSet::default(),
             &FeeStructure::default(),
-            lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2068,18 +2072,24 @@ mod tests {
         let post_validation_fee_payer_account = {
             let mut account = fee_payer_account.clone();
             account.set_rent_epoch(1);
-            account.set_lamports(starting_balance - transaction_fee - rent_due);
+            account.set_lamports(starting_balance - transaction_fee - fee_payer_rent_debit);
             account
         };
 
         assert_eq!(
             result,
-            Ok((
-                FeeDetails::new_for_tests(transaction_fee, 0, false),
-                post_validation_fee_payer_account,
-                rent_due,
-                0, // rent epoch
-            ))
+            Ok(ValidatedTransactionDetails {
+                rollback_accounts: RollbackAccounts::new(
+                    None, // nonce
+                    *fee_payer_address,
+                    post_validation_fee_payer_account.clone(),
+                    fee_payer_rent_debit,
+                    0, // rent epoch
+                ),
+                fee_details: FeeDetails::new_for_tests(transaction_fee, 0, false),
+                fee_payer_rent_debit,
+                fee_payer_account: post_validation_fee_payer_account,
+            })
         );
     }
 
@@ -2095,9 +2105,12 @@ mod tests {
         let result = batch_processor.validate_transaction_fee_payer(
             &mock_bank,
             &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
             &FeatureSet::default(),
             &FeeStructure::default(),
-            lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2124,9 +2137,12 @@ mod tests {
         let result = batch_processor.validate_transaction_fee_payer(
             &mock_bank,
             &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
             &FeatureSet::default(),
             &FeeStructure::default(),
-            lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2157,9 +2173,12 @@ mod tests {
         let result = batch_processor.validate_transaction_fee_payer(
             &mock_bank,
             &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
             &FeatureSet::default(),
             &FeeStructure::default(),
-            lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2188,9 +2207,12 @@ mod tests {
         let result = batch_processor.validate_transaction_fee_payer(
             &mock_bank,
             &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature,
+            },
             &FeatureSet::default(),
             &FeeStructure::default(),
-            lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2237,12 +2259,19 @@ mod tests {
 
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+            let nonce = Some(NoncePartial::new(
+                *fee_payer_address,
+                fee_payer_account.clone(),
+            ));
             let result = batch_processor.validate_transaction_fee_payer(
                 &mock_bank,
                 &message,
+                CheckedTransactionDetails {
+                    nonce: nonce.clone(),
+                    lamports_per_signature,
+                },
                 &feature_set,
                 &FeeStructure::default(),
-                lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
             );
@@ -2256,12 +2285,18 @@ mod tests {
 
             assert_eq!(
                 result,
-                Ok((
-                    FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
-                    post_validation_fee_payer_account,
-                    0, // rent due
-                    0, // rent epoch
-                ))
+                Ok(ValidatedTransactionDetails {
+                    rollback_accounts: RollbackAccounts::new(
+                        nonce,
+                        *fee_payer_address,
+                        post_validation_fee_payer_account.clone(),
+                        0, // fee_payer_rent_debit
+                        0, // fee_payer_rent_epoch
+                    ),
+                    fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                    fee_payer_rent_debit: 0, // rent due
+                    fee_payer_account: post_validation_fee_payer_account,
+                })
             );
         }
 
@@ -2287,9 +2322,12 @@ mod tests {
             let result = batch_processor.validate_transaction_fee_payer(
                 &mock_bank,
                 &message,
+                CheckedTransactionDetails {
+                    nonce: None,
+                    lamports_per_signature,
+                },
                 &feature_set,
                 &FeeStructure::default(),
-                lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
             );
