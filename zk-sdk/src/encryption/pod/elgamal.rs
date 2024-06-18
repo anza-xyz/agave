@@ -133,6 +133,22 @@ impl From<PodDecryptHandle> for CompressedRistretto {
     }
 }
 
+use solana_zk_token_sdk::curve25519::ristretto::PodRistrettoPoint;
+
+#[cfg(not(target_os = "solana"))]
+impl From<PodDecryptHandle> for PodRistrettoPoint {
+    fn from(pod_handle: PodDecryptHandle) -> Self {
+        PodRistrettoPoint(pod_handle.0)
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+impl From<PodRistrettoPoint> for PodDecryptHandle {
+    fn from(ristretto_point: PodRistrettoPoint) -> Self {
+        Self(ristretto_point.0)
+    }
+}
+
 #[cfg(not(target_os = "solana"))]
 impl TryFrom<PodDecryptHandle> for DecryptHandle {
     type Error = ElGamalError;

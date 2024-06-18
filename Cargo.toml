@@ -130,6 +130,7 @@ members = [
     "zk-keygen",
     "zk-sdk",
     "zk-token-sdk",
+    "zk-token",
 ]
 
 exclude = ["programs/sbf", "svm/tests/example-programs"]
@@ -407,6 +408,7 @@ solana-wen-restart = { path = "wen-restart", version = "=2.0.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.0.0" }
 solana-zk-keygen = { path = "zk-keygen", version = "=2.0.0" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.0.0" }
+solana-zk-token = { path = "zk-token", version = "=2.0.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.0.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.0.0" }
 solana_rbpf = "=0.8.1"

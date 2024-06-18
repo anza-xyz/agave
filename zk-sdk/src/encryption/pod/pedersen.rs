@@ -45,3 +45,19 @@ impl TryFrom<PodPedersenCommitment> for PedersenCommitment {
         Self::from_bytes(&pod_commitment.0).ok_or(ElGamalError::CiphertextDeserialization)
     }
 }
+
+use solana_zk_token_sdk::curve25519::ristretto::PodRistrettoPoint;
+
+#[cfg(not(target_os = "solana"))]
+impl From<PodPedersenCommitment> for PodRistrettoPoint {
+    fn from(pod_commitment: PodPedersenCommitment) -> Self {
+        PodRistrettoPoint(pod_commitment.0)
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+impl From<PodRistrettoPoint> for PodPedersenCommitment {
+    fn from(ristretto_point: PodRistrettoPoint) -> Self {
+        Self(ristretto_point.0)
+    }
+}

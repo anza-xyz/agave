@@ -77,7 +77,7 @@ impl<const N: usize> GroupedElGamal<N> {
 
     /// Converts a grouped ElGamal ciphertext into a regular ElGamal ciphertext using the decrypt
     /// handle at a specified index.
-    fn to_elgamal_ciphertext(
+    pub fn to_elgamal_ciphertext(
         grouped_ciphertext: &GroupedElGamalCiphertext<N>,
         index: usize,
     ) -> Result<ElGamalCiphertext, GroupedElGamalError> {

@@ -8035,6 +8035,36 @@ dependencies = [
  "sha3 0.9.1",
  "solana-program",
  "solana-sdk",
+ "solana-zk-token-sdk",
+ "subtle",
+ "thiserror",
+ "tiny-bip39",
+ "zeroize",
+]
+
+[[package]]
+name = "solana-zk-token"
+version = "2.0.0"
+dependencies = [
+ "aes-gcm-siv",
+ "base64 0.22.1",
+ "bincode",
+ "bytemuck",
+ "curve25519-dalek",
+ "itertools",
+ "lazy_static",
+ "merlin",
+ "num-derive",
+ "num-traits",
+ "rand 0.7.3",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha3 0.9.1",
+ "solana-program",
+ "solana-sdk",
+ "solana-zk-sdk",
+ "solana-zk-token-sdk",
  "subtle",
  "thiserror",
  "tiny-bip39",

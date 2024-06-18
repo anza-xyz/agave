@@ -1,6 +1,6 @@
 [package]
-name = "solana-zk-sdk"
-description = "Solana ZK SDK"
+name = "solana-zk-token"
+description = "Solana ZK Token"
 documentation = "https://docs.rs/solana-zk-sdk"
 version = { workspace = true }
 authors = { workspace = true }
@@ -33,7 +33,8 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 sha3 = "0.9"
 solana-sdk = { workspace = true }
-solana-zk-token-sdk = { workspace = true }
+solana-zk-sdk = { workspace = true }
+solana-zk-token-sdk = { workspace = true }                    # needed just for the syscalls
 subtle = { workspace = true }
 zeroize = { workspace = true, features = ["zeroize_derive"] }
 
