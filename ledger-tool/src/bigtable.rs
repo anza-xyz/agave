@@ -1,6 +1,7 @@
 //! The `bigtable` subcommand
 use {
     crate::{
+        args::snapshot_args,
         ledger_path::canonicalize_ledger_path,
         load_and_process_ledger_or_exit, open_genesis_config_by,
         output::{
@@ -40,7 +41,7 @@ use {
     std::{
         cmp::min,
         collections::HashSet,
-        path::{Path, PathBuf},
+        path::Path,
         process::exit,
         result::Result,
         str::FromStr,
@@ -1027,6 +1028,7 @@ impl BigTableSubCommand for App<'_, '_> {
                             and entries, shred the block and then insert the shredded blocks into \
                             the local Blockstore",
                         )
+                        .args(&snapshot_args())
                         .arg(
                             Arg::with_name("starting_slot")
                                 .long("starting-slot")
@@ -1272,13 +1274,6 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
 
     let verbose = matches.is_present("verbose");
     let output_format = OutputFormat::from_matches(matches, "output_format", verbose);
-    let snapshot_archive_path = value_t!(matches, "snapshots", String)
-        .ok()
-        .map(PathBuf::from);
-    let incremental_snapshot_archive_path =
-        value_t!(matches, "incremental_snapshot_archive_path", String)
-            .ok()
-            .map(PathBuf::from);
 
     let (subcommand, sub_matches) = matches.subcommand();
     let instance_name = get_global_subcommand_arg(
@@ -1383,8 +1378,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 &genesis_config,
                 blockstore.clone(),
                 process_options,
-                snapshot_archive_path,
-                incremental_snapshot_archive_path,
+                None,
             );
 
             let bank = bank_forks.read().unwrap().working_bank();
