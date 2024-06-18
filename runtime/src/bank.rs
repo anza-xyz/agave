@@ -35,7 +35,6 @@
 //! already been signed and verified.
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
-pub use solana_sdk::reward_type::RewardType;
 use {
     crate::{
         bank::{
@@ -204,6 +203,9 @@ use {
         thread::Builder,
         time::{Duration, Instant},
     },
+};
+pub use {
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_sdk::reward_type::RewardType,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -600,6 +602,7 @@ impl PartialEq for Bank {
             collector_fee_details: _,
             compute_budget: _,
             transaction_account_lock_limit: _,
+            fee_structure: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -885,6 +888,9 @@ pub struct Bank {
 
     /// The max number of accounts that a transaction may lock.
     transaction_account_lock_limit: Option<usize>,
+
+    /// Fee structure to use for assessing transaction fees.
+    fee_structure: FeeStructure,
 }
 
 struct VoteWithStakeDelegations {
@@ -1002,14 +1008,11 @@ impl Bank {
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: None,
             transaction_account_lock_limit: None,
+            fee_structure: FeeStructure::default(),
         };
 
-        bank.transaction_processor = TransactionBatchProcessor::new(
-            bank.slot,
-            bank.epoch,
-            bank.epoch_schedule.clone(),
-            HashSet::default(),
-        );
+        bank.transaction_processor =
+            TransactionBatchProcessor::new(bank.slot, bank.epoch, HashSet::default());
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
@@ -1251,6 +1254,7 @@ impl Bank {
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: parent.compute_budget,
             transaction_account_lock_limit: parent.transaction_account_lock_limit,
+            fee_structure: parent.fee_structure.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1281,12 +1285,17 @@ impl Bank {
             }
         });
 
+        let (_epoch, slot_index) = new.epoch_schedule.get_epoch_and_slot_index(new.slot);
+        let slots_in_epoch = new.epoch_schedule.get_slots_in_epoch(new.epoch);
+
         let (_, cache_preparation_time_us) = measure_us!(new
             .transaction_processor
             .prepare_program_cache_for_upcoming_feature_set(
                 &new,
                 &new.compute_active_feature_set(true).0,
                 &new.compute_budget.unwrap_or_default(),
+                slot_index,
+                slots_in_epoch,
             ));
 
         // Update sysvars before processing transactions
@@ -1637,14 +1646,11 @@ impl Bank {
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: runtime_config.compute_budget,
             transaction_account_lock_limit: runtime_config.transaction_account_lock_limit,
+            fee_structure: FeeStructure::default(),
         };
 
-        bank.transaction_processor = TransactionBatchProcessor::new(
-            bank.slot,
-            bank.epoch,
-            bank.epoch_schedule.clone(),
-            HashSet::default(),
-        );
+        bank.transaction_processor =
+            TransactionBatchProcessor::new(bank.slot, bank.epoch, HashSet::default());
 
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
@@ -2969,7 +2975,6 @@ impl Bank {
         self.slots_per_year = genesis_config.slots_per_year();
 
         self.epoch_schedule = genesis_config.epoch_schedule.clone();
-        self.transaction_processor.epoch_schedule = genesis_config.epoch_schedule.clone();
 
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
@@ -3718,6 +3723,7 @@ impl Bank {
             epoch_total_stake: self.epoch_total_stake(self.epoch()),
             epoch_vote_accounts: self.epoch_vote_accounts(self.epoch()),
             feature_set: Arc::clone(&self.feature_set),
+            fee_structure: Some(&self.fee_structure),
             lamports_per_signature,
             rent_collector: Some(&self.rent_collector),
         };
@@ -6829,7 +6835,7 @@ impl Bank {
     }
 
     pub fn fee_structure(&self) -> &FeeStructure {
-        &self.transaction_processor.fee_structure
+        &self.fee_structure
     }
 
     pub fn compute_budget(&self) -> Option<ComputeBudget> {
@@ -7151,7 +7157,7 @@ impl Bank {
     }
 
     pub fn set_fee_structure(&mut self, fee_structure: &FeeStructure) {
-        self.transaction_processor.fee_structure = fee_structure.clone();
+        self.fee_structure = fee_structure.clone();
     }
 
     pub fn load_program(
@@ -7163,14 +7169,7 @@ impl Bank {
         let environments = self
             .transaction_processor
             .get_environments_for_epoch(effective_epoch)?;
-        load_program_with_pubkey(
-            self,
-            &environments,
-            pubkey,
-            self.slot(),
-            self.epoch_schedule(),
-            reload,
-        )
+        load_program_with_pubkey(self, &environments, pubkey, self.slot(), reload)
     }
 }
 

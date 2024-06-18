@@ -727,7 +727,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.13.2",
+ "hashbrown 0.12.3",
 ]
 
 [[package]]
@@ -4793,11 +4793,12 @@ dependencies = [
  "log",
  "scopeguard",
  "solana-compute-budget",
+ "solana-curve25519",
  "solana-measure",
  "solana-poseidon",
  "solana-program-runtime",
  "solana-sdk",
- "solana-zk-token-sdk",
+ "solana-type-overrides",
  "solana_rbpf",
  "thiserror",
 ]
@@ -5047,6 +5048,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-curve25519"
+version = "2.0.0"
+dependencies = [
+ "bytemuck",
+ "curve25519-dalek",
+ "solana-program",
+ "thiserror",
+]
+
+[[package]]
 name = "solana-download-utils"
 version = "2.0.0"
 dependencies = [
@@ -5266,6 +5277,7 @@ dependencies = [
  "solana-measure",
  "solana-program-runtime",
  "solana-sdk",
+ "solana-type-overrides",
  "solana_rbpf",
 ]
 
@@ -5401,7 +5413,6 @@ dependencies = [
  "bs58",
  "bv",
  "bytemuck",
- "cc",
  "console_error_panic_hook",
  "console_log",
  "curve25519-dalek",
@@ -5450,6 +5461,7 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-sdk",
+ "solana-type-overrides",
  "solana-vote",
  "solana_rbpf",
  "thiserror",
@@ -5736,6 +5748,8 @@ dependencies = [
  "solana-version",
  "solana-vote",
  "solana-vote-program",
+ "solana-zk-elgamal-proof-program",
+ "solana-zk-sdk",
  "solana-zk-token-proof-program",
  "solana-zk-token-sdk",
  "static_assertions",
@@ -5783,6 +5797,7 @@ dependencies = [
  "solana-sdk",
  "solana-svm",
  "solana-transaction-status",
+ "solana-type-overrides",
  "solana_rbpf",
  "walkdir",
 ]
@@ -5854,6 +5869,7 @@ dependencies = [
 name = "solana-sbf-rust-curve25519"
 version = "2.0.0"
 dependencies = [
+ "solana-curve25519",
  "solana-program",
  "solana-zk-token-sdk",
 ]
@@ -6298,6 +6314,7 @@ dependencies = [
  "solana-config-program",
  "solana-program-runtime",
  "solana-sdk",
+ "solana-type-overrides",
  "solana-vote-program",
 ]
 
@@ -6400,6 +6417,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk",
  "solana-system-program",
+ "solana-type-overrides",
  "solana-vote",
 ]
 
@@ -6413,6 +6431,7 @@ dependencies = [
  "serde_derive",
  "solana-program-runtime",
  "solana-sdk",
+ "solana-type-overrides",
 ]
 
 [[package]]
@@ -6554,6 +6573,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-type-overrides"
+version = "2.0.0"
+dependencies = [
+ "futures 0.3.30",
+ "lazy_static",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "solana-udp-client"
 version = "2.0.0"
 dependencies = [
@@ -6661,6 +6689,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-zk-elgamal-proof-program"
+version = "2.0.0"
+dependencies = [
+ "bytemuck",
+ "num-derive",
+ "num-traits",
+ "solana-program-runtime",
+ "solana-sdk",
+ "solana-zk-sdk",
+]
+
+[[package]]
+name = "solana-zk-sdk"
+version = "2.0.0"
+dependencies = [
+ "aes-gcm-siv",
+ "base64 0.22.1",
+ "bincode",
+ "bytemuck",
+ "curve25519-dalek",
+ "itertools 0.12.1",
+ "lazy_static",
+ "merlin",
+ "num-derive",
+ "num-traits",
+ "rand 0.7.3",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha3 0.9.1",
+ "solana-program",
+ "solana-sdk",
+ "subtle",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "solana-zk-token-proof-program"
 version = "2.0.0"
 dependencies = [
@@ -6682,7 +6748,6 @@ dependencies = [
  "bytemuck",
  "byteorder 1.5.0",
  "curve25519-dalek",
- "getrandom 0.1.14",
  "itertools 0.12.1",
  "lazy_static",
  "merlin",
@@ -6693,6 +6758,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha3 0.9.1",
+ "solana-curve25519",
  "solana-program",
  "solana-sdk",
  "subtle",

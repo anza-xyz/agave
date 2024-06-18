@@ -50,7 +50,7 @@ impl Bank {
             distribution_starting_block_height + status.stake_rewards_by_partition.len() as u64;
         assert!(
             self.epoch_schedule.get_slots_in_epoch(self.epoch)
-                > distribution_end_exclusive.saturating_sub(distribution_starting_block_height)
+                > status.stake_rewards_by_partition.len() as u64
         );
 
         if height >= distribution_starting_block_height && height < distribution_end_exclusive {
@@ -150,7 +150,10 @@ impl Bank {
         let (mut account, stake_state): (AccountSharedData, StakeStateV2) = stake_account.into();
         let StakeStateV2::Stake(meta, stake, flags) = stake_state else {
             // StakesCache only stores accounts where StakeStateV2::delegation().is_some()
-            unreachable!()
+            unreachable!(
+                "StakesCache entry {:?} failed StakeStateV2 deserialization",
+                partitioned_stake_reward.stake_pubkey
+            )
         };
         account
             .checked_add_lamports(partitioned_stake_reward.stake_reward_info.lamports as u64)
@@ -207,8 +210,8 @@ impl Bank {
                 }
                 Err(err) => {
                     error!(
-                        "bank::distribution::store_stake_accounts_in_partition() failed for {}: {:?}",
-                        stake_pubkey, err
+                        "bank::distribution::store_stake_accounts_in_partition() failed for \
+                         {stake_pubkey}, {reward_amount} lamports burned: {err:?}"
                     );
                     lamports_burned += reward_amount;
                 }

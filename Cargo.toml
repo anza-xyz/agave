@@ -31,6 +31,7 @@ members = [
     "connection-cache",
     "core",
     "cost-model",
+    "curves/*",
     "dos",
     "download-utils",
     "entry",
@@ -116,6 +117,7 @@ members = [
     "transaction-metrics-tracker",
     "transaction-status",
     "turbine",
+    "type-overrides",
     "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
@@ -177,7 +179,6 @@ bytes = "1.6"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
-cc = "1.0.94"
 chrono = { version = "0.4.38", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
@@ -310,6 +311,7 @@ serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
+shuttle = "0.7.1"
 signal-hook = "0.3.17"
 siphasher = "0.3.11"
 smallvec = "1.13.2"
@@ -339,6 +341,7 @@ solana-config-program = { path = "programs/config", version = "=2.0.0" }
 solana-connection-cache = { path = "connection-cache", version = "=2.0.0", default-features = false }
 solana-core = { path = "core", version = "=2.0.0" }
 solana-cost-model = { path = "cost-model", version = "=2.0.0" }
+solana-curve25519 = { path = "curves/curve25519", version = "=2.0.0" }
 solana-download-utils = { path = "download-utils", version = "=2.0.0" }
 solana-entry = { path = "entry", version = "=2.0.0" }
 solana-faucet = { path = "faucet", version = "=2.0.0" }
@@ -395,6 +398,7 @@ solana-tpu-client = { path = "tpu-client", version = "=2.0.0", default-features 
 solana-transaction-status = { path = "transaction-status", version = "=2.0.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.0.0" }
 solana-turbine = { path = "turbine", version = "=2.0.0" }
+solana-type-overrides = { path = "type-overrides", version = "=2.0.0" }
 solana-udp-client = { path = "udp-client", version = "=2.0.0" }
 solana-version = { path = "version", version = "=2.0.0" }
 solana-vote = { path = "vote", version = "=2.0.0" }
@@ -488,6 +492,7 @@ crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d
 #
 # There is a similar override in `programs/sbf/Cargo.toml`.  Please keep both
 # comments and the overrides in sync.
+solana-curve25519 = { path = "curves/curve25519" }
 solana-program = { path = "sdk/program" }
 solana-zk-sdk = { path = "zk-sdk" }
 solana-zk-token-sdk = { path = "zk-token-sdk" }
