@@ -1,14 +1,14 @@
 //! The `bigtable` subcommand
 use {
     crate::{
-        args::snapshot_args,
+        args::{load_genesis_arg, snapshot_args},
         ledger_path::canonicalize_ledger_path,
         load_and_process_ledger_or_exit, open_genesis_config_by,
         output::{
             encode_confirmed_block, CliBlockWithEntries, CliEntries,
             EncodedConfirmedBlockWithEntries,
         },
-        parse_process_options,
+        parse_process_options, LoadAndProcessLedgerOutput,
     },
     clap::{
         value_t, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand,
@@ -1028,6 +1028,7 @@ impl BigTableSubCommand for App<'_, '_> {
                             and entries, shred the block and then insert the shredded blocks into \
                             the local Blockstore",
                         )
+                        .arg(load_genesis_arg())
                         .args(&snapshot_args())
                         .arg(
                             Arg::with_name("starting_slot")
@@ -1373,7 +1374,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 arg_matches,
                 AccessType::Primary,
             ));
-            let (bank_forks, _) = load_and_process_ledger_or_exit(
+            let LoadAndProcessLedgerOutput { bank_forks, .. } = load_and_process_ledger_or_exit(
                 arg_matches,
                 &genesis_config,
                 blockstore.clone(),
