@@ -104,7 +104,7 @@ impl ProgramSubCommand for App<'_, '_> {
             .required(true)
             .index(1);
 
-        let load_genesis_config_args = load_genesis_args();
+        let load_genesis_config_arg = load_genesis_arg();
         let snapshot_config_args = snapshot_args();
 
         self.subcommand(
@@ -157,7 +157,7 @@ and the following fields are required
                         .takes_value(true)
                         .default_value("0"),
                 )
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&snapshot_config_args)
                 .arg(
                     Arg::with_name("memory")

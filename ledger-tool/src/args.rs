@@ -119,14 +119,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
 const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE_STR: &str = "10485760";
 
 /// Returns the arguments that configure loading genesis
-pub fn load_genesis_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
-    vec![Arg::with_name("max_genesis_archive_unpacked_size")
+pub fn load_genesis_arg<'a, 'b>() -> Arg<'a, 'b> {
+    Arg::with_name("max_genesis_archive_unpacked_size")
         .long("max-genesis-archive-unpacked-size")
         .value_name("NUMBER")
         .takes_value(true)
         .default_value(MAX_GENESIS_ARCHIVE_UNPACKED_SIZE_STR)
-        .help("maximum total uncompressed size of unpacked genesis archive")]
-    .into_boxed_slice()
+        .help("maximum total uncompressed size of unpacked genesis archive")
 }
 
 /// Returns the arguments that configure snapshot loading

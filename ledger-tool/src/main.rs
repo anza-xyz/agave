@@ -558,7 +558,7 @@ fn main() {
 
     solana_logger::setup_with_default_filter();
 
-    let load_genesis_config_args = load_genesis_args();
+    let load_genesis_config_arg = load_genesis_arg();
     let accounts_db_config_args = accounts_db_args();
     let snapshot_config_args = snapshot_args();
 
@@ -762,7 +762,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("genesis")
                 .about("Prints the ledger's genesis config")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .arg(
                     Arg::with_name("accounts")
                         .long("accounts")
@@ -781,12 +781,12 @@ fn main() {
         .subcommand(
             SubCommand::with_name("genesis-hash")
                 .about("Prints the ledger's genesis hash")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
         )
         .subcommand(
             SubCommand::with_name("modify-genesis")
                 .about("Modifies genesis parameters")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .arg(&hashes_per_tick)
                 .arg(
                     Arg::with_name("cluster_type")
@@ -806,7 +806,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("shred-version")
                 .about("Prints the ledger's shred hash")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&hard_forks_arg)
@@ -814,7 +814,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("bank-hash")
                 .about("Prints the hash of the working bank after reading the ledger")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
@@ -822,7 +822,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("verify")
                 .about("Verify the ledger")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
@@ -958,7 +958,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("graph")
                 .about("Create a Graphviz rendering of the ledger")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
@@ -991,7 +991,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("create-snapshot")
                 .about("Create a new ledger snapshot")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&hard_forks_arg)
@@ -1197,7 +1197,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("accounts")
                 .about("Print account stats and contents after processing the ledger")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
@@ -1251,7 +1251,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("capitalization")
                 .about("Print capitalization (aka, total supply) while checksumming it")
-                .args(&load_genesis_config_args)
+                .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
