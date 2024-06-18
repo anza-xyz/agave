@@ -69,13 +69,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[profile.release]
+strip = true
+
 [features]
 sbf_c = []
 sbf_rust = []
 dummy-for-ci-check = ["sbf_c", "sbf_rust"]
-
-[build-dependencies]
-walkdir = "2"
 
 [dev-dependencies]
 agave-validator = { workspace = true }
