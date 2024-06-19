@@ -31,8 +31,13 @@ cargo_audit_ignores=(
 
   --ignore RUSTSEC-2022-0093
 
+<<<<<<< HEAD
   # mio
   --ignore RUSTSEC-2024-0019
+=======
+  # curve25519-dalek
+  --ignore RUSTSEC-2024-0344
+>>>>>>> a6bc917f36 (ci: ignore curve25519-dalek audit temporarily (#1786))
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
