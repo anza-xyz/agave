@@ -947,12 +947,7 @@ mod tests {
             if let Ok(program_address) =
                 Pubkey::create_program_address(&[&bytes1, &bytes2], &program_id)
             {
-                let is_on_curve = curve25519_dalek::edwards::CompressedEdwardsY::from_slice(
-                    &program_address.to_bytes(),
-                )
-                .decompress()
-                .is_some();
-                assert!(!is_on_curve);
+                assert!(!program_address.is_on_curve());
                 assert!(!addresses.contains(&program_address));
                 addresses.push(program_address);
             }
