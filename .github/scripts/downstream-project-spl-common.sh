@@ -27,3 +27,7 @@ fi
 
 # anza migration stopgap. can be removed when agave is fully recommended for public usage.
 sed -i 's/solana-geyser-plugin-interface/agave-geyser-plugin-interface/g' ./Cargo.toml
+
+# should be removed when spl project upgrade to agave 2.0
+sed -i '/^curve25519-dalek = "3/d' token/client/Cargo.toml
+sed -i 's/    curve25519_dalek::scalar::Scalar\,/    spl_token_2022::solana_zk_token_sdk::curve25519_dalek::scalar::Scalar,/' token/client/src/proof_generation.rs
