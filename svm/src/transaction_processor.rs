@@ -484,7 +484,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // to rollback to if transaction execution fails.
         let rollback_accounts = RollbackAccounts::new(
             nonce,
-            *message.fee_payer(),
+            *fee_payer_address,
             fee_payer_account.clone(),
             fee_payer_rent_debit,
             fee_payer_loaded_rent_epoch,
