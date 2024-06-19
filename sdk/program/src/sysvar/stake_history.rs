@@ -84,7 +84,7 @@ impl StakeHistoryGetEntry for StakeHistorySysvar {
     fn get_entry(&self, target_epoch: Epoch) -> Option<StakeHistoryEntry> {
         let current_epoch = self.0;
         let newest_historical_epoch = current_epoch.checked_sub(1)?;
-        let oldest_historical_epoch = newest_historical_epoch.saturating_sub(MAX_ENTRIES as u64);
+        let oldest_historical_epoch = current_epoch.saturating_sub(MAX_ENTRIES as u64);
 
         // target epoch is before the beginning of time; this is a user error
         if target_epoch == 0 {
@@ -130,7 +130,11 @@ impl StakeHistoryGetEntry for StakeHistorySysvar {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::stake_history::*};
+    use {
+        super::*,
+        crate::{stake_history::*, sysvar::tests::mock_get_sysvar_syscall},
+        serial_test::serial,
+    };
 
     #[test]
     fn test_size_of() {
@@ -149,18 +153,6 @@ mod tests {
             bincode::serialized_size(&stake_history).unwrap() as usize,
             StakeHistory::size_of()
         );
-    }
-
-    #[test]
-    fn test_precompute_entry_size() {
-        let mut stake_history = StakeHistory::default();
-        stake_history.add(
-            1,
-            StakeHistoryEntry {
-                activating: 1,
-                ..StakeHistoryEntry::default()
-            },
-        );
 
         let stake_history_inner: Vec<(Epoch, StakeHistoryEntry)> =
             bincode::deserialize(&bincode::serialize(&stake_history).unwrap()).unwrap();
@@ -172,27 +164,53 @@ mod tests {
         );
     }
 
+    #[serial]
     #[test]
-    fn test_create_account() {
+    fn test_stake_history_get_entry() {
+        let unique_entry_for_epoch = |epoch: u64| StakeHistoryEntry {
+            activating: epoch.saturating_mul(2),
+            deactivating: epoch.saturating_mul(3),
+            effective: epoch.saturating_mul(5),
+        };
+
+        let current_epoch = MAX_ENTRIES.saturating_add(2) as u64;
+
+        // make a stake history object with at least one valid entry that has expired
         let mut stake_history = StakeHistory::default();
-        for i in 0..MAX_ENTRIES as u64 + 1 {
-            stake_history.add(
-                i,
-                StakeHistoryEntry {
-                    activating: i,
-                    ..StakeHistoryEntry::default()
-                },
-            );
+        for i in 0..current_epoch {
+            stake_history.add(i, unique_entry_for_epoch(i));
         }
         assert_eq!(stake_history.len(), MAX_ENTRIES);
-        assert_eq!(stake_history.iter().map(|entry| entry.0).min().unwrap(), 1);
+        assert_eq!(stake_history.iter().map(|entry| entry.0).min().unwrap(), 2);
+
+        // set up sol_get_sysvar
+        mock_get_sysvar_syscall(&bincode::serialize(&stake_history).unwrap());
+
+        // make a syscall interface object
+        let stake_history_sysvar = StakeHistorySysvar::new(current_epoch).unwrap();
+
+        // now test the stake history interfaces
+
         assert_eq!(stake_history.get(0), None);
-        assert_eq!(
-            stake_history.get(1),
-            Some(&StakeHistoryEntry {
-                activating: 1,
-                ..StakeHistoryEntry::default()
-            })
-        );
+        assert_eq!(stake_history.get(1), None);
+        assert_eq!(stake_history.get(current_epoch), None);
+
+        assert_eq!(stake_history.get_entry(0), None);
+        assert_eq!(stake_history.get_entry(1), None);
+        assert_eq!(stake_history.get_entry(current_epoch), None);
+
+        assert_eq!(stake_history_sysvar.get_entry(0), None);
+        assert_eq!(stake_history_sysvar.get_entry(1), None);
+        assert_eq!(stake_history_sysvar.get_entry(current_epoch), None);
+
+        for i in 2..current_epoch {
+            let entry = Some(unique_entry_for_epoch(i));
+
+            assert_eq!(stake_history.get(i), entry.as_ref(),);
+
+            assert_eq!(stake_history.get_entry(i), entry,);
+
+            assert_eq!(stake_history_sysvar.get_entry(i), entry,);
+        }
     }
 }
