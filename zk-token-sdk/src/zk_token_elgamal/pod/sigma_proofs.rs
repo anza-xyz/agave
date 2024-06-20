@@ -12,7 +12,7 @@ use crate::sigma_proofs::{
     pubkey_proof::PubkeyValidityProof as DecodedPubkeyValidityProof,
     zero_balance_proof::ZeroBalanceProof as DecodedZeroBalanceProof,
 };
-use crate::zk_token_elgamal::pod::{Pod, Zeroable};
+use bytemuck::{Pod, Zeroable};
 
 /// Byte length of a ciphertext-commitment equality proof
 const CIPHERTEXT_COMMITMENT_EQUALITY_PROOF_LEN: usize = 192;

@@ -14,7 +14,7 @@ use {
 };
 pub use {
     auth_encryption::AeCiphertext,
-    bytemuck::{Pod, Zeroable},
+    bytemuck_derive::{Pod, Zeroable},
     elgamal::{DecryptHandle, ElGamalCiphertext, ElGamalPubkey},
     grouped_elgamal::{GroupedElGamalCiphertext2Handles, GroupedElGamalCiphertext3Handles},
     instruction::{FeeEncryption, FeeParameters, TransferAmountCiphertext},

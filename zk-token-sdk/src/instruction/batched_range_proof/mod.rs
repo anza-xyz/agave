@@ -20,10 +20,7 @@ pub mod batched_range_proof_u128;
 pub mod batched_range_proof_u256;
 pub mod batched_range_proof_u64;
 
-use {
-    crate::zk_token_elgamal::pod,
-    bytemuck::{Pod, Zeroable},
-};
+use {crate::zk_token_elgamal::pod, bytemuck::Zeroable};
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -48,7 +45,7 @@ const MAX_SINGLE_BIT_LENGTH: usize = 128;
 /// The context data needed to verify a range-proof for a Pedersen committed value.
 ///
 /// The context data is shared by all `VerifyBatchedRangeProof{N}` instructions.
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 #[repr(C)]
 pub struct BatchedRangeProofContext {
     pub commitments: [pod::PedersenCommitment; MAX_COMMITMENTS],
