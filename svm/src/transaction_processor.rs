@@ -53,14 +53,13 @@ use {
         transaction::{self, SanitizedTransaction, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
-    solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock},
+    solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         cell::RefCell,
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
-        sync::RwLockReadGuard,
     },
 };
 
@@ -745,7 +744,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
             rent.clone(),
-            compute_budget.max_invoke_stack_height,
+            compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
         #[cfg(debug_assertions)]
