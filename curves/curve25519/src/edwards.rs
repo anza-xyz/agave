@@ -138,6 +138,7 @@ mod target_arch {
             curve_syscall_traits::{ADD, CURVE25519_EDWARDS, MUL, SUB},
             scalar::PodScalar,
         },
+        bytemuck::Zeroable,
     };
 
     pub fn validate_edwards(point: &PodEdwardsPoint) -> bool {

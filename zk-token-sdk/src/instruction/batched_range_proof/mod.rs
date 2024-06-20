@@ -20,14 +20,14 @@ pub mod batched_range_proof_u128;
 pub mod batched_range_proof_u256;
 pub mod batched_range_proof_u64;
 
-use {crate::zk_token_elgamal::pod, bytemuck::Zeroable};
+use crate::zk_token_elgamal::pod;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
         encryption::pedersen::{PedersenCommitment, PedersenOpening},
         errors::{ProofGenerationError, ProofVerificationError},
     },
-    bytemuck::bytes_of,
+    bytemuck::{bytes_of, Zeroable},
     curve25519_dalek::traits::IsIdentity,
     merlin::Transcript,
     std::convert::TryInto,

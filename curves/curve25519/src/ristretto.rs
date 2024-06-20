@@ -139,6 +139,7 @@ mod target_arch {
             curve_syscall_traits::{ADD, CURVE25519_RISTRETTO, MUL, SUB},
             scalar::PodScalar,
         },
+        bytemuck::Zeroable,
     };
 
     pub fn validate_ristretto(point: &PodRistrettoPoint) -> bool {
