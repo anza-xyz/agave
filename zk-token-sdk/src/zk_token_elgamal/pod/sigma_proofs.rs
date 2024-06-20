@@ -217,7 +217,7 @@ impl TryFrom<ZeroBalanceProof> for DecodedZeroBalanceProof {
 }
 
 /// The `FeeSigmaProof` type as a `Pod`.
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 #[repr(transparent)]
 pub struct FeeSigmaProof(pub [u8; FEE_SIGMA_PROOF_LEN]);
 
@@ -238,7 +238,7 @@ impl TryFrom<FeeSigmaProof> for DecodedFeeSigmaProof {
 }
 
 /// The `PubkeyValidityProof` type as a `Pod`.
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, bytemuck_derive::Pod, bytemuck_derive::Zeroable)]
 #[repr(transparent)]
 pub struct PubkeyValidityProof(pub [u8; PUBKEY_VALIDITY_PROOF_LEN]);
 
