@@ -30,11 +30,8 @@ use {
         saturating_add_assign,
         transaction_context::{BorrowedAccount, InstructionContext},
     },
-    std::{
-        cell::RefCell,
-        rc::Rc,
-        sync::{atomic::Ordering, Arc},
-    },
+    solana_type_overrides::sync::{atomic::Ordering, Arc},
+    std::{cell::RefCell, rc::Rc},
 };
 
 pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
@@ -449,7 +446,10 @@ pub fn process_instruction_deploy(
     state.slot = current_slot;
     state.status = LoaderV4Status::Deployed;
 
-    if let Some(old_entry) = invoke_context.find_program_in_cache(program.get_key()) {
+    if let Some(old_entry) = invoke_context
+        .program_cache_for_tx_batch
+        .find(program.get_key())
+    {
         executor.tx_usage_counter.store(
             old_entry.tx_usage_counter.load(Ordering::Relaxed),
             Ordering::Relaxed,
@@ -460,8 +460,8 @@ pub fn process_instruction_deploy(
         );
     }
     invoke_context
-        .programs_modified_by_tx
-        .replenish(*program.get_key(), Arc::new(executor));
+        .program_cache_for_tx_batch
+        .store_modified_entry(*program.get_key(), Arc::new(executor));
     Ok(())
 }
 
@@ -592,7 +592,8 @@ pub fn process_instruction_inner(
         }
         let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
-            .find_program_in_cache(program.get_key())
+            .program_cache_for_tx_batch
+            .find(program.get_key())
             .ok_or_else(|| {
                 ic_logger_msg!(log_collector, "Program is not cached");
                 InstructionError::InvalidAccountData
@@ -661,7 +662,7 @@ mod tests {
                     if let Ok(loaded_program) = ProgramCacheEntry::new(
                         &loader_v4::id(),
                         invoke_context
-                            .programs_modified_by_tx
+                            .program_cache_for_tx_batch
                             .environments
                             .program_runtime_v2
                             .clone(),
@@ -671,10 +672,12 @@ mod tests {
                         account.data().len(),
                         &mut load_program_metrics,
                     ) {
-                        invoke_context.programs_modified_by_tx.set_slot_for_tests(0);
                         invoke_context
-                            .programs_modified_by_tx
-                            .replenish(*pubkey, Arc::new(loaded_program));
+                            .program_cache_for_tx_batch
+                            .set_slot_for_tests(0);
+                        invoke_context
+                            .program_cache_for_tx_batch
+                            .store_modified_entry(*pubkey, Arc::new(loaded_program));
                     }
                 }
             }
@@ -708,7 +711,7 @@ mod tests {
             Entrypoint::vm,
             |invoke_context| {
                 invoke_context
-                    .programs_modified_by_tx
+                    .program_cache_for_tx_batch
                     .environments
                     .program_runtime_v2 = Arc::new(create_program_runtime_environment_v2(
                     &ComputeBudget::default(),

@@ -1350,6 +1350,100 @@ fn process_instruction<'a>(
             let byte_index = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             target_account.data.borrow_mut()[byte_index] = instruction_data[10];
         }
+        TEST_CALLEE_ACCOUNT_UPDATES => {
+            msg!("TEST_CALLEE_ACCOUNT_UPDATES");
+
+            if instruction_data.len() < 2 + 2 * std::mem::size_of::<usize>() {
+                return Ok(());
+            }
+
+            let writable = instruction_data[1] != 0;
+            let resize = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
+            let write_offset = usize::from_le_bytes(instruction_data[10..18].try_into().unwrap());
+            let invoke_struction = &instruction_data[18..];
+
+            let account = &accounts[ARGUMENT_INDEX];
+
+            if resize != 0 {
+                account.realloc(resize, false).unwrap();
+            }
+
+            if !invoke_struction.is_empty() {
+                // Invoke another program. With direct mapping, before CPI the callee will update the accounts (incl resizing)
+                // so the pointer may change.
+                let invoked_program_id = accounts[INVOKED_PROGRAM_INDEX].key;
+
+                invoke(
+                    &create_instruction(
+                        *invoked_program_id,
+                        &[
+                            (accounts[MINT_INDEX].key, false, false),
+                            (accounts[ARGUMENT_INDEX].key, writable, false),
+                            (invoked_program_id, false, false),
+                        ],
+                        invoke_struction.to_vec(),
+                    ),
+                    accounts,
+                )
+                .unwrap();
+            }
+
+            if write_offset != 0 {
+                // Ensure we still have access to the correct account
+                account.data.borrow_mut()[write_offset] ^= 0xe5;
+            }
+        }
+        TEST_STACK_HEAP_ZEROED => {
+            msg!("TEST_STACK_HEAP_ZEROED");
+            const MM_STACK_START: u64 = 0x200000000;
+            const MM_HEAP_START: u64 = 0x300000000;
+            const ZEROS: [u8; 256 * 1024] = [0; 256 * 1024];
+            const STACK_FRAME_SIZE: usize = 4096;
+            const MAX_CALL_DEPTH: usize = 64;
+
+            // Check that the heap is always zeroed.
+            //
+            // At this point the code up to here will have allocated some values on the heap. The
+            // bump allocator writes the current heap pointer to the start of the memory region. We
+            // read it to find the slice of unallocated memory and check that it's zeroed. We then
+            // fill this memory with a sentinel value, and in the next nested invocation check that
+            // it's been zeroed as expected.
+            let heap_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let heap = unsafe { slice::from_raw_parts_mut(MM_HEAP_START as *mut u8, heap_len) };
+            let pos = usize::from_le_bytes(heap[0..8].try_into().unwrap())
+                .saturating_sub(MM_HEAP_START as usize);
+            assert!(heap[8..pos] == ZEROS[8..pos], "heap not zeroed");
+            heap[8..pos].fill(42);
+
+            // Check that the stack is zeroed too.
+            //
+            // We don't know in which frame we are now, so we skip a few (10) frames at the start
+            // which might have been used by the current call stack. We check that the memory for
+            // the 10..MAX_CALL_DEPTH frames is zeroed. Then we write a sentinel value, and in the
+            // next nested invocation check that it's been zeroed.
+            let stack =
+                unsafe { slice::from_raw_parts_mut(MM_STACK_START as *mut u8, 0x100000000) };
+            for i in 10..MAX_CALL_DEPTH {
+                let stack = &mut stack[i * STACK_FRAME_SIZE..][..STACK_FRAME_SIZE];
+                assert!(stack == &ZEROS[..STACK_FRAME_SIZE], "stack not zeroed");
+                stack.fill(42);
+            }
+
+            // Recurse to check that the stack and heap are zeroed.
+            //
+            // We recurse until we go over max CPI depth and error out. Stack and heap allocations
+            // are reused across CPI, by going over max depth we ensure that it's impossible to get
+            // non-zeroed regions through execution.
+            invoke(
+                &create_instruction(
+                    *program_id,
+                    &[(program_id, false, false)],
+                    instruction_data.to_vec(),
+                ),
+                accounts,
+            )
+            .unwrap();
+        }
         _ => panic!("unexpected program data"),
     }
 

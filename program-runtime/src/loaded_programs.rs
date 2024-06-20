@@ -5,7 +5,6 @@ use {
     },
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
-    rand::{thread_rng, Rng},
     solana_measure::measure::Measure,
     solana_rbpf::{
         elf::Executable,
@@ -20,13 +19,17 @@ use {
         pubkey::Pubkey,
         saturating_add_assign,
     },
-    std::{
-        collections::{hash_map::Entry, HashMap},
-        fmt::{Debug, Formatter},
+    solana_type_overrides::{
+        rand::{thread_rng, Rng},
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
+        thread,
+    },
+    std::{
+        collections::{hash_map::Entry, HashMap},
+        fmt::{Debug, Formatter},
     },
 };
 
@@ -598,7 +601,7 @@ enum IndexImplementation {
         /// It is possible that multiple TX batches from different slots need different versions of a
         /// program. The deployment slot of a program is only known after load tho,
         /// so all loads for a given program key are serialized.
-        loading_entries: Mutex<HashMap<Pubkey, (Slot, std::thread::ThreadId)>>,
+        loading_entries: Mutex<HashMap<Pubkey, (Slot, thread::ThreadId)>>,
     },
 }
 
@@ -663,6 +666,8 @@ pub struct ProgramCacheForTxBatch {
     /// Pubkey is the address of a program.
     /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a transaction is being executed.
     entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    /// Program entries modified during the transaction batch.
+    modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     slot: Slot,
     pub environments: ProgramRuntimeEnvironments,
     /// Anticipated replacement for `environments` at the next epoch.
@@ -689,6 +694,7 @@ impl ProgramCacheForTxBatch {
     ) -> Self {
         Self {
             entries: HashMap::new(),
+            modified_entries: HashMap::new(),
             slot,
             environments,
             upcoming_environments,
@@ -706,6 +712,7 @@ impl ProgramCacheForTxBatch {
     ) -> Self {
         Self {
             entries: HashMap::new(),
+            modified_entries: HashMap::new(),
             slot,
             environments: cache.get_environments_for_epoch(epoch),
             upcoming_environments: cache.get_upcoming_environments_for_epoch(epoch),
@@ -714,14 +721,6 @@ impl ProgramCacheForTxBatch {
             loaded_missing: false,
             merged_modified: false,
         }
-    }
-
-    pub fn entries(&self) -> &HashMap<Pubkey, Arc<ProgramCacheEntry>> {
-        &self.entries
-    }
-
-    pub fn take_entries(&mut self) -> HashMap<Pubkey, Arc<ProgramCacheEntry>> {
-        std::mem::take(&mut self.entries)
     }
 
     /// Returns the current environments depending on the given epoch
@@ -747,21 +746,39 @@ impl ProgramCacheForTxBatch {
         (self.entries.insert(key, entry.clone()).is_some(), entry)
     }
 
+    /// Store an entry in `modified_entries` for a program modified during the
+    /// transaction batch.
+    pub fn store_modified_entry(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
+        self.modified_entries.insert(key, entry);
+    }
+
+    /// Drain the program cache's modified entries, returning the owned
+    /// collection.
+    pub fn drain_modified_entries(&mut self) -> HashMap<Pubkey, Arc<ProgramCacheEntry>> {
+        std::mem::take(&mut self.modified_entries)
+    }
+
     pub fn find(&self, key: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
-        self.entries.get(key).map(|entry| {
-            if entry.is_implicit_delay_visibility_tombstone(self.slot) {
-                // Found a program entry on the current fork, but it's not effective
-                // yet. It indicates that the program has delayed visibility. Return
-                // the tombstone to reflect that.
-                Arc::new(ProgramCacheEntry::new_tombstone(
-                    entry.deployment_slot,
-                    entry.account_owner,
-                    ProgramCacheEntryType::DelayVisibility,
-                ))
-            } else {
-                entry.clone()
-            }
-        })
+        // First lookup the cache of the programs modified by the current
+        // transaction. If not found, lookup the cache of the cache of the
+        // programs that are loaded for the transaction batch.
+        self.modified_entries
+            .get(key)
+            .or(self.entries.get(key))
+            .map(|entry| {
+                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
+                    // Found a program entry on the current fork, but it's not effective
+                    // yet. It indicates that the program has delayed visibility. Return
+                    // the tombstone to reflect that.
+                    Arc::new(ProgramCacheEntry::new_tombstone(
+                        entry.deployment_slot,
+                        entry.account_owner,
+                        ProgramCacheEntryType::DelayVisibility,
+                    ))
+                } else {
+                    entry.clone()
+                }
+            })
     }
 
     pub fn slot(&self) -> Slot {
@@ -1108,7 +1125,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         if let Entry::Vacant(entry) = entry {
                             entry.insert((
                                 loaded_programs_for_tx_batch.slot,
-                                std::thread::current().id(),
+                                thread::current().id(),
                             ));
                             cooperative_loading_task = Some((*key, *usage_count));
                         }
@@ -1142,7 +1159,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 loading_entries, ..
             } => {
                 let loading_thread = loading_entries.get_mut().unwrap().remove(&key);
-                debug_assert_eq!(loading_thread, Some((slot, std::thread::current().id())));
+                debug_assert_eq!(loading_thread, Some((slot, thread::current().id())));
                 // Check that it will be visible to our own fork once inserted
                 if loaded_program.deployment_slot > self.latest_root_slot
                     && !matches!(

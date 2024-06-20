@@ -2,13 +2,15 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(target_arch = "wasm32")]
+use crate::wasm_bindgen;
 #[cfg(test)]
 use arbitrary::Arbitrary;
 #[cfg(feature = "borsh")]
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use {
-    crate::{decode_error::DecodeError, hash::hashv, wasm_bindgen},
-    bytemuck::{Pod, Zeroable},
+    crate::{decode_error::DecodeError, hash::hashv},
+    bytemuck_derive::{Pod, Zeroable},
     num_derive::{FromPrimitive, ToPrimitive},
     std::{
         convert::{Infallible, TryFrom},
@@ -68,7 +70,7 @@ impl From<u64> for PubkeyError {
 /// [ed25519]: https://ed25519.cr.yp.to/
 /// [pdas]: https://solana.com/docs/core/cpi#program-derived-addresses
 /// [`Keypair`]: https://docs.rs/solana-sdk/latest/solana_sdk/signer/keypair/struct.Keypair.html
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[repr(transparent)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(

@@ -5,6 +5,7 @@ pub mod serialization;
 pub mod syscalls;
 
 use {
+    solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_measure::measure::Measure,
     solana_program_runtime::{
         ic_logger_msg, ic_msg,
@@ -14,13 +15,13 @@ use {
             DELAY_VISIBILITY_SLOT_OFFSET,
         },
         log_collector::LogCollector,
+        mem_pool::VmMemoryPool,
         stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_rbpf::{
-        aligned_memory::AlignedMemory,
         declare_builtin_function,
-        ebpf::{self, HOST_ALIGN, MM_HEAP_START},
+        ebpf::{self, MM_HEAP_START},
         elf::Executable,
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryCowCallback, MemoryMapping, MemoryRegion},
@@ -46,18 +47,18 @@ use {
         system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
         transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
-    std::{
-        cell::RefCell,
-        mem,
-        rc::Rc,
-        sync::{atomic::Ordering, Arc},
-    },
+    solana_type_overrides::sync::{atomic::Ordering, Arc},
+    std::{cell::RefCell, mem, rc::Rc},
     syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
 };
 
 pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
 pub const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
 pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
+
+thread_local! {
+    pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn load_program_from_bytes(
@@ -152,7 +153,7 @@ macro_rules! deploy_program {
             environments.program_runtime_v1.clone(),
             true,
         )?;
-        if let Some(old_entry) = $invoke_context.find_program_in_cache(&$program_id) {
+        if let Some(old_entry) = $invoke_context.program_cache_for_tx_batch.find(&$program_id) {
             executor.tx_usage_counter.store(
                 old_entry.tx_usage_counter.load(Ordering::Relaxed),
                 Ordering::Relaxed
@@ -165,7 +166,7 @@ macro_rules! deploy_program {
         $drop
         load_program_metrics.program_id = $program_id.to_string();
         load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
-        $invoke_context.programs_modified_by_tx.replenish($program_id, Arc::new(executor));
+        $invoke_context.program_cache_for_tx_batch.store_modified_entry($program_id, Arc::new(executor));
     }};
 }
 
@@ -244,8 +245,8 @@ pub fn create_vm<'a, 'b>(
     regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
     invoke_context: &'a mut InvokeContext<'b>,
-    stack: &mut AlignedMemory<HOST_ALIGN>,
-    heap: &mut AlignedMemory<HOST_ALIGN>,
+    stack: &mut [u8],
+    heap: &mut [u8],
 ) -> Result<EbpfVm<'a, InvokeContext<'b>>, Box<dyn std::error::Error>> {
     let stack_size = stack.len();
     let heap_size = heap.len();
@@ -299,24 +300,23 @@ macro_rules! create_vm {
             heap_size,
             invoke_context.get_compute_budget().heap_cost,
         ));
-        let mut allocations = None;
         let $vm = heap_cost_result.and_then(|_| {
-            let mut stack = solana_rbpf::aligned_memory::AlignedMemory::<
-                { solana_rbpf::ebpf::HOST_ALIGN },
-            >::zero_filled(stack_size);
-            let mut heap = solana_rbpf::aligned_memory::AlignedMemory::<
-                { solana_rbpf::ebpf::HOST_ALIGN },
-            >::zero_filled(usize::try_from(heap_size).unwrap());
+            let (mut stack, mut heap) = $crate::MEMORY_POOL
+                .with_borrow_mut(|pool| (pool.get_stack(stack_size), pool.get_heap(heap_size)));
             let vm = $crate::create_vm(
                 $program,
                 $regions,
                 $accounts_metadata,
                 $invoke_context,
-                &mut stack,
-                &mut heap,
+                stack
+                    .as_slice_mut()
+                    .get_mut(..stack_size)
+                    .expect("invalid stack size"),
+                heap.as_slice_mut()
+                    .get_mut(..heap_size as usize)
+                    .expect("invalid heap size"),
             );
-            allocations = Some((stack, heap));
-            vm
+            vm.map(|vm| (vm, stack, heap))
         });
     };
 }
@@ -324,7 +324,7 @@ macro_rules! create_vm {
 #[macro_export]
 macro_rules! mock_create_vm {
     ($vm:ident, $additional_regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
-        let loader = std::sync::Arc::new(BuiltinProgram::new_mock());
+        let loader = solana_type_overrides::sync::Arc::new(BuiltinProgram::new_mock());
         let function_registry = solana_rbpf::program::FunctionRegistry::default();
         let executable = solana_rbpf::elf::Executable::<InvokeContext>::from_text_bytes(
             &[0x95, 0, 0, 0, 0, 0, 0, 0],
@@ -343,13 +343,14 @@ macro_rules! mock_create_vm {
             $accounts_metadata,
             $invoke_context,
         );
+        let $vm = $vm.map(|(vm, _, _)| vm);
     };
 }
 
 fn create_memory_mapping<'a, 'b, C: ContextObject>(
     executable: &'a Executable<C>,
-    stack: &'b mut AlignedMemory<{ HOST_ALIGN }>,
-    heap: &'b mut AlignedMemory<{ HOST_ALIGN }>,
+    stack: &'b mut [u8],
+    heap: &'b mut [u8],
     additional_regions: Vec<MemoryRegion>,
     cow_cb: Option<MemoryCowCallback>,
 ) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
@@ -358,7 +359,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     let regions: Vec<MemoryRegion> = vec![
         executable.get_ro_region(),
         MemoryRegion::new_writable_gapped(
-            stack.as_slice_mut(),
+            stack,
             ebpf::MM_STACK_START,
             if !sbpf_version.dynamic_stack_frames() && config.enable_stack_frame_gaps {
                 config.stack_frame_size as u64
@@ -366,7 +367,7 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
                 0
             },
         ),
-        MemoryRegion::new_writable(heap.as_slice_mut(), MM_HEAP_START),
+        MemoryRegion::new_writable(heap, MM_HEAP_START),
     ]
     .into_iter()
     .chain(additional_regions)
@@ -437,7 +438,8 @@ pub fn process_instruction_inner(
 
     let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
     let executor = invoke_context
-        .find_program_in_cache(program_account.get_key())
+        .program_cache_for_tx_batch
+        .find(program_account.get_key())
         .ok_or_else(|| {
             ic_logger_msg!(log_collector, "Program is not cached");
             InstructionError::InvalidAccountData
@@ -1109,14 +1111,16 @@ fn process_loader_upgradeable_instruction(
                                 &log_collector,
                             )?;
                             let clock = invoke_context.get_sysvar_cache().get_clock()?;
-                            invoke_context.programs_modified_by_tx.replenish(
-                                program_key,
-                                Arc::new(ProgramCacheEntry::new_tombstone(
-                                    clock.slot,
-                                    ProgramCacheEntryOwner::LoaderV3,
-                                    ProgramCacheEntryType::Closed,
-                                )),
-                            );
+                            invoke_context
+                                .program_cache_for_tx_batch
+                                .store_modified_entry(
+                                    program_key,
+                                    Arc::new(ProgramCacheEntry::new_tombstone(
+                                        clock.slot,
+                                        ProgramCacheEntryOwner::LoaderV3,
+                                        ProgramCacheEntryType::Closed,
+                                    )),
+                                );
                         }
                         _ => {
                             ic_logger_msg!(log_collector, "Invalid Program account");
@@ -1388,7 +1392,7 @@ fn execute<'a, 'b: 'a>(
     let execution_result = {
         let compute_meter_prev = invoke_context.get_remaining();
         create_vm!(vm, executable, regions, accounts_metadata, invoke_context);
-        let mut vm = match vm {
+        let (mut vm, stack, heap) = match vm {
             Ok(info) => info,
             Err(e) => {
                 ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", e);
@@ -1399,6 +1403,12 @@ fn execute<'a, 'b: 'a>(
 
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
+        MEMORY_POOL.with_borrow_mut(|memory_pool| {
+            memory_pool.put_stack(stack);
+            memory_pool.put_heap(heap);
+            debug_assert!(memory_pool.stack_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+            debug_assert!(memory_pool.heap_len() <= MAX_INSTRUCTION_STACK_DEPTH);
+        });
         drop(vm);
         if let Some(execute_time) = invoke_context.execute_time.as_mut() {
             execute_time.stop();
@@ -1543,11 +1553,11 @@ pub mod test_utils {
                     false,
                 ) {
                     invoke_context
-                        .programs_modified_by_tx
+                        .program_cache_for_tx_batch
                         .set_slot_for_tests(DELAY_VISIBILITY_SLOT_OFFSET);
                     invoke_context
-                        .programs_modified_by_tx
-                        .replenish(*pubkey, Arc::new(loaded_program));
+                        .program_cache_for_tx_batch
+                        .store_modified_entry(*pubkey, Arc::new(loaded_program));
                 }
             }
         }
@@ -3763,7 +3773,7 @@ mod tests {
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
-            .programs_modified_by_tx
+            .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
 
         assert_matches!(
@@ -3772,7 +3782,7 @@ mod tests {
         );
 
         let updated_program = invoke_context
-            .programs_modified_by_tx
+            .program_cache_for_tx_batch
             .find(&program_id)
             .expect("Didn't find upgraded program in the cache");
 
@@ -3807,7 +3817,7 @@ mod tests {
             latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
-            .programs_modified_by_tx
+            .program_cache_for_tx_batch
             .replenish(program_id, Arc::new(program));
 
         let program_id2 = Pubkey::new_unique();
@@ -3817,7 +3827,7 @@ mod tests {
         );
 
         let program2 = invoke_context
-            .programs_modified_by_tx
+            .program_cache_for_tx_batch
             .find(&program_id2)
             .expect("Didn't find upgraded program in the cache");
 

@@ -7985,7 +7985,7 @@ fn test_reserved_account_keys() {
 
     assert_eq!(
         bank.get_reserved_account_keys().len(),
-        29,
+        30,
         "after activating the new feature, bank should have new active reserved keys"
     );
 }
@@ -9116,10 +9116,7 @@ fn test_epoch_schedule_from_genesis_config() {
         Arc::default(),
     ));
 
-    assert_eq!(
-        &bank.transaction_processor.epoch_schedule,
-        &genesis_config.epoch_schedule
-    );
+    assert_eq!(bank.epoch_schedule(), &genesis_config.epoch_schedule);
 }
 
 fn check_stake_vote_account_validity<F>(check_owner_change: bool, load_vote_and_stake_accounts: F)

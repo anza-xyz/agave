@@ -38,7 +38,6 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
-        epoch_schedule::EpochSchedule,
         feature_set::{
             include_loaded_accounts_data_size_in_fee_calculation,
             remove_rounding_in_fee_calculation, FeatureSet,
@@ -54,16 +53,13 @@ use {
         transaction::{self, SanitizedTransaction, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
+    solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         cell::RefCell,
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
-        sync::{
-            atomic::Ordering::{self, Relaxed},
-            Arc, RwLock,
-        },
     },
 };
 
@@ -132,6 +128,8 @@ pub struct TransactionProcessingEnvironment<'a> {
     pub epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: Arc<FeatureSet>,
+    /// Fee structure to use for assessing transaction fees.
+    pub fee_structure: Option<&'a FeeStructure>,
     /// Lamports per signature to charge per transaction.
     pub lamports_per_signature: u64,
     /// Rent collector to use for the transaction batch.
@@ -146,16 +144,10 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Bank epoch
     epoch: Epoch,
 
-    /// initialized from genesis
-    pub epoch_schedule: EpochSchedule,
-
-    /// Transaction fee structure
-    pub fee_structure: FeeStructure,
-
     /// SysvarCache is a collection of system variables that are
     /// accessible from on chain programs. It is passed to SVM from
     /// client code (e.g. Bank) and forwarded to the MessageProcessor.
-    pub sysvar_cache: RwLock<SysvarCache>,
+    sysvar_cache: RwLock<SysvarCache>,
 
     /// Programs required for transaction batch processing
     pub program_cache: Arc<RwLock<ProgramCache<FG>>>,
@@ -169,8 +161,6 @@ impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
         f.debug_struct("TransactionBatchProcessor")
             .field("slot", &self.slot)
             .field("epoch", &self.epoch)
-            .field("epoch_schedule", &self.epoch_schedule)
-            .field("fee_structure", &self.fee_structure)
             .field("sysvar_cache", &self.sysvar_cache)
             .field("program_cache", &self.program_cache)
             .finish()
@@ -182,8 +172,6 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
         Self {
             slot: Slot::default(),
             epoch: Epoch::default(),
-            epoch_schedule: EpochSchedule::default(),
-            fee_structure: FeeStructure::default(),
             sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache: Arc::new(RwLock::new(ProgramCache::new(
                 Slot::default(),
@@ -195,17 +183,10 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
 }
 
 impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
-    pub fn new(
-        slot: Slot,
-        epoch: Epoch,
-        epoch_schedule: EpochSchedule,
-        builtin_program_ids: HashSet<Pubkey>,
-    ) -> Self {
+    pub fn new(slot: Slot, epoch: Epoch, builtin_program_ids: HashSet<Pubkey>) -> Self {
         Self {
             slot,
             epoch,
-            epoch_schedule,
-            fee_structure: FeeStructure::default(),
             sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
             builtin_program_ids: RwLock::new(builtin_program_ids),
@@ -216,8 +197,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         Self {
             slot,
             epoch,
-            epoch_schedule: self.epoch_schedule.clone(),
-            fee_structure: self.fee_structure.clone(),
             sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache: self.program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
@@ -232,6 +211,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .try_read()
             .ok()
             .map(|cache| cache.get_environments_for_epoch(epoch))
+    }
+
+    pub fn sysvar_cache(&self) -> RwLockReadGuard<SysvarCache> {
+        self.sysvar_cache.read().unwrap()
     }
 
     /// Main entrypoint to the SVM.
@@ -252,6 +235,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sanitized_txs,
             check_results,
             &environment.feature_set,
+            environment
+                .fee_structure
+                .unwrap_or(&FeeStructure::default()),
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
@@ -339,7 +325,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         compute_budget,
                         &mut execute_timings,
                         &mut error_metrics,
-                        &program_cache_for_tx_batch.borrow(),
+                        &mut program_cache_for_tx_batch.borrow_mut(),
                         environment,
                         config,
                     );
@@ -415,6 +401,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
         check_results: Vec<TransactionCheckResult>,
         feature_set: &FeatureSet,
+        fee_structure: &FeeStructure,
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionValidationResult> {
@@ -433,6 +420,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 callbacks,
                                 message,
                                 feature_set,
+                                fee_structure,
                                 lamports_per_signature,
                                 rent_collector,
                                 error_counters,
@@ -469,6 +457,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         callbacks: &CB,
         message: &SanitizedMessage,
         feature_set: &FeatureSet,
+        fee_structure: &FeeStructure,
         lamports_per_signature: u64,
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
@@ -488,7 +477,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         )
         .rent_amount;
 
-        let fee_details = self.fee_structure.calculate_fee_details(
+        let fee_details = fee_structure.calculate_fee_details(
             message,
             lamports_per_signature,
             &process_compute_budget_instructions(message.program_instructions_iter())
@@ -589,7 +578,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &program_cache.get_environments_for_epoch(self.epoch),
                         &key,
                         self.slot,
-                        &self.epoch_schedule,
                         false,
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
@@ -637,10 +625,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         callbacks: &CB,
         upcoming_feature_set: &FeatureSet,
         compute_budget: &ComputeBudget,
+        slot_index: u64,
+        slots_in_epoch: u64,
     ) {
         // Recompile loaded programs one at a time before the next epoch hits
-        let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
-        let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
         let slots_in_recompilation_phase =
             (solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT as u64)
                 .min(slots_in_epoch)
@@ -661,15 +649,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &environments_for_epoch,
                     &key,
                     self.slot,
-                    &self.epoch_schedule,
                     false,
                 ) {
-                    recompiled
-                        .tx_usage_counter
-                        .fetch_add(program_to_recompile.tx_usage_counter.load(Relaxed), Relaxed);
-                    recompiled
-                        .ix_usage_counter
-                        .fetch_add(program_to_recompile.ix_usage_counter.load(Relaxed), Relaxed);
+                    recompiled.tx_usage_counter.fetch_add(
+                        program_to_recompile
+                            .tx_usage_counter
+                            .load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    recompiled.ix_usage_counter.fetch_add(
+                        program_to_recompile
+                            .ix_usage_counter
+                            .load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
                     let mut program_cache = self.program_cache.write().unwrap();
                     program_cache.assign_program(key, recompiled);
                 }
@@ -722,7 +715,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         compute_budget: ComputeBudget,
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
-        program_cache_for_tx_batch: &ProgramCacheForTxBatch,
+        program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
     ) -> TransactionExecutionResult {
@@ -751,7 +744,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
             rent.clone(),
-            compute_budget.max_invoke_stack_height,
+            compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
         #[cfg(debug_assertions)]
@@ -775,12 +768,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let lamports_per_signature = environment.lamports_per_signature;
 
         let mut executed_units = 0u64;
-        let mut programs_modified_by_tx = ProgramCacheForTxBatch::new(
-            self.slot,
-            program_cache_for_tx_batch.environments.clone(),
-            program_cache_for_tx_batch.upcoming_environments.clone(),
-            program_cache_for_tx_batch.latest_root_epoch,
-        );
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
 
         let mut invoke_context = InvokeContext::new(
@@ -796,7 +783,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ),
             log_collector.clone(),
             compute_budget,
-            &mut programs_modified_by_tx,
         );
 
         let mut process_message_time = Measure::start("process_message_time");
@@ -903,7 +889,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 executed_units,
                 accounts_data_len_delta,
             },
-            programs_modified_by_tx: programs_modified_by_tx.take_entries(),
+            programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
         }
     }
 
@@ -1010,6 +996,7 @@ mod tests {
             bpf_loader,
             bpf_loader_upgradeable::{self, UpgradeableLoaderState},
             compute_budget::ComputeBudgetInstruction,
+            epoch_schedule::EpochSchedule,
             feature_set::FeatureSet,
             fee::FeeDetails,
             fee_calculator::FeeCalculator,
@@ -1149,7 +1136,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
@@ -1179,7 +1166,7 @@ mod tests {
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
-            &program_cache_for_tx_batch,
+            &mut program_cache_for_tx_batch,
             &processing_environment,
             &processing_config,
         );
@@ -1201,7 +1188,7 @@ mod tests {
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
-            &program_cache_for_tx_batch,
+            &mut program_cache_for_tx_batch,
             &processing_environment,
             &processing_config,
         );
@@ -1231,7 +1218,7 @@ mod tests {
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
-            &program_cache_for_tx_batch,
+            &mut program_cache_for_tx_batch,
             &processing_environment,
             &processing_config,
         );
@@ -1271,7 +1258,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
@@ -1307,7 +1294,7 @@ mod tests {
             ComputeBudget::default(),
             &mut ExecuteTimings::default(),
             &mut error_metrics,
-            &program_cache_for_tx_batch,
+            &mut program_cache_for_tx_batch,
             &TransactionProcessingEnvironment::default(),
             &processing_config,
         );
@@ -1856,12 +1843,7 @@ mod tests {
     #[test]
     fn fast_concur_test() {
         let mut mock_bank = MockBankCallback::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::new(
-            5,
-            5,
-            EpochSchedule::default(),
-            HashSet::new(),
-        );
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::new(5, 5, HashSet::new());
         batch_processor.program_cache.write().unwrap().fork_graph =
             Some(Arc::new(RwLock::new(TestForkGraph {})));
 
@@ -1998,6 +1980,7 @@ mod tests {
             &mock_bank,
             &message,
             &FeatureSet::default(),
+            &FeeStructure::default(),
             lamports_per_signature,
             &rent_collector,
             &mut error_counters,
@@ -2056,6 +2039,7 @@ mod tests {
             &mock_bank,
             &message,
             &FeatureSet::default(),
+            &FeeStructure::default(),
             lamports_per_signature,
             &rent_collector,
             &mut error_counters,
@@ -2091,6 +2075,7 @@ mod tests {
             &mock_bank,
             &message,
             &FeatureSet::default(),
+            &FeeStructure::default(),
             lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
@@ -2119,6 +2104,7 @@ mod tests {
             &mock_bank,
             &message,
             &FeatureSet::default(),
+            &FeeStructure::default(),
             lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
@@ -2151,6 +2137,7 @@ mod tests {
             &mock_bank,
             &message,
             &FeatureSet::default(),
+            &FeeStructure::default(),
             lamports_per_signature,
             &rent_collector,
             &mut error_counters,
@@ -2181,6 +2168,7 @@ mod tests {
             &mock_bank,
             &message,
             &FeatureSet::default(),
+            &FeeStructure::default(),
             lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
@@ -2232,6 +2220,7 @@ mod tests {
                 &mock_bank,
                 &message,
                 &feature_set,
+                &FeeStructure::default(),
                 lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2277,6 +2266,7 @@ mod tests {
                 &mock_bank,
                 &message,
                 &feature_set,
+                &FeeStructure::default(),
                 lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
