@@ -54,7 +54,10 @@ use {
         ancient_append_vecs::{
             get_ancient_append_vec_capacity, is_ancient, AccountsToStore, StorageSelector,
         },
-        append_vec::{aligned_stored_size, APPEND_VEC_MMAPPED_FILES_OPEN, STORE_META_OVERHEAD},
+        append_vec::{
+            aligned_stored_size, APPEND_VEC_MMAPPED_FILES_DIRTY, APPEND_VEC_MMAPPED_FILES_OPEN,
+            STORE_META_OVERHEAD,
+        },
         cache_hash_data::{
             CacheHashData, CacheHashDataFileReference, DeletionPolicy as CacheHashDeletionPolicy,
         },
@@ -1112,7 +1115,12 @@ impl AccountStorageEntry {
     }
 
     /// open a new instance of the storage that is readonly
-    fn reopen_as_readonly(&self) -> Option<Self> {
+    fn reopen_as_readonly(&self, storage_access: StorageAccess) -> Option<Self> {
+        if storage_access != StorageAccess::File {
+            // if we are only using mmap, then no reason to re-open
+            return None;
+        }
+
         let count_and_status = self.count_and_status.lock_write();
         self.accounts.reopen_as_readonly().map(|accounts| Self {
             id: self.id,
@@ -1480,7 +1488,6 @@ pub struct AccountsDb {
     accounts_file_provider: AccountsFileProvider,
 
     /// method to use for accessing storages
-    #[allow(dead_code)]
     storage_access: StorageAccess,
 
     /// this will live here until the feature for partitioned epoch rewards is activated.
@@ -1691,7 +1698,7 @@ impl SplitAncientStorages {
                     i += 1;
                     if treat_as_ancient(storage) {
                         // even though the slot is in range of being an ancient append vec, if it isn't actually a large append vec,
-                        // then we are better off treating all these slots as normally cachable to reduce work in dedup.
+                        // then we are better off treating all these slots as normally cacheable to reduce work in dedup.
                         // Since this one is large, for the moment, this one becomes the highest slot where we want to individually cache files.
                         len_truncate = i;
                     }
@@ -1905,6 +1912,11 @@ impl LatestAccountsIndexRootsStats {
                 "append_vecs_open",
                 APPEND_VEC_MMAPPED_FILES_OPEN.load(Ordering::Relaxed) as i64,
                 i64
+            ),
+            (
+                "append_vecs_dirty",
+                APPEND_VEC_MMAPPED_FILES_DIRTY.load(Ordering::Relaxed),
+                i64
             )
         );
 
@@ -1942,6 +1954,11 @@ pub(crate) struct ShrinkAncientStats {
     pub(crate) slots_considered: AtomicU64,
     pub(crate) ancient_scanned: AtomicU64,
     pub(crate) bytes_ancient_created: AtomicU64,
+    pub(crate) bytes_from_must_shrink: AtomicU64,
+    pub(crate) bytes_from_smallest_storages: AtomicU64,
+    pub(crate) many_ref_slots_skipped: AtomicU64,
+    pub(crate) slots_cannot_move_count: AtomicU64,
+    pub(crate) many_refs_old_alive: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -2229,6 +2246,31 @@ impl ShrinkAncientStats {
             (
                 "bytes_ancient_created",
                 self.bytes_ancient_created.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "bytes_from_must_shrink",
+                self.bytes_from_must_shrink.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "bytes_from_smallest_storages",
+                self.bytes_from_smallest_storages.swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "many_ref_slots_skipped",
+                self.many_ref_slots_skipped.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "slots_cannot_move_count",
+                self.slots_cannot_move_count.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "many_refs_old_alive",
+                self.many_refs_old_alive.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -4016,8 +4058,6 @@ impl AccountsDb {
         let (_, drop_storage_entries_elapsed) = measure_us!(drop(dead_storages));
         time.stop();
 
-        self.reopen_storage_as_readonly_shrinking_in_progress_ok(shrink_collect.slot);
-
         self.stats
             .dropped_stores
             .fetch_add(dead_storages_len as u64, Ordering::Relaxed);
@@ -4133,6 +4173,8 @@ impl AccountsDb {
                 Some(shrink_in_progress),
                 false,
             );
+
+            self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
         }
 
         Self::update_shrink_stats(&self.shrink_stats, stats_sub, true);
@@ -4216,7 +4258,7 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
-            if let Some(new_storage) = storage.reopen_as_readonly() {
+            if let Some(new_storage) = storage.reopen_as_readonly(self.storage_access) {
                 // consider here the race condition of tx processing having looked up something in the index,
                 // which could return (slot, append vec id). We want the lookup for the storage to get a storage
                 // that works whether the lookup occurs before or after the replace call here.
@@ -5756,7 +5798,7 @@ impl AccountsDb {
 
     /// This should only be called after the `Bank::drop()` runs in bank.rs, See BANK_DROP_SAFETY
     /// comment below for more explanation.
-    ///   * `is_serialized_with_abs` - indicates whehter this call runs sequentially with all other
+    ///   * `is_serialized_with_abs` - indicates whether this call runs sequentially with all other
     ///        accounts_db relevant calls, such as shrinking, purging etc., in account background
     ///        service.
     pub fn purge_slot(&self, slot: Slot, bank_id: BankId, is_serialized_with_abs: bool) {
@@ -6003,7 +6045,6 @@ impl AccountsDb {
         );
     }
 
-    #[allow(clippy::needless_collect)]
     fn purge_slots<'a>(&self, slots: impl Iterator<Item = &'a Slot> + Clone) {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
@@ -6141,7 +6182,7 @@ impl AccountsDb {
         // allocate a buffer on the stack that's big enough
         // to hold a token account or a stake account
         const META_SIZE: usize = 8 /* lamports */ + 8 /* rent_epoch */ + 1 /* executable */ + 32 /* owner */ + 32 /* pubkey */;
-        const DATA_SIZE: usize = 200; // stake acounts are 200 B and token accounts are 165-182ish B
+        const DATA_SIZE: usize = 200; // stake accounts are 200 B and token accounts are 165-182ish B
         const BUFFER_SIZE: usize = META_SIZE + DATA_SIZE;
         let mut buffer = SmallVec::<[u8; BUFFER_SIZE]>::new();
 
@@ -7998,6 +8039,7 @@ impl AccountsDb {
         // It is not possible to identify ancient append vecs when we pack, so no check for ancient when we are not appending.
         let total_bytes = if self.create_ancient_storage == CreateAncientStorage::Append
             && is_ancient(&store.accounts)
+            && store.accounts.can_append()
         {
             store.written_bytes()
         } else {
@@ -8908,7 +8950,7 @@ impl AccountsDb {
                 // these write directly to disk, so the more threads, the better
                 num_cpus::get()
             } else {
-                // seems to be a good hueristic given varying # cpus for in-mem disk index
+                // seems to be a good heuristic given varying # cpus for in-mem disk index
                 8
             };
             let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot

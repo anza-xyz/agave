@@ -111,6 +111,8 @@
 
 #![cfg(feature = "full")]
 
+#[cfg(target_arch = "wasm32")]
+use crate::wasm_bindgen;
 use {
     crate::{
         hash::Hash,
@@ -124,7 +126,6 @@ use {
         short_vec,
         signature::{Signature, SignerError},
         signers::Signers,
-        wasm_bindgen,
     },
     serde::Serialize,
     solana_program::{system_instruction::SystemInstruction, system_program},
@@ -167,7 +168,7 @@ pub type Result<T> = result::Result<T, TransactionError>;
 /// if the caller has knowledge that the first account of the constructed
 /// transaction's `Message` is both a signer and the expected fee-payer, then
 /// redundantly specifying the fee-payer is not strictly required.
-#[wasm_bindgen]
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
@@ -184,11 +185,29 @@ pub struct Transaction {
     /// [`MessageHeader`]: crate::message::MessageHeader
     /// [`num_required_signatures`]: crate::message::MessageHeader::num_required_signatures
     // NOTE: Serialization-related changes must be paired with the direct read at sigverify.
-    #[wasm_bindgen(skip)]
     #[serde(with = "short_vec")]
     pub signatures: Vec<Signature>,
 
     /// The message to sign.
+    pub message: Message,
+}
+
+/// wasm-bindgen version of the Transaction struct.
+/// This duplication is required until https://github.com/rustwasm/wasm-bindgen/issues/3671
+/// is fixed. This must not diverge from the regular non-wasm Transaction struct.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "FZtncnS1Xk8ghHfKiXE5oGiUbw2wJhmfXQuNgQR3K6Mc")
+)]
+#[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    #[wasm_bindgen(skip)]
+    #[serde(with = "short_vec")]
+    pub signatures: Vec<Signature>,
+
     #[wasm_bindgen(skip)]
     pub message: Message,
 }
@@ -1060,13 +1079,21 @@ impl Transaction {
             return Err(TransactionError::InvalidAccountIndex);
         }
 
-        signers
+        for (index, account_key) in self
+            .message
+            .account_keys
             .iter()
             .enumerate()
-            .for_each(|(i, (pubkey, signature))| {
-                self.signatures[i] = *signature;
-                self.message.account_keys[i] = *pubkey;
-            });
+            .take(num_required_signatures)
+        {
+            if let Some((_pubkey, signature)) =
+                signers.iter().find(|(key, _signature)| account_key == key)
+            {
+                self.signatures[index] = *signature
+            } else {
+                return Err(TransactionError::InvalidAccountIndex);
+            }
+        }
 
         self.verify()
     }
@@ -1661,5 +1688,37 @@ mod tests {
         let tx = instructions_to_tx(&[], Box::new(vec![signer]));
 
         assert!(tx.is_signed());
+    }
+
+    #[test]
+    fn test_replace_signatures() {
+        let program_id = Pubkey::default();
+        let keypair0 = Keypair::new();
+        let keypair1 = Keypair::new();
+        let pubkey0 = keypair0.pubkey();
+        let pubkey1 = keypair1.pubkey();
+        let ix = Instruction::new_with_bincode(
+            program_id,
+            &0,
+            vec![
+                AccountMeta::new(pubkey0, true),
+                AccountMeta::new(pubkey1, true),
+            ],
+        );
+        let message = Message::new(&[ix], Some(&pubkey0));
+        let expected_account_keys = message.account_keys.clone();
+        let mut tx = Transaction::new_unsigned(message);
+        tx.sign(&[&keypair0, &keypair1], Hash::new_unique());
+
+        let signature0 = keypair0.sign_message(&tx.message_data());
+        let signature1 = keypair1.sign_message(&tx.message_data());
+
+        // Replace signatures with order swapped
+        tx.replace_signatures(&[(pubkey1, signature1), (pubkey0, signature0)])
+            .unwrap();
+        // Order of account_keys should not change
+        assert_eq!(tx.message.account_keys, expected_account_keys);
+        // Order of signatures should match original account_keys list
+        assert_eq!(tx.signatures, &[signature0, signature1]);
     }
 }

@@ -101,6 +101,22 @@ impl Display for SlotBounds<'_> {
     }
 }
 
+#[derive(Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotBankHash {
+    pub slot: Slot,
+    pub hash: String,
+}
+
+impl VerboseDisplay for SlotBankHash {}
+impl QuietDisplay for SlotBankHash {}
+
+impl Display for SlotBankHash {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "Bank hash for slot {}: {}", self.slot, self.hash)
+    }
+}
+
 fn writeln_entry(f: &mut dyn fmt::Write, i: usize, entry: &CliEntry, prefix: &str) -> fmt::Result {
     writeln!(
         f,
@@ -656,7 +672,7 @@ impl AccountsScanner {
 
         match &self.config.mode {
             AccountsOutputMode::All => {
-                self.bank.scan_all_accounts(scan_func).unwrap();
+                self.bank.scan_all_accounts(scan_func, true).unwrap();
             }
             AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
                 if let Some((account, slot)) = self
@@ -676,7 +692,7 @@ impl AccountsScanner {
             }),
             AccountsOutputMode::Program(program_pubkey) => self
                 .bank
-                .get_program_accounts(program_pubkey, &ScanConfig::default())
+                .get_program_accounts(program_pubkey, &ScanConfig::new(false))
                 .unwrap()
                 .iter()
                 .filter(|(_, account)| self.should_process_account(account))

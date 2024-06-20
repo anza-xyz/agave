@@ -50,6 +50,7 @@ solana-accounts-db = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-bucket-map = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-config-program = { workspace = true }
 solana-cost-model = { workspace = true }
@@ -66,9 +67,12 @@ solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
 solana-system-program = { workspace = true }
+solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+solana-zk-elgamal-proof-program = { workspace = true }
+solana-zk-sdk = { workspace = true }
 solana-zk-token-proof-program = { workspace = true }
 solana-zk-token-sdk = { workspace = true }
 static_assertions = { workspace = true }
@@ -95,6 +99,7 @@ solana-logger = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
@@ -110,6 +115,7 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
+    "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",

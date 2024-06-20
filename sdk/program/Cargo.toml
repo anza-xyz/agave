@@ -14,12 +14,12 @@ rust-version = "1.75.0" # solana platform-tools rust version
 [dependencies]
 bincode = { workspace = true }
 blake3 = { workspace = true, features = ["digest", "traits-preview"] }
-borsh = { workspace = true }
-borsh0-10 = { package = "borsh", version = "0.10.3" }
+borsh = { workspace = true, optional = true }
+borsh0-10 = { package = "borsh", version = "0.10.3", optional = true }
 bs58 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
-bytemuck = { workspace = true, features = ["derive"] }
-itertools =  { workspace = true }
+bytemuck = { workspace = true }
+bytemuck_derive = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 memoffset = { workspace = true }
@@ -53,14 +53,13 @@ ark-serialize = { workspace = true }
 base64 = { workspace = true, features = ["alloc", "std"] }
 bitflags = { workspace = true }
 curve25519-dalek = { workspace = true }
-itertools = { workspace = true }
 libsecp256k1 = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
-wasm-bindgen = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dev-dependencies]
 arbitrary = { workspace = true, features = ["derive"] }
+libsecp256k1 = { workspace = true, features = ["hmac"] } # used by doctests
 solana-logger = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -68,6 +67,7 @@ console_error_panic_hook = { workspace = true }
 console_log = { workspace = true }
 getrandom = { workspace = true, features = ["js", "wasm-bindgen"] }
 js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
 
 [target.'cfg(not(target_pointer_width = "64"))'.dependencies]
 parking_lot = { workspace = true }
@@ -76,14 +76,12 @@ parking_lot = { workspace = true }
 anyhow = { workspace = true }
 array-bytes = { workspace = true }
 assert_matches = { workspace = true }
+itertools = { workspace = true }
 serde_json = { workspace = true }
 static_assertions = { workspace = true }
 
 [build-dependencies]
 rustc_version = { workspace = true }
-
-[target.'cfg(any(unix, windows))'.build-dependencies]
-cc = { workspace = true, features = ["jobserver", "parallel"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -92,5 +90,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["borsh"]
+borsh = ["dep:borsh", "dep:borsh0-10"]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]

@@ -232,7 +232,9 @@ impl BankForks {
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             let context = SchedulingContext::new(bank.clone());
             let scheduler = scheduler_pool.take_scheduler(context);
-            BankWithScheduler::new(bank, Some(scheduler))
+            let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
+            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+            bank_with_scheduler
         } else {
             BankWithScheduler::new_without_scheduler(bank)
         };
@@ -642,10 +644,8 @@ impl BankForks {
         root: Slot,
         highest_super_majority_root: Option<Slot>,
     ) -> (Vec<BankWithScheduler>, u64, u64) {
-        // Clippy doesn't like separating the two collects below,
-        // but we want to collect timing separately, and the 2nd requires
+        // We want to collect timing separately, and the 2nd collect requires
         // a unique borrow to self which is already borrowed by self.banks
-        #![allow(clippy::needless_collect)]
         let mut prune_slots_time = Measure::start("prune_slots");
         let highest_super_majority_root = highest_super_majority_root.unwrap_or(root);
         let prune_slots: Vec<_> = self

@@ -7,18 +7,6 @@ use {
 };
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
-pub enum AuthenticatedEncryptionError {
-    #[error("key derivation method not supported")]
-    DerivationMethodNotSupported,
-    #[error("seed length too short for derivation")]
-    SeedLengthTooShort,
-    #[error("seed length too long for derivation")]
-    SeedLengthTooLong,
-    #[error("failed to deserialize")]
-    Deserialization,
-}
-
-#[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ElGamalError {
     #[error("key derivation method not supported")]
     DerivationMethodNotSupported,
@@ -34,6 +22,18 @@ pub enum ElGamalError {
     KeypairDeserialization,
     #[error("failed to deserialize secret key")]
     SecretKeyDeserialization,
+}
+
+#[derive(Error, Clone, Debug, Eq, PartialEq)]
+pub enum AuthenticatedEncryptionError {
+    #[error("key derivation method not supported")]
+    DerivationMethodNotSupported,
+    #[error("seed length too short for derivation")]
+    SeedLengthTooShort,
+    #[error("seed length too long for derivation")]
+    SeedLengthTooLong,
+    #[error("failed to deserialize")]
+    Deserialization,
 }
 
 #[cfg(not(target_os = "solana"))]

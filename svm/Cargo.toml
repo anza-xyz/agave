@@ -13,9 +13,11 @@ edition = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 percentage = { workspace = true }
+qualifier_attr = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-loader-v4-program = { workspace = true }
@@ -24,6 +26,8 @@ solana-metrics = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 solana-system-program = { workspace = true }
+solana-type-overrides = { workspace = true }
+solana-vote = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
@@ -37,8 +41,11 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 rand = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
+solana-compute-budget-program = { workspace = true }
 solana-logger = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-svm = { path = ".", features = ["dev-context-only-utils"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -52,6 +59,13 @@ dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "solana-compute-budget/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-sdk/frozen-abi",
+]
+shuttle-test = [
+    "solana-type-overrides/shuttle-test",
+    "solana-program-runtime/shuttle-test",
+    "solana-bpf-loader-program/shuttle-test",
+    "solana-loader-v4-program/shuttle-test",
 ]

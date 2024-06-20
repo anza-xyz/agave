@@ -16,15 +16,17 @@ dashmap = { workspace = true }
 derivative = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true }
+scopeguard = { workspace = true }
 solana-ledger = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
-solana-vote = { workspace = true }
+vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+lazy_static = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 

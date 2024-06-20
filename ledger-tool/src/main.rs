@@ -8,6 +8,7 @@ use {
         ledger_utils::*,
         output::{
             output_account, AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer,
+            SlotBankHash,
         },
         program::*,
     },
@@ -19,15 +20,12 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account_decoder::UiAccountEncoding,
-    solana_accounts_db::{
-        accounts_db::CalcAccountsHashDataSource, accounts_index::ScanConfig,
-        hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-    },
+    solana_accounts_db::{accounts_db::CalcAccountsHashDataSource, accounts_index::ScanConfig},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
-            is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
+            is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
             is_within_range,
         },
     },
@@ -40,12 +38,16 @@ use {
     solana_ledger::{
         blockstore::{create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
-        blockstore_processor::ProcessSlotCallback,
-        use_snapshot_archives_at_startup,
+        blockstore_processor::{
+            ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
+        },
     },
     solana_measure::{measure, measure::Measure},
     solana_runtime::{
-        bank::{bank_hash_details, Bank, RewardCalculationEvent},
+        bank::{
+            bank_hash_details::{self, SlotDetails, TransactionDetails},
+            Bank, RewardCalculationEvent,
+        },
         bank_forks::BankForks,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
@@ -73,6 +75,7 @@ use {
         transaction::{MessageHash, SanitizedTransaction, SimpleAddressLoader},
     },
     solana_stake_program::{points::PointValue, stake_state},
+    solana_transaction_status::UiInstruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::{
         self,
@@ -83,6 +86,7 @@ use {
         ffi::OsStr,
         fs::File,
         io::{self, Write},
+        mem::swap,
         path::{Path, PathBuf},
         process::{exit, Command, Stdio},
         str::FromStr,
@@ -555,76 +559,10 @@ fn main() {
 
     solana_logger::setup_with_default_filter();
 
-    let no_snapshot_arg = Arg::with_name("no_snapshot")
-        .long("no-snapshot")
-        .takes_value(false)
-        .help("Do not start from a local snapshot if present");
-    let accounts_index_bins = Arg::with_name("accounts_index_bins")
-        .long("accounts-index-bins")
-        .value_name("BINS")
-        .validator(is_pow2)
-        .takes_value(true)
-        .help("Number of bins to divide the accounts index into");
-    let accounts_index_limit = Arg::with_name("accounts_index_memory_limit_mb")
-        .long("accounts-index-memory-limit-mb")
-        .value_name("MEGABYTES")
-        .validator(is_parsable::<usize>)
-        .takes_value(true)
-        .help(
-            "How much memory the accounts index can consume. If this is exceeded, some account \
-             index entries will be stored on disk.",
-        );
-    let disable_disk_index = Arg::with_name("disable_accounts_disk_index")
-        .long("disable-accounts-disk-index")
-        .help(
-            "Disable the disk-based accounts index. It is enabled by default. The entire accounts \
-             index will be kept in memory.",
-        )
-        .conflicts_with("accounts_index_memory_limit_mb");
-    let accountsdb_skip_shrink = Arg::with_name("accounts_db_skip_shrink")
-        .long("accounts-db-skip-shrink")
-        .help(
-            "Enables faster starting of ledger-tool by skipping shrink. This option is for use \
-             during testing.",
-        );
-    let accountsdb_verify_refcounts = Arg::with_name("accounts_db_verify_refcounts")
-        .long("accounts-db-verify-refcounts")
-        .help(
-            "Debug option to scan all AppendVecs and verify account index refcounts prior to clean",
-        )
-        .hidden(hidden_unless_forced());
-    let accounts_db_test_skip_rewrites_but_include_in_bank_hash =
-        Arg::with_name("accounts_db_test_skip_rewrites")
-            .long("accounts-db-test-skip-rewrites")
-            .help(
-                "Debug option to skip rewrites for rent-exempt accounts but still add them in \
-                 bank delta hash calculation",
-            )
-            .hidden(hidden_unless_forced());
-    let account_paths_arg = Arg::with_name("account_paths")
-        .long("accounts")
-        .value_name("PATHS")
-        .takes_value(true)
-        .help(
-            "Persistent accounts location. \
-            May be specified multiple times. \
-            [default: <LEDGER>/accounts]",
-        );
-    let accounts_hash_cache_path_arg = Arg::with_name("accounts_hash_cache_path")
-        .long("accounts-hash-cache-path")
-        .value_name("PATH")
-        .takes_value(true)
-        .help("Use PATH as accounts hash cache location [default: <LEDGER>/accounts_hash_cache]");
-    let accounts_index_path_arg = Arg::with_name("accounts_index_path")
-        .long("accounts-index-path")
-        .value_name("PATH")
-        .takes_value(true)
-        .multiple(true)
-        .help(
-            "Persistent accounts-index location. \
-            May be specified multiple times. \
-            [default: <LEDGER>/accounts_index]",
-        );
+    let load_genesis_config_arg = load_genesis_arg();
+    let accounts_db_config_args = accounts_db_args();
+    let snapshot_config_args = snapshot_args();
+
     let accounts_db_test_hash_calculation_arg = Arg::with_name("accounts_db_test_hash_calculation")
         .long("accounts-db-test-hash-calculation")
         .help("Enable hash calculation test");
@@ -637,20 +575,6 @@ fn main() {
     let os_memory_stats_reporting_arg = Arg::with_name("os_memory_stats_reporting")
         .long("os-memory-stats-reporting")
         .help("Enable reporting of OS memory statistics.");
-    let accounts_db_skip_initial_hash_calc_arg =
-        Arg::with_name("accounts_db_skip_initial_hash_calculation")
-            .long("accounts-db-skip-initial-hash-calculation")
-            .help("Do not verify accounts hash at startup.")
-            .hidden(hidden_unless_forced());
-    let ancient_append_vecs = Arg::with_name("accounts_db_ancient_append_vecs")
-        .long("accounts-db-ancient-append-vecs")
-        .value_name("SLOT-OFFSET")
-        .validator(is_parsable::<i64>)
-        .takes_value(true)
-        .help(
-            "AppendVecs that are older than (slots_per_epoch - SLOT-OFFSET) are squashed together.",
-        )
-        .hidden(hidden_unless_forced());
     let halt_at_slot_store_hash_raw_data = Arg::with_name("halt_at_slot_store_hash_raw_data")
         .long("halt-at-slot-store-hash-raw-data")
         .help(
@@ -683,13 +607,6 @@ fn main() {
         .long("allow-dead-slots")
         .takes_value(false)
         .help("Output dead slots as well");
-    let default_genesis_archive_unpacked_size = MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string();
-    let max_genesis_archive_unpacked_size_arg = Arg::with_name("max_genesis_archive_unpacked_size")
-        .long("max-genesis-archive-unpacked-size")
-        .value_name("NUMBER")
-        .takes_value(true)
-        .default_value(&default_genesis_archive_unpacked_size)
-        .help("maximum total uncompressed size of unpacked genesis archive");
     let hashes_per_tick = Arg::with_name("hashes_per_tick")
         .long("hashes-per-tick")
         .value_name("NUM_HASHES|\"sleep\"")
@@ -712,14 +629,6 @@ fn main() {
         .multiple(true)
         .takes_value(true)
         .help("Log when transactions are processed that reference the given key(s).");
-    let use_snapshot_archives_at_startup =
-        Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
-            .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
-            .takes_value(true)
-            .possible_values(use_snapshot_archives_at_startup::cli::POSSIBLE_VALUES)
-            .default_value(use_snapshot_archives_at_startup::cli::default_value_for_ledger_tool())
-            .help(use_snapshot_archives_at_startup::cli::HELP)
-            .long_help(use_snapshot_archives_at_startup::cli::LONG_HELP);
 
     let geyser_plugin_args = Arg::with_name("geyser_plugin_config")
         .long("geyser-plugin-config")
@@ -805,23 +714,6 @@ fn main() {
                 ),
         )
         .arg(
-            Arg::with_name("snapshots")
-                .long("snapshots")
-                .alias("snapshot-archive-path")
-                .value_name("DIR")
-                .takes_value(true)
-                .global(true)
-                .help("Use DIR for snapshot location [default: --ledger value]"),
-        )
-        .arg(
-            Arg::with_name("incremental_snapshot_archive_path")
-                .long("incremental-snapshot-archive-path")
-                .value_name("DIR")
-                .takes_value(true)
-                .global(true)
-                .help("Use DIR for separate incremental snapshot location"),
-        )
-        .arg(
             Arg::with_name("block_verification_method")
                 .long("block-verification-method")
                 .value_name("METHOD")
@@ -871,7 +763,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("genesis")
                 .about("Prints the ledger's genesis config")
-                .arg(&max_genesis_archive_unpacked_size_arg)
+                .arg(&load_genesis_config_arg)
                 .arg(
                     Arg::with_name("accounts")
                         .long("accounts")
@@ -890,12 +782,12 @@ fn main() {
         .subcommand(
             SubCommand::with_name("genesis-hash")
                 .about("Prints the ledger's genesis hash")
-                .arg(&max_genesis_archive_unpacked_size_arg),
+                .arg(&load_genesis_config_arg)
         )
         .subcommand(
             SubCommand::with_name("modify-genesis")
                 .about("Modifies genesis parameters")
-                .arg(&max_genesis_archive_unpacked_size_arg)
+                .arg(&load_genesis_config_arg)
                 .arg(&hashes_per_tick)
                 .arg(
                     Arg::with_name("cluster_type")
@@ -915,57 +807,36 @@ fn main() {
         .subcommand(
             SubCommand::with_name("shred-version")
                 .about("Prints the ledger's shred hash")
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&hard_forks_arg)
-                .arg(&max_genesis_archive_unpacked_size_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
-                .arg(&use_snapshot_archives_at_startup),
         )
         .subcommand(
             SubCommand::with_name("bank-hash")
                 .about("Prints the hash of the working bank after reading the ledger")
-                .arg(&max_genesis_archive_unpacked_size_arg)
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
-                .arg(&use_snapshot_archives_at_startup),
         )
         .subcommand(
             SubCommand::with_name("verify")
                 .about("Verify the ledger")
-                .arg(&no_snapshot_arg)
-                .arg(&account_paths_arg)
-                .arg(&accounts_hash_cache_path_arg)
-                .arg(&accounts_index_path_arg)
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
                 .arg(&limit_load_slot_count_from_snapshot_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_skip_shrink)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
                 .arg(&verify_index_arg)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
-                .arg(&ancient_append_vecs)
                 .arg(&halt_at_slot_store_hash_raw_data)
                 .arg(&hard_forks_arg)
                 .arg(&accounts_db_test_hash_calculation_arg)
                 .arg(&os_memory_stats_reporting_arg)
                 .arg(&allow_dead_slots_arg)
-                .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(&debug_key_arg)
                 .arg(&geyser_plugin_args)
                 .arg(&log_messages_bytes_limit_arg)
-                .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("skip_poh_verify")
                         .long("skip-poh-verify")
@@ -1040,6 +911,14 @@ fn main() {
                         ),
                 )
                 .arg(
+                    Arg::with_name("print_bank_hash")
+                        .long("print-bank-hash")
+                        .takes_value(false)
+                        .help(
+                            "After verifying the ledger, print the working bank's hash"
+                        ),
+                )
+                .arg(
                     Arg::with_name("write_bank_file")
                         .long("write-bank-file")
                         .takes_value(false)
@@ -1066,28 +945,25 @@ fn main() {
                 .arg(
                     Arg::with_name("record_slots_config")
                         .long("record-slots-config")
-                        .default_value("hash-only")
-                        .possible_values(&["hash-only", "accounts"])
+                        .multiple(true)
+                        .takes_value(true)
+                        .possible_values(&["accounts", "tx"])
                         .requires("record_slots")
-                        .help("In the slot recording, include bank details or not"),
+                        .conflicts_with_all(&[
+                            "enable_rpc_transaction_history",
+                            "geyser_plugin_config",
+                        ])
+                        .help("In addition to the bank hash, optionally include accounts and/or transactions details for the slot"),
                 ),
         )
         .subcommand(
             SubCommand::with_name("graph")
                 .about("Create a Graphviz rendering of the ledger")
-                .arg(&no_snapshot_arg)
-                .arg(&account_paths_arg)
-                .arg(&accounts_hash_cache_path_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
-                .arg(&max_genesis_archive_unpacked_size_arg)
-                .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("include_all_votes")
                         .long("include-all-votes")
@@ -1116,23 +992,13 @@ fn main() {
         .subcommand(
             SubCommand::with_name("create-snapshot")
                 .about("Create a new ledger snapshot")
-                .arg(&no_snapshot_arg)
-                .arg(&account_paths_arg)
-                .arg(&accounts_hash_cache_path_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
-                .arg(&accountsdb_skip_shrink)
-                .arg(&ancient_append_vecs)
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&hard_forks_arg)
-                .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(&snapshot_version_arg)
                 .arg(&geyser_plugin_args)
                 .arg(&log_messages_bytes_limit_arg)
-                .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("snapshot_slot")
                         .index(1)
@@ -1332,22 +1198,14 @@ fn main() {
         .subcommand(
             SubCommand::with_name("accounts")
                 .about("Print account stats and contents after processing the ledger")
-                .arg(&no_snapshot_arg)
-                .arg(&account_paths_arg)
-                .arg(&accounts_hash_cache_path_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
                 .arg(&geyser_plugin_args)
                 .arg(&log_messages_bytes_limit_arg)
                 .arg(&accounts_data_encoding_arg)
-                .arg(&use_snapshot_archives_at_startup)
-                .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(
                     Arg::with_name("include_sysvars")
                         .long("include-sysvars")
@@ -1394,21 +1252,13 @@ fn main() {
         .subcommand(
             SubCommand::with_name("capitalization")
                 .about("Print capitalization (aka, total supply) while checksumming it")
-                .arg(&no_snapshot_arg)
-                .arg(&account_paths_arg)
-                .arg(&accounts_hash_cache_path_arg)
-                .arg(&accounts_index_bins)
-                .arg(&accounts_index_limit)
-                .arg(&disable_disk_index)
-                .arg(&accountsdb_verify_refcounts)
-                .arg(&accounts_db_test_skip_rewrites_but_include_in_bank_hash)
-                .arg(&accounts_db_skip_initial_hash_calc_arg)
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
                 .arg(&halt_at_slot_arg)
                 .arg(&hard_forks_arg)
-                .arg(&max_genesis_archive_unpacked_size_arg)
                 .arg(&geyser_plugin_args)
                 .arg(&log_messages_bytes_limit_arg)
-                .arg(&use_snapshot_archives_at_startup)
                 .arg(
                     Arg::with_name("warp_epoch")
                         .required(false)
@@ -1479,14 +1329,6 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = PathBuf::from(value_t_or_exit!(matches, "ledger_path", String));
-    let snapshot_archive_path = value_t!(matches, "snapshots", String)
-        .ok()
-        .map(PathBuf::from);
-    let incremental_snapshot_archive_path =
-        value_t!(matches, "incremental_snapshot_archive_path", String)
-            .ok()
-            .map(PathBuf::from);
-
     let verbose_level = matches.occurrences_of("verbose");
 
     // Name the rayon global thread pool
@@ -1589,14 +1431,14 @@ fn main() {
                         arg_matches,
                         get_access_type(&process_options),
                     );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            Arc::new(blockstore),
+                            process_options,
+                            None,
+                        );
 
                     println!(
                         "{}",
@@ -1606,23 +1448,11 @@ fn main() {
                         )
                     );
                 }
-                ("bank-hash", Some(arg_matches)) => {
-                    let process_options = parse_process_options(&ledger_path, arg_matches);
-                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let blockstore = open_blockstore(
-                        &ledger_path,
-                        arg_matches,
-                        get_access_type(&process_options),
+                ("bank-hash", Some(_)) => {
+                    eprintln!(
+                        "The bank-hash command has been deprecated, use \
+                        agave-ledger-tool verify --print-bank-hash ... instead"
                     );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                    );
-                    println!("{}", &bank_forks.read().unwrap().working_bank().hash());
                 }
                 ("verify", Some(arg_matches)) => {
                     let exit_signal = Arc::new(AtomicBool::new(false));
@@ -1653,6 +1483,9 @@ fn main() {
                         exit(1);
                     }
 
+                    let mut transaction_status_sender = None;
+                    let mut tx_receiver = None;
+
                     let (slot_callback, record_slots_file, recorded_slots) = if arg_matches
                         .occurrences_of("record_slots")
                         > 0
@@ -1664,29 +1497,61 @@ fn main() {
                             exit(1);
                         });
 
-                        let include_bank =
-                            match arg_matches.value_of("record_slots_config").unwrap() {
-                                "hash-only" => false,
-                                "accounts" => true,
-                                _ => unreachable!(),
-                            };
+                        let mut include_bank = false;
+                        let mut include_tx = false;
+
+                        if let Some(args) = arg_matches.values_of("record_slots_config") {
+                            for arg in args {
+                                match arg {
+                                    "tx" => include_tx = true,
+                                    "accounts" => include_bank = true,
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
 
                         let slot_hashes = Arc::new(Mutex::new(Vec::new()));
+
+                        if include_tx {
+                            let (sender, receiver) = crossbeam_channel::unbounded();
+
+                            transaction_status_sender = Some(TransactionStatusSender { sender });
+
+                            let slots = Arc::clone(&slot_hashes);
+
+                            tx_receiver = Some(std::thread::spawn(move || {
+                                record_transactions(receiver, slots);
+                            }));
+                        }
 
                         let slot_callback = Arc::new({
                             let slots = Arc::clone(&slot_hashes);
                             move |bank: &Bank| {
-                                let slot_details = if include_bank {
-                                    bank_hash_details::BankHashSlotDetails::try_from(bank).unwrap()
+                                let mut details = if include_bank {
+                                    bank_hash_details::SlotDetails::try_from(bank).unwrap()
                                 } else {
-                                    bank_hash_details::BankHashSlotDetails {
+                                    bank_hash_details::SlotDetails {
                                         slot: bank.slot(),
                                         bank_hash: bank.hash().to_string(),
                                         ..Default::default()
                                     }
                                 };
 
-                                slots.lock().unwrap().push(slot_details);
+                                let mut slots = slots.lock().unwrap();
+
+                                if let Some(recorded_slot) =
+                                    slots.iter_mut().find(|f| f.slot == details.slot)
+                                {
+                                    // copy all fields except transactions
+                                    swap(
+                                        &mut recorded_slot.transactions,
+                                        &mut details.transactions,
+                                    );
+
+                                    *recorded_slot = details;
+                                } else {
+                                    slots.push(details);
+                                }
                             }
                         });
 
@@ -1721,7 +1586,7 @@ fn main() {
                                     bank.hash()
                                 );
                             } else {
-                                let bank_hash_details::BankHashSlotDetails {
+                                let bank_hash_details::SlotDetails {
                                     slot: expected_slot,
                                     bank_hash: expected_hash,
                                     ..
@@ -1746,8 +1611,12 @@ fn main() {
 
                     process_options.slot_callback = slot_callback;
 
+                    let output_format =
+                        OutputFormat::from_matches(arg_matches, "output_format", false);
                     let print_accounts_stats = arg_matches.is_present("print_accounts_stats");
+                    let print_bank_hash = arg_matches.is_present("print_bank_hash");
                     let write_bank_file = arg_matches.is_present("write_bank_file");
+
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     info!("genesis hash: {}", genesis_config.hash());
 
@@ -1756,26 +1625,36 @@ fn main() {
                         arg_matches,
                         get_access_type(&process_options),
                     );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            Arc::new(blockstore),
+                            process_options,
+                            transaction_status_sender,
+                        );
 
+                    let working_bank = bank_forks.read().unwrap().working_bank();
                     if print_accounts_stats {
-                        let working_bank = bank_forks.read().unwrap().working_bank();
                         working_bank.print_accounts_stats();
                     }
+                    if print_bank_hash {
+                        let slot_bank_hash = SlotBankHash {
+                            slot: working_bank.slot(),
+                            hash: working_bank.hash().to_string(),
+                        };
+                        println!("{}", output_format.formatted_string(&slot_bank_hash));
+                    }
                     if write_bank_file {
-                        let working_bank = bank_forks.read().unwrap().working_bank();
                         bank_hash_details::write_bank_hash_details_file(&working_bank)
                             .map_err(|err| {
                                 warn!("Unable to write bank hash_details file: {err}");
                             })
                             .ok();
+                    }
+
+                    if let Some(tx_receiver) = tx_receiver {
+                        tx_receiver.join().unwrap();
                     }
 
                     if let Some(recorded_slots_file) = record_slots_file {
@@ -1813,14 +1692,14 @@ fn main() {
                         arg_matches,
                         get_access_type(&process_options),
                     );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            Arc::new(blockstore),
+                            process_options,
+                            None,
+                        );
 
                     let dot = graph_forks(&bank_forks.read().unwrap(), &graph_config);
                     let extension = Path::new(&output_file).extension();
@@ -1843,6 +1722,13 @@ fn main() {
                     let is_minimized = arg_matches.is_present("minimized");
                     let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
                         .unwrap_or_else(|_| {
+                            let snapshot_archive_path = value_t!(matches, "snapshots", String)
+                                .ok()
+                                .map(PathBuf::from);
+                            let incremental_snapshot_archive_path =
+                                value_t!(matches, "incremental_snapshot_archive_path", String)
+                                    .ok()
+                                    .map(PathBuf::from);
                             match (
                                 is_incremental,
                                 &snapshot_archive_path,
@@ -1976,14 +1862,23 @@ fn main() {
                         output_directory.display()
                     );
 
-                    let (bank_forks, starting_snapshot_hashes) = load_and_process_ledger_or_exit(
+                    let LoadAndProcessLedgerOutput {
+                        bank_forks,
+                        starting_snapshot_hashes,
+                        accounts_background_service,
+                    } = load_and_process_ledger_or_exit(
                         arg_matches,
                         &genesis_config,
                         blockstore.clone(),
                         process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
+                        None,
                     );
+                    // Snapshot creation will implicitly perform AccountsDb
+                    // flush and clean operations. These operations cannot be
+                    // run concurrently, so ensure ABS is stopped to avoid that
+                    // possibility.
+                    accounts_background_service.join().unwrap();
+
                     let mut bank = bank_forks
                         .read()
                         .unwrap()
@@ -2032,7 +1927,7 @@ fn main() {
 
                     if remove_stake_accounts {
                         for (address, mut account) in bank
-                            .get_program_accounts(&stake::program::id(), &ScanConfig::default())
+                            .get_program_accounts(&stake::program::id(), &ScanConfig::new(false))
                             .unwrap()
                             .into_iter()
                         {
@@ -2082,7 +1977,7 @@ fn main() {
 
                     if !vote_accounts_to_destake.is_empty() {
                         for (address, mut account) in bank
-                            .get_program_accounts(&stake::program::id(), &ScanConfig::default())
+                            .get_program_accounts(&stake::program::id(), &ScanConfig::new(false))
                             .unwrap()
                             .into_iter()
                         {
@@ -2122,7 +2017,7 @@ fn main() {
                         for (address, mut account) in bank
                             .get_program_accounts(
                                 &solana_vote_program::id(),
-                                &ScanConfig::default(),
+                                &ScanConfig::new(false),
                             )
                             .unwrap()
                             .into_iter()
@@ -2365,14 +2260,14 @@ fn main() {
                         arg_matches,
                         get_access_type(&process_options),
                     );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            Arc::new(blockstore),
+                            process_options,
+                            None,
+                        );
                     let bank = bank_forks.read().unwrap().working_bank();
 
                     let include_sysvars = arg_matches.is_present("include_sysvars");
@@ -2417,14 +2312,14 @@ fn main() {
                         arg_matches,
                         get_access_type(&process_options),
                     );
-                    let (bank_forks, _) = load_and_process_ledger_or_exit(
-                        arg_matches,
-                        &genesis_config,
-                        Arc::new(blockstore),
-                        process_options,
-                        snapshot_archive_path,
-                        incremental_snapshot_archive_path,
-                    );
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            Arc::new(blockstore),
+                            process_options,
+                            None,
+                        );
                     let bank_forks = bank_forks.read().unwrap();
                     let slot = bank_forks.working_bank().slot();
                     let bank = bank_forks.get(slot).unwrap_or_else(|| {
@@ -2945,4 +2840,65 @@ fn main() {
     };
     measure_total_execution_time.stop();
     info!("{}", measure_total_execution_time);
+}
+
+fn record_transactions(
+    recv: crossbeam_channel::Receiver<TransactionStatusMessage>,
+    slots: Arc<Mutex<Vec<SlotDetails>>>,
+) {
+    for tsm in recv {
+        if let TransactionStatusMessage::Batch(batch) = tsm {
+            let slot = batch.bank.slot();
+
+            assert_eq!(batch.transactions.len(), batch.execution_results.len());
+
+            let transactions: Vec<_> = batch
+                .transactions
+                .iter()
+                .zip(batch.execution_results)
+                .zip(batch.transaction_indexes)
+                .map(|((tx, execution_results), index)| {
+                    let message = tx.message();
+
+                    let accounts: Vec<String> = message
+                        .account_keys()
+                        .iter()
+                        .map(|acc| acc.to_string())
+                        .collect();
+
+                    let instructions = message
+                        .instructions()
+                        .iter()
+                        .map(|ix| UiInstruction::parse(ix, &message.account_keys(), None))
+                        .collect();
+
+                    let is_simple_vote_tx = tx.is_simple_vote_transaction();
+
+                    TransactionDetails {
+                        accounts,
+                        instructions,
+                        is_simple_vote_tx,
+                        execution_results,
+                        index,
+                    }
+                })
+                .collect();
+
+            let mut slots = slots.lock().unwrap();
+
+            if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == slot) {
+                recorded_slot.transactions.extend(transactions);
+            } else {
+                slots.push(SlotDetails {
+                    slot,
+                    transactions,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    for slot in slots.lock().unwrap().iter_mut() {
+        slot.transactions.sort_by(|a, b| a.index.cmp(&b.index));
+    }
 }

@@ -21,8 +21,9 @@ use {
         create_vm, serialization::serialize_parameters,
         syscalls::create_program_runtime_environment_v1,
     },
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_measure::measure::Measure,
-    solana_program_runtime::{compute_budget::ComputeBudget, invoke_context::InvokeContext},
+    solana_program_runtime::invoke_context::InvokeContext,
     solana_rbpf::{
         ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
         verifier::RequisiteVerifier, vm::ContextObject,
@@ -138,7 +139,7 @@ fn bench_program_alu(bencher: &mut Bencher) {
         vec![],
         &mut invoke_context,
     );
-    let mut vm = vm.unwrap();
+    let (mut vm, _, _) = vm.unwrap();
 
     println!("Interpreted:");
     vm.context_object_pointer
@@ -313,7 +314,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
         account_lengths,
         &mut invoke_context,
     );
-    let mut vm = vm.unwrap();
+    let (mut vm, _, _) = vm.unwrap();
 
     let mut measure = Measure::start("tune");
     let (instructions, _result) = vm.execute_program(&executable, true);

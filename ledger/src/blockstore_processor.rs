@@ -42,6 +42,7 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
         transaction_batch::TransactionBatch,
+        vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
@@ -65,7 +66,7 @@ use {
         },
     },
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    solana_vote::{vote_account::VoteAccountsHashMap, vote_sender_types::ReplayVoteSender},
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
@@ -79,6 +80,7 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+    ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
 
 pub struct TransactionBatchWithIndexes<'a, 'b> {
@@ -338,11 +340,29 @@ fn process_batches(
             "process_batches()/schedule_batches_for_execution({} batches)",
             batches.len()
         );
-        // scheduling always succeeds here without being blocked on actual transaction executions.
-        // The transaction execution errors will be collected via the blocking fn called
-        // BankWithScheduler::wait_for_completed_scheduler(), if any.
-        schedule_batches_for_execution(bank, batches);
-        Ok(())
+        // Scheduling usually succeeds (immediately returns `Ok(())`) here without being blocked on
+        // the actual transaction executions.
+        //
+        // As an exception, this code path could propagate the transaction execution _errors of
+        // previously-scheduled transactions_ to notify the replay stage. Then, the replay stage
+        // will bail out the further processing of the malformed (possibly malicious) block
+        // immediately, not to waste any system resources. Note that this propagation is of early
+        // hints. Even if errors won't be propagated in this way, they are guaranteed to be
+        // propagated eventually via the blocking fn called
+        // BankWithScheduler::wait_for_completed_scheduler().
+        //
+        // To recite, the returned error is completely unrelated to the argument's `batches` at the
+        // hand. While being awkward, the _async_ unified scheduler is abusing this existing error
+        // propagation code path to the replay stage for compatibility and ease of integration,
+        // exploiting the fact that the replay stage doesn't care _which transaction the returned
+        // error is originating from_.
+        //
+        // In the future, more proper error propagation mechanism will be introduced once after we
+        // fully transition to the unified scheduler for the block verification. That one would be
+        // a push based one from the unified scheduler to the replay stage to eliminate the current
+        // overhead: 1 read lock per batch in
+        // `BankWithScheduler::schedule_transaction_executions()`.
+        schedule_batches_for_execution(bank, batches)
     } else {
         debug!(
             "process_batches()/rebatch_and_execute_batches({} batches)",
@@ -364,7 +384,7 @@ fn process_batches(
 fn schedule_batches_for_execution(
     bank: &BankWithScheduler,
     batches: &[TransactionBatchWithIndexes],
-) {
+) -> Result<()> {
     for TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
@@ -375,8 +395,9 @@ fn schedule_batches_for_execution(
                 .sanitized_transactions()
                 .iter()
                 .zip(transaction_indexes.iter()),
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn rebatch_transactions<'a>(
@@ -493,7 +514,8 @@ fn rebatch_and_execute_batches(
         prioritization_fee_cache,
     )?;
 
-    timing.accumulate(execute_batches_internal_metrics);
+    // Pass false because this code-path is never touched by unified scheduler.
+    timing.accumulate(execute_batches_internal_metrics, false);
     Ok(())
 }
 
@@ -1059,11 +1081,15 @@ pub struct ConfirmationTiming {
     /// and replay.  As replay can run in parallel with the verification, this value can not be
     /// recovered from the `replay_elapsed` and or `{poh,transaction}_verify_elapsed`.  This
     /// includes failed cases, when `confirm_slot_entries` exist with an error.  In microseconds.
+    /// When unified scheduler is enabled, replay excludes the transaction execution, only
+    /// accounting for task creation and submission to the scheduler.
     pub confirmation_elapsed: u64,
 
     /// Wall clock time used by the entry replay code.  Does not include the PoH or the transaction
     /// signature/precompiles verification, but can overlap with the PoH and signature verification.
     /// In microseconds.
+    /// When unified scheduler is enabled, replay excludes the transaction execution, only
+    /// accounting for task creation and submission to the scheduler.
     pub replay_elapsed: u64,
 
     /// Wall clock times, used for the PoH verification of entries.  In microseconds.
@@ -1109,42 +1135,59 @@ pub struct BatchExecutionTiming {
 
     /// Wall clock time used by the transaction execution part of pipeline.
     /// [`ConfirmationTiming::replay_elapsed`] includes this time.  In microseconds.
-    pub wall_clock_us: u64,
+    wall_clock_us: u64,
 
     /// Time used to execute transactions, via `execute_batch()`, in the thread that consumed the
-    /// most time.
-    pub slowest_thread: ThreadExecuteTimings,
+    /// most time (in terms of total_thread_us) among rayon threads. Note that the slowest thread
+    /// is determined each time a given group of batches is newly processed. So, this is a coarse
+    /// approximation of wall-time single-threaded linearized metrics, discarding all metrics other
+    /// than the arbitrary set of batches mixed with various transactions, which replayed slowest
+    /// as a whole for each rayon processing session, also after blockstore_processor's rebatching.
+    ///
+    /// When unified scheduler is enabled, this field isn't maintained, because it's not batched at
+    /// all.
+    slowest_thread: ThreadExecuteTimings,
 }
 
 impl BatchExecutionTiming {
-    pub fn accumulate(&mut self, new_batch: ExecuteBatchesInternalMetrics) {
+    pub fn accumulate(
+        &mut self,
+        new_batch: ExecuteBatchesInternalMetrics,
+        is_unified_scheduler_enabled: bool,
+    ) {
         let Self {
             totals,
             wall_clock_us,
             slowest_thread,
         } = self;
 
-        saturating_add_assign!(*wall_clock_us, new_batch.execute_batches_us);
+        // These metric fields aren't applicable for the unified scheduler
+        if !is_unified_scheduler_enabled {
+            saturating_add_assign!(*wall_clock_us, new_batch.execute_batches_us);
 
-        use ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen};
-        totals.saturating_add_in_place(TotalBatchesLen, new_batch.total_batches_len);
-        totals.saturating_add_in_place(NumExecuteBatches, 1);
+            totals.saturating_add_in_place(TotalBatchesLen, new_batch.total_batches_len);
+            totals.saturating_add_in_place(NumExecuteBatches, 1);
+        }
 
         for thread_times in new_batch.execution_timings_per_thread.values() {
             totals.accumulate(&thread_times.execute_timings);
         }
 
-        let slowest = new_batch
-            .execution_timings_per_thread
-            .values()
-            .max_by_key(|thread_times| thread_times.total_thread_us);
+        // This whole metric (replay-slot-end-to-end-stats) isn't applicable for the unified
+        // scheduler.
+        if !is_unified_scheduler_enabled {
+            let slowest = new_batch
+                .execution_timings_per_thread
+                .values()
+                .max_by_key(|thread_times| thread_times.total_thread_us);
 
-        if let Some(slowest) = slowest {
-            slowest_thread.accumulate(slowest);
-            slowest_thread
-                .execute_timings
-                .saturating_add_in_place(NumExecuteBatches, 1);
-        };
+            if let Some(slowest) = slowest {
+                slowest_thread.accumulate(slowest);
+                slowest_thread
+                    .execute_timings
+                    .saturating_add_in_place(NumExecuteBatches, 1);
+            };
+        }
     }
 }
 
@@ -1165,7 +1208,8 @@ impl ThreadExecuteTimings {
                 ("total_transactions_executed", self.total_transactions_executed as i64, i64),
                 // Everything inside the `eager!` block will be eagerly expanded before
                 // evaluation of the rest of the surrounding macro.
-                eager!{report_execute_timings!(self.execute_timings)}
+                // Pass false because this code-path is never touched by unified scheduler.
+                eager!{report_execute_timings!(self.execute_timings, false)}
             );
         };
     }
@@ -1202,7 +1246,24 @@ impl ReplaySlotStats {
         num_entries: usize,
         num_shreds: u64,
         bank_complete_time_us: u64,
+        is_unified_scheduler_enabled: bool,
     ) {
+        let confirmation_elapsed = if is_unified_scheduler_enabled {
+            "confirmation_without_replay_us"
+        } else {
+            "confirmation_time_us"
+        };
+        let replay_elapsed = if is_unified_scheduler_enabled {
+            "task_submission_us"
+        } else {
+            "replay_time"
+        };
+        let execute_batches_us = if is_unified_scheduler_enabled {
+            None
+        } else {
+            Some(self.batch_execute.wall_clock_us as i64)
+        };
+
         lazy! {
             datapoint_info!(
                 "replay-slot-stats",
@@ -1223,9 +1284,9 @@ impl ReplaySlotStats {
                     self.transaction_verify_elapsed as i64,
                     i64
                 ),
-                ("confirmation_time_us", self.confirmation_elapsed as i64, i64),
-                ("replay_time", self.replay_elapsed as i64, i64),
-                ("execute_batches_us", self.batch_execute.wall_clock_us as i64, i64),
+                (confirmation_elapsed, self.confirmation_elapsed as i64, i64),
+                (replay_elapsed, self.replay_elapsed as i64, i64),
+                ("execute_batches_us", execute_batches_us, Option<i64>),
                 (
                     "replay_total_elapsed",
                     self.started.elapsed().as_micros() as i64,
@@ -1237,11 +1298,17 @@ impl ReplaySlotStats {
                 ("total_shreds", num_shreds as i64, i64),
                 // Everything inside the `eager!` block will be eagerly expanded before
                 // evaluation of the rest of the surrounding macro.
-                eager!{report_execute_timings!(self.batch_execute.totals)}
+                eager!{report_execute_timings!(self.batch_execute.totals, is_unified_scheduler_enabled)}
             );
         };
 
-        self.batch_execute.slowest_thread.report_stats(slot);
+        // Skip reporting replay-slot-end-to-end-stats entirely if unified scheduler is enabled,
+        // because the whole metrics itself is only meaningful for rayon-based worker threads.
+        //
+        // See slowest_thread doc comment for details.
+        if !is_unified_scheduler_enabled {
+            self.batch_execute.slowest_thread.report_stats(slot);
+        }
 
         let mut per_pubkey_timings: Vec<_> = self
             .batch_execute
@@ -2138,7 +2205,8 @@ pub mod tests {
                 self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
             },
             installed_scheduler_pool::{
-                MockInstalledScheduler, MockUninstalledScheduler, SchedulingContext,
+                MockInstalledScheduler, MockUninstalledScheduler, SchedulerAborted,
+                SchedulingContext,
             },
         },
         solana_sdk::{
@@ -4740,8 +4808,7 @@ pub mod tests {
         assert_eq!(batch3.transaction_indexes, vec![43, 44]);
     }
 
-    #[test]
-    fn test_schedule_batches_for_execution() {
+    fn do_test_schedule_batches_for_execution(should_succeed: bool) {
         solana_logger::setup();
         let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
         let GenesisConfigInfo {
@@ -4762,10 +4829,23 @@ pub mod tests {
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(context);
-        mocked_scheduler
-            .expect_schedule_execution()
-            .times(txs.len())
-            .returning(|_| ());
+        if should_succeed {
+            mocked_scheduler
+                .expect_schedule_execution()
+                .times(txs.len())
+                .returning(|(_, _)| Ok(()));
+        } else {
+            // mocked_scheduler isn't async; so short-circuiting behavior is quite visible in that
+            // .times(1) is called instead of .times(txs.len()), not like the succeeding case
+            mocked_scheduler
+                .expect_schedule_execution()
+                .times(1)
+                .returning(|(_, _)| Err(SchedulerAborted));
+            mocked_scheduler
+                .expect_recover_error_after_abort()
+                .times(1)
+                .returning(|| TransactionError::InsufficientFundsForFee);
+        }
         mocked_scheduler
             .expect_wait_for_termination()
             .with(mockall::predicate::eq(true))
@@ -4794,7 +4874,7 @@ pub mod tests {
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut batch_execution_timing = BatchExecutionTiming::default();
         let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
-        assert!(process_batches(
+        let result = process_batches(
             &bank,
             &replay_tx_thread_pool,
             &[batch_with_indexes],
@@ -4802,9 +4882,23 @@ pub mod tests {
             None,
             &mut batch_execution_timing,
             None,
-            &ignored_prioritization_fee_cache
-        )
-        .is_ok());
+            &ignored_prioritization_fee_cache,
+        );
+        if should_succeed {
+            assert_matches!(result, Ok(()));
+        } else {
+            assert_matches!(result, Err(TransactionError::InsufficientFundsForFee));
+        }
+    }
+
+    #[test]
+    fn test_schedule_batches_for_execution_success() {
+        do_test_schedule_batches_for_execution(true);
+    }
+
+    #[test]
+    fn test_schedule_batches_for_execution_failure() {
+        do_test_schedule_batches_for_execution(false);
     }
 
     #[test]

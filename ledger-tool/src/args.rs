@@ -1,13 +1,17 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
-    clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
+    clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_index::{AccountsIndexConfig, IndexLimitMb},
         partitioned_rewards::TestPartitionedEpochRewards,
         utils::create_and_canonicalize_directories,
     },
-    solana_clap_utils::input_parsers::pubkeys_of,
+    solana_clap_utils::{
+        hidden_unless_forced,
+        input_parsers::pubkeys_of,
+        input_validators::{is_parsable, is_pow2},
+    },
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
@@ -20,6 +24,141 @@ use {
         sync::Arc,
     },
 };
+
+/// Returns the arguments that configure AccountsDb
+pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
+    vec![
+        Arg::with_name("account_paths")
+            .long("accounts")
+            .value_name("PATHS")
+            .takes_value(true)
+            .help(
+                "Persistent accounts location. May be specified multiple times. \
+                [default: <LEDGER>/accounts]",
+            ),
+        Arg::with_name("accounts_index_path")
+            .long("accounts-index-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .multiple(true)
+            .help(
+                "Persistent accounts-index location. May be specified multiple times. \
+                [default: <LEDGER>/accounts_index]",
+            ),
+        Arg::with_name("accounts_hash_cache_path")
+            .long("accounts-hash-cache-path")
+            .value_name("PATH")
+            .takes_value(true)
+            .help(
+                "Use PATH as accounts hash cache location [default: <LEDGER>/accounts_hash_cache]",
+            ),
+        Arg::with_name("accounts_index_bins")
+            .long("accounts-index-bins")
+            .value_name("BINS")
+            .validator(is_pow2)
+            .takes_value(true)
+            .help("Number of bins to divide the accounts index into"),
+        Arg::with_name("accounts_index_memory_limit_mb")
+            .long("accounts-index-memory-limit-mb")
+            .value_name("MEGABYTES")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help(
+                "How much memory the accounts index can consume. If this is exceeded, some \
+                 account index entries will be stored on disk.",
+            ),
+        Arg::with_name("disable_accounts_disk_index")
+            .long("disable-accounts-disk-index")
+            .help(
+                "Disable the disk-based accounts index. It is enabled by default. The entire \
+                 accounts index will be kept in memory.",
+            )
+            .conflicts_with("accounts_index_memory_limit_mb"),
+        Arg::with_name("accounts_db_skip_shrink")
+            .long("accounts-db-skip-shrink")
+            .help(
+                "Enables faster starting of ledger-tool by skipping shrink. This option is for \
+                use during testing.",
+            ),
+        Arg::with_name("accounts_db_verify_refcounts")
+            .long("accounts-db-verify-refcounts")
+            .help(
+                "Debug option to scan all AppendVecs and verify account index refcounts prior to \
+                clean",
+            )
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_test_skip_rewrites")
+            .long("accounts-db-test-skip-rewrites")
+            .help(
+                "Debug option to skip rewrites for rent-exempt accounts but still add them in \
+                 bank delta hash calculation",
+            )
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_skip_initial_hash_calculation")
+            .long("accounts-db-skip-initial-hash-calculation")
+            .help("Do not verify accounts hash at startup.")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_ancient_append_vecs")
+            .long("accounts-db-ancient-append-vecs")
+            .value_name("SLOT-OFFSET")
+            .validator(is_parsable::<i64>)
+            .takes_value(true)
+            .help(
+                "AppendVecs that are older than (slots_per_epoch - SLOT-OFFSET) are squashed \
+                 together.",
+            )
+            .hidden(hidden_unless_forced()),
+    ]
+    .into_boxed_slice()
+}
+
+// For our current version of CLAP, the value passed to Arg::default_value()
+// must be a &str. But, we can't convert an integer to a &str at compile time.
+// So, declare this constant and enforce equality with the following unit test
+// test_max_genesis_archive_unpacked_size_constant
+const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE_STR: &str = "10485760";
+
+/// Returns the arguments that configure loading genesis
+pub fn load_genesis_arg<'a, 'b>() -> Arg<'a, 'b> {
+    Arg::with_name("max_genesis_archive_unpacked_size")
+        .long("max-genesis-archive-unpacked-size")
+        .value_name("NUMBER")
+        .takes_value(true)
+        .default_value(MAX_GENESIS_ARCHIVE_UNPACKED_SIZE_STR)
+        .help("maximum total uncompressed size of unpacked genesis archive")
+}
+
+/// Returns the arguments that configure snapshot loading
+pub fn snapshot_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
+    vec![
+        Arg::with_name("no_snapshot")
+            .long("no-snapshot")
+            .takes_value(false)
+            .help("Do not start from a local snapshot if present"),
+        Arg::with_name("snapshots")
+            .long("snapshots")
+            .alias("snapshot-archive-path")
+            .alias("full-snapshot-archive-path")
+            .value_name("DIR")
+            .takes_value(true)
+            .global(true)
+            .help("Use DIR for snapshot location [default: --ledger value]"),
+        Arg::with_name("incremental_snapshot_archive_path")
+            .long("incremental-snapshot-archive-path")
+            .value_name("DIR")
+            .takes_value(true)
+            .global(true)
+            .help("Use DIR for separate incremental snapshot location"),
+        Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
+            .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
+            .takes_value(true)
+            .possible_values(use_snapshot_archives_at_startup::cli::POSSIBLE_VALUES)
+            .default_value(use_snapshot_archives_at_startup::cli::default_value_for_ledger_tool())
+            .help(use_snapshot_archives_at_startup::cli::HELP)
+            .long_help(use_snapshot_archives_at_startup::cli::LONG_HELP),
+    ]
+    .into_boxed_slice()
+}
 
 /// Parse a `ProcessOptions` from subcommand arguments. This function attempts
 /// to parse all flags related to `ProcessOptions`; however, subcommands that
@@ -153,5 +292,20 @@ pub fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
         Some(values_t_or_exit!(matches, name, Slot))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE};
+
+    #[test]
+    fn test_max_genesis_archive_unpacked_size_constant() {
+        assert_eq!(
+            MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+            MAX_GENESIS_ARCHIVE_UNPACKED_SIZE_STR
+                .parse::<u64>()
+                .unwrap()
+        );
     }
 }

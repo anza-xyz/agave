@@ -24,10 +24,22 @@ pub enum CoreBpfMigrationError {
     /// Program has a data account
     #[error("Data account exists for program {0:?}")]
     ProgramHasDataAccount(Pubkey),
+    /// Program has no data account
+    #[error("Data account does not exist for program {0:?}")]
+    ProgramHasNoDataAccount(Pubkey),
+    /// Invalid program account
+    #[error("Invalid program account: {0:?}")]
+    InvalidProgramAccount(Pubkey),
+    /// Invalid program data account
+    #[error("Invalid program data account: {0:?}")]
+    InvalidProgramDataAccount(Pubkey),
     /// Invalid buffer account
     #[error("Invalid buffer account: {0:?}")]
     InvalidBufferAccount(Pubkey),
     /// Arithmetic overflow
     #[error("Arithmetic overflow")]
     ArithmeticOverflow,
+    /// Upgrade authority mismatch
+    #[error("Upgrade authority mismatch. Expected: {0:?}, Got: {1:?}")]
+    UpgradeAuthorityMismatch(Pubkey, Option<Pubkey>),
 }

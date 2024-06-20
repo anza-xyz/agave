@@ -1,15 +1,17 @@
 use {
     crate::{
         mock_bank::{MockBankCallback, MockForkGraph},
-        proto::InstrFixture,
+        proto::{InstrEffects, InstrFixture},
         transaction_builder::SanitizedTransactionBuilder,
     },
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
-        compute_budget::ComputeBudget,
-        loaded_programs::{ProgramCache, ProgramCacheEntry, ProgramRuntimeEnvironments},
+        invoke_context::{EnvironmentConfig, InvokeContext},
+        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+        log_collector::LogCollector,
         solana_rbpf::{
             program::{BuiltinProgram, FunctionRegistry},
             vm::Config,
@@ -19,19 +21,26 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable,
-        epoch_schedule::EpochSchedule,
         feature_set::{FeatureSet, FEATURE_NAMES},
         hash::Hash,
         instruction::AccountMeta,
+        message::SanitizedMessage,
         pubkey::Pubkey,
+        rent::Rent,
         signature::Signature,
+        transaction::TransactionError,
+        transaction_context::{
+            ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount,
+            TransactionContext,
+        },
     },
     solana_svm::{
         account_loader::CheckedTransactionDetails,
-        runtime_config::RuntimeConfig,
-        transaction_error_metrics::TransactionErrorMetrics,
+        program_loader,
+        transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            TransactionProcessingEnvironment,
         },
     },
     std::{
@@ -87,10 +96,10 @@ fn setup() -> PathBuf {
             .status()
             .expect("Failed to download test-vectors");
 
-        std::println!("Checking out commit e94f22066cb2e98f8fe5f05a6797b8111ad78265");
+        std::println!("Checking out commit 90a8ad069f8a07d2fdad3cf03b3fb486a00fe988");
         Command::new("git")
             .current_dir(&dir)
-            .args(["checkout", "e94f22066cb2e98f8fe5f05a6797b8111ad78265"])
+            .args(["checkout", "90a8ad069f8a07d2fdad3cf03b3fb486a00fe988"])
             .status()
             .expect("Failed to checkout to proper test-vector commit");
 
@@ -117,6 +126,25 @@ fn execute_fixtures() {
 
     // bpf-loader tests
     base_dir.push("bpf-loader");
+    run_from_folder(&base_dir, &HashSet::new());
+    base_dir.pop();
+
+    // System program tests
+    base_dir.push("system");
+    // These cases hit a debug_assert here:
+    // https://github.com/anza-xyz/agave/blob/0142c7fa1c46b05d201552102eb91b6d4b10f077/svm/src/transaction_account_state_info.rs#L34
+    let run_as_instr = HashSet::from([
+        OsString::from("7fcde5cb94e1dc44.bin.fix"),
+        OsString::from("9f3c001dcd1803fe.bin.fix"),
+        OsString::from("34ee00c659dc5aa6.bin.fix"),
+        OsString::from("8fd951ecde987723.bin.fix"),
+    ]);
+    run_from_folder(&base_dir, &run_as_instr);
+
+    cleanup();
+}
+
+fn run_from_folder(base_dir: &PathBuf, run_as_instr: &HashSet<OsString>) {
     for path in std::fs::read_dir(base_dir).unwrap() {
         let filename = path.as_ref().unwrap().file_name();
         let mut file = File::open(path.as_ref().unwrap().path()).expect("file not found");
@@ -124,15 +152,14 @@ fn execute_fixtures() {
         file.read_to_end(&mut buffer).expect("Failed to read file");
 
         let fixture = proto::InstrFixture::decode(buffer.as_slice()).unwrap();
-        run_fixture(fixture, filename);
+        let execute_as_instr = run_as_instr.contains(&filename);
+        run_fixture(fixture, filename, execute_as_instr);
     }
-
-    cleanup();
 }
 
-fn run_fixture(fixture: InstrFixture, filename: OsString) {
+fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool) {
     let input = fixture.input.unwrap();
-    let output = fixture.output.unwrap();
+    let output = fixture.output.as_ref().unwrap();
 
     let mut transaction_builder = SanitizedTransactionBuilder::default();
     let program_id = Pubkey::new_from_array(input.program_id.try_into().unwrap());
@@ -170,22 +197,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         }
     }
 
-    let fee_payer = Pubkey::new_unique();
-    let Ok(transaction) =
-        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), false)
-    else {
-        // If we can't build a sanitized transaction,
-        // the output must be a failed instruction as well
-        assert_ne!(output.result, 0);
-        return;
-    };
-
-    let transactions = vec![transaction];
-    let mut transaction_check = vec![Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 30,
-    })];
-
+    let mut fee_payer = Pubkey::new_unique();
     let mut mock_bank = MockBankCallback::default();
     {
         let mut account_data_map = mock_bank.account_shared_data.borrow_mut();
@@ -202,8 +214,28 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         }
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(800000);
+
+        while account_data_map.contains_key(&fee_payer) {
+            // The fee payer must not coincide with any of the previous accounts
+            fee_payer = Pubkey::new_unique();
+        }
         account_data_map.insert(fee_payer, account_data);
     }
+
+    let Ok(transaction) =
+        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), false)
+    else {
+        // If we can't build a sanitized transaction,
+        // the output must be a failed instruction as well
+        assert_ne!(output.result, 0);
+        return;
+    };
+
+    let transactions = vec![transaction];
+    let transaction_check = vec![Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 30,
+    })];
 
     let compute_budget = ComputeBudget {
         compute_unit_limit: input.cu_avail,
@@ -213,31 +245,33 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
     let v1_environment =
         create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
 
-    let mut program_cache = ProgramCache::<MockForkGraph>::new(0, 20);
-    program_cache.environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(v1_environment),
-        program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
-            Config::default(),
-            FunctionRegistry::default(),
-        )),
-    };
-    program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
-
-    let program_cache = Arc::new(RwLock::new(program_cache));
     mock_bank.override_feature_set(feature_set);
-    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
-        42,
-        2,
-        EpochSchedule::default(),
-        Arc::new(RuntimeConfig::default()),
-        program_cache.clone(),
-        HashSet::new(),
-    );
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
+
+    {
+        let mut program_cache = batch_processor.program_cache.write().unwrap();
+        program_cache.environments = ProgramRuntimeEnvironments {
+            program_runtime_v1: Arc::new(v1_environment),
+            program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
+                Config::default(),
+                FunctionRegistry::default(),
+            )),
+        };
+        program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+    }
 
     batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
     register_builtins(&batch_processor, &mock_bank);
 
-    let mut error_counter = TransactionErrorMetrics::default();
+    #[allow(deprecated)]
+    let (blockhash, lamports_per_signature) = batch_processor
+        .sysvar_cache()
+        .get_recent_blockhashes()
+        .ok()
+        .and_then(|x| (*x).last().cloned())
+        .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
+        .unwrap_or_default();
+
     let recording_config = ExecutionRecordingConfig {
         enable_log_recording: true,
         enable_return_data_recording: true,
@@ -245,18 +279,35 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
     };
     let processor_config = TransactionProcessingConfig {
         account_overrides: None,
+        compute_budget: None,
         log_messages_bytes_limit: None,
         limit_to_load_programs: true,
         recording_config,
+        transaction_account_lock_limit: None,
     };
-    let mut timings = ExecuteTimings::default();
+
+    if execute_as_instr {
+        execute_fixture_as_instr(
+            &mock_bank,
+            &batch_processor,
+            transactions[0].message(),
+            compute_budget,
+            output,
+            filename,
+            input.cu_avail,
+        );
+        return;
+    }
 
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        transaction_check.as_mut_slice(),
-        &mut error_counter,
-        &mut timings,
+        transaction_check,
+        &TransactionProcessingEnvironment {
+            blockhash,
+            lamports_per_signature,
+            ..Default::default()
+        },
         &processor_config,
     );
 
@@ -268,6 +319,24 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
             .status
             .is_err()
     {
+        if matches!(
+            result.execution_results[0].flattened_result(),
+            Err(TransactionError::InsufficientFundsForRent { .. })
+        ) {
+            // This is a transaction error not an instruction error, so execute the instruction
+            // instead.
+            execute_fixture_as_instr(
+                &mock_bank,
+                &batch_processor,
+                transactions[0].message(),
+                compute_budget,
+                output,
+                filename,
+                input.cu_avail,
+            );
+            return;
+        }
+
         assert_ne!(
             output.result, 0,
             "Transaction was not successful, but should have been: file {:?}",
@@ -276,11 +345,207 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         return;
     }
 
-    // Check modified accounts
-    let idx_map: HashMap<Pubkey, usize> = result.loaded_transactions[0]
-        .as_ref()
-        .unwrap()
+    let execution_details = result.execution_results[0].details().unwrap();
+    verify_accounts_and_data(
+        &result.loaded_transactions[0].as_ref().unwrap().accounts,
+        output,
+        execution_details.executed_units,
+        input.cu_avail,
+        execution_details
+            .return_data
+            .as_ref()
+            .map(|x| &x.data)
+            .unwrap_or(&Vec::new()),
+        filename,
+    );
+}
+
+fn register_builtins(
+    batch_processor: &TransactionBatchProcessor<MockForkGraph>,
+    mock_bank: &MockBankCallback,
+) {
+    let bpf_loader = "solana_bpf_loader_upgradeable_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        bpf_loader_upgradeable::id(),
+        bpf_loader,
+        ProgramCacheEntry::new_builtin(
+            0,
+            bpf_loader.len(),
+            solana_bpf_loader_program::Entrypoint::vm,
+        ),
+    );
+
+    let system_program = "system_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        solana_system_program::id(),
+        system_program,
+        ProgramCacheEntry::new_builtin(
+            0,
+            system_program.len(),
+            solana_system_program::system_processor::Entrypoint::vm,
+        ),
+    );
+}
+
+fn execute_fixture_as_instr(
+    mock_bank: &MockBankCallback,
+    batch_processor: &TransactionBatchProcessor<MockForkGraph>,
+    sanitized_message: &SanitizedMessage,
+    compute_budget: ComputeBudget,
+    output: &InstrEffects,
+    filename: OsString,
+    cu_avail: u64,
+) {
+    let rent = if let Ok(rent) = batch_processor.sysvar_cache().get_rent() {
+        (*rent).clone()
+    } else {
+        Rent::default()
+    };
+
+    let transaction_accounts: Vec<TransactionAccount> = sanitized_message
+        .account_keys()
+        .iter()
+        .map(|key| (*key, mock_bank.get_account_shared_data(key).unwrap()))
+        .collect();
+
+    let mut transaction_context = TransactionContext::new(
+        transaction_accounts,
+        rent,
+        compute_budget.max_instruction_stack_depth,
+        compute_budget.max_instruction_trace_length,
+    );
+
+    let mut loaded_programs = ProgramCacheForTxBatch::new(
+        42,
+        batch_processor
+            .program_cache
+            .read()
+            .unwrap()
+            .environments
+            .clone(),
+        None,
+        2,
+    );
+
+    let program_idx = sanitized_message.instructions()[0].program_id_index as usize;
+    let program_id = *sanitized_message.account_keys().get(program_idx).unwrap();
+
+    let loaded_program = program_loader::load_program_with_pubkey(
+        mock_bank,
+        &batch_processor.get_environments_for_epoch(2).unwrap(),
+        &program_id,
+        42,
+        false,
+    )
+    .unwrap();
+
+    loaded_programs.replenish(program_id, loaded_program);
+    loaded_programs.replenish(
+        solana_system_program::id(),
+        Arc::new(ProgramCacheEntry::new_builtin(
+            0u64,
+            0usize,
+            solana_system_program::system_processor::Entrypoint::vm,
+        )),
+    );
+
+    let log_collector = LogCollector::new_ref();
+
+    let sysvar_cache = &batch_processor.sysvar_cache();
+    let env_config = EnvironmentConfig::new(
+        Hash::default(),
+        None,
+        None,
+        mock_bank.feature_set.clone(),
+        0,
+        sysvar_cache,
+    );
+
+    let mut invoke_context = InvokeContext::new(
+        &mut transaction_context,
+        &mut loaded_programs,
+        env_config,
+        Some(log_collector.clone()),
+        compute_budget,
+    );
+
+    let mut instruction_accounts: Vec<InstructionAccount> =
+        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len());
+
+    for (instruction_acct_idx, index_txn) in sanitized_message.instructions()[0]
         .accounts
+        .iter()
+        .enumerate()
+    {
+        let index_in_callee = sanitized_message.instructions()[0]
+            .accounts
+            .get(0..instruction_acct_idx)
+            .unwrap()
+            .iter()
+            .position(|idx| *idx == *index_txn)
+            .unwrap_or(instruction_acct_idx);
+
+        instruction_accounts.push(InstructionAccount {
+            index_in_transaction: *index_txn as IndexOfAccount,
+            index_in_caller: *index_txn as IndexOfAccount,
+            index_in_callee: index_in_callee as IndexOfAccount,
+            is_signer: sanitized_message.is_signer(*index_txn as usize),
+            is_writable: sanitized_message.is_writable(*index_txn as usize),
+        });
+    }
+
+    let mut compute_units_consumed = 0u64;
+    let mut timings = ExecuteTimings::default();
+    let result = invoke_context.process_instruction(
+        &sanitized_message.instructions()[0].data,
+        &instruction_accounts,
+        &[program_idx as IndexOfAccount],
+        &mut compute_units_consumed,
+        &mut timings,
+    );
+
+    if output.result == 0 {
+        assert!(
+            result.is_ok(),
+            "Instruction execution was NOT successful, but should have been: {:?}",
+            filename
+        );
+    } else {
+        assert!(
+            result.is_err(),
+            "Instruction execution was successful, but should NOT have been: {:?}",
+            filename
+        );
+        return;
+    }
+
+    let ExecutionRecord {
+        accounts,
+        return_data,
+        ..
+    } = transaction_context.into();
+
+    verify_accounts_and_data(
+        &accounts,
+        output,
+        compute_units_consumed,
+        cu_avail,
+        &return_data.data,
+        filename,
+    );
+}
+
+fn verify_accounts_and_data(
+    accounts: &[TransactionAccount],
+    output: &InstrEffects,
+    consumed_units: u64,
+    cu_avail: u64,
+    return_data: &Vec<u8>,
+    filename: OsString,
+) {
+    let idx_map: HashMap<Pubkey, usize> = accounts
         .iter()
         .enumerate()
         .map(|(idx, item)| (item.0, idx))
@@ -291,7 +556,8 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         let index = *idx_map
             .get(&pubkey)
             .expect("Account not in expected results");
-        let received_data = &result.loaded_transactions[0].as_ref().unwrap().accounts[index].1;
+
+        let received_data = &accounts[index].1;
 
         assert_eq!(
             received_data.lamports(),
@@ -329,34 +595,16 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         }
     }
 
-    let execution_details = result.execution_results[0].details().unwrap();
     assert_eq!(
-        execution_details.executed_units,
-        input.cu_avail.saturating_sub(output.cu_avail),
+        consumed_units,
+        cu_avail.saturating_sub(output.cu_avail),
         "Execution units differs in case: {:?}",
         filename
     );
 
-    if let Some(return_data) = &execution_details.return_data {
-        assert_eq!(return_data.data, output.return_data);
+    if return_data.is_empty() {
+        assert!(output.return_data.is_empty());
     } else {
-        assert_eq!(output.return_data.len(), 0);
+        assert_eq!(&output.return_data, return_data);
     }
-}
-
-fn register_builtins(
-    batch_processor: &TransactionBatchProcessor<MockForkGraph>,
-    mock_bank: &MockBankCallback,
-) {
-    let bpf_loader = "solana_bpf_loader_upgradeable_program";
-    batch_processor.add_builtin(
-        mock_bank,
-        bpf_loader_upgradeable::id(),
-        bpf_loader,
-        ProgramCacheEntry::new_builtin(
-            0,
-            bpf_loader.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
-        ),
-    );
 }

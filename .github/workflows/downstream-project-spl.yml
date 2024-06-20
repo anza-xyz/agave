@@ -19,6 +19,8 @@ on:
       - "cargo-test-sbf"
       - "ci/downstream-projects/run-spl.sh"
       - ".github/workflows/downstream-project-spl.yml"
+      - ".github/scripts/downstream-project-spl-common.sh"
+      - ".github/scripts/downstream-project-spl-install-deps.sh"
   workflow_call:
     inputs:
       branch:
@@ -45,9 +47,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.3
+      - uses: mozilla-actions/sccache-action@v0.0.4
         with:
-          version: "v0.5.4"
+          version: "v0.8.1"
 
       - shell: bash
         run: |
@@ -93,9 +95,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.3
+      - uses: mozilla-actions/sccache-action@v0.0.4
         with:
-          version: "v0.5.4"
+          version: "v0.8.1"
 
       - shell: bash
         run: |
@@ -144,9 +146,9 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.3
+      - uses: mozilla-actions/sccache-action@v0.0.4
         with:
-          version: "v0.5.4"
+          version: "v0.8.1"
 
       - shell: bash
         run: |

@@ -45,6 +45,7 @@ serde_derive = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
 solana-client = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
@@ -116,6 +117,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-bloom/frozen-abi",
+    "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
     "solana-gossip/frozen-abi",
     "solana-ledger/frozen-abi",

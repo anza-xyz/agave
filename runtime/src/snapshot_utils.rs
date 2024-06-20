@@ -21,9 +21,10 @@ use {
     log::*,
     regex::Regex,
     solana_accounts_db::{
-        account_storage::AccountStorageMap,
-        accounts_db::{AccountStorageEntry, AccountsDb, AtomicAccountsFileId},
+        account_storage::{meta::StoredMetaWriteVersion, AccountStorageMap},
+        accounts_db::{AccountStorageEntry, AtomicAccountsFileId, BankHashStats},
         accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
+        accounts_hash::{AccountsDeltaHash, AccountsHash},
         epoch_accounts_hash::EpochAccountsHash,
         hardened_unpack::{self, ParallelSelector, UnpackError},
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
@@ -747,21 +748,27 @@ pub fn serialize_and_archive_snapshot_package(
         mut snapshot_storages,
         status_cache_slot_deltas,
         bank_fields_to_serialize,
+        bank_hash_stats,
+        accounts_delta_hash,
+        accounts_hash,
         epoch_accounts_hash,
         bank_incremental_snapshot_persistence,
-        accounts,
+        write_version,
         enqueued: _,
     } = snapshot_package;
 
     let bank_snapshot_info = serialize_snapshot(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
-        &accounts.accounts_db,
         snapshot_storages.as_slice(),
         status_cache_slot_deltas.as_slice(),
         bank_fields_to_serialize,
+        bank_hash_stats,
+        accounts_delta_hash,
+        accounts_hash,
         epoch_accounts_hash,
         bank_incremental_snapshot_persistence.as_ref(),
+        write_version,
     )?;
 
     // now write the full snapshot slot file after serializing so this bank snapshot is loadable
@@ -811,15 +818,19 @@ pub fn serialize_and_archive_snapshot_package(
 }
 
 /// Serializes a snapshot into `bank_snapshots_dir`
+#[allow(clippy::too_many_arguments)]
 fn serialize_snapshot(
     bank_snapshots_dir: impl AsRef<Path>,
     snapshot_version: SnapshotVersion,
-    accounts_db: &AccountsDb,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     slot_deltas: &[BankSlotDelta],
     bank_fields: BankFieldsToSerialize,
+    bank_hash_stats: BankHashStats,
+    accounts_delta_hash: AccountsDeltaHash,
+    accounts_hash: AccountsHash,
     epoch_accounts_hash: Option<EpochAccountsHash>,
     bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
+    write_version: StoredMetaWriteVersion,
 ) -> Result<BankSnapshotInfo> {
     let slot = bank_fields.slot;
 
@@ -866,10 +877,13 @@ fn serialize_snapshot(
             serde_snapshot::serialize_bank_snapshot_into(
                 stream,
                 bank_fields,
-                accounts_db,
+                bank_hash_stats,
+                accounts_delta_hash,
+                accounts_hash,
                 &get_storages_to_serialize(snapshot_storages),
                 bank_incremental_snapshot_persistence,
                 epoch_accounts_hash,
+                write_version,
             )?;
             Ok(())
         };
@@ -1588,7 +1602,6 @@ fn streaming_unarchive_snapshot(
     let shared_buffer = untar_snapshot_create_shared_buffer(&snapshot_archive_path, archive_format);
 
     // All shared buffer readers need to be created before the threads are spawned
-    #[allow(clippy::needless_collect)]
     let archives: Vec<_> = (0..num_threads)
         .map(|_| {
             let reader = SharedBufferReader::new(&shared_buffer);

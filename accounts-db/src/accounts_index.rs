@@ -90,7 +90,7 @@ pub enum UpsertReclaim {
     IgnoreReclaims,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ScanConfig {
     /// checked by the scan. When true, abort scan.
     pub abort: Option<Arc<AtomicBool>>,
@@ -100,11 +100,20 @@ pub struct ScanConfig {
     pub collect_all_unsorted: bool,
 }
 
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            abort: None,
+            collect_all_unsorted: true,
+        }
+    }
+}
+
 impl ScanConfig {
     pub fn new(collect_all_unsorted: bool) -> Self {
         Self {
             collect_all_unsorted,
-            ..ScanConfig::default()
+            ..Default::default()
         }
     }
 
@@ -1632,7 +1641,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // But, does NOT update secondary index
     // This is designed to be called at startup time.
     // returns (dirty_pubkeys, insertion_time_us, GenerateIndexResult)
-    #[allow(clippy::needless_collect)]
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
@@ -1964,15 +1972,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     }
 
     pub(crate) fn reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
-        let mut cleaned_roots = HashSet::new();
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
         w_roots_tracker.uncleaned_roots.retain(|root| {
             let is_cleaned = max_clean_root
                 .map(|max_clean_root| *root <= max_clean_root)
                 .unwrap_or(true);
-            if is_cleaned {
-                cleaned_roots.insert(*root);
-            }
             // Only keep the slots that have yet to be cleaned
             !is_cleaned
         });
@@ -4214,8 +4218,12 @@ pub mod tests {
             assert!(!config.is_aborted());
         }
 
-        let config = ScanConfig::default();
+        let config = ScanConfig::new(false);
         assert!(!config.collect_all_unsorted);
+        assert!(config.abort.is_none());
+
+        let config = ScanConfig::default();
+        assert!(config.collect_all_unsorted);
         assert!(config.abort.is_none());
 
         let config = config.recreate_with_abort();

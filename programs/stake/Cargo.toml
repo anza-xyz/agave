@@ -15,11 +15,13 @@ log = { workspace = true }
 solana-config-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-sdk = { workspace = true }
+solana-type-overrides = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 proptest = { workspace = true }
+solana-compute-budget = { workspace = true }
 solana-logger = { workspace = true }
 test-case = { workspace = true }
 

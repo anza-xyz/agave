@@ -9,15 +9,14 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
+    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
         BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
-    solana_program_runtime::{
-        compute_budget_processor::process_compute_budget_instructions, timings::ExecuteTimings,
-    },
+    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         bank::{Bank, LoadAndExecuteTransactionsOutput},
         compute_budget_details::GetComputeBudgetDetails,
@@ -34,7 +33,7 @@ use {
     solana_svm::{
         account_loader::{validate_fee_payer, TransactionCheckResult},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processor::ExecutionRecordingConfig,
+        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     std::{
         sync::{atomic::Ordering, Arc},
@@ -604,11 +603,17 @@ impl Consumer {
             .load_and_execute_transactions(
                 batch,
                 MAX_PROCESSING_AGE,
-                ExecutionRecordingConfig::new_single_setting(transaction_status_sender_enabled),
                 &mut execute_and_commit_timings.execute_timings,
-                None, // account_overrides
-                self.log_messages_bytes_limit,
-                true,
+                TransactionProcessingConfig {
+                    account_overrides: None,
+                    compute_budget: bank.compute_budget(),
+                    log_messages_bytes_limit: self.log_messages_bytes_limit,
+                    limit_to_load_programs: true,
+                    recording_config: ExecutionRecordingConfig::new_single_setting(
+                        transaction_status_sender_enabled
+                    ),
+                    transaction_account_lock_limit: Some(bank.get_transaction_account_lock_limit()),
+                }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
 
@@ -1556,9 +1561,18 @@ mod tests {
             assert_eq!(retryable_transaction_indexes, vec![1]);
 
             let expected_block_cost = if !apply_cost_tracker_during_replay_enabled {
-                let actual_programs_execution_cost =
+                let (actual_programs_execution_cost, actual_loaded_accounts_data_size_cost) =
                     match commit_transactions_result.first().unwrap() {
-                        CommitTransactionDetails::Committed { compute_units } => *compute_units,
+                        CommitTransactionDetails::Committed {
+                            compute_units,
+                            loaded_accounts_data_size,
+                        } => (
+                            *compute_units,
+                            CostModel::calculate_loaded_accounts_data_size_cost(
+                                *loaded_accounts_data_size,
+                                &bank.feature_set,
+                            ),
+                        ),
                         CommitTransactionDetails::NotCommitted => {
                             unreachable!()
                         }
@@ -1567,6 +1581,8 @@ mod tests {
                 let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
                 if let TransactionCost::Transaction(ref mut usage_cost) = cost {
                     usage_cost.programs_execution_cost = actual_programs_execution_cost;
+                    usage_cost.loaded_accounts_data_size_cost =
+                        actual_loaded_accounts_data_size_cost;
                 }
 
                 block_cost + cost.sum()
