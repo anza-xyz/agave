@@ -43,7 +43,6 @@ impl ProgramTiming {
 #[derive(Debug, Sequence)]
 pub enum ExecuteTimingType {
     CheckUs,
-    ValidateFeesUs,
     LoadUs,
     ExecuteUs,
     StoreUs,
@@ -53,6 +52,10 @@ pub enum ExecuteTimingType {
     TotalBatchesLen,
     UpdateTransactionStatuses,
     ProgramCacheUs,
+    ValidateFeesUs,
+    // New variants should be appended to the enum variant list and existing
+    // variants shouldn't be removed, they should be replaced with an unused
+    // placeholder to keep consistent indexes
 }
 
 pub struct Metrics([u64; ExecuteTimingType::CARDINALITY]);
