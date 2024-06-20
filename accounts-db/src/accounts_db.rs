@@ -1698,7 +1698,7 @@ impl SplitAncientStorages {
                     i += 1;
                     if treat_as_ancient(storage) {
                         // even though the slot is in range of being an ancient append vec, if it isn't actually a large append vec,
-                        // then we are better off treating all these slots as normally cachable to reduce work in dedup.
+                        // then we are better off treating all these slots as normally cacheable to reduce work in dedup.
                         // Since this one is large, for the moment, this one becomes the highest slot where we want to individually cache files.
                         len_truncate = i;
                     }
