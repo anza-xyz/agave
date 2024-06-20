@@ -9,7 +9,11 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+solana-package-metadata = { workspace = true }
 solana-program = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
+
+[package.metadata.solana]
+program-id = "Sim1jD5C35odT8mzctm8BWnjic8xW5xgeb5MbcbErTo"
