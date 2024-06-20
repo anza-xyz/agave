@@ -632,8 +632,7 @@ impl JsonRpcRequestProcessor {
             .map(|slot| slot <= first_confirmed_block_in_epoch)
             .unwrap_or(false);
 
-        // Collect rewards from first block in the epoch if partitioned epoch
-        // rewards not enabled, or address is a vote account
+        // Get first block in the epoch
         let Ok(Some(epoch_boundary_block)) = self
             .get_block(
                 first_confirmed_block_in_epoch,
@@ -647,6 +646,8 @@ impl JsonRpcRequestProcessor {
             .into());
         };
 
+        // Collect rewards from first block in the epoch if partitioned epoch
+        // rewards not enabled, or address is a vote account
         let mut reward_map: HashMap<String, (Reward, Slot)> = {
             let addresses: Vec<String> =
                 addresses.iter().map(|pubkey| pubkey.to_string()).collect();
@@ -661,6 +662,8 @@ impl JsonRpcRequestProcessor {
             )
         };
 
+        // Append stake account rewards from partitions if partitions epoch
+        // rewards is enabled
         if partitioned_epoch_reward_enabled {
             let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
                 "epoch-boundary block should have num_reward_partitions after partitioned epoch \
