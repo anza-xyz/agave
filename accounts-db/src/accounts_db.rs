@@ -8950,7 +8950,7 @@ impl AccountsDb {
                 // these write directly to disk, so the more threads, the better
                 num_cpus::get()
             } else {
-                // seems to be a good hueristic given varying # cpus for in-mem disk index
+                // seems to be a good heuristic given varying # cpus for in-mem disk index
                 8
             };
             let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot
