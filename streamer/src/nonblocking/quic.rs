@@ -160,7 +160,7 @@ pub fn spawn_server(
     info!("Start {name} quic server on {sock:?}");
     let concurrent_connections = max_staked_connections + max_unstaked_connections;
     let max_concurrent_connections = concurrent_connections + concurrent_connections / 4;
-    let (config, _cert) = configure_server(keypair, max_concurrent_connections)?;
+    let (config, _) = configure_server(keypair)?;
 
     let endpoint = Endpoint::new(
         EndpointConfig::default(),
@@ -274,20 +274,28 @@ async fn run_server(
                     .fetch_add(1, Ordering::Relaxed);
                 continue;
             }
-            tokio::spawn(setup_connection(
-                connection,
-                unstaked_connection_table.clone(),
-                staked_connection_table.clone(),
-                sender.clone(),
-                max_connections_per_peer,
-                staked_nodes.clone(),
-                max_staked_connections,
-                max_unstaked_connections,
-                max_streams_per_ms,
-                stats.clone(),
-                wait_for_chunk_timeout,
-                stream_load_ema.clone(),
-            ));
+            let connection = connection.accept();
+            match connection {
+                Ok(connection) => {
+                    tokio::spawn(setup_connection(
+                        connection,
+                        unstaked_connection_table.clone(),
+                        staked_connection_table.clone(),
+                        sender.clone(),
+                        max_connections_per_peer,
+                        staked_nodes.clone(),
+                        max_staked_connections,
+                        max_unstaked_connections,
+                        max_streams_per_ms,
+                        stats.clone(),
+                        wait_for_chunk_timeout,
+                        stream_load_ema.clone(),
+                    ));
+                }
+                Err(err) => {
+                    debug!("Incoming::accept(): error {:?}", err);
+                }
+            }
         } else {
             debug!("accept(): Timed out waiting for connection");
         }
@@ -313,7 +321,7 @@ pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
     // Use the client cert only if it is self signed and the chain length is 1.
     connection
         .peer_identity()?
-        .downcast::<Vec<rustls::Certificate>>()
+        .downcast::<Vec<rustls::pki_types::CertificateDer>>()
         .ok()
         .filter(|certs| certs.len() == 1)?
         .first()
@@ -1164,7 +1172,7 @@ impl Drop for ConnectionEntry {
     }
 }
 
-#[derive(Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 enum ConnectionTableKey {
     IP(IpAddr),
     Pubkey(Pubkey),
@@ -1329,7 +1337,7 @@ pub mod test {
         assert_matches::assert_matches,
         async_channel::unbounded as async_unbounded,
         crossbeam_channel::{unbounded, Receiver},
-        quinn::{ClientConfig, IdleTimeout, TransportConfig},
+        quinn::{crypto::rustls::QuicClientConfig, ClientConfig, IdleTimeout, TransportConfig},
         solana_sdk::{
             net::DEFAULT_TPU_COALESCE,
             quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
@@ -1339,7 +1347,7 @@ pub mod test {
         std::collections::HashMap,
         tokio::time::sleep,
     };
-
+    #[derive(Debug)]
     struct SkipServerVerification;
 
     impl SkipServerVerification {
@@ -1348,17 +1356,54 @@ pub mod test {
         }
     }
 
-    impl rustls::client::ServerCertVerifier for SkipServerVerification {
+    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            use rustls::SignatureScheme::*;
+            [
+                RSA_PKCS1_SHA1,
+                ECDSA_SHA1_Legacy,
+                RSA_PKCS1_SHA256,
+                ECDSA_NISTP256_SHA256,
+                RSA_PKCS1_SHA384,
+                ECDSA_NISTP384_SHA384,
+                RSA_PKCS1_SHA512,
+                ECDSA_NISTP521_SHA512,
+                RSA_PSS_SHA256,
+                RSA_PSS_SHA384,
+                RSA_PSS_SHA512,
+                ED25519,
+                ED448,
+            ]
+            .to_vec()
+        }
+
         fn verify_server_cert(
             &self,
-            _end_entity: &rustls::Certificate,
-            _intermediates: &[rustls::Certificate],
-            _server_name: &rustls::ServerName,
-            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
             _ocsp_response: &[u8],
-            _now: std::time::SystemTime,
-        ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-            Ok(rustls::client::ServerCertVerified::assertion())
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
         }
     }
 
@@ -1366,7 +1411,7 @@ pub mod test {
         let (cert, key) = new_dummy_x509_certificate(keypair);
 
         let mut crypto = rustls::ClientConfig::builder()
-            .with_safe_defaults()
+            .dangerous()
             .with_custom_certificate_verifier(SkipServerVerification::new())
             .with_client_auth_cert(vec![cert], key)
             .expect("Failed to use client certificate");
@@ -1374,7 +1419,7 @@ pub mod test {
         crypto.enable_early_data = true;
         crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
-        let mut config = ClientConfig::new(Arc::new(crypto));
+        let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
 
         let mut transport_config = TransportConfig::default();
         let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
@@ -1454,7 +1499,7 @@ pub mod test {
         for i in 0..total {
             let mut s1 = conn1.open_uni().await.unwrap();
             s1.write_all(&[0u8]).await.unwrap();
-            s1.finish().await.unwrap();
+            s1.finish().unwrap();
             info!("done {}", i);
             sleep(Duration::from_millis(1000)).await;
         }
@@ -1479,15 +1524,12 @@ pub mod test {
         let s2 = conn2.open_uni().await;
         if let Ok(mut s2) = s2 {
             s1.write_all(&[0u8]).await.unwrap();
-            s1.finish().await.unwrap();
+            s1.finish().unwrap();
             // Send enough data to create more than 1 chunks.
             // The first will try to open the connection (which should fail).
             // The following chunks will enable the detection of connection failure.
             let data = vec![1u8; PACKET_DATA_SIZE * 2];
             s2.write_all(&data)
-                .await
-                .expect_err("shouldn't be able to open 2 connections");
-            s2.finish()
                 .await
                 .expect_err("shouldn't be able to open 2 connections");
         } else {
@@ -1512,9 +1554,9 @@ pub mod test {
             let mut s1 = c1.open_uni().await.unwrap();
             let mut s2 = c2.open_uni().await.unwrap();
             s1.write_all(&[0u8]).await.unwrap();
-            s1.finish().await.unwrap();
+            s1.finish().unwrap();
             s2.write_all(&[0u8]).await.unwrap();
-            s2.finish().await.unwrap();
+            s2.finish().unwrap();
             num_expected_packets += 2;
             sleep(Duration::from_millis(200)).await;
         }
@@ -1554,7 +1596,7 @@ pub mod test {
         for _ in 0..num_bytes {
             s1.write_all(&[0u8]).await.unwrap();
         }
-        s1.finish().await.unwrap();
+        s1.finish().unwrap();
 
         let mut all_packets = vec![];
         let now = Instant::now();
@@ -1589,7 +1631,8 @@ pub mod test {
                 // Ignoring any errors here. s1.finish() will test the error condition
                 s1.write_all(&[0u8]).await.unwrap_or_default();
             }
-            s1.finish().await.unwrap_err();
+            s1.finish().unwrap_or_default();
+            s1.stopped().await.unwrap_err();
         }
     }
 
@@ -1682,7 +1725,6 @@ pub mod test {
         // Test that more writes to the stream will fail (i.e. the stream is no longer writable
         // after the timeouts)
         assert!(s1.write_all(&[0u8]).await.is_err());
-        assert!(s1.finish().await.is_err());
 
         exit.store(true, Ordering::Relaxed);
         t.await.unwrap();
@@ -1726,7 +1768,7 @@ pub mod test {
 
         let mut s1 = conn1.open_uni().await.unwrap();
         s1.write_all(&[0u8]).await.unwrap();
-        s1.finish().await.unwrap();
+        s1.finish().unwrap();
 
         let mut s2 = conn2.open_uni().await.unwrap();
         conn1.close(
@@ -1740,7 +1782,7 @@ pub mod test {
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
 
         s2.write_all(&[0u8]).await.unwrap();
-        s2.finish().await.unwrap();
+        s2.finish().unwrap();
 
         conn2.close(
             CONNECTION_CLOSE_CODE_DROPPED_ENTRY.into(),

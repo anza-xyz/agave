@@ -193,7 +193,7 @@ criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.13"
 csv = "1.3.0"
 ctrlc = "3.4.4"
-curve25519-dalek = "3.2.1"
+curve25519-dalek = { git = "https://github.com/anza-xyz/curve25519-dalek.git", rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464" }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
 derivative = "2.2.0"
@@ -285,8 +285,8 @@ prost-types = "0.11.9"
 protobuf-src = "1.1.0"
 qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
-quinn = "0.10.2"
-quinn-proto = "0.10.6"
+quinn = "0.11.1"
+quinn-proto = "0.11.2"
 quote = "1.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
@@ -298,7 +298,7 @@ reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
 rustc_version = "0.4"
-rustls = { version = "0.21.12", default-features = false, features = ["quic"] }
+rustls = { version = "0.23.9", default-features = false }
 rustversion = "1.0.17"
 scopeguard = "1.2.0"
 semver = "1.0.23"
@@ -454,7 +454,7 @@ winapi = "0.3.8"
 winreg = "0.50"
 x509-parser = "0.14.0"
 # See "zeroize versioning issues" below if you are updating this version.
-zeroize = { version = "1.3", default-features = false }
+zeroize = { version = "1.7", default-features = false }
 zstd = "0.11.2"
 
 [patch.crates-io]
@@ -497,7 +497,6 @@ solana-curve25519 = { path = "curves/curve25519" }
 solana-program = { path = "sdk/program" }
 solana-zk-sdk = { path = "zk-sdk" }
 solana-zk-token-sdk = { path = "zk-token-sdk" }
-
 # Our dependency tree has `curve25519-dalek` v3.2.1.  They have removed the
 # constraint in the next major release. The commit that removes the `zeroize`
 # constraint was added to multiple release branches, but not to the 3.2 branch.
@@ -527,9 +526,11 @@ solana-zk-token-sdk = { path = "zk-token-sdk" }
 #
 # https://github.com/dalek-cryptography/curve25519-dalek/compare/3.2.1...solana-labs:curve25519-dalek:3.2.1-unpin-zeroize
 #
-[patch.crates-io.curve25519-dalek]
-git = "https://github.com/anza-xyz/curve25519-dalek.git"
-rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464"
+# See above dependency -- we directly set the dependency via git dependency. It is found the patch.crates-io
+#  is ineffective in other crate which wrongly picks the curve25519-dalek 3.2.1 which has constraint on the zeroize >= 1 < 1.4.
+# [patch.crates-io.curve25519-dalek]
+# git = "https://github.com/anza-xyz/curve25519-dalek.git"
+# rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464"
 
 # Solana RPC nodes experience stalls when running with `tokio` containing this
 # commit:
