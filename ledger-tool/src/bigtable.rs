@@ -247,7 +247,7 @@ async fn shreds(
                         return Err(format!(
                             "Entry summary {i} for slot {slot} with starting_transaction_index \
                              {starting_transaction_index} and num_transactions {num_transactions} \
-                             is in conflict with the block has {num_block_transactions} \
+                             is in conflict with the block, which has {num_block_transactions} \
                              transactions"
                         ));
                     };
