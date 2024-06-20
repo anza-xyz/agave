@@ -77,24 +77,9 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     ))
 }
 
-pub(crate) struct ComputeUnitConfig<'a> {
-    pub(crate) compute_unit_price: Option<&'a u64>,
+pub(crate) struct ComputeUnitConfig {
+    pub(crate) compute_unit_price: Option<u64>,
     pub(crate) compute_unit_limit: ComputeUnitLimit,
-}
-
-pub(crate) trait WithComputeUnitPrice {
-    fn with_compute_unit_price(self, compute_unit_price: Option<&u64>) -> Self;
-}
-
-impl WithComputeUnitPrice for Vec<Instruction> {
-    fn with_compute_unit_price(mut self, compute_unit_price: Option<&u64>) -> Self {
-        if let Some(compute_unit_price) = compute_unit_price {
-            self.push(ComputeBudgetInstruction::set_compute_unit_price(
-                *compute_unit_price,
-            ));
-        }
-        self
-    }
 }
 
 pub(crate) trait WithComputeUnitConfig {
@@ -105,7 +90,7 @@ impl WithComputeUnitConfig for Vec<Instruction> {
     fn with_compute_unit_config(mut self, config: &ComputeUnitConfig) -> Self {
         if let Some(compute_unit_price) = config.compute_unit_price {
             self.push(ComputeBudgetInstruction::set_compute_unit_price(
-                *compute_unit_price,
+                compute_unit_price,
             ));
             match config.compute_unit_limit {
                 ComputeUnitLimit::Default => {}

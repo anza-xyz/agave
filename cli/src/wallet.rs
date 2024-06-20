@@ -879,7 +879,7 @@ pub fn process_transfer(
     fee_payer: SignerIndex,
     derived_address_seed: Option<String>,
     derived_address_program_id: Option<&Pubkey>,
-    compute_unit_price: Option<&u64>,
+    compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let from = config.signers[from];
     let mut from_pubkey = from.pubkey();
