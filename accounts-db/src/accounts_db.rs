@@ -6182,7 +6182,7 @@ impl AccountsDb {
         // allocate a buffer on the stack that's big enough
         // to hold a token account or a stake account
         const META_SIZE: usize = 8 /* lamports */ + 8 /* rent_epoch */ + 1 /* executable */ + 32 /* owner */ + 32 /* pubkey */;
-        const DATA_SIZE: usize = 200; // stake acounts are 200 B and token accounts are 165-182ish B
+        const DATA_SIZE: usize = 200; // stake accounts are 200 B and token accounts are 165-182ish B
         const BUFFER_SIZE: usize = META_SIZE + DATA_SIZE;
         let mut buffer = SmallVec::<[u8; BUFFER_SIZE]>::new();
 
