@@ -1767,6 +1767,8 @@ pub fn main() {
         BlockProductionMethod
     )
     .unwrap_or_default();
+    validator_config.enable_block_production_forwarding =
+        matches.is_present("enable_block_production_forwarding");
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
 
