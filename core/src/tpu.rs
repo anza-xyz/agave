@@ -244,6 +244,7 @@ impl Tpu {
             connection_cache.clone(),
             bank_forks.clone(),
             prioritization_fee_cache,
+            false,
         );
 
         let (entry_receiver, tpu_entry_notifier) =
