@@ -69,7 +69,6 @@ use {
         epoch_schedule::EpochSchedule,
         exit::Exit,
         feature_set,
-        fee_calculator::FeeCalculator,
         hash::Hash,
         message::SanitizedMessage,
         pubkey::{Pubkey, PUBKEY_BYTES},
@@ -798,75 +797,6 @@ impl JsonRpcRequestProcessor {
     ) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
         Ok(new_response(&bank, bank.get_balance(pubkey)))
-    }
-
-    fn get_recent_blockhash(
-        &self,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>> {
-        let bank = self.bank(commitment);
-        let blockhash = bank.confirmed_last_blockhash();
-        let lamports_per_signature = bank
-            .get_lamports_per_signature_for_blockhash(&blockhash)
-            .unwrap();
-        Ok(new_response(
-            &bank,
-            RpcBlockhashFeeCalculator {
-                blockhash: blockhash.to_string(),
-                fee_calculator: FeeCalculator::new(lamports_per_signature),
-            },
-        ))
-    }
-
-    fn get_fees(&self, commitment: Option<CommitmentConfig>) -> Result<RpcResponse<RpcFees>> {
-        let bank = self.bank(commitment);
-        let blockhash = bank.confirmed_last_blockhash();
-        let lamports_per_signature = bank
-            .get_lamports_per_signature_for_blockhash(&blockhash)
-            .unwrap();
-        #[allow(deprecated)]
-        let last_valid_slot = bank
-            .get_blockhash_last_valid_slot(&blockhash)
-            .expect("bank blockhash queue should contain blockhash");
-        let last_valid_block_height = bank
-            .get_blockhash_last_valid_block_height(&blockhash)
-            .expect("bank blockhash queue should contain blockhash");
-        Ok(new_response(
-            &bank,
-            RpcFees {
-                blockhash: blockhash.to_string(),
-                fee_calculator: FeeCalculator::new(lamports_per_signature),
-                last_valid_slot,
-                last_valid_block_height,
-            },
-        ))
-    }
-
-    fn get_fee_calculator_for_blockhash(
-        &self,
-        blockhash: &Hash,
-        commitment: Option<CommitmentConfig>,
-    ) -> Result<RpcResponse<Option<RpcFeeCalculator>>> {
-        let bank = self.bank(commitment);
-        let lamports_per_signature = bank.get_lamports_per_signature_for_blockhash(blockhash);
-        Ok(new_response(
-            &bank,
-            lamports_per_signature.map(|lamports_per_signature| RpcFeeCalculator {
-                fee_calculator: FeeCalculator::new(lamports_per_signature),
-            }),
-        ))
-    }
-
-    fn get_fee_rate_governor(&self) -> RpcResponse<RpcFeeRateGovernor> {
-        let bank = self.bank(None);
-        #[allow(deprecated)]
-        let fee_rate_governor = bank.get_fee_rate_governor();
-        new_response(
-            &bank,
-            RpcFeeRateGovernor {
-                fee_rate_governor: fee_rate_governor.clone(),
-            },
-        )
     }
 
     pub fn confirm_transaction(
@@ -4346,102 +4276,6 @@ pub mod rpc_deprecated_v1_18 {
     }
 }
 
-// RPC methods deprecated in v1.9
-pub mod rpc_deprecated_v1_9 {
-    #![allow(deprecated)]
-    use super::*;
-    #[rpc]
-    pub trait DeprecatedV1_9 {
-        type Metadata;
-
-        #[rpc(meta, name = "getRecentBlockhash")]
-        fn get_recent_blockhash(
-            &self,
-            meta: Self::Metadata,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>>;
-
-        #[rpc(meta, name = "getFees")]
-        fn get_fees(
-            &self,
-            meta: Self::Metadata,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<RpcFees>>;
-
-        #[rpc(meta, name = "getFeeCalculatorForBlockhash")]
-        fn get_fee_calculator_for_blockhash(
-            &self,
-            meta: Self::Metadata,
-            blockhash: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<Option<RpcFeeCalculator>>>;
-
-        #[rpc(meta, name = "getFeeRateGovernor")]
-        fn get_fee_rate_governor(
-            &self,
-            meta: Self::Metadata,
-        ) -> Result<RpcResponse<RpcFeeRateGovernor>>;
-
-        #[rpc(meta, name = "getSnapshotSlot")]
-        fn get_snapshot_slot(&self, meta: Self::Metadata) -> Result<Slot>;
-    }
-
-    pub struct DeprecatedV1_9Impl;
-    impl DeprecatedV1_9 for DeprecatedV1_9Impl {
-        type Metadata = JsonRpcRequestProcessor;
-
-        fn get_recent_blockhash(
-            &self,
-            meta: Self::Metadata,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>> {
-            debug!("get_recent_blockhash rpc request received");
-            meta.get_recent_blockhash(commitment)
-        }
-
-        fn get_fees(
-            &self,
-            meta: Self::Metadata,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<RpcFees>> {
-            debug!("get_fees rpc request received");
-            meta.get_fees(commitment)
-        }
-
-        fn get_fee_calculator_for_blockhash(
-            &self,
-            meta: Self::Metadata,
-            blockhash: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<Option<RpcFeeCalculator>>> {
-            debug!("get_fee_calculator_for_blockhash rpc request received");
-            let blockhash =
-                Hash::from_str(&blockhash).map_err(|e| Error::invalid_params(format!("{e:?}")))?;
-            meta.get_fee_calculator_for_blockhash(&blockhash, commitment)
-        }
-
-        fn get_fee_rate_governor(
-            &self,
-            meta: Self::Metadata,
-        ) -> Result<RpcResponse<RpcFeeRateGovernor>> {
-            debug!("get_fee_rate_governor rpc request received");
-            Ok(meta.get_fee_rate_governor())
-        }
-
-        fn get_snapshot_slot(&self, meta: Self::Metadata) -> Result<Slot> {
-            debug!("get_snapshot_slot rpc request received");
-
-            meta.snapshot_config
-                .and_then(|snapshot_config| {
-                    snapshot_utils::get_highest_full_snapshot_archive_slot(
-                        snapshot_config.full_snapshot_archives_dir,
-                    )
-                })
-                .ok_or_else(|| RpcCustomError::NoSnapshot.into())
-        }
-    }
-}
-
 const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
 fn decode_and_deserialize<T>(
@@ -4616,8 +4450,7 @@ pub fn populate_blockstore_for_tests(
 pub mod tests {
     use {
         super::{
-            rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_deprecated_v1_9::*,
-            rpc_full::*, rpc_minimal::*, *,
+            rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *,
         },
         crate::{
             optimistically_confirmed_bank_tracker::{
@@ -4654,9 +4487,8 @@ pub mod tests {
                 self,
                 state::{AddressLookupTable, LookupTableMeta},
             },
-            clock::MAX_PROCESSING_AGE,
             compute_budget::ComputeBudgetInstruction,
-            fee_calculator::{FeeRateGovernor, DEFAULT_BURN_PERCENT},
+            fee_calculator::FeeRateGovernor,
             hash::{hash, Hash},
             instruction::InstructionError,
             message::{
@@ -4818,7 +4650,6 @@ pub mod tests {
             io.extend_with(rpc_accounts::AccountsDataImpl.to_delegate());
             io.extend_with(rpc_accounts_scan::AccountsScanImpl.to_delegate());
             io.extend_with(rpc_full::FullImpl.to_delegate());
-            io.extend_with(rpc_deprecated_v1_9::DeprecatedV1_9Impl.to_delegate());
             Self {
                 io,
                 meta,
@@ -6684,146 +6515,6 @@ pub mod tests {
                 r#"{"jsonrpc":"2.0","error":{"code":-32011,"message":"Transaction history is not available from this node"},"id":1}"#.to_string(),
             )
         );
-    }
-
-    #[test]
-    fn test_rpc_get_recent_blockhash() {
-        let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let recent_blockhash = bank.confirmed_last_blockhash();
-        let RpcHandler { meta, io, .. } = rpc;
-
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"getRecentBlockhash"}"#;
-        let res = io.handle_request_sync(req, meta);
-        let expected = json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
-                "value":{
-                    "blockhash": recent_blockhash.to_string(),
-                    "feeCalculator": {
-                        "lamportsPerSignature": TEST_SIGNATURE_FEE,
-                    }
-                },
-            },
-            "id": 1
-        });
-        let expected: Response =
-            serde_json::from_value(expected).expect("expected response deserialization");
-        let result: Response = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_rpc_get_fees() {
-        let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let recent_blockhash = bank.confirmed_last_blockhash();
-        let RpcHandler { meta, io, .. } = rpc;
-
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"getFees"}"#;
-        let res = io.handle_request_sync(req, meta);
-        let expected = json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
-                "value": {
-                    "blockhash": recent_blockhash.to_string(),
-                    "feeCalculator": {
-                        "lamportsPerSignature": TEST_SIGNATURE_FEE,
-                    },
-                    "lastValidSlot": MAX_PROCESSING_AGE,
-                    "lastValidBlockHeight": MAX_PROCESSING_AGE,
-                },
-            },
-            "id": 1
-        });
-        let expected: Response =
-            serde_json::from_value(expected).expect("expected response deserialization");
-        let result: Response = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_rpc_get_fee_calculator_for_blockhash() {
-        let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let recent_blockhash = bank.confirmed_last_blockhash();
-        let RpcHandler { meta, io, .. } = rpc;
-
-        let lamports_per_signature = bank.get_lamports_per_signature();
-        let fee_calculator = RpcFeeCalculator {
-            fee_calculator: FeeCalculator::new(lamports_per_signature),
-        };
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getFeeCalculatorForBlockhash","params":["{recent_blockhash:?}"]}}"#
-        );
-        let res = io.handle_request_sync(&req, meta.clone());
-        let expected = json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
-                "value":fee_calculator,
-            },
-            "id": 1
-        });
-        let expected: Response =
-            serde_json::from_value(expected).expect("expected response deserialization");
-        let result: Response = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        assert_eq!(result, expected);
-
-        // Expired (non-existent) blockhash
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getFeeCalculatorForBlockhash","params":["{:?}"]}}"#,
-            Hash::default()
-        );
-        let res = io.handle_request_sync(&req, meta);
-        let expected = json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
-                "value":Value::Null,
-            },
-            "id": 1
-        });
-        let expected: Response =
-            serde_json::from_value(expected).expect("expected response deserialization");
-        let result: Response = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_rpc_get_fee_rate_governor() {
-        let RpcHandler { meta, io, .. } = RpcHandler::start();
-
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"getFeeRateGovernor"}"#;
-        let res = io.handle_request_sync(req, meta);
-        let expected = json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "context": {"slot": 0, "apiVersion": RpcApiVersion::default()},
-                "value":{
-                    "feeRateGovernor": {
-                        "burnPercent": DEFAULT_BURN_PERCENT,
-                        "maxLamportsPerSignature": TEST_SIGNATURE_FEE,
-                        "minLamportsPerSignature": TEST_SIGNATURE_FEE,
-                        "targetLamportsPerSignature": TEST_SIGNATURE_FEE,
-                        "targetSignaturesPerSlot": 0
-                    }
-                },
-            },
-            "id": 1
-        });
-        let expected: Response =
-            serde_json::from_value(expected).expect("expected response deserialization");
-        let result: Response = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-        assert_eq!(result, expected);
     }
 
     #[test]
