@@ -44,8 +44,8 @@ use {
         request::{
             TokenAccountsFilter, DELINQUENT_VALIDATOR_SLOT_DISTANCE,
             MAX_GET_CONFIRMED_BLOCKS_RANGE, MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
-            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS_SLOT_RANGE, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
-            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
+            MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
+            MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
             MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY, NUM_LARGEST_ACCOUNTS,
         },
         response::{Response as RpcResponse, *},
@@ -158,7 +158,6 @@ pub struct JsonRpcConfig {
     pub rpc_threads: usize,
     pub rpc_niceness_adj: i8,
     pub full_api: bool,
-    pub obsolete_v1_7_api: bool,
     pub rpc_scan_and_fix_roots: bool,
     pub max_request_body_size: Option<usize>,
     /// Disable the health check, used for tests and TestValidator
@@ -969,11 +968,6 @@ impl JsonRpcRequestProcessor {
     fn get_transaction_count(&self, config: RpcContextConfig) -> Result<u64> {
         let bank = self.get_bank_with_config(config)?;
         Ok(bank.transaction_count())
-    }
-
-    fn get_total_supply(&self, commitment: Option<CommitmentConfig>) -> Result<u64> {
-        let bank = self.bank(commitment);
-        Ok(bank.capitalization())
     }
 
     fn get_cached_largest_accounts(
@@ -4623,142 +4617,6 @@ pub mod rpc_deprecated_v1_7 {
                     .await
                 }),
             }
-        }
-    }
-}
-
-// Obsolete RPC methods, collected for easy deactivation and removal
-pub mod rpc_obsolete_v1_7 {
-    use super::*;
-    #[rpc]
-    pub trait ObsoleteV1_7 {
-        type Metadata;
-
-        // DEPRECATED
-        #[rpc(meta, name = "confirmTransaction")]
-        fn confirm_transaction(
-            &self,
-            meta: Self::Metadata,
-            signature_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<bool>>;
-
-        // DEPRECATED
-        #[rpc(meta, name = "getSignatureStatus")]
-        fn get_signature_status(
-            &self,
-            meta: Self::Metadata,
-            signature_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<Option<transaction::Result<()>>>;
-
-        // DEPRECATED (used by Trust Wallet)
-        #[rpc(meta, name = "getSignatureConfirmation")]
-        fn get_signature_confirmation(
-            &self,
-            meta: Self::Metadata,
-            signature_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<Option<RpcSignatureConfirmation>>;
-
-        // DEPRECATED
-        #[rpc(meta, name = "getTotalSupply")]
-        fn get_total_supply(
-            &self,
-            meta: Self::Metadata,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<u64>;
-
-        // DEPRECATED
-        #[rpc(meta, name = "getConfirmedSignaturesForAddress")]
-        fn get_confirmed_signatures_for_address(
-            &self,
-            meta: Self::Metadata,
-            pubkey_str: String,
-            start_slot: Slot,
-            end_slot: Slot,
-        ) -> Result<Vec<String>>;
-    }
-
-    pub struct ObsoleteV1_7Impl;
-    impl ObsoleteV1_7 for ObsoleteV1_7Impl {
-        type Metadata = JsonRpcRequestProcessor;
-
-        fn confirm_transaction(
-            &self,
-            meta: Self::Metadata,
-            id: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<bool>> {
-            debug!("confirm_transaction rpc request received: {:?}", id);
-            let signature = verify_signature(&id)?;
-            meta.confirm_transaction(&signature, commitment)
-        }
-
-        fn get_signature_status(
-            &self,
-            meta: Self::Metadata,
-            signature_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<Option<transaction::Result<()>>> {
-            debug!(
-                "get_signature_status rpc request received: {:?}",
-                signature_str
-            );
-            let signature = verify_signature(&signature_str)?;
-            meta.get_signature_status(signature, commitment)
-        }
-
-        fn get_signature_confirmation(
-            &self,
-            meta: Self::Metadata,
-            signature_str: String,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<Option<RpcSignatureConfirmation>> {
-            debug!(
-                "get_signature_confirmation rpc request received: {:?}",
-                signature_str
-            );
-            let signature = verify_signature(&signature_str)?;
-            meta.get_signature_confirmation_status(signature, commitment)
-        }
-
-        fn get_total_supply(
-            &self,
-            meta: Self::Metadata,
-            commitment: Option<CommitmentConfig>,
-        ) -> Result<u64> {
-            debug!("get_total_supply rpc request received");
-            meta.get_total_supply(commitment)
-        }
-
-        fn get_confirmed_signatures_for_address(
-            &self,
-            meta: Self::Metadata,
-            pubkey_str: String,
-            start_slot: Slot,
-            end_slot: Slot,
-        ) -> Result<Vec<String>> {
-            debug!(
-                "get_confirmed_signatures_for_address rpc request received: {:?} {:?}-{:?}",
-                pubkey_str, start_slot, end_slot
-            );
-            let pubkey = verify_pubkey(&pubkey_str)?;
-            if end_slot < start_slot {
-                return Err(Error::invalid_params(format!(
-                    "start_slot {start_slot} must be less than or equal to end_slot {end_slot}"
-                )));
-            }
-            if end_slot - start_slot > MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS_SLOT_RANGE {
-                return Err(Error::invalid_params(format!(
-                    "Slot range too large; max {MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS_SLOT_RANGE}"
-                )));
-            }
-            Ok(meta
-                .get_confirmed_signatures_for_address(pubkey, start_slot, end_slot)
-                .iter()
-                .map(|signature| signature.to_string())
-                .collect())
         }
     }
 }
