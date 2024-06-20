@@ -5798,7 +5798,7 @@ impl AccountsDb {
 
     /// This should only be called after the `Bank::drop()` runs in bank.rs, See BANK_DROP_SAFETY
     /// comment below for more explanation.
-    ///   * `is_serialized_with_abs` - indicates whehter this call runs sequentially with all other
+    ///   * `is_serialized_with_abs` - indicates whether this call runs sequentially with all other
     ///        accounts_db relevant calls, such as shrinking, purging etc., in account background
     ///        service.
     pub fn purge_slot(&self, slot: Slot, bank_id: BankId, is_serialized_with_abs: bool) {
