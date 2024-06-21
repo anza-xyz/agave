@@ -490,11 +490,9 @@ mod tests {
         );
 
         // Mock having loaded plugin (TestPlugin)
-        let (mut plugin, lib, config) = dummy_plugin_and_library(TestPlugin, DUMMY_CONFIG);
+        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, DUMMY_CONFIG);
         plugin.on_load(config, false).unwrap();
         plugin_manager_lock.plugins.push(plugin);
-        plugin_manager_lock.libs.push(lib);
-        // plugin_manager_lock.libs.push(lib);
         assert_eq!(plugin_manager_lock.plugins[0].name(), DUMMY_NAME);
         plugin_manager_lock.plugins[0].name();
 
@@ -525,15 +523,13 @@ mod tests {
 
         // Load two plugins
         // First
-        let (mut plugin, lib, config) = dummy_plugin_and_library(TestPlugin, TESTPLUGIN_CONFIG);
+        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin, TESTPLUGIN_CONFIG);
         plugin.on_load(config, false).unwrap();
         plugin_manager_lock.plugins.push(plugin);
-        plugin_manager_lock.libs.push(lib);
         // Second
-        let (mut plugin, lib, config) = dummy_plugin_and_library(TestPlugin2, TESTPLUGIN2_CONFIG);
+        let (mut plugin, config) = dummy_plugin_and_library(TestPlugin2, TESTPLUGIN2_CONFIG);
         plugin.on_load(config, false).unwrap();
         plugin_manager_lock.plugins.push(plugin);
-        plugin_manager_lock.libs.push(lib);
 
         // Check that both plugins are returned in the list
         let plugins = plugin_manager_lock.list_plugins().unwrap();
