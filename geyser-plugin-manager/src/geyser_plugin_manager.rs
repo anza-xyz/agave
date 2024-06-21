@@ -14,9 +14,14 @@ use {
 pub struct LoadedGeyserPlugin {
     name: String,
     plugin: Box<dyn GeyserPlugin>,
-    // NOTE: We store the library after the plugin to ensure that it will live
-    // longer than plugin. We never access the library but we must ensure it is
-    // valid for the full lifetime of plugin else we will most likely SIGSEGV.
+    // NOTE: While we do not access the library, the plugin we have loaded most
+    // certainly does. To ensure we don't SIGSEGV we must declare the library
+    // after the plugin so the plugin is dropped first.
+    //
+    // Furthermore, a well behaved Geyser plugin must ensure it ceases to run
+    // any code before returning from Drop. This means if the Geyser plugins
+    // spawn threads that access the Library, those threads must be `join`ed
+    // before the Geyser plugin returns from on_unload / Drop.
     #[allow(dead_code)]
     library: Library,
 }
