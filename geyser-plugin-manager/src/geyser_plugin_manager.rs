@@ -143,19 +143,26 @@ impl GeyserPluginManager {
             });
         }
 
-        setup_logger_for_plugin(&*new_plugin.plugin)?;
+        if let Err(err) = setup_logger_for_plugin(&*new_plugin.plugin) {
+            // NB: Must drop pugin before lib to avoid a segfault.
+            drop(new_plugin);
+            drop(new_lib);
+            return Err(err);
+        }
 
         // Call on_load and push plugin
-        new_plugin
-            .on_load(new_config_file, false)
-            .map_err(|on_load_err| jsonrpc_core::Error {
+        if let Err(err) = new_plugin.on_load(new_config_file, false) {
+            // NB: Must drop pugin before lib to avoid a segfault.
+            let name = new_plugin.name().to_owned();
+            drop(new_plugin);
+            drop(new_lib);
+
+            return Err(jsonrpc_core::Error {
                 code: ErrorCode::InvalidRequest,
-                message: format!(
-                    "on_load method of plugin {} failed: {on_load_err}",
-                    new_plugin.name()
-                ),
+                message: format!("on_load method of plugin {name} failed: {err}",),
                 data: None,
-            })?;
+            });
+        }
         let name = new_plugin.name().to_string();
         self.plugins.push(new_plugin);
         self.libs.push(new_lib);
