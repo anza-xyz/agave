@@ -144,7 +144,7 @@ impl GeyserPluginManager {
         }
 
         if let Err(err) = setup_logger_for_plugin(&*new_plugin.plugin) {
-            // NOTE: Must drop pugin before lib to avoid a segfault.
+            // NOTE: Must drop plugin before lib to avoid a segfault.
             drop(new_plugin);
             drop(new_lib);
             return Err(err);
