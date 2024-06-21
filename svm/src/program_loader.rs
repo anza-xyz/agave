@@ -11,7 +11,7 @@ use {
         account::{AccountSharedData, ReadableAccount},
         account_utils::StateMut,
         bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::UpgradeableLoaderState,
+        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::Slot,
         instruction::InstructionError,
         loader_v4::{self, LoaderV4State, LoaderV4Status},
