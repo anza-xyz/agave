@@ -14,13 +14,19 @@ use {
 pub struct LoadedGeyserPlugin {
     name: String,
     plugin: Box<dyn GeyserPlugin>,
+    // NOTE: We store the library after the plugin to ensure that it will live
+    // longer than plugin. We never access the library but we must ensure it is
+    // valid for the full lifetime of plugin else we will most likely SIGSEGV.
+    #[allow(dead_code)]
+    library: Library,
 }
 
 impl LoadedGeyserPlugin {
-    pub fn new(plugin: Box<dyn GeyserPlugin>, name: Option<String>) -> Self {
+    pub fn new(library: Library, plugin: Box<dyn GeyserPlugin>, name: Option<String>) -> Self {
         Self {
             name: name.unwrap_or_else(|| plugin.name().to_owned()),
             plugin,
+            library,
         }
     }
 
@@ -46,14 +52,12 @@ impl DerefMut for LoadedGeyserPlugin {
 #[derive(Default, Debug)]
 pub struct GeyserPluginManager {
     pub plugins: Vec<LoadedGeyserPlugin>,
-    libs: Vec<Library>,
 }
 
 impl GeyserPluginManager {
     pub fn new() -> Self {
         GeyserPluginManager {
             plugins: Vec::default(),
-            libs: Vec::default(),
         }
     }
 
@@ -63,10 +67,6 @@ impl GeyserPluginManager {
         for mut plugin in self.plugins.drain(..) {
             info!("Unloading plugin for {:?}", plugin.name());
             plugin.on_unload();
-        }
-
-        for lib in self.libs.drain(..) {
-            drop(lib);
         }
     }
 
@@ -118,7 +118,7 @@ impl GeyserPluginManager {
         geyser_plugin_config_file: impl AsRef<Path>,
     ) -> JsonRpcResult<String> {
         // First load plugin
-        let (mut new_plugin, new_lib, new_config_file) =
+        let (mut new_plugin, new_config_file) =
             load_plugin_from_config(geyser_plugin_config_file.as_ref()).map_err(|e| {
                 jsonrpc_core::Error {
                     code: ErrorCode::InvalidRequest,
@@ -143,29 +143,21 @@ impl GeyserPluginManager {
             });
         }
 
-        if let Err(err) = setup_logger_for_plugin(&*new_plugin.plugin) {
-            // NOTE: Must drop plugin before lib to avoid a segfault.
-            drop(new_plugin);
-            drop(new_lib);
-            return Err(err);
-        }
+        setup_logger_for_plugin(&*new_plugin.plugin)?;
 
         // Call on_load and push plugin
-        if let Err(err) = new_plugin.on_load(new_config_file, false) {
-            // NOTE: Must drop pugin before lib to avoid a segfault.
-            let name = new_plugin.name().to_owned();
-            drop(new_plugin);
-            drop(new_lib);
-
-            return Err(jsonrpc_core::Error {
+        new_plugin
+            .on_load(new_config_file, false)
+            .map_err(|on_load_err| jsonrpc_core::Error {
                 code: ErrorCode::InvalidRequest,
-                message: format!("on_load method of plugin {name} failed: {err}",),
+                message: format!(
+                    "on_load method of plugin {} failed: {on_load_err}",
+                    new_plugin.name()
+                ),
                 data: None,
-            });
-        }
+            })?;
         let name = new_plugin.name().to_string();
         self.plugins.push(new_plugin);
-        self.libs.push(new_lib);
 
         Ok(name)
     }
@@ -215,7 +207,7 @@ impl GeyserPluginManager {
 
         // Try to load plugin, library
         // SAFETY: It is up to the validator to ensure this is a valid plugin library.
-        let (mut new_plugin, new_lib, new_parsed_config_file) =
+        let (mut new_plugin, new_parsed_config_file) =
             load_plugin_from_config(config_file.as_ref()).map_err(|err| jsonrpc_core::Error {
                 code: ErrorCode::InvalidRequest,
                 message: err.to_string(),
@@ -245,7 +237,6 @@ impl GeyserPluginManager {
             // On success, push plugin and library
             Ok(()) => {
                 self.plugins.push(new_plugin);
-                self.libs.push(new_lib);
             }
 
             // On failure, return error
@@ -264,13 +255,9 @@ impl GeyserPluginManager {
     }
 
     fn _drop_plugin(&mut self, idx: usize) {
-        let current_lib = self.libs.remove(idx);
         let mut current_plugin = self.plugins.remove(idx);
         let name = current_plugin.name().to_string();
         current_plugin.on_unload();
-        // The plugin must be dropped before the library to avoid a crash.
-        drop(current_plugin);
-        drop(current_lib);
         info!("Unloaded plugin {name} at idx {idx}");
     }
 }
@@ -346,7 +333,7 @@ pub enum GeyserPluginManagerError {
 #[cfg(not(test))]
 pub(crate) fn load_plugin_from_config(
     geyser_plugin_config_file: &Path,
-) -> Result<(LoadedGeyserPlugin, Library, &str), GeyserPluginManagerError> {
+) -> Result<(LoadedGeyserPlugin, &str), GeyserPluginManagerError> {
     use std::{fs::File, io::Read, path::PathBuf};
     type PluginConstructor = unsafe fn() -> *mut dyn GeyserPlugin;
     use libloading::Symbol;
@@ -406,8 +393,7 @@ pub(crate) fn load_plugin_from_config(
         (Box::from_raw(plugin_raw), lib)
     };
     Ok((
-        LoadedGeyserPlugin::new(plugin, plugin_name),
-        lib,
+        LoadedGeyserPlugin::new(lib, plugin, plugin_name),
         config_file,
     ))
 }
@@ -425,7 +411,7 @@ const TESTPLUGIN2_CONFIG: &str = "TESTPLUGIN2_CONFIG";
 #[cfg(test)]
 pub(crate) fn load_plugin_from_config(
     geyser_plugin_config_file: &Path,
-) -> Result<(LoadedGeyserPlugin, Library, &str), GeyserPluginManagerError> {
+) -> Result<(LoadedGeyserPlugin, &str), GeyserPluginManagerError> {
     if geyser_plugin_config_file.ends_with(TESTPLUGIN_CONFIG) {
         Ok(tests::dummy_plugin_and_library(
             tests::TestPlugin,
@@ -457,14 +443,13 @@ mod tests {
     pub(super) fn dummy_plugin_and_library<P: GeyserPlugin>(
         plugin: P,
         config_path: &'static str,
-    ) -> (LoadedGeyserPlugin, Library, &'static str) {
+    ) -> (LoadedGeyserPlugin, &'static str) {
         #[cfg(unix)]
         let library = libloading::os::unix::Library::this();
         #[cfg(windows)]
         let library = libloading::os::windows::Library::this().unwrap();
         (
-            LoadedGeyserPlugin::new(Box::new(plugin), None),
-            Library::from(library),
+            LoadedGeyserPlugin::new(Library::from(library), Box::new(plugin), None),
             config_path,
         )
     }
