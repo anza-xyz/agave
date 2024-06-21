@@ -1137,7 +1137,6 @@ mod tests {
         let fee_payer_rent_debit = 42;
 
         let mut error_metrics = TransactionErrorMetrics::default();
-        let loaded_programs = ProgramCacheForTxBatch::default();
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1156,7 +1155,8 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
-            &loaded_programs,
+            &[],
+            &mut HashMap::default(),
         );
 
         let expected_rent_debits = {
