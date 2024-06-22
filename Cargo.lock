@@ -6189,6 +6189,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-define-syscall"
+version = "2.1.0"
+
+[[package]]
 name = "solana-dos"
 version = "2.1.0"
 dependencies = [
