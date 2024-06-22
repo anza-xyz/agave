@@ -6792,6 +6792,7 @@ version = "2.1.0"
 dependencies = [
  "ark-bn254",
  "light-poseidon",
+ "solana-define-syscall",
  "thiserror",
 ]
 
