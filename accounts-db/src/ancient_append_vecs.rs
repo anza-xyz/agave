@@ -8,8 +8,8 @@ use {
         account_storage::ShrinkInProgress,
         accounts_db::{
             AccountFromStorage, AccountStorageEntry, AccountsDb, AliveAccounts,
-            GetUniqueAccountsResult, ShrinkCollect, ShrinkCollectAliveSeparatedByRefs,
-            ShrinkStatsSub,
+            GetUniqueAccountsResult, ShrinkAncientStats, ShrinkCollect,
+            ShrinkCollectAliveSeparatedByRefs, ShrinkStatsSub,
         },
         accounts_file::AccountsFile,
         accounts_index::AccountsIndexScanResult,
@@ -26,6 +26,10 @@ use {
         sync::{atomic::Ordering, Arc, Mutex},
     },
 };
+
+/// this many # of highest slot values should be treated as desirable to pack.
+/// This gives us high slots to move packed accounts into.
+const HIGH_SLOT_OFFSET: u64 = 100;
 
 /// ancient packing algorithm tuning per pass
 #[derive(Debug)]
@@ -57,6 +61,9 @@ struct SlotInfo {
     alive_bytes: u64,
     /// true if this should be shrunk due to ratio
     should_shrink: bool,
+    /// this slot is a high slot #
+    /// It is important to include some high slot #s so that we have new slots to try each time pack runs.
+    is_high_slot: bool,
 }
 
 /// info for all storages in ancient slots
@@ -83,6 +90,7 @@ impl AncientSlotInfos {
         storage: Arc<AccountStorageEntry>,
         can_randomly_shrink: bool,
         ideal_size: NonZeroU64,
+        is_high_slot: bool,
     ) -> bool {
         let mut was_randomly_shrunk = false;
         let alive_bytes = storage.alive_bytes() as u64;
@@ -122,6 +130,7 @@ impl AncientSlotInfos {
                 storage,
                 alive_bytes,
                 should_shrink,
+                is_high_slot,
             });
             self.total_alive_bytes += alive_bytes;
         }
@@ -130,12 +139,16 @@ impl AncientSlotInfos {
 
     /// modify 'self' to contain only the slot infos for the slots that should be combined
     /// (and in this process effectively shrunk)
-    fn filter_ancient_slots(&mut self, tuning: &PackedAncientStorageTuning) {
+    fn filter_ancient_slots(
+        &mut self,
+        tuning: &PackedAncientStorageTuning,
+        stats: &ShrinkAncientStats,
+    ) {
         // figure out which slots to combine
         // 1. should_shrink: largest bytes saved above some cutoff of ratio
         self.choose_storages_to_shrink(tuning);
         // 2. smallest files so we get the largest number of files to remove
-        self.filter_by_smallest_capacity(tuning);
+        self.filter_by_smallest_capacity(tuning, stats);
     }
 
     // sort 'shrink_indexes' by most bytes saved, highest to lowest
@@ -185,42 +198,73 @@ impl AncientSlotInfos {
     /// 'all_infos' are combined, the total number of storages <= 'max_storages'
     /// The idea is that 'all_infos' is sorted from smallest capacity to largest,
     /// but that isn't required for this function to be 'correct'.
-    fn truncate_to_max_storages(&mut self, tuning: &PackedAncientStorageTuning) {
+    fn truncate_to_max_storages(
+        &mut self,
+        tuning: &PackedAncientStorageTuning,
+        stats: &ShrinkAncientStats,
+    ) {
         // these indexes into 'all_infos' are useless once we truncate 'all_infos', so make sure they're cleared out to avoid any issues
         self.shrink_indexes.clear();
         let total_storages = self.all_infos.len();
         let mut cumulative_bytes = Saturating(0u64);
         let low_threshold = tuning.max_ancient_slots * 50 / 100;
+        let mut bytes_from_must_shrink = 0;
+        let mut bytes_from_smallest_storages = 0;
+        let mut bytes_from_newest_storages = 0;
         for (i, info) in self.all_infos.iter().enumerate() {
             cumulative_bytes += info.alive_bytes;
             let ancient_storages_required =
-                (cumulative_bytes.0 / tuning.ideal_storage_size + 1) as usize;
+                div_ceil(cumulative_bytes.0, tuning.ideal_storage_size) as usize;
             let storages_remaining = total_storages - i - 1;
 
             // if the remaining uncombined storages and the # of resulting
-            // combined ancient storages is less than the threshold, then
+            // combined ancient storages are less than the threshold, then
             // we've gone too far, so get rid of this entry and all after it.
-            // Every storage after this one is larger.
+            // Every storage after this one is larger than the ones we've chosen.
             // if we ever get to more than `max_resulting_storages` required ancient storages, that is enough to stop for now.
-            // It will take a while to create that many. This should be a limit that only affects
-            // extreme testing environments.
-            if storages_remaining + ancient_storages_required < low_threshold
-                || ancient_storages_required as u64 > u64::from(tuning.max_resulting_storages)
+            // It will take a lot of time for the pack algorithm to create that many, and that is bad for system performance.
+            // This should be a limit that only affects extreme testing environments.
+            // We do not stop including entries until we have dealt with all the high slot #s. This allows the algorithm to continue
+            // to make progress each time it is called. There are exceptions that can cause the pack to fail, such as accounts with multiple
+            // refs.
+            if !info.is_high_slot
+                && (storages_remaining + ancient_storages_required < low_threshold
+                    || ancient_storages_required as u64 > u64::from(tuning.max_resulting_storages))
             {
                 self.all_infos.truncate(i);
                 break;
             }
+            if info.should_shrink {
+                bytes_from_must_shrink += info.alive_bytes;
+            } else if info.is_high_slot {
+                bytes_from_newest_storages += info.alive_bytes;
+            } else {
+                bytes_from_smallest_storages += info.alive_bytes;
+            }
         }
+        stats
+            .bytes_from_must_shrink
+            .fetch_add(bytes_from_must_shrink, Ordering::Relaxed);
+        stats
+            .bytes_from_smallest_storages
+            .fetch_add(bytes_from_smallest_storages, Ordering::Relaxed);
+        stats
+            .bytes_from_newest_storages
+            .fetch_add(bytes_from_newest_storages, Ordering::Relaxed);
     }
 
     /// remove entries from 'all_infos' such that combining
     /// the remaining entries into storages of 'ideal_storage_size'
     /// will get us below 'max_storages'
-    /// The entires that are removed will be reconsidered the next time around.
+    /// The entries that are removed will be reconsidered the next time around.
     /// Combining too many storages costs i/o and cpu so the goal is to find the sweet spot so
     /// that we make progress in cleaning/shrinking/combining but that we don't cause unnecessary
     /// churn.
-    fn filter_by_smallest_capacity(&mut self, tuning: &PackedAncientStorageTuning) {
+    fn filter_by_smallest_capacity(
+        &mut self,
+        tuning: &PackedAncientStorageTuning,
+        stats: &ShrinkAncientStats,
+    ) {
         let total_storages = self.all_infos.len();
         if total_storages <= tuning.max_ancient_slots {
             // currently fewer storages than max, so nothing to shrink
@@ -229,16 +273,21 @@ impl AncientSlotInfos {
             return;
         }
 
-        // sort by 'should_shrink' then smallest capacity to largest
+        // sort by:
+        // 1. `high_slot`: we want to include new, high slots each time so that we try new slots
+        //     each time alg runs and have several high target slots for packed storages.
+        // 2. 'should_shrink' so we make progress on shrinking ancient storages
+        // 3. smallest capacity to largest so that we remove the most slots possible
         self.all_infos.sort_unstable_by(|l, r| {
-            r.should_shrink
-                .cmp(&l.should_shrink)
+            r.is_high_slot
+                .cmp(&l.is_high_slot)
+                .then_with(|| r.should_shrink.cmp(&l.should_shrink))
                 .then_with(|| l.capacity.cmp(&r.capacity))
         });
 
         // remove any storages we don't need to combine this pass to achieve
         // # resulting storages <= 'max_storages'
-        self.truncate_to_max_storages(tuning);
+        self.truncate_to_max_storages(tuning, stats);
     }
 }
 
@@ -452,7 +501,7 @@ impl AccountsDb {
             tuning.ideal_storage_size,
         );
 
-        ancient_slot_infos.filter_ancient_slots(tuning);
+        ancient_slot_infos.filter_ancient_slots(tuning, &self.shrink_ancient_stats);
         ancient_slot_infos
     }
 
@@ -498,10 +547,20 @@ impl AccountsDb {
             ..AncientSlotInfos::default()
         };
         let mut randoms = 0;
+        let max_slot = slots.iter().max().cloned().unwrap_or_default();
+        // heuristic to include some # of newly eligible ancient slots so that the pack algorithm always makes progress
+        let high_slot_boundary = max_slot.saturating_sub(HIGH_SLOT_OFFSET);
+        let is_high_slot = |slot| slot >= high_slot_boundary;
 
         for slot in &slots {
             if let Some(storage) = self.storage.get_slot_storage_entry(*slot) {
-                if infos.add(*slot, storage, can_randomly_shrink, ideal_size) {
+                if infos.add(
+                    *slot,
+                    storage,
+                    can_randomly_shrink,
+                    ideal_size,
+                    is_high_slot(*slot),
+                ) {
                     randoms += 1;
                 }
             }
@@ -548,9 +607,6 @@ impl AccountsDb {
         self.thread_pool_clean.install(|| {
             packer.par_iter().for_each(|(target_slot, pack)| {
                 let mut write_ancient_accounts_local = WriteAncientAccounts::default();
-                self.shrink_ancient_stats
-                    .bytes_ancient_created
-                    .fetch_add(pack.bytes, Ordering::Relaxed);
                 self.write_one_packed_storage(
                     pack,
                     **target_slot,
@@ -1059,6 +1115,25 @@ pub fn is_ancient(storage: &AccountsFile) -> bool {
     storage.capacity() >= get_ancient_append_vec_capacity()
 }
 
+/// Divides `x` by `y` and rounds up
+///
+/// # Notes
+///
+/// It is undefined behavior if `x + y` overflows a u64.
+/// Debug builds check this invariant, and will panic if broken.
+fn div_ceil(x: u64, y: NonZeroU64) -> u64 {
+    let y = y.get();
+    debug_assert!(
+        x.checked_add(y).is_some(),
+        "x + y must not overflow! x: {x}, y: {y}",
+    );
+    // SAFETY: The caller guaranteed `x + y` does not overflow
+    // SAFETY: Since `y` is NonZero:
+    // - we know the denominator is > 0, and thus safe (cannot have divide-by-zero)
+    // - we know `x + y` is non-zero, and thus the numerator is safe (cannot underflow)
+    (x + y - 1) / y
+}
+
 #[cfg(test)]
 pub mod tests {
     use {
@@ -1078,17 +1153,22 @@ pub mod tests {
             },
             accounts_hash::AccountHash,
             accounts_index::UpsertReclaim,
-            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{
+                aligned_stored_size, AppendVec, AppendVecStoredAccountMeta,
+                MAXIMUM_APPEND_VEC_FILE_SIZE,
+            },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
+        rand::seq::SliceRandom as _,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
             hash::Hash,
             pubkey::Pubkey,
         },
-        std::ops::Range,
+        std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
         strum_macros::EnumIter,
+        test_case::test_case,
     };
 
     fn get_sample_storages(
@@ -1105,6 +1185,7 @@ pub mod tests {
         let original_stores = (0..slots)
             .filter_map(|slot| db.storage.get_slot_storage_entry((slot as Slot) + slot1))
             .collect::<Vec<_>>();
+        let is_high_slot = false;
         let slot_infos = original_stores
             .iter()
             .map(|storage| SlotInfo {
@@ -1113,6 +1194,7 @@ pub mod tests {
                 capacity: 0,
                 alive_bytes: 0,
                 should_shrink: false,
+                is_high_slot,
             })
             .collect();
         (
@@ -2379,6 +2461,7 @@ pub mod tests {
                 let mut infos = AncientSlotInfos::default();
                 let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
                 let alive_bytes_expected = storage.alive_bytes();
+                let high_slot = false;
                 match method {
                     TestCollectInfo::Add => {
                         // test lower level 'add'
@@ -2387,6 +2470,7 @@ pub mod tests {
                             Arc::clone(&storage),
                             can_randomly_shrink,
                             NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
+                            high_slot,
                         );
                     }
                     TestCollectInfo::CalcAncientSlotInfo => {
@@ -2445,12 +2529,14 @@ pub mod tests {
             let (db, slot1) = create_db_with_storages_and_index(alive, slots, None);
             let mut infos = AncientSlotInfos::default();
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
+            let high_slot = false;
             if call_add {
                 infos.add(
                     slot1,
                     Arc::clone(&storage),
                     can_randomly_shrink,
                     NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
+                    high_slot,
                 );
             } else {
                 infos = db.calc_ancient_slot_info(
@@ -2628,6 +2714,7 @@ pub mod tests {
                     capacity: 1,
                     alive_bytes: 1,
                     should_shrink: false,
+                    is_high_slot: false,
                 })
                 .collect(),
             shrink_indexes: (0..count).collect(),
@@ -2659,10 +2746,10 @@ pub mod tests {
                 match method {
                     TestSmallestCapacity::FilterAncientSlots => {
                         infos.shrink_indexes.clear();
-                        infos.filter_ancient_slots(&tuning);
+                        infos.filter_ancient_slots(&tuning, &ShrinkAncientStats::default());
                     }
                     TestSmallestCapacity::FilterBySmallestCapacity => {
-                        infos.filter_by_smallest_capacity(&tuning);
+                        infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
                     }
                 }
                 assert!(infos.all_infos.is_empty());
@@ -2671,7 +2758,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_filter_by_smaller_capacity_sort() {
+    fn test_filter_by_smallest_capacity_sort() {
         // max is 6
         // 7 storages
         // storage[last] is big enough to cause us to need another storage
@@ -2705,11 +2792,11 @@ pub mod tests {
                 };
                 match method {
                     TestSmallestCapacity::FilterBySmallestCapacity => {
-                        infos.filter_by_smallest_capacity(&tuning);
+                        infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
                     }
                     TestSmallestCapacity::FilterAncientSlots => {
                         infos.shrink_indexes.clear();
-                        infos.filter_ancient_slots(&tuning);
+                        infos.filter_ancient_slots(&tuning, &ShrinkAncientStats::default());
                     }
                 }
                 assert_eq!(
@@ -2729,11 +2816,106 @@ pub mod tests {
         }
     }
 
+    /// Test that we always include the high slots when filtering which ancient infos to pack
+    ///
+    /// If we have *more* high slots than max resulting storages set in the tuning parameters,
+    /// we should still have all the high slots after calling `filter_by_smallest_capacity().
+    #[test]
+    fn test_filter_by_smallest_capacity_high_slot_more() {
+        let tuning = default_tuning();
+
+        // Ensure we have more storages with high slots than the 'max resulting storages'.
+        let num_high_slots = tuning.max_resulting_storages.get() * 2;
+        let num_ancient_storages = num_high_slots * 3;
+        let mut infos = create_test_infos(num_ancient_storages as usize);
+        infos
+            .all_infos
+            .sort_unstable_by_key(|slot_info| slot_info.slot);
+        infos
+            .all_infos
+            .iter_mut()
+            .rev()
+            .take(num_high_slots as usize)
+            .for_each(|slot_info| {
+                slot_info.is_high_slot = true;
+            });
+        let slots_expected: Vec<_> = infos
+            .all_infos
+            .iter()
+            .filter_map(|slot_info| slot_info.is_high_slot.then_some(slot_info.slot))
+            .collect();
+
+        // shuffle the infos so they actually need to be sorted
+        infos.all_infos.shuffle(&mut thread_rng());
+        infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
+
+        infos
+            .all_infos
+            .sort_unstable_by_key(|slot_info| slot_info.slot);
+        let slots_actual: Vec<_> = infos
+            .all_infos
+            .iter()
+            .map(|slot_info| slot_info.slot)
+            .collect();
+        assert_eq!(infos.all_infos.len() as u64, num_high_slots);
+        assert_eq!(slots_actual, slots_expected);
+    }
+
+    /// Test that we always include the high slots when filtering which ancient infos to pack
+    ///
+    /// If we have *less* high slots than max resulting storages set in the tuning parameters,
+    /// we should still have all the high slots after calling `filter_by_smallest_capacity().
+    #[test]
+    fn test_filter_by_smallest_capacity_high_slot_less() {
+        let tuning = default_tuning();
+
+        // Ensure we have less storages with high slots than the 'max resulting storages'.
+        let num_high_slots = tuning.max_resulting_storages.get() / 2;
+        let num_ancient_storages = num_high_slots * 5;
+        let mut infos = create_test_infos(num_ancient_storages as usize);
+        infos
+            .all_infos
+            .sort_unstable_by_key(|slot_info| slot_info.slot);
+        infos
+            .all_infos
+            .iter_mut()
+            .rev()
+            .take(num_high_slots as usize)
+            .for_each(|slot_info| {
+                slot_info.is_high_slot = true;
+            });
+        let high_slots: Vec<_> = infos
+            .all_infos
+            .iter()
+            .filter_map(|slot_info| slot_info.is_high_slot.then_some(slot_info.slot))
+            .collect();
+
+        // shuffle the infos so they actually need to be sorted
+        infos.all_infos.shuffle(&mut thread_rng());
+        infos.filter_by_smallest_capacity(&tuning, &ShrinkAncientStats::default());
+
+        infos
+            .all_infos
+            .sort_unstable_by_key(|slot_info| slot_info.slot);
+        let slots_actual: HashSet<_> = infos
+            .all_infos
+            .iter()
+            .map(|slot_info| slot_info.slot)
+            .collect();
+        assert_eq!(
+            infos.all_infos.len() as u64,
+            tuning.max_resulting_storages.get(),
+        );
+        assert!(high_slots
+            .iter()
+            .all(|high_slot| slots_actual.contains(high_slot)));
+    }
+
     fn test(filter: bool, infos: &mut AncientSlotInfos, tuning: &PackedAncientStorageTuning) {
         if filter {
-            infos.filter_by_smallest_capacity(tuning);
+            infos.filter_by_smallest_capacity(tuning, &ShrinkAncientStats::default());
         } else {
-            infos.truncate_to_max_storages(tuning);
+            infos.truncate_to_max_storages(tuning, &ShrinkAncientStats::default());
         }
     }
 
@@ -3157,7 +3339,7 @@ pub mod tests {
                     };
                     match method {
                         TestShouldShrink::FilterAncientSlots => {
-                            infos.filter_ancient_slots(&tuning);
+                            infos.filter_ancient_slots(&tuning, &ShrinkAncientStats::default());
                         }
                         TestShouldShrink::ClearShouldShrink => {
                             infos.clear_should_shrink_after_cutoff(&tuning);
@@ -3212,6 +3394,7 @@ pub mod tests {
                 capacity: info1_capacity,
                 alive_bytes: 0,
                 should_shrink: false,
+                is_high_slot: false,
             };
             let info2 = SlotInfo {
                 storage: storage.clone(),
@@ -3219,6 +3402,7 @@ pub mod tests {
                 capacity: 2,
                 alive_bytes: 1,
                 should_shrink: false,
+                is_high_slot: false,
             };
             let mut infos = AncientSlotInfos {
                 all_infos: vec![info1, info2],
@@ -3652,5 +3836,30 @@ pub mod tests {
             // should have removed all of them
             assert!(expected_ref_counts.is_empty());
         }
+    }
+
+    #[test_case(0, 1 => 0)]
+    #[test_case(1, 1 => 1)]
+    #[test_case(2, 1 => 2)]
+    #[test_case(2, 2 => 1)]
+    #[test_case(2, 3 => 1)]
+    #[test_case(2, 4 => 1)]
+    #[test_case(3, 4 => 1)]
+    #[test_case(4, 4 => 1)]
+    #[test_case(5, 4 => 2)]
+    #[test_case(0, u64::MAX => 0)]
+    #[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE - 1, MAXIMUM_APPEND_VEC_FILE_SIZE => 1)]
+    #[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE + 1, MAXIMUM_APPEND_VEC_FILE_SIZE => 2)]
+    fn test_div_ceil(x: u64, y: u64) -> u64 {
+        div_ceil(x, NonZeroU64::new(y).unwrap())
+    }
+
+    #[should_panic(expected = "x + y must not overflow")]
+    #[test_case(1, u64::MAX)]
+    #[test_case(u64::MAX, 1)]
+    #[test_case(u64::MAX/2 + 2, u64::MAX/2)]
+    #[test_case(u64::MAX/2,     u64::MAX/2 + 2)]
+    fn test_div_ceil_overflow(x: u64, y: u64) {
+        div_ceil(x, NonZeroU64::new(y).unwrap());
     }
 }

@@ -35,7 +35,6 @@
 //! already been signed and verified.
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
-pub use solana_sdk::reward_type::RewardType;
 use {
     crate::{
         bank::{
@@ -99,10 +98,7 @@ use {
     solana_perf::perf_libs,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext,
-        loaded_programs::{
-            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            ProgramCacheMatchCriteria,
-        },
+        loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
         timings::{ExecuteTimingType, ExecuteTimings},
     },
     solana_sdk::{
@@ -110,8 +106,7 @@ use {
             create_account_shared_data_with_fields as create_account, from_account, Account,
             AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
         },
-        account_utils::StateMut,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+        bpf_loader_upgradeable,
         clock::{
             BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
             DEFAULT_TICKS_PER_SECOND, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
@@ -134,7 +129,6 @@ use {
         incinerator,
         inflation::Inflation,
         inner_instruction::InnerInstructions,
-        loader_v4,
         message::{AccountKeys, SanitizedMessage},
         native_loader,
         native_token::LAMPORTS_PER_SOL,
@@ -183,7 +177,6 @@ use {
             TransactionLoadedAccountsStats, TransactionResults,
         },
     },
-    solana_system_program::{get_system_account_kind, SystemAccountKind},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     solana_vote_program::vote_state::VoteState,
     std::{
@@ -205,6 +198,9 @@ use {
         time::{Duration, Instant},
     },
 };
+pub use {
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_sdk::reward_type::RewardType,
+};
 #[cfg(feature = "dev-context-only-utils")]
 use {
     solana_accounts_db::accounts_db::{
@@ -212,6 +208,7 @@ use {
     },
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
     solana_svm::program_loader::load_program_with_pubkey,
+    solana_system_program::{get_system_account_kind, SystemAccountKind},
 };
 
 /// params to `verify_accounts_hash`
@@ -600,6 +597,7 @@ impl PartialEq for Bank {
             collector_fee_details: _,
             compute_budget: _,
             transaction_account_lock_limit: _,
+            fee_structure: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -885,6 +883,9 @@ pub struct Bank {
 
     /// The max number of accounts that a transaction may lock.
     transaction_account_lock_limit: Option<usize>,
+
+    /// Fee structure to use for assessing transaction fees.
+    fee_structure: FeeStructure,
 }
 
 struct VoteWithStakeDelegations {
@@ -931,10 +932,10 @@ struct PrevEpochInflationRewards {
     foundation_rate: f64,
 }
 
-pub struct CommitTransactionCounts {
-    pub committed_transactions_count: u64,
-    pub committed_non_vote_transactions_count: u64,
-    pub committed_with_failure_result_count: u64,
+pub struct ExecutedTransactionCounts {
+    pub executed_transactions_count: u64,
+    pub executed_non_vote_transactions_count: u64,
+    pub executed_with_failure_result_count: u64,
     pub signature_count: u64,
 }
 
@@ -1002,14 +1003,11 @@ impl Bank {
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: None,
             transaction_account_lock_limit: None,
+            fee_structure: FeeStructure::default(),
         };
 
-        bank.transaction_processor = TransactionBatchProcessor::new(
-            bank.slot,
-            bank.epoch,
-            bank.epoch_schedule.clone(),
-            HashSet::default(),
-        );
+        bank.transaction_processor =
+            TransactionBatchProcessor::new(bank.slot, bank.epoch, HashSet::default());
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
@@ -1251,6 +1249,7 @@ impl Bank {
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: parent.compute_budget,
             transaction_account_lock_limit: parent.transaction_account_lock_limit,
+            fee_structure: parent.fee_structure.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1281,12 +1280,17 @@ impl Bank {
             }
         });
 
+        let (_epoch, slot_index) = new.epoch_schedule.get_epoch_and_slot_index(new.slot);
+        let slots_in_epoch = new.epoch_schedule.get_slots_in_epoch(new.epoch);
+
         let (_, cache_preparation_time_us) = measure_us!(new
             .transaction_processor
             .prepare_program_cache_for_upcoming_feature_set(
                 &new,
                 &new.compute_active_feature_set(true).0,
                 &new.compute_budget.unwrap_or_default(),
+                slot_index,
+                slots_in_epoch,
             ));
 
         // Update sysvars before processing transactions
@@ -1637,14 +1641,11 @@ impl Bank {
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
             compute_budget: runtime_config.compute_budget,
             transaction_account_lock_limit: runtime_config.transaction_account_lock_limit,
+            fee_structure: FeeStructure::default(),
         };
 
-        bank.transaction_processor = TransactionBatchProcessor::new(
-            bank.slot,
-            bank.epoch,
-            bank.epoch_schedule.clone(),
-            HashSet::default(),
-        );
+        bank.transaction_processor =
+            TransactionBatchProcessor::new(bank.slot, bank.epoch, HashSet::default());
 
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
@@ -2969,7 +2970,6 @@ impl Bank {
         self.slots_per_year = genesis_config.slots_per_year();
 
         self.epoch_schedule = genesis_config.epoch_schedule.clone();
-        self.transaction_processor.epoch_schedule = genesis_config.epoch_schedule.clone();
 
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
@@ -3402,6 +3402,7 @@ impl Bank {
             &mut timings,
             TransactionProcessingConfig {
                 account_overrides: Some(&account_overrides),
+                check_program_modification_slot: self.check_program_modification_slot,
                 compute_budget: self.compute_budget(),
                 log_messages_bytes_limit: None,
                 limit_to_load_programs: true,
@@ -3718,6 +3719,7 @@ impl Bank {
             epoch_total_stake: self.epoch_total_stake(self.epoch()),
             epoch_vote_accounts: self.epoch_vote_accounts(self.epoch()),
             feature_set: Arc::clone(&self.feature_set),
+            fee_structure: Some(&self.fee_structure),
             lamports_per_signature,
             rent_collector: Some(&self.rent_collector),
         };
@@ -3933,31 +3935,18 @@ impl Bank {
 
     fn filter_program_errors_and_collect_fee(
         &self,
-        txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
         let mut fees = 0;
 
-        let results = txs
+        let results = execution_results
             .iter()
-            .zip(execution_results)
-            .map(|(tx, execution_result)| {
-                let message = tx.message();
-                let details = match &execution_result {
-                    TransactionExecutionResult::Executed { details, .. } => details,
-                    TransactionExecutionResult::NotExecuted(err) => return Err(err.clone()),
-                };
-
-                let fee = details.fee_details.total_fee();
-                self.check_execution_status_and_charge_fee(
-                    message,
-                    &details.status,
-                    details.is_nonce,
-                    fee,
-                )?;
-
-                fees += fee;
-                Ok(())
+            .map(|execution_result| match execution_result {
+                TransactionExecutionResult::Executed { details, .. } => {
+                    fees += details.fee_details.total_fee();
+                    Ok(())
+                }
+                TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
             })
             .collect();
 
@@ -3968,31 +3957,18 @@ impl Bank {
     // Note: this function is not yet used; next PR will call it behind a feature gate
     fn filter_program_errors_and_collect_fee_details(
         &self,
-        txs: &[SanitizedTransaction],
         execution_results: &[TransactionExecutionResult],
     ) -> Vec<Result<()>> {
         let mut accumulated_fee_details = FeeDetails::default();
 
-        let results = txs
+        let results = execution_results
             .iter()
-            .zip(execution_results)
-            .map(|(tx, execution_result)| {
-                let message = tx.message();
-                let details = match &execution_result {
-                    TransactionExecutionResult::Executed { details, .. } => details,
-                    TransactionExecutionResult::NotExecuted(err) => return Err(err.clone()),
-                };
-
-                self.check_execution_status_and_charge_fee(
-                    message,
-                    &details.status,
-                    details.is_nonce,
-                    details.fee_details.total_fee(),
-                )?;
-
-                accumulated_fee_details.accumulate(&details.fee_details);
-
-                Ok(())
+            .map(|execution_result| match execution_result {
+                TransactionExecutionResult::Executed { details, .. } => {
+                    accumulated_fee_details.accumulate(&details.fee_details);
+                    Ok(())
+                }
+                TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
             })
             .collect();
 
@@ -4003,31 +3979,6 @@ impl Bank {
         results
     }
 
-    fn check_execution_status_and_charge_fee(
-        &self,
-        message: &SanitizedMessage,
-        execution_status: &transaction::Result<()>,
-        is_nonce: bool,
-        fee: u64,
-    ) -> Result<()> {
-        // In case of instruction error, even though no accounts
-        // were stored we still need to charge the payer the
-        // fee.
-        //
-        //...except nonce accounts, which already have their
-        // post-load, fee deducted, pre-execute account state
-        // stored
-        if execution_status.is_err() && !is_nonce {
-            self.withdraw(message.fee_payer(), fee)?;
-        }
-
-        Ok(())
-    }
-
-    /// `committed_transactions_count` is the number of transactions out of `sanitized_txs`
-    /// that was executed. Of those, `committed_transactions_count`,
-    /// `committed_with_failure_result_count` is the number of executed transactions that returned
-    /// a failure result.
     pub fn commit_transactions(
         &self,
         sanitized_txs: &[SanitizedTransaction],
@@ -4035,7 +3986,7 @@ impl Bank {
         execution_results: Vec<TransactionExecutionResult>,
         last_blockhash: Hash,
         lamports_per_signature: u64,
-        counts: CommitTransactionCounts,
+        counts: ExecutedTransactionCounts,
         timings: &mut ExecuteTimings,
     ) -> TransactionResults {
         assert!(
@@ -4043,30 +3994,30 @@ impl Bank {
             "commit_transactions() working on a bank that is already frozen or is undergoing freezing!"
         );
 
-        let CommitTransactionCounts {
-            committed_transactions_count,
-            committed_non_vote_transactions_count,
-            committed_with_failure_result_count,
+        let ExecutedTransactionCounts {
+            executed_transactions_count,
+            executed_non_vote_transactions_count,
+            executed_with_failure_result_count,
             signature_count,
         } = counts;
 
-        self.increment_transaction_count(committed_transactions_count);
+        self.increment_transaction_count(executed_transactions_count);
         self.increment_non_vote_transaction_count_since_restart(
-            committed_non_vote_transactions_count,
+            executed_non_vote_transactions_count,
         );
         self.increment_signature_count(signature_count);
 
-        if committed_with_failure_result_count > 0 {
+        if executed_with_failure_result_count > 0 {
             self.transaction_error_count
-                .fetch_add(committed_with_failure_result_count, Relaxed);
+                .fetch_add(executed_with_failure_result_count, Relaxed);
         }
 
-        // Should be equivalent to checking `committed_transactions_count > 0`
+        // Should be equivalent to checking `executed_transactions_count > 0`
         if execution_results.iter().any(|result| result.was_executed()) {
             self.is_delta.store(true, Relaxed);
             self.transaction_entries_count.fetch_add(1, Relaxed);
             self.transactions_per_entry_max
-                .fetch_max(committed_transactions_count, Relaxed);
+                .fetch_max(executed_transactions_count, Relaxed);
         }
 
         let mut write_time = Measure::start("write_time");
@@ -4142,9 +4093,9 @@ impl Bank {
         self.update_transaction_statuses(sanitized_txs, &execution_results);
         let fee_collection_results = if self.feature_set.is_active(&reward_full_priority_fee::id())
         {
-            self.filter_program_errors_and_collect_fee_details(sanitized_txs, &execution_results)
+            self.filter_program_errors_and_collect_fee_details(&execution_results)
         } else {
-            self.filter_program_errors_and_collect_fee(sanitized_txs, &execution_results)
+            self.filter_program_errors_and_collect_fee(&execution_results)
         };
         update_transaction_statuses_time.stop();
         timings.saturating_add_in_place(
@@ -4885,6 +4836,7 @@ impl Bank {
             timings,
             TransactionProcessingConfig {
                 account_overrides: None,
+                check_program_modification_slot: self.check_program_modification_slot,
                 compute_budget: self.compute_budget(),
                 log_messages_bytes_limit,
                 limit_to_load_programs: false,
@@ -4901,10 +4853,10 @@ impl Bank {
             execution_results,
             last_blockhash,
             lamports_per_signature,
-            CommitTransactionCounts {
-                committed_transactions_count: executed_transactions_count as u64,
-                committed_non_vote_transactions_count: executed_non_vote_transactions_count as u64,
-                committed_with_failure_result_count: executed_transactions_count
+            ExecutedTransactionCounts {
+                executed_transactions_count: executed_transactions_count as u64,
+                executed_non_vote_transactions_count: executed_non_vote_transactions_count as u64,
+                executed_with_failure_result_count: executed_transactions_count
                     .saturating_sub(executed_with_successful_result_count)
                     as u64,
                 signature_count,
@@ -5130,32 +5082,6 @@ impl Bank {
             old_account_data_size,
             new_account.data().len(),
         );
-    }
-
-    fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
-        match self.get_account_with_fixed_root_no_cache(pubkey) {
-            Some(mut account) => {
-                let min_balance = match get_system_account_kind(&account) {
-                    Some(SystemAccountKind::Nonce) => self
-                        .rent_collector
-                        .rent
-                        .minimum_balance(nonce::State::size()),
-                    _ => 0,
-                };
-
-                lamports
-                    .checked_add(min_balance)
-                    .filter(|required_balance| *required_balance <= account.lamports())
-                    .ok_or(TransactionError::InsufficientFundsForFee)?;
-                account
-                    .checked_sub_lamports(lamports)
-                    .map_err(|_| TransactionError::InsufficientFundsForFee)?;
-                self.store_account(pubkey, &account);
-
-                Ok(())
-            }
-            None => Err(TransactionError::AccountNotFound),
-        }
     }
 
     pub fn accounts(&self) -> Arc<Accounts> {
@@ -6815,21 +6741,23 @@ impl Bank {
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {
         if slot < &self.slot {
-            if let Ok(sysvar_cache) = self.transaction_processor.sysvar_cache.read() {
-                if let Ok(slot_hashes) = sysvar_cache.get_slot_hashes() {
-                    return slot_hashes.get(slot).is_some();
-                }
+            if let Ok(slot_hashes) = self.transaction_processor.sysvar_cache().get_slot_hashes() {
+                return slot_hashes.get(slot).is_some();
             }
         }
         false
     }
 
-    pub fn check_program_modification_slot(&mut self) {
-        self.check_program_modification_slot = true;
+    pub fn check_program_modification_slot(&self) -> bool {
+        self.check_program_modification_slot
+    }
+
+    pub fn set_check_program_modification_slot(&mut self, check: bool) {
+        self.check_program_modification_slot = check;
     }
 
     pub fn fee_structure(&self) -> &FeeStructure {
-        &self.transaction_processor.fee_structure
+        &self.fee_structure
     }
 
     pub fn compute_budget(&self) -> Option<ComputeBudget> {
@@ -6839,40 +6767,6 @@ impl Bank {
     pub fn add_builtin(&self, program_id: Pubkey, name: &str, builtin: ProgramCacheEntry) {
         self.transaction_processor
             .add_builtin(self, program_id, name, builtin)
-    }
-
-    /// Find the slot in which the program was most recently modified.
-    /// Returns slot 0 for programs deployed with v1/v2 loaders, since programs deployed
-    /// with those loaders do not retain deployment slot information.
-    /// Returns an error if the program's account state can not be found or parsed.
-    fn program_modification_slot(&self, pubkey: &Pubkey) -> transaction::Result<Slot> {
-        let program = self
-            .get_account(pubkey)
-            .ok_or(TransactionError::ProgramAccountNotFound)?;
-        if bpf_loader_upgradeable::check_id(program.owner()) {
-            if let Ok(UpgradeableLoaderState::Program {
-                programdata_address,
-            }) = program.state()
-            {
-                let programdata = self
-                    .get_account(&programdata_address)
-                    .ok_or(TransactionError::ProgramAccountNotFound)?;
-                if let Ok(UpgradeableLoaderState::ProgramData {
-                    slot,
-                    upgrade_authority_address: _,
-                }) = programdata.state()
-                {
-                    return Ok(slot);
-                }
-            }
-            Err(TransactionError::ProgramAccountNotFound)
-        } else if loader_v4::check_id(program.owner()) {
-            let state = solana_loader_v4_program::get_state(program.data())
-                .map_err(|_| TransactionError::ProgramAccountNotFound)?;
-            Ok(state.slot)
-        } else {
-            Ok(0)
-        }
     }
 }
 
@@ -6891,17 +6785,6 @@ impl TransactionProcessingCallback for Bank {
             .accounts_db
             .load_with_fixed_root(&self.ancestors, pubkey)
             .map(|(acc, _)| acc)
-    }
-
-    fn get_program_match_criteria(&self, program: &Pubkey) -> ProgramCacheMatchCriteria {
-        if self.check_program_modification_slot {
-            self.program_modification_slot(program)
-                .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
-                    ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
-                })
-        } else {
-            ProgramCacheMatchCriteria::NoCriteria
-        }
     }
 
     // NOTE: must hold idempotent for the same set of arguments
@@ -7151,7 +7034,7 @@ impl Bank {
     }
 
     pub fn set_fee_structure(&mut self, fee_structure: &FeeStructure) {
-        self.transaction_processor.fee_structure = fee_structure.clone();
+        self.fee_structure = fee_structure.clone();
     }
 
     pub fn load_program(
@@ -7163,14 +7046,33 @@ impl Bank {
         let environments = self
             .transaction_processor
             .get_environments_for_epoch(effective_epoch)?;
-        load_program_with_pubkey(
-            self,
-            &environments,
-            pubkey,
-            self.slot(),
-            self.epoch_schedule(),
-            reload,
-        )
+        load_program_with_pubkey(self, &environments, pubkey, self.slot(), reload)
+    }
+
+    pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
+        match self.get_account_with_fixed_root(pubkey) {
+            Some(mut account) => {
+                let min_balance = match get_system_account_kind(&account) {
+                    Some(SystemAccountKind::Nonce) => self
+                        .rent_collector
+                        .rent
+                        .minimum_balance(nonce::State::size()),
+                    _ => 0,
+                };
+
+                lamports
+                    .checked_add(min_balance)
+                    .filter(|required_balance| *required_balance <= account.lamports())
+                    .ok_or(TransactionError::InsufficientFundsForFee)?;
+                account
+                    .checked_sub_lamports(lamports)
+                    .map_err(|_| TransactionError::InsufficientFundsForFee)?;
+                self.store_account(pubkey, &account);
+
+                Ok(())
+            }
+            None => Err(TransactionError::AccountNotFound),
+        }
     }
 }
 

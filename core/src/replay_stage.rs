@@ -3009,10 +3009,14 @@ impl ReplayStage {
                     .expect("Bank fork progress entry missing for completed bank");
 
                 let replay_stats = bank_progress.replay_stats.clone();
+                let mut is_unified_scheduler_enabled = false;
 
                 if let Some((result, completed_execute_timings)) =
                     bank.wait_for_completed_scheduler()
                 {
+                    // It's guaranteed that wait_for_completed_scheduler() returns Some(_), iff the
+                    // unified scheduler is enabled for the bank.
+                    is_unified_scheduler_enabled = true;
                     let metrics = ExecuteBatchesInternalMetrics::new_with_timings_from_all_threads(
                         completed_execute_timings,
                     );
@@ -3020,7 +3024,7 @@ impl ReplayStage {
                         .write()
                         .unwrap()
                         .batch_execute
-                        .accumulate(metrics);
+                        .accumulate(metrics, is_unified_scheduler_enabled);
 
                     if let Err(err) = result {
                         let root = bank_forks.read().unwrap().root();
@@ -3219,6 +3223,7 @@ impl ReplayStage {
                     r_replay_progress.num_entries,
                     r_replay_progress.num_shreds,
                     bank_complete_time.as_us(),
+                    is_unified_scheduler_enabled,
                 );
                 execute_timings.accumulate(&r_replay_stats.batch_execute.totals);
             } else {
@@ -4393,10 +4398,10 @@ impl ReplayStage {
 
     fn record_rewards(bank: &Bank, rewards_recorder_sender: &Option<RewardsRecorderSender>) {
         if let Some(rewards_recorder_sender) = rewards_recorder_sender {
-            let rewards = bank.rewards.read().unwrap();
-            if !rewards.is_empty() {
+            let rewards = bank.get_rewards_and_num_partitions();
+            if rewards.should_record() {
                 rewards_recorder_sender
-                    .send(RewardsMessage::Batch((bank.slot(), rewards.clone())))
+                    .send(RewardsMessage::Batch((bank.slot(), rewards)))
                     .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
             }
             rewards_recorder_sender

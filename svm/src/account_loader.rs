@@ -1,13 +1,14 @@
 use {
     crate::{
-        account_overrides::AccountOverrides,
-        account_rent_state::RentState,
-        nonce_info::{NonceFull, NoncePartial},
+        account_overrides::AccountOverrides, account_rent_state::RentState,
+        nonce_info::NoncePartial, rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
     },
     itertools::Itertools,
-    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
+    solana_compute_budget::compute_budget_processor::{
+        process_compute_budget_instructions, ComputeBudgetLimits,
+    },
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -45,7 +46,8 @@ pub struct CheckedTransactionDetails {
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct ValidatedTransactionDetails {
-    pub nonce: Option<NonceFull>,
+    pub rollback_accounts: RollbackAccounts,
+    pub compute_budget_limits: ComputeBudgetLimits,
     pub fee_details: FeeDetails,
     pub fee_payer_account: AccountSharedData,
     pub fee_payer_rent_debit: u64,
@@ -55,17 +57,12 @@ pub struct ValidatedTransactionDetails {
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
     pub program_indices: TransactionProgramIndices,
-    pub nonce: Option<NonceFull>,
     pub fee_details: FeeDetails,
+    pub rollback_accounts: RollbackAccounts,
+    pub compute_budget_limits: ComputeBudgetLimits,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
     pub loaded_accounts_data_size: usize,
-}
-
-impl LoadedTransaction {
-    pub fn fee_payer_account(&self) -> Option<&TransactionAccount> {
-        self.accounts.first()
-    }
 }
 
 /// Collect rent from an account if rent is still enabled and regardless of
@@ -363,8 +360,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     Ok(LoadedTransaction {
         accounts,
         program_indices,
-        nonce: tx_details.nonce,
         fee_details: tx_details.fee_details,
+        rollback_accounts: tx_details.rollback_accounts,
+        compute_budget_limits: tx_details.compute_budget_limits,
         rent: tx_rent,
         rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size,
@@ -439,7 +437,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            nonce_info::NonceFull, transaction_account_state_info::TransactionAccountStateInfo,
+            transaction_account_state_info::TransactionAccountStateInfo,
             transaction_processing_callback::TransactionProcessingCallback,
         },
         nonce::state::Versions as NonceVersions,
@@ -1115,6 +1113,70 @@ mod tests {
     }
 
     #[test]
+    fn test_load_transaction_accounts_fee_payer() {
+        let fee_payer_address = Pubkey::new_unique();
+        let message = Message {
+            account_keys: vec![fee_payer_address],
+            header: MessageHeader::default(),
+            instructions: vec![],
+            recent_blockhash: Hash::default(),
+        };
+
+        let sanitized_message = new_unchecked_sanitized_message(message);
+        let mut mock_bank = TestCallbacks::default();
+
+        let fee_payer_balance = 200;
+        let mut fee_payer_account_data = AccountSharedData::default();
+        fee_payer_account_data.set_lamports(fee_payer_balance);
+        mock_bank
+            .accounts_map
+            .insert(fee_payer_address, fee_payer_account_data.clone());
+        let fee_payer_rent_debit = 42;
+
+        let mut error_metrics = TransactionErrorMetrics::default();
+        let loaded_programs = ProgramCacheForTxBatch::default();
+
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let result = load_transaction_accounts(
+            &mock_bank,
+            sanitized_transaction.message(),
+            ValidatedTransactionDetails {
+                fee_payer_account: fee_payer_account_data.clone(),
+                fee_payer_rent_debit,
+                ..ValidatedTransactionDetails::default()
+            },
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        let expected_rent_debits = {
+            let mut rent_debits = RentDebits::default();
+            rent_debits.insert(&fee_payer_address, fee_payer_rent_debit, fee_payer_balance);
+            rent_debits
+        };
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransaction {
+                accounts: vec![(fee_payer_address, fee_payer_account_data),],
+                program_indices: vec![],
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
+                rent: fee_payer_rent_debit,
+                rent_debits: expected_rent_debits,
+                loaded_accounts_data_size: 0,
+            }
+        );
+    }
+
+    #[test]
     fn test_load_transaction_accounts_native_loader() {
         let key1 = Keypair::new();
         let message = Message {
@@ -1147,15 +1209,12 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let fee_details = FeeDetails::new_for_tests(32, 0, false);
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                nonce: None,
-                fee_details,
-                fee_payer_account: fee_payer_account_data,
-                fee_payer_rent_debit: 0,
+                fee_payer_account: fee_payer_account_data.clone(),
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1168,18 +1227,16 @@ mod tests {
             result.unwrap(),
             LoadedTransaction {
                 accounts: vec![
-                    (
-                        key1.pubkey(),
-                        mock_bank.accounts_map[&key1.pubkey()].clone()
-                    ),
+                    (key1.pubkey(), fee_payer_account_data),
                     (
                         native_loader::id(),
                         mock_bank.accounts_map[&native_loader::id()].clone()
                     )
                 ],
                 program_indices: vec![vec![]],
-                nonce: None,
-                fee_details,
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1359,15 +1416,12 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let fee_details = FeeDetails::new_for_tests(32, 0, false);
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                nonce: None,
-                fee_details,
-                fee_payer_account: fee_payer_account_data,
-                fee_payer_rent_debit: 0,
+                fee_payer_account: fee_payer_account_data.clone(),
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1380,17 +1434,15 @@ mod tests {
             result.unwrap(),
             LoadedTransaction {
                 accounts: vec![
-                    (
-                        key2.pubkey(),
-                        mock_bank.accounts_map[&key2.pubkey()].clone()
-                    ),
+                    (key2.pubkey(), fee_payer_account_data),
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                 ],
-                nonce: None,
-                fee_details,
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 program_indices: vec![vec![1]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
@@ -1545,15 +1597,12 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let fee_details = FeeDetails::new_for_tests(32, 0, false);
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                nonce: None,
-                fee_details,
-                fee_payer_account: fee_payer_account_data,
-                fee_payer_rent_debit: 0,
+                fee_payer_account: fee_payer_account_data.clone(),
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1566,10 +1615,7 @@ mod tests {
             result.unwrap(),
             LoadedTransaction {
                 accounts: vec![
-                    (
-                        key2.pubkey(),
-                        mock_bank.accounts_map[&key2.pubkey()].clone()
-                    ),
+                    (key2.pubkey(), fee_payer_account_data),
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
@@ -1580,8 +1626,9 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![2, 1]],
-                nonce: None,
-                fee_details,
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1640,15 +1687,12 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let fee_details = FeeDetails::new_for_tests(32, 0, false);
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
             ValidatedTransactionDetails {
-                nonce: None,
-                fee_details,
-                fee_payer_account: fee_payer_account_data,
-                fee_payer_rent_debit: 0,
+                fee_payer_account: fee_payer_account_data.clone(),
+                ..ValidatedTransactionDetails::default()
             },
             &mut error_metrics,
             None,
@@ -1663,10 +1707,7 @@ mod tests {
             result.unwrap(),
             LoadedTransaction {
                 accounts: vec![
-                    (
-                        key2.pubkey(),
-                        mock_bank.accounts_map[&key2.pubkey()].clone()
-                    ),
+                    (key2.pubkey(), fee_payer_account_data),
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
@@ -1678,8 +1719,9 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![3, 1], vec![3, 1]],
-                nonce: None,
-                fee_details,
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1733,7 +1775,7 @@ mod tests {
         let transaction_context = TransactionContext::new(
             loaded_txs[0].as_ref().unwrap().accounts.clone(),
             Rent::default(),
-            compute_budget.max_invoke_stack_height,
+            compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
 
@@ -1800,10 +1842,8 @@ mod tests {
             false,
         );
         let validation_result = Ok(ValidatedTransactionDetails {
-            nonce: None,
-            fee_details: FeeDetails::default(),
             fee_payer_account: fee_payer_account_data,
-            fee_payer_rent_debit: 0,
+            ..ValidatedTransactionDetails::default()
         });
 
         let results = load_accounts(
@@ -1841,8 +1881,9 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![3, 1], vec![3, 1]],
-                nonce: None,
                 fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::default(),
+                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1874,13 +1915,7 @@ mod tests {
             false,
         );
 
-        let validation_result = Ok(ValidatedTransactionDetails {
-            nonce: Some(NonceFull::default()),
-            fee_details: FeeDetails::default(),
-            fee_payer_account: AccountSharedData::default(),
-            fee_payer_rent_debit: 0,
-        });
-
+        let validation_result = Ok(ValidatedTransactionDetails::default());
         let result = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],

@@ -28,7 +28,7 @@ use {
     },
     solana_sdk::{
         account::{Account, AccountSharedData},
-        clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
+        clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         feature_set,
@@ -36,13 +36,15 @@ use {
         message::Message,
         poh_config::PohConfig,
         pubkey::Pubkey,
-        signature::{Keypair, Signer},
+        signature::{Keypair, Signature, Signer},
+        signers::Signers,
         stake::{
             instruction as stake_instruction,
             state::{Authorized, Lockup},
         },
         system_transaction,
         transaction::Transaction,
+        transport::TransportError,
     },
     solana_stake_program::stake_state,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
@@ -61,6 +63,7 @@ use {
         net::{IpAddr, Ipv4Addr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
+        time::Instant,
     },
 };
 
@@ -187,44 +190,43 @@ impl LocalCluster {
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
-        let connection_cache = match config.tpu_use_quic {
-            true => {
-                let client_keypair = Keypair::new();
-                let stake = DEFAULT_NODE_STAKE;
+        let connection_cache = if config.tpu_use_quic {
+            let client_keypair = Keypair::new();
+            let stake = DEFAULT_NODE_STAKE;
 
-                for validator_config in config.validator_configs.iter_mut() {
-                    let mut overrides = HashMap::new();
-                    overrides.insert(client_keypair.pubkey(), stake);
-                    validator_config.staked_nodes_overrides = Arc::new(RwLock::new(overrides));
-                }
-
-                assert!(
-                    config.tpu_use_quic,
-                    "no support for staked override forwarding without quic"
-                );
-
-                let total_stake = config.node_stakes.iter().sum::<u64>();
-                let stakes = HashMap::from([
-                    (client_keypair.pubkey(), stake),
-                    (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
-                ]);
-                let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
-                    Arc::new(stakes),
-                    HashMap::<Pubkey, u64>::default(), // overrides
-                )));
-
-                Arc::new(ConnectionCache::new_with_client_options(
-                    "connection_cache_local_cluster_quic_staked",
-                    config.tpu_connection_pool_size,
-                    None,
-                    Some((&client_keypair, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
-                    Some((&staked_nodes, &client_keypair.pubkey())),
-                ))
+            for validator_config in config.validator_configs.iter_mut() {
+                let mut overrides = HashMap::new();
+                overrides.insert(client_keypair.pubkey(), stake);
+                validator_config.staked_nodes_overrides = Arc::new(RwLock::new(overrides));
             }
-            false => Arc::new(ConnectionCache::with_udp(
+
+            assert!(
+                config.tpu_use_quic,
+                "no support for staked override forwarding without quic"
+            );
+
+            let total_stake = config.node_stakes.iter().sum::<u64>();
+            let stakes = HashMap::from([
+                (client_keypair.pubkey(), stake),
+                (Pubkey::new_unique(), total_stake.saturating_sub(stake)),
+            ]);
+            let staked_nodes = Arc::new(RwLock::new(StakedNodes::new(
+                Arc::new(stakes),
+                HashMap::<Pubkey, u64>::default(), // overrides
+            )));
+
+            Arc::new(ConnectionCache::new_with_client_options(
+                "connection_cache_local_cluster_quic_staked",
+                config.tpu_connection_pool_size,
+                None,
+                Some((&client_keypair, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))),
+                Some((&staked_nodes, &client_keypair.pubkey())),
+            ))
+        } else {
+            Arc::new(ConnectionCache::with_udp(
                 "connection_cache_local_cluster_udp",
                 config.tpu_connection_pool_size,
-            )),
+            ))
         };
 
         let mut validator_keys = {
@@ -334,7 +336,9 @@ impl LocalCluster {
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
+            // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
+            // to use the same QUIC ports due to SO_REUSEPORT.
+            true,
             32, // max connections per IpAddr per minute
             Arc::new(RwLock::new(None)),
         )
@@ -665,6 +669,53 @@ impl LocalCluster {
         info!("{} done waiting for roots", test_name);
     }
 
+    /// Attempt to send and confirm tx "attempts" times
+    /// Wait for signature confirmation before returning
+    /// Return the transaction signature
+    pub fn send_transaction_with_retries<T: Signers + ?Sized>(
+        client: &QuicTpuClient,
+        keypairs: &T,
+        transaction: &mut Transaction,
+        attempts: usize,
+        pending_confirmations: usize,
+    ) -> std::result::Result<Signature, TransportError> {
+        for attempt in 0..attempts {
+            let now = Instant::now();
+            let mut num_confirmed = 0;
+            let mut wait_time = MAX_PROCESSING_AGE;
+
+            while now.elapsed().as_secs() < wait_time as u64 {
+                if num_confirmed == 0 {
+                    client.send_transaction_to_upcoming_leaders(transaction)?;
+                }
+
+                if let Ok(confirmed_blocks) = client.rpc_client().poll_for_signature_confirmation(
+                    &transaction.signatures[0],
+                    pending_confirmations,
+                ) {
+                    num_confirmed = confirmed_blocks;
+                    if confirmed_blocks >= pending_confirmations {
+                        return Ok(transaction.signatures[0]);
+                    }
+                    // Since network has seen the transaction, wait longer to receive
+                    // all pending confirmations. Resending the transaction could result into
+                    // extra transaction fees
+                    wait_time = wait_time.max(
+                        MAX_PROCESSING_AGE * pending_confirmations.saturating_sub(num_confirmed),
+                    );
+                }
+            }
+            info!("{attempt} tries failed transfer");
+            let blockhash = client.rpc_client().get_latest_blockhash()?;
+            transaction.sign(keypairs, blockhash);
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "failed to confirm transaction".to_string(),
+        )
+        .into())
+    }
+
     fn transfer_with_client(
         client: &QuicTpuClient,
         source_keypair: &Keypair,
@@ -676,7 +727,7 @@ impl LocalCluster {
             .rpc_client()
             .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap();
-        let tx = system_transaction::transfer(source_keypair, dest_pubkey, lamports, blockhash);
+        let mut tx = system_transaction::transfer(source_keypair, dest_pubkey, lamports, blockhash);
         info!(
             "executing transfer of {} from {} to {}",
             lamports,
@@ -684,8 +735,7 @@ impl LocalCluster {
             *dest_pubkey
         );
 
-        client
-            .send_transaction_to_upcoming_leaders(&tx)
+        LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10, 0)
             .expect("client transfer should succeed");
         client
             .rpc_client()
@@ -749,7 +799,7 @@ impl LocalCluster {
                 },
             );
             let message = Message::new(&instructions, Some(&from_account.pubkey()));
-            let transaction = Transaction::new(
+            let mut transaction = Transaction::new(
                 &[from_account.as_ref(), vote_account],
                 message,
                 client
@@ -758,9 +808,14 @@ impl LocalCluster {
                     .unwrap()
                     .0,
             );
-            client
-                .send_transaction_to_upcoming_leaders(&transaction)
-                .expect("fund vote");
+            LocalCluster::send_transaction_with_retries(
+                client,
+                &[from_account],
+                &mut transaction,
+                10,
+                0,
+            )
+            .expect("should fund vote");
             client
                 .rpc_client()
                 .wait_for_balance_with_commitment(
@@ -779,7 +834,7 @@ impl LocalCluster {
                 amount,
             );
             let message = Message::new(&instructions, Some(&from_account.pubkey()));
-            let transaction = Transaction::new(
+            let mut transaction = Transaction::new(
                 &[from_account.as_ref(), &stake_account_keypair],
                 message,
                 client
@@ -789,9 +844,14 @@ impl LocalCluster {
                     .0,
             );
 
-            client
-                .send_transaction_to_upcoming_leaders(&transaction)
-                .expect("delegate stake");
+            LocalCluster::send_transaction_with_retries(
+                client,
+                &[from_account.as_ref(), &stake_account_keypair],
+                &mut transaction,
+                5,
+                0,
+            )
+            .expect("should delegate stake");
             client
                 .rpc_client()
                 .wait_for_balance_with_commitment(

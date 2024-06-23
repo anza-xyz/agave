@@ -340,6 +340,8 @@ where
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> S {
+        assert_matches!(result_with_timings, (Ok(_), _));
+
         // pop is intentional for filo, expecting relatively warmed-up scheduler due to having been
         // returned recently
         if let Some((inner, _pooled_at)) = self.scheduler_inners.lock().expect("not poisoned").pop()
@@ -1711,6 +1713,10 @@ mod tests {
             &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
@@ -1778,10 +1784,60 @@ mod tests {
         bank.schedule_transaction_executions([(tx_after_stale, &1)].into_iter())
             .unwrap();
 
+        // Observe second occurrence of TimeoutListenerTriggered(1), which indicates a new timeout
+        // lister is registered correctly again for reactivated scheduler.
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+
         let (result, timings) = bank.wait_for_completed_scheduler().unwrap();
         assert_matches!(result, Ok(()));
         // ResultWithTimings should be carried over across active=>stale=>active transitions.
         assert_eq!(timings.metrics[ExecuteTimingType::CheckUs], 246);
+    }
+
+    #[test]
+    fn test_scheduler_pause_after_stale() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool_raw = DefaultSchedulerPool::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+
+        // This calls register_recent_blockhash() internally, which in turn calls
+        // BankWithScheduler::wait_for_paused_scheduler().
+        bank.fill_bank_with_ticks_for_tests();
+        let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Ok(()));
     }
 
     #[test]

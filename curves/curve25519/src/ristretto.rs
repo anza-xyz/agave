@@ -1,4 +1,4 @@
-use bytemuck::{Pod, Zeroable};
+use bytemuck_derive::{Pod, Zeroable};
 pub use target_arch::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
@@ -9,7 +9,7 @@ pub struct PodRistrettoPoint(pub [u8; 32]);
 mod target_arch {
     use {
         super::*,
-        crate::curve25519::{
+        crate::{
             curve_syscall_traits::{GroupOperations, MultiScalarMultiplication, PointValidation},
             errors::Curve25519Error,
             scalar::PodScalar,
@@ -135,10 +135,11 @@ mod target_arch {
 mod target_arch {
     use {
         super::*,
-        crate::curve25519::{
+        crate::{
             curve_syscall_traits::{ADD, CURVE25519_RISTRETTO, MUL, SUB},
             scalar::PodScalar,
         },
+        bytemuck::Zeroable,
     };
 
     pub fn validate_ristretto(point: &PodRistrettoPoint) -> bool {
@@ -247,7 +248,7 @@ mod target_arch {
 mod tests {
     use {
         super::*,
-        crate::curve25519::scalar::PodScalar,
+        crate::scalar::PodScalar,
         curve25519_dalek::{
             constants::RISTRETTO_BASEPOINT_POINT as G, ristretto::RistrettoPoint, traits::Identity,
         },

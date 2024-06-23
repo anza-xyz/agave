@@ -88,7 +88,7 @@ impl core::fmt::Debug for Metrics {
 eager_macro_rules! { $eager_1
     #[macro_export]
     macro_rules! report_execute_timings {
-        ($self: expr) => {
+        ($self: expr, $is_unified_scheduler_enabled: expr) => {
             (
                 "validate_transactions_us",
                 *$self
@@ -149,19 +149,25 @@ eager_macro_rules! { $eager_1
             ),
             (
                 "total_batches_len",
-                *$self
-
-                    .metrics
-                    .index(ExecuteTimingType::TotalBatchesLen),
-                i64
+                (if $is_unified_scheduler_enabled {
+                    None
+                } else {
+                    Some(*$self
+                        .metrics
+                        .index(ExecuteTimingType::TotalBatchesLen))
+                }),
+                Option<i64>
             ),
             (
                 "num_execute_batches",
-                *$self
-
-                    .metrics
-                    .index(ExecuteTimingType::NumExecuteBatches),
-                i64
+                (if $is_unified_scheduler_enabled {
+                    None
+                } else {
+                    Some(*$self
+                        .metrics
+                        .index(ExecuteTimingType::NumExecuteBatches))
+                }),
+                Option<i64>
             ),
             (
                 "update_transaction_statuses",
@@ -233,13 +239,6 @@ eager_macro_rules! { $eager_1
                 $self
                     .execute_accessories
                     .feature_set_clone_us,
-                i64
-            ),
-            (
-                "execute_accessories_compute_budget_process_transaction_us",
-                $self
-                    .execute_accessories
-                    .compute_budget_process_transaction_us,
                 i64
             ),
             (
@@ -342,7 +341,6 @@ impl ExecuteProcessInstructionTimings {
 #[derive(Default, Debug)]
 pub struct ExecuteAccessoryTimings {
     pub feature_set_clone_us: u64,
-    pub compute_budget_process_transaction_us: u64,
     pub get_executors_us: u64,
     pub process_message_us: u64,
     pub update_executors_us: u64,
@@ -352,10 +350,6 @@ pub struct ExecuteAccessoryTimings {
 impl ExecuteAccessoryTimings {
     pub fn accumulate(&mut self, other: &ExecuteAccessoryTimings) {
         saturating_add_assign!(self.feature_set_clone_us, other.feature_set_clone_us);
-        saturating_add_assign!(
-            self.compute_budget_process_transaction_us,
-            other.compute_budget_process_transaction_us
-        );
         saturating_add_assign!(self.get_executors_us, other.get_executors_us);
         saturating_add_assign!(self.process_message_us, other.process_message_us);
         saturating_add_assign!(self.update_executors_us, other.update_executors_us);
