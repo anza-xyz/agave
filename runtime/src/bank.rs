@@ -2959,7 +2959,6 @@ impl Bank {
         self.collector_id =
             collector_id.expect("genesis processing failed because no staked nodes exist");
 
-
         #[cfg(not(feature = "dev-context-only-utils"))]
         let default_genesis_hash = genesis_config.hash();
         #[cfg(feature = "dev-context-only-utils")]
@@ -3229,11 +3228,8 @@ impl Bank {
 
     // gating this under #[cfg(feature = "dev-context-only-utils")] isn't easy due to
     // solana-program-test's usage...
-    pub fn register_unique_recent_blockhash_for_test(&self) {
-        self.register_recent_blockhash(
-            &Hash::new_unique(),
-            &BankWithScheduler::no_scheduler_available(),
-        )
+    pub fn register_unique_recent_blockhash_for_test(&self, hash: &Hash) {
+        self.register_recent_blockhash(hash, &BankWithScheduler::no_scheduler_available())
     }
 
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls

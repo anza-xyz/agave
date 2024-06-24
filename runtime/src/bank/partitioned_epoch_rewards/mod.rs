@@ -276,6 +276,7 @@ mod tests {
         solana_sdk::{
             account::Account,
             epoch_schedule::EpochSchedule,
+            hash::Hash,
             native_token::LAMPORTS_PER_SOL,
             reward_type::RewardType,
             signature::Signer,
@@ -828,7 +829,7 @@ mod tests {
             // Push a dummy blockhash, so that the latest_blockhash() for the transfer transaction in each
             // iteration are different. Otherwise, all those transactions will be the same, and will not be
             // executed by the bank except the first one.
-            bank.register_unique_recent_blockhash_for_test();
+            bank.register_unique_recent_blockhash_for_test(&Hash::new_unique());
             previous_bank = bank;
         }
     }

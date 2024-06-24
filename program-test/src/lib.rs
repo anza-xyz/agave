@@ -937,7 +937,7 @@ impl ProgramTest {
                     .read()
                     .unwrap()
                     .working_bank()
-                    .register_unique_recent_blockhash_for_test();
+                    .register_unique_recent_blockhash_for_test(&Hash::new_unique());
             }
         });
 
@@ -1097,7 +1097,7 @@ impl ProgramTestContext {
                         .read()
                         .unwrap()
                         .working_bank()
-                        .register_unique_recent_blockhash_for_test();
+                        .register_unique_recent_blockhash_for_test(&Hash::new_unique());
                 }
             }),
         );
