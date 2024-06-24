@@ -1190,7 +1190,7 @@ mod test {
     };
     use rand::{distributions::Uniform, Rng};
     use std::{fs::File, io::Read};
-    use test_utils::assert_error;
+    use solana_rbpf_test_utils::assert_error;
     type ElfExecutable = Executable<TestContextObject>;
 
     fn loader() -> Arc<BuiltinProgram<TestContextObject>> {

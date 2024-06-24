@@ -6974,8 +6974,17 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "rustc-demangle",
+ "solana-rbpf-test-utils",
  "thiserror",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "solana-rbpf-test-utils"
+version = "2.1.0"
+dependencies = [
+ "libc",
+ "solana-rbpf",
 ]
 
 [[package]]
