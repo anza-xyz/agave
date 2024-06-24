@@ -1,32 +1,38 @@
+#![allow(clippy::arithmetic_side_effects)]
 //! Debugger for the virtual machines' interpreter.
 
-use std::net::{TcpListener, TcpStream};
-
-use gdbstub::common::Signal;
-use gdbstub::conn::ConnectionExt;
-use gdbstub::stub::{state_machine, GdbStub, SingleThreadStopReason};
-
-use gdbstub::arch::lldb::{Encoding, Format, Generic, Register};
-use gdbstub::arch::RegId;
-
-use gdbstub::target;
-use gdbstub::target::{Target, TargetError, TargetResult};
-
-use core::convert::TryInto;
-
-use bpf_arch::reg::id::BpfRegId;
-use bpf_arch::reg::BpfRegs;
-use bpf_arch::Bpf;
-use gdbstub::target::ext::base::singlethread::{SingleThreadBase, SingleThreadResume};
-use gdbstub::target::ext::lldb_register_info_override::{Callback, CallbackToken};
-use gdbstub::target::ext::section_offsets::Offsets;
-
-use crate::{
-    ebpf,
-    error::{EbpfError, ProgramResult},
-    interpreter::{DebugState, Interpreter},
-    memory_region::AccessType,
-    vm::ContextObject,
+use {
+    crate::{
+        ebpf,
+        error::{EbpfError, ProgramResult},
+        interpreter::{DebugState, Interpreter},
+        memory_region::AccessType,
+        vm::ContextObject,
+    },
+    bpf_arch::{
+        reg::{id::BpfRegId, BpfRegs},
+        Bpf,
+    },
+    core::convert::TryInto,
+    gdbstub::{
+        arch::{
+            lldb::{Encoding, Format, Generic, Register},
+            RegId,
+        },
+        common::Signal,
+        conn::ConnectionExt,
+        stub::{state_machine, GdbStub, SingleThreadStopReason},
+        target::{
+            self,
+            ext::{
+                base::singlethread::{SingleThreadBase, SingleThreadResume},
+                lldb_register_info_override::{Callback, CallbackToken},
+                section_offsets::Offsets,
+            },
+            Target, TargetError, TargetResult,
+        },
+    },
+    std::net::{TcpListener, TcpStream},
 };
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -195,12 +201,11 @@ impl<'a, 'b, C: ContextObject> SingleThreadBase for Interpreter<'a, 'b, C> {
 
     fn read_addrs(&mut self, start_addr: u64, data: &mut [u8]) -> TargetResult<(), Self> {
         for (vm_addr, val) in (start_addr..).zip(data.iter_mut()) {
-            let host_ptr = match get_host_ptr(self, vm_addr) {
-                Ok(host_ptr) => host_ptr,
+            let Ok(host_ptr) = get_host_ptr(self, vm_addr) else {
                 // The debugger is sometimes requesting more data than we have access to, just skip these
-                _ => continue,
+                continue;
             };
-            *val = unsafe { *host_ptr as u8 };
+            *val = unsafe { *host_ptr };
         }
         Ok(())
     }
@@ -436,9 +441,7 @@ mod bpf_arch {
         pub use bpf::BpfRegs;
 
         mod bpf {
-            use core::convert::TryInto;
-
-            use gdbstub::arch::Registers;
+            use {core::convert::TryInto, gdbstub::arch::Registers};
 
             /// BPF registers.
             ///
@@ -512,9 +515,7 @@ mod bpf_arch {
             }
         }
         pub mod id {
-            use core::num::NonZeroUsize;
-
-            use gdbstub::arch::RegId;
+            use {core::num::NonZeroUsize, gdbstub::arch::RegId};
 
             /// BPF register identifier.
             #[derive(Debug, Clone, Copy)]

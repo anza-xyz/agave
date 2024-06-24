@@ -181,7 +181,7 @@ pub fn create_memory_mapping<'a, C: ContextObject>(
         MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
     ]
     .into_iter()
-    .chain(additional_regions.into_iter())
+    .chain(additional_regions)
     .collect();
 
     Ok(if let Some(cow_cb) = cow_cb {
@@ -199,7 +199,7 @@ macro_rules! create_vm {
         );
         let mut $heap = solana_rbpf::aligned_memory::AlignedMemory::with_capacity(0);
         let stack_len = $stack.len();
-        let memory_mapping = test_utils::create_memory_mapping(
+        let memory_mapping = solana_rbpf_test_utils::create_memory_mapping(
             $verified_executable,
             &mut $stack,
             &mut $heap,

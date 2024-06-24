@@ -12,17 +12,19 @@
 
 //! Virtual machine for eBPF programs.
 
-use crate::{
-    ebpf,
-    elf::Executable,
-    error::{EbpfError, ProgramResult},
-    interpreter::Interpreter,
-    memory_region::MemoryMapping,
-    program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
-    static_analysis::{Analysis, TraceLogEntry},
+use {
+    crate::{
+        ebpf,
+        elf::Executable,
+        error::{EbpfError, ProgramResult},
+        interpreter::Interpreter,
+        memory_region::MemoryMapping,
+        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+        static_analysis::{Analysis, TraceLogEntry},
+    },
+    rand::Rng,
+    std::{collections::BTreeMap, fmt::Debug, sync::Arc},
 };
-use rand::Rng;
-use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 /// Shift the RUNTIME_ENVIRONMENT_KEY by this many bits to the LSB
 ///
@@ -384,7 +386,7 @@ impl<'a, C: ContextObject> EbpfVm<'a, C> {
         self.program_result = ProgramResult::Ok(0);
         if interpreted {
             #[cfg(feature = "debugger")]
-            let debug_port = self.debug_port.clone();
+            let debug_port = self.debug_port;
             let mut interpreter = Interpreter::new(self, executable, self.registers);
             #[cfg(feature = "debugger")]
             if let Some(debug_port) = debug_port {

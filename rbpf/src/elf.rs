@@ -6,31 +6,32 @@
 // where the section headers may be removed from the ELF.  If that happens then
 // this loader will need to be re-written to use the program headers instead.
 
-use crate::{
-    aligned_memory::{is_memory_aligned, AlignedMemory},
-    ebpf::{self, EF_SBPF_V2, HOST_ALIGN, INSN_SIZE},
-    elf_parser::{
-        consts::{
-            ELFCLASS64, ELFDATA2LSB, ELFOSABI_NONE, EM_BPF, EM_SBPF, ET_DYN, R_X86_64_32,
-            R_X86_64_64, R_X86_64_NONE, R_X86_64_RELATIVE,
-        },
-        types::Elf64Word,
-    },
-    elf_parser_glue::{
-        ElfParser, ElfProgramHeader, ElfRelocation, ElfSectionHeader, ElfSymbol, GoblinParser,
-        NewParser,
-    },
-    error::EbpfError,
-    memory_region::MemoryRegion,
-    program::{BuiltinProgram, FunctionRegistry, SBPFVersion},
-    verifier::Verifier,
-    vm::{Config, ContextObject},
-};
-
 #[cfg(all(feature = "jit", not(target_os = "windows"), target_arch = "x86_64"))]
 use crate::jit::{JitCompiler, JitProgram};
-use byteorder::{ByteOrder, LittleEndian};
-use std::{collections::BTreeMap, fmt::Debug, mem, ops::Range, str, sync::Arc};
+use {
+    crate::{
+        aligned_memory::{is_memory_aligned, AlignedMemory},
+        ebpf::{self, EF_SBPF_V2, HOST_ALIGN, INSN_SIZE},
+        elf_parser::{
+            consts::{
+                ELFCLASS64, ELFDATA2LSB, ELFOSABI_NONE, EM_BPF, EM_SBPF, ET_DYN, R_X86_64_32,
+                R_X86_64_64, R_X86_64_NONE, R_X86_64_RELATIVE,
+            },
+            types::Elf64Word,
+        },
+        elf_parser_glue::{
+            ElfParser, ElfProgramHeader, ElfRelocation, ElfSectionHeader, ElfSymbol, GoblinParser,
+            NewParser,
+        },
+        error::EbpfError,
+        memory_region::MemoryRegion,
+        program::{BuiltinProgram, FunctionRegistry, SBPFVersion},
+        verifier::Verifier,
+        vm::{Config, ContextObject},
+    },
+    byteorder::{ByteOrder, LittleEndian},
+    std::{collections::BTreeMap, fmt::Debug, mem, ops::Range, str, sync::Arc},
+};
 
 /// Error definitions
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -1174,7 +1175,6 @@ pub(crate) fn get_ro_region(ro_section: &Section, elf: &[u8]) -> MemoryRegion {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::{
         elf_parser::{
             // FIXME consts::{ELFCLASS32, ELFDATA2MSB, ET_REL},
@@ -1188,9 +1188,12 @@ mod test {
         syscalls,
         vm::TestContextObject,
     };
-    use rand::{distributions::Uniform, Rng};
-    use std::{fs::File, io::Read};
-    use solana_rbpf_test_utils::assert_error;
+    use {
+        super::*,
+        rand::{distributions::Uniform, Rng},
+        solana_rbpf_test_utils::assert_error,
+        std::{fs::File, io::Read},
+    };
     type ElfExecutable = Executable<TestContextObject>;
 
     fn loader() -> Arc<BuiltinProgram<TestContextObject>> {
@@ -1617,15 +1620,22 @@ mod test {
 
         // [0..s3.sh_addr + s3.sh_size] is the valid ro memory area
         assert!(matches!(
-            ro_region.vm_to_host(ebpf::MM_PROGRAM_START, s3.sh_addr + s3.sh_size),
+            ro_region.vm_to_host(ebpf::MM_PROGRAM_START, s3.sh_addr.saturating_add(s3.sh_size)),
             ProgramResult::Ok(ptr) if ptr == owned_section.as_ptr() as u64,
         ));
 
         // one byte past the ro section is not mappable
         assert_error!(
-            ro_region.vm_to_host(ebpf::MM_PROGRAM_START + s3.sh_addr + s3.sh_size, 1),
+            ro_region.vm_to_host(
+                ebpf::MM_PROGRAM_START
+                    .saturating_add(s3.sh_addr)
+                    .saturating_add(s3.sh_size),
+                1
+            ),
             "InvalidVirtualAddress({})",
-            ebpf::MM_PROGRAM_START + s3.sh_addr + s3.sh_size
+            ebpf::MM_PROGRAM_START
+                .saturating_add(s3.sh_addr)
+                .saturating_add(s3.sh_size)
         );
     }
 
@@ -1661,15 +1671,22 @@ mod test {
         // But for backwards compatibility (config.optimize_rodata=false)
         // [0..s1.sh_addr] is mappable too (and zeroed).
         assert!(matches!(
-            ro_region.vm_to_host(ebpf::MM_PROGRAM_START, s3.sh_addr + s3.sh_size),
+            ro_region.vm_to_host(ebpf::MM_PROGRAM_START, s3.sh_addr.saturating_add(s3.sh_size)),
             ProgramResult::Ok(ptr) if ptr == owned_section.as_ptr() as u64,
         ));
 
         // one byte past the ro section is not mappable
         assert_error!(
-            ro_region.vm_to_host(ebpf::MM_PROGRAM_START + s3.sh_addr + s3.sh_size, 1),
+            ro_region.vm_to_host(
+                ebpf::MM_PROGRAM_START
+                    .saturating_add(s3.sh_addr)
+                    .saturating_add(s3.sh_size),
+                1
+            ),
             "InvalidVirtualAddress({})",
-            ebpf::MM_PROGRAM_START + s3.sh_addr + s3.sh_size
+            ebpf::MM_PROGRAM_START
+                .saturating_add(s3.sh_addr)
+                .saturating_add(s3.sh_size)
         );
     }
 
@@ -1708,25 +1725,37 @@ mod test {
 
         // the hi bound of the initial gap is not mappable
         assert_error!(
-            ro_region.vm_to_host(ebpf::MM_PROGRAM_START + s1.sh_addr - 1, 1),
+            ro_region.vm_to_host(
+                ebpf::MM_PROGRAM_START
+                    .saturating_add(s1.sh_addr)
+                    .saturating_sub(1),
+                1
+            ),
             "InvalidVirtualAddress({})",
-            ebpf::MM_PROGRAM_START + 9
+            ebpf::MM_PROGRAM_START.saturating_add(9)
         );
 
         // [s1.sh_addr..s3.sh_addr + s3.sh_size] is the valid ro memory area
         assert!(matches!(
             ro_region.vm_to_host(
-                ebpf::MM_PROGRAM_START + s1.sh_addr,
-                s3.sh_addr + s3.sh_size - s1.sh_addr
+                ebpf::MM_PROGRAM_START.saturating_add(s1.sh_addr),
+                s3.sh_addr.saturating_add(s3.sh_size).saturating_sub(s1.sh_addr)
             ),
             ProgramResult::Ok(ptr) if ptr == owned_section.as_ptr() as u64,
         ));
 
         // one byte past the ro section is not mappable
         assert_error!(
-            ro_region.vm_to_host(ebpf::MM_PROGRAM_START + s3.sh_addr + s3.sh_size, 1),
+            ro_region.vm_to_host(
+                ebpf::MM_PROGRAM_START
+                    .saturating_add(s3.sh_addr)
+                    .saturating_add(s3.sh_size),
+                1
+            ),
             "InvalidVirtualAddress({})",
-            ebpf::MM_PROGRAM_START + s3.sh_addr + s3.sh_size
+            ebpf::MM_PROGRAM_START
+                .saturating_add(s3.sh_addr)
+                .saturating_add(s3.sh_size)
         );
     }
 

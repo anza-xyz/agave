@@ -179,10 +179,12 @@ pub fn parse(input: &str) -> Result<Vec<Statement>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ident, instruction, integer, mnemonic, operand, parse, register, Operand, Statement,
+    use {
+        super::{
+            ident, instruction, integer, mnemonic, operand, parse, register, Operand, Statement,
+        },
+        combine::Parser,
     };
-    use combine::Parser;
 
     // Unit tests for the different kinds of parsers.
 

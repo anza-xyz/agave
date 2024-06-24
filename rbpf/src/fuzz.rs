@@ -1,7 +1,6 @@
 //! This module defines memory regions
 
-use rand::Rng;
-use std::ops::Range;
+use {rand::Rng, std::ops::Range};
 
 /// fuzzing utility function
 pub fn fuzz<F>(

@@ -344,8 +344,10 @@ macro_rules! declare_builtin_function {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{syscalls, vm::TestContextObject};
+    use {
+        super::*,
+        crate::{syscalls, vm::TestContextObject},
+    };
 
     #[test]
     fn test_builtin_program_eq() {

@@ -23,12 +23,14 @@
 //!
 //! Contrary to the verifier of the Linux kernel, this one does not modify the bytecode at all.
 
-use crate::{
-    ebpf,
-    program::{FunctionRegistry, SBPFVersion},
-    vm::Config,
+use {
+    crate::{
+        ebpf,
+        program::{FunctionRegistry, SBPFVersion},
+        vm::Config,
+    },
+    thiserror::Error,
 };
-use thiserror::Error;
 
 /// Error definitions
 #[derive(Debug, Error, Eq, PartialEq)]

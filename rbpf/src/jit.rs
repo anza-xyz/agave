@@ -10,19 +10,20 @@
 // the MIT license <http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-use rand::{rngs::SmallRng, Rng, SeedableRng};
-use std::{fmt::Debug, mem, ptr};
-
-use crate::{
-    ebpf::{self, FIRST_SCRATCH_REG, FRAME_PTR_REG, INSN_SIZE, SCRATCH_REGS, STACK_PTR_REG},
-    elf::Executable,
-    error::{EbpfError, ProgramResult},
-    memory_management::{
-        allocate_pages, free_pages, get_system_page_size, protect_pages, round_to_page_size,
+use {
+    crate::{
+        ebpf::{self, FIRST_SCRATCH_REG, FRAME_PTR_REG, INSN_SIZE, SCRATCH_REGS, STACK_PTR_REG},
+        elf::Executable,
+        error::{EbpfError, ProgramResult},
+        memory_management::{
+            allocate_pages, free_pages, get_system_page_size, protect_pages, round_to_page_size,
+        },
+        memory_region::{AccessType, MemoryMapping},
+        vm::{get_runtime_environment_key, Config, ContextObject, EbpfVm},
+        x86::*,
     },
-    memory_region::{AccessType, MemoryMapping},
-    vm::{get_runtime_environment_key, Config, ContextObject, EbpfVm},
-    x86::*,
+    rand::{rngs::SmallRng, Rng, SeedableRng},
+    std::{fmt::Debug, mem, ptr},
 };
 
 const MAX_EMPTY_PROGRAM_MACHINE_CODE_LENGTH: usize = 4096;
@@ -1605,14 +1606,16 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
 
 #[cfg(all(test, target_arch = "x86_64", not(target_os = "windows")))]
 mod tests {
-    use super::*;
-    use crate::{
-        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
-        syscalls,
-        vm::TestContextObject,
+    use {
+        super::*,
+        crate::{
+            program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
+            syscalls,
+            vm::TestContextObject,
+        },
+        byteorder::{ByteOrder, LittleEndian},
+        std::sync::Arc,
     };
-    use byteorder::{ByteOrder, LittleEndian};
-    use std::sync::Arc;
 
     #[test]
     fn test_runtime_environment_slots() {

@@ -1,15 +1,17 @@
 #![allow(clippy::arithmetic_side_effects)]
 //! Static Byte Code Analysis
 
-use crate::disassembler::disassemble_instruction;
-use crate::{
-    ebpf,
-    elf::Executable,
-    error::EbpfError,
-    vm::{ContextObject, DynamicAnalysis, TestContextObject},
+use {
+    crate::{
+        disassembler::disassemble_instruction,
+        ebpf,
+        elf::Executable,
+        error::EbpfError,
+        vm::{ContextObject, DynamicAnalysis, TestContextObject},
+    },
+    rustc_demangle::demangle,
+    std::collections::{BTreeMap, BTreeSet, HashMap, HashSet},
 };
-use rustc_demangle::demangle;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Register state recorded after executing one instruction
 ///

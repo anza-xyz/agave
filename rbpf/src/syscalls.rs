@@ -21,13 +21,15 @@
 //! value. Hence some syscalls have unused arguments, or return a 0 value in all cases, in order to
 //! respect this convention.
 
-use crate::{
-    declare_builtin_function,
-    error::EbpfError,
-    memory_region::{AccessType, MemoryMapping},
-    vm::TestContextObject,
+use {
+    crate::{
+        declare_builtin_function,
+        error::EbpfError,
+        memory_region::{AccessType, MemoryMapping},
+        vm::TestContextObject,
+    },
+    std::{slice::from_raw_parts, str::from_utf8},
 };
-use std::{slice::from_raw_parts, str::from_utf8};
 
 declare_builtin_function!(
     /// Prints its **last three** arguments to standard output. The **first two** arguments are

@@ -12,7 +12,6 @@ use crate::error::EbpfError;
 extern crate libc;
 #[cfg(not(target_os = "windows"))]
 use libc::c_void;
-
 #[cfg(target_os = "windows")]
 use winapi::{
     ctypes::c_void,

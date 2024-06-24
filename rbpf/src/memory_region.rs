@@ -1,18 +1,20 @@
 //! This module defines memory regions
 
-use crate::{
-    aligned_memory::Pod,
-    ebpf,
-    error::{EbpfError, ProgramResult},
-    program::SBPFVersion,
-    vm::Config,
-};
-use std::{
-    array,
-    cell::{Cell, UnsafeCell},
-    fmt, mem,
-    ops::Range,
-    ptr::{self, copy_nonoverlapping},
+use {
+    crate::{
+        aligned_memory::Pod,
+        ebpf,
+        error::{EbpfError, ProgramResult},
+        program::SBPFVersion,
+        vm::Config,
+    },
+    std::{
+        array,
+        cell::{Cell, UnsafeCell},
+        fmt, mem,
+        ops::Range,
+        ptr::{self, copy_nonoverlapping},
+    },
 };
 
 /* Explaination of the Gapped Memory
@@ -327,17 +329,14 @@ impl<'a> UnalignedMemoryMapping<'a> {
         // guaranteed to be unique.
         let cache = unsafe { &mut *self.cache.get() };
 
-        let region = match self.find_region(cache, vm_addr) {
-            Some(res) => res,
-            None => {
-                return generate_access_violation(
-                    self.config,
-                    self.sbpf_version,
-                    access_type,
-                    vm_addr,
-                    len,
-                )
-            }
+        let Some(region) = self.find_region(cache, vm_addr) else {
+            return generate_access_violation(
+                self.config,
+                self.sbpf_version,
+                access_type,
+                vm_addr,
+                len,
+            );
         };
 
         if access_type == AccessType::Load || ensure_writable_region(region, &self.cow_cb) {
@@ -960,10 +959,11 @@ impl MappingCache {
 
 #[cfg(test)]
 mod test {
-    use std::{cell::RefCell, rc::Rc};
-    use solana_rbpf_test_utils::assert_error;
-
-    use super::*;
+    use {
+        super::*,
+        solana_rbpf_test_utils::assert_error,
+        std::{cell::RefCell, rc::Rc},
+    };
 
     #[test]
     fn test_mapping_cache() {

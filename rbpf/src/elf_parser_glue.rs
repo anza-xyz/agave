@@ -1,27 +1,27 @@
 //! Internal ELF parser abstraction.
-use std::{borrow::Cow, convert::TryInto, iter, ops::Range, slice};
-
-use goblin::{
-    elf::{Elf, Header, ProgramHeader, Reloc, SectionHeader, Sym},
-    elf64::{
-        header::{EI_ABIVERSION, EI_CLASS, EI_DATA, EI_OSABI, EI_VERSION},
-        reloc::RelocIterator,
-        sym::SymIterator,
-    },
-    error::Error as GoblinError,
-};
-
-use crate::{
-    elf::ElfError,
-    elf_parser::{
-        consts::{SHF_ALLOC, SHF_WRITE, SHT_NOBITS, STT_FUNC},
-        types::{
-            Elf64Addr, Elf64Ehdr, Elf64Off, Elf64Phdr, Elf64Rel, Elf64Shdr, Elf64Sym, Elf64Word,
-            Elf64Xword, ElfIdent,
+use {
+    crate::{
+        elf::ElfError,
+        elf_parser::{
+            consts::{SHF_ALLOC, SHF_WRITE, SHT_NOBITS, STT_FUNC},
+            types::{
+                Elf64Addr, Elf64Ehdr, Elf64Off, Elf64Phdr, Elf64Rel, Elf64Shdr, Elf64Sym,
+                Elf64Word, Elf64Xword, ElfIdent,
+            },
+            Elf64, ElfParserError,
         },
-        Elf64, ElfParserError,
+        error::EbpfError,
     },
-    error::EbpfError,
+    goblin::{
+        elf::{Elf, Header, ProgramHeader, Reloc, SectionHeader, Sym},
+        elf64::{
+            header::{EI_ABIVERSION, EI_CLASS, EI_DATA, EI_OSABI, EI_VERSION},
+            reloc::RelocIterator,
+            sym::SymIterator,
+        },
+        error::Error as GoblinError,
+    },
+    std::{borrow::Cow, convert::TryInto, iter, ops::Range, slice},
 };
 
 /// The common trait implemented by LegacyParser and NewParser.
