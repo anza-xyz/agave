@@ -3936,19 +3936,22 @@ impl AccountsDb {
         accounts.sort_by(|a, b| a.pubkey().cmp(b.pubkey()));
         let len0 = accounts.len();
         if accounts.len() > 1 {
-            let mut i = 0;
-            // iterate 0..1 less than end
-            while i < accounts.len() - 1 {
-                let current = accounts[i];
-                let next = accounts[i + 1];
-                if current.pubkey() == next.pubkey() {
-                    // remove the first duplicate
-                    accounts.remove(i);
-                    // do not advance i, we just removed an element at i
-                    continue;
+            let mut last = 0;
+            let mut curr = 1;
+
+            loop {
+                if accounts[curr].pubkey() == accounts[last].pubkey() {
+                    accounts[last] = accounts[curr];
+                } else {
+                    last += 1;
+                    accounts[last] = accounts[curr];
                 }
-                i += 1;
+                curr += 1;
+                if curr == accounts.len() {
+                    break;
+                }
             }
+            accounts.truncate(last + 1);
         }
         len0 - accounts.len()
     }
