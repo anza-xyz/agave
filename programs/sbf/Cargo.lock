@@ -6442,6 +6442,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",
+ "static_assertions",
  "thiserror",
  "tokio",
 ]
