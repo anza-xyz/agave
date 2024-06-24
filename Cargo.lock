@@ -187,6 +187,7 @@ dependencies = [
  "solana-logger",
  "solana-measure",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-rpc",
  "solana-runtime",
  "solana-sdk",
@@ -198,7 +199,6 @@ dependencies = [
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote-program",
- "solana_rbpf",
  "thiserror",
  "tikv-jemallocator",
  "tokio",
@@ -5721,10 +5721,10 @@ dependencies = [
  "solana-measure",
  "solana-poseidon",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-sdk",
  "solana-type-overrides",
  "solana-vote",
- "solana_rbpf",
  "test-case",
  "thiserror",
 ]
@@ -5877,6 +5877,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubsub-client",
  "solana-quic-client",
+ "solana-rbpf",
  "solana-remote-wallet",
  "solana-rpc",
  "solana-rpc-client",
@@ -5891,7 +5892,6 @@ dependencies = [
  "solana-udp-client",
  "solana-version",
  "solana-vote-program",
- "solana_rbpf",
  "spl-memo",
  "tempfile",
  "test-case",
@@ -6529,9 +6529,9 @@ dependencies = [
  "solana-compute-budget",
  "solana-measure",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-sdk",
  "solana-type-overrides",
- "solana_rbpf",
 ]
 
 [[package]]
@@ -6861,10 +6861,10 @@ dependencies = [
  "solana-logger",
  "solana-measure",
  "solana-metrics",
+ "solana-rbpf",
  "solana-sdk",
  "solana-type-overrides",
  "solana-vote",
- "solana_rbpf",
  "test-case",
  "thiserror",
 ]
@@ -6890,12 +6890,12 @@ dependencies = [
  "solana-inline-spl",
  "solana-logger",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-runtime",
  "solana-sdk",
  "solana-stake-program",
  "solana-svm",
  "solana-vote-program",
- "solana_rbpf",
  "test-case",
  "thiserror",
  "tokio",
@@ -8007,26 +8007,6 @@ dependencies = [
  "thiserror",
  "tiny-bip39",
  "zeroize",
-]
-
-[[package]]
-name = "solana_rbpf"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06beab07f4104d6ad70d47baa67ad1bcd501a2345a983e20c389bade7c72305e"
-dependencies = [
- "byteorder",
- "combine",
- "gdbstub",
- "goblin",
- "hash32",
- "libc",
- "log",
- "rand 0.8.5",
- "rustc-demangle",
- "scroll",
- "thiserror",
- "winapi 0.3.9",
 ]
 
 [[package]]

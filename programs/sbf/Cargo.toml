@@ -53,7 +53,7 @@ solana-transaction-status = { path = "../../transaction-status", version = "=2.1
 solana-type-overrides = { path = "../../type-overrides", version = "=2.1.0" }
 agave-validator = { path = "../../validator", version = "=2.1.0" }
 solana-zk-token-sdk = { path = "../../zk-token-sdk", version = "=2.1.0" }
-solana_rbpf = "=0.8.1"
+solana_rbpf = { path = "../../rbpf", version = "=2.1.0" }
 thiserror = "1.0"
 
 [package]
@@ -106,7 +106,7 @@ solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana_rbpf = { workspace = true }
+solana-rbpf = { workspace = true }
 
 [[bench]]
 name = "bpf_loader"

@@ -15,7 +15,7 @@ solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana_rbpf = { workspace = true }
+solana-rbpf = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }

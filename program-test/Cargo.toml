@@ -30,7 +30,7 @@ solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
 solana-vote-program = { workspace = true }
-solana_rbpf = { workspace = true }
+solana-rbpf = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
