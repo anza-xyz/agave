@@ -1,0 +1,42 @@
+[package]
+name = "solana-rbpf"
+description = "Virtual machine and JIT compiler for SBF programs"
+documentation = "https://docs.rs/solana-svm"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+include = [
+    "src/**",
+    "tests/**",
+    "benches/**",
+    "Cargo.toml",
+]
+
+[dependencies]
+arbitrary = { workspace = true, optional = true, features = ["derive"] }
+byteorder = { workspace = true }
+combine = { workspace = true }
+gdbstub = { workspace = true, optional = true }
+goblin = { workspace = true }
+hash32 = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true, features = ["small_rng"] }
+rustc-demangle = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { workspace = true, features = ["memoryapi", "sysinfoapi", "winnt", "errhandlingapi"], optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+libc = { workspace = true, optional = true }
+
+[features]
+default = ["jit"]
+jit = ["libc", "winapi"]
+fuzzer-not-safe-for-production = ["arbitrary"]
+debugger = ["gdbstub"]
+
