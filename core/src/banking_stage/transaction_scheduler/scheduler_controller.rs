@@ -529,7 +529,7 @@ impl SchedulerController {
             let mut post_transaction_check_count: usize = 0;
             let mut num_dropped_on_capacity: usize = 0;
             let mut num_buffered: usize = 0;
-            for (((packet, transaction), fee_budget_limits), _) in arc_packets
+            for (((packet, transaction), fee_budget_limits), _check_result) in arc_packets
                 .drain(..)
                 .zip(transactions.drain(..))
                 .zip(fee_budget_limits_vec.drain(..))
