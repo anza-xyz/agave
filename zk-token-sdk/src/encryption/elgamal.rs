@@ -617,7 +617,8 @@ impl TryFrom<&[u8]> for ElGamalSecretKey {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         match bytes.try_into() {
             Ok(bytes) => Ok(ElGamalSecretKey::from(
-                Option::<Scalar>::from(Scalar::from_canonical_bytes(bytes))
+                Scalar::from_canonical_bytes(bytes)
+                    .into_option()
                     .ok_or(ElGamalError::SecretKeyDeserialization)?,
             )),
             _ => Err(ElGamalError::SecretKeyDeserialization),

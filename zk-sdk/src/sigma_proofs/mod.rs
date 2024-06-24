@@ -88,6 +88,6 @@ fn canonical_scalar_from_optional_slice(
     optional_slice
         .and_then(|slice| (slice.len() == SCALAR_LEN).then_some(slice)) // if chunk is the wrong length, convert to None
         .and_then(|slice| slice.try_into().ok()) // convert to array
-        .and_then(|slice| Option::from(Scalar::from_canonical_bytes(slice)))
+        .and_then(|slice| Scalar::from_canonical_bytes(slice).into_option())
         .ok_or(SigmaProofVerificationError::Deserialization)
 }

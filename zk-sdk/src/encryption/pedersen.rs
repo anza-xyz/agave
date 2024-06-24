@@ -89,7 +89,9 @@ impl PedersenOpening {
 
     pub fn from_bytes(bytes: &[u8]) -> Option<PedersenOpening> {
         match bytes.try_into() {
-            Ok(bytes) => Option::from(Scalar::from_canonical_bytes(bytes)).map(PedersenOpening),
+            Ok(bytes) => Scalar::from_canonical_bytes(bytes)
+                .into_option()
+                .map(PedersenOpening),
             _ => None,
         }
     }

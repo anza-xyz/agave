@@ -1280,7 +1280,7 @@ mod tests {
             for _ in 0..1_000_000 {
                 thread_rng().fill(&mut input);
                 let ans = get_checked_scalar(&input);
-                let ref_ans = Option::<Scalar>::from(Scalar::from_canonical_bytes(input));
+                let ref_ans = Scalar::from_canonical_bytes(input).into_option();
                 if let Some(ref_ans) = ref_ans {
                     passed += 1;
                     assert_eq!(ans.unwrap(), ref_ans.to_bytes());

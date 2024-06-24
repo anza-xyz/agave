@@ -411,12 +411,12 @@ impl InnerProductProof {
         }
 
         let pos = 2 * lg_n * 32;
-        let a = Option::from(Scalar::from_canonical_bytes(util::read32(&slice[pos..])))
+        let a = Scalar::from_canonical_bytes(util::read32(&slice[pos..]))
+            .into_option()
             .ok_or(RangeProofVerificationError::Deserialization)?;
-        let b = Option::from(Scalar::from_canonical_bytes(util::read32(
-            &slice[pos + 32..],
-        )))
-        .ok_or(RangeProofVerificationError::Deserialization)?;
+        let b = Scalar::from_canonical_bytes(util::read32(&slice[pos + 32..]))
+            .into_option()
+            .ok_or(RangeProofVerificationError::Deserialization)?;
 
         Ok(InnerProductProof { L_vec, R_vec, a, b })
     }
