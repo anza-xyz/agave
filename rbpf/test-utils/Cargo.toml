@@ -10,4 +10,4 @@ publish = false
 
 [dependencies]
 libc = { workspace = true }
-solana-rbpf = { path = "../" }
+solana-rbpf = { path = ".." }

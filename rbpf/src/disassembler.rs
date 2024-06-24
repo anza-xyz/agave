@@ -113,7 +113,7 @@ fn jmp_reg_str(name: &str, insn: &ebpf::Insn, cfg_nodes: &BTreeMap<usize, CfgNod
 /// Disassemble an eBPF instruction
 #[rustfmt::skip]
 pub fn disassemble_instruction<C: ContextObject>(
-    insn: &ebpf::Insn, 
+    insn: &ebpf::Insn,
     cfg_nodes: &BTreeMap<usize, CfgNode>,
     function_registry: &FunctionRegistry<usize>,
     loader: &BuiltinProgram<C>,

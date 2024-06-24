@@ -51,9 +51,9 @@ $RC_V1 -o reloc_64_relative.o reloc_64_relative.rs
 $LD_V1 -o reloc_64_relative_sbpfv1.so reloc_64_relative.o
 
 # $RC -o reloc_64_relative_data.o reloc_64_relative_data.rs
-# $LD -o reloc_64_relative_data.so reloc_64_relative_data.o# 
+# $LD -o reloc_64_relative_data.so reloc_64_relative_data.o#
 
 # $RC_V1 -o reloc_64_relative_data.o reloc_64_relative_data.rs
 # $LD_V1 -o reloc_64_relative_data_sbpfv1.so reloc_64_relative_data.o
 
-rm *.o
+rm ./*.o

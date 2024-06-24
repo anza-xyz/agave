@@ -1930,9 +1930,9 @@ dependencies = [
 
 [[package]]
 name = "goblin"
-version = "0.5.1"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c955ab4e0ad8c843ea653a3d143048b87490d9be56bd7132a435c2407846ac8f"
+checksum = "a7666983ed0dd8d21a6f6576ee00053ca0926fb281a5522577a4dbd0f1b54143"
 dependencies = [
  "log",
  "plain",
@@ -4042,9 +4042,9 @@ dependencies = [
 
 [[package]]
 name = "rustc-demangle"
-version = "0.1.16"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c691c0e608126e00913e33f0ccf3727d5fc84573623b8d65b2df340b5201783"
+checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 
 [[package]]
 name = "rustc-hash"
@@ -4672,9 +4672,9 @@ dependencies = [
  "solana-measure",
  "solana-poseidon",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-sdk",
  "solana-type-overrides",
- "solana_rbpf",
  "thiserror",
 ]
 
@@ -5153,9 +5153,9 @@ dependencies = [
  "solana-compute-budget",
  "solana-measure",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-sdk",
  "solana-type-overrides",
- "solana_rbpf",
 ]
 
 [[package]]
@@ -5337,10 +5337,10 @@ dependencies = [
  "solana-compute-budget",
  "solana-measure",
  "solana-metrics",
+ "solana-rbpf",
  "solana-sdk",
  "solana-type-overrides",
  "solana-vote",
- "solana_rbpf",
  "thiserror",
 ]
 
@@ -5365,11 +5365,11 @@ dependencies = [
  "solana-inline-spl",
  "solana-logger",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-runtime",
  "solana-sdk",
  "solana-svm",
  "solana-vote-program",
- "solana_rbpf",
  "thiserror",
  "tokio",
 ]
@@ -5427,6 +5427,22 @@ version = "2.1.0"
 dependencies = [
  "lazy_static",
  "num_cpus",
+]
+
+[[package]]
+name = "solana-rbpf"
+version = "2.1.0"
+dependencies = [
+ "byteorder 1.5.0",
+ "combine",
+ "goblin",
+ "hash32",
+ "libc",
+ "log",
+ "rand 0.8.5",
+ "rustc-demangle",
+ "thiserror",
+ "winapi 0.3.9",
 ]
 
 [[package]]
@@ -5661,6 +5677,7 @@ dependencies = [
  "solana-measure",
  "solana-program",
  "solana-program-runtime",
+ "solana-rbpf",
  "solana-runtime",
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-realloc-dep",
@@ -5669,7 +5686,6 @@ dependencies = [
  "solana-svm",
  "solana-transaction-status",
  "solana-type-overrides",
- "solana_rbpf",
 ]
 
 [[package]]
@@ -6638,25 +6654,6 @@ dependencies = [
  "subtle",
  "thiserror",
  "zeroize",
-]
-
-[[package]]
-name = "solana_rbpf"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06beab07f4104d6ad70d47baa67ad1bcd501a2345a983e20c389bade7c72305e"
-dependencies = [
- "byteorder 1.5.0",
- "combine",
- "goblin",
- "hash32",
- "libc",
- "log",
- "rand 0.8.5",
- "rustc-demangle",
- "scroll",
- "thiserror",
- "winapi 0.3.9",
 ]
 
 [[package]]

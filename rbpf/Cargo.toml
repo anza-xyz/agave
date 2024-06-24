@@ -42,4 +42,3 @@ default = ["jit"]
 jit = ["libc", "winapi"]
 fuzzer-not-safe-for-production = ["arbitrary"]
 debugger = ["gdbstub"]
-
