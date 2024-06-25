@@ -19,6 +19,7 @@ use {
         clock::{Slot, UnixTimestamp},
         hash::Hash,
         native_token::lamports_to_sol,
+        program_utils::limited_deserialize,
         pubkey::Pubkey,
     },
     solana_transaction_status::{
@@ -27,6 +28,7 @@ use {
         UiTransactionEncoding, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
     },
+    solana_vote_program::vote_instruction::VoteInstruction,
     std::{
         cell::RefCell,
         collections::HashMap,
@@ -456,6 +458,84 @@ pub fn output_slot(
     }
 
     Ok(())
+}
+
+#[derive(Default)]
+pub(crate) struct SlotLatency {
+    slot: Slot,
+    latencies: [u64; 4],
+    total_txs: u64,
+}
+
+impl SlotLatency {
+    pub(crate) fn new(slot: Slot) -> Self {
+        SlotLatency {
+            slot,
+            ..SlotLatency::default()
+        }
+    }
+
+    fn add_vote(&mut self, vote_slot: Slot) {
+        let latency = u64::min(self.slot - vote_slot, 4) - 1;
+        self.latencies[latency as usize] += 1;
+        self.total_txs += 1;
+    }
+
+    pub(crate) fn output(&self) {
+        println!(
+            "{},{},{},{},{},{}",
+            self.slot,
+            self.total_txs,
+            self.latencies[0],
+            self.latencies[1],
+            self.latencies[2],
+            self.latencies[3]
+        );
+    }
+
+    pub(crate) fn accumulate(&mut self, other: SlotLatency) {
+        self.total_txs += other.total_txs;
+        for i in 0..4 {
+            self.latencies[i] += other.latencies[i];
+        }
+    }
+}
+
+pub fn output_votes(
+    blockstore: &Blockstore,
+    slot: Slot,
+    allow_dead_slots: bool,
+    _output_format: &OutputFormat,
+    verbose_level: u64,
+) -> Result<SlotLatency> {
+    let VersionedConfirmedBlockWithEntries { block, .. } = blockstore
+        .get_complete_block_with_entries(
+            slot,
+            /*require_previous_blockhash:*/ false,
+            /*populate_entries:*/ true,
+            allow_dead_slots,
+        )?;
+
+    let mut slot_latency = SlotLatency::new(slot);
+    for VersionedTransactionWithStatusMeta { transaction, .. } in block.transactions.iter() {
+        let message = &transaction.message;
+        let account_keys = message.static_account_keys();
+        for ix in message.instructions().iter() {
+            let program_id = ix.program_id(account_keys);
+            if *program_id == solana_sdk::vote::program::id() {
+                let vote_ix: VoteInstruction = limited_deserialize(&ix.data).unwrap();
+                if vote_ix.is_simple_vote() {
+                    slot_latency.add_vote(vote_ix.last_voted_slot().unwrap());
+                }
+            }
+        }
+    }
+
+    if verbose_level > 0 {
+        slot_latency.output();
+    }
+
+    Ok(slot_latency)
 }
 
 pub fn output_ledger(

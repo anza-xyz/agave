@@ -5,7 +5,7 @@ use {
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
         ledger_utils::{get_program_ids, get_shred_storage_type},
-        output::{output_ledger, output_slot, SlotBounds, SlotInfo},
+        output::{output_ledger, output_slot, output_votes, SlotBounds, SlotInfo, SlotLatency},
     },
     chrono::{DateTime, Utc},
     clap::{
@@ -29,6 +29,7 @@ use {
         hash::Hash,
     },
     std::{
+        array,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
         io::{stdout, BufRead, BufReader, Write},
@@ -306,7 +307,10 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
         .long("allow-dead-slots")
         .takes_value(false)
         .help("Output dead slots as well");
-
+    let only_rooted_arg = Arg::with_name("only_rooted")
+        .long("only-rooted")
+        .takes_value(false)
+        .help("Only print root slots");
     vec![
         SubCommand::with_name("analyze-storage")
             .about(
@@ -430,6 +434,7 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
             .arg(&starting_slot_arg)
             .arg(&ending_slot_arg)
             .arg(&allow_dead_slots_arg)
+            .arg(&only_rooted_arg)
             .arg(
                 Arg::with_name("num_slots")
                     .long("num-slots")
@@ -437,12 +442,6 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .validator(is_slot)
                     .takes_value(true)
                     .help("Number of slots to print"),
-            )
-            .arg(
-                Arg::with_name("only_rooted")
-                    .long("only-rooted")
-                    .takes_value(false)
-                    .help("Only print root slots"),
             ),
         SubCommand::with_name("print-file-metadata")
             .about(
@@ -587,6 +586,13 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .required(true)
                     .help("Slots to print"),
             ),
+        SubCommand::with_name("votes")
+            .about("Print vote metrics of a slot range")
+            .settings(&hidden)
+            .arg(&allow_dead_slots_arg)
+            .arg(&starting_slot_arg)
+            .arg(&ending_slot_arg)
+            .arg(&only_rooted_arg),
     ]
 }
 
@@ -1033,6 +1039,51 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     verbose_level,
                     &mut HashMap::new(),
                 )?;
+            }
+        }
+        ("votes", Some(arg_matches)) => {
+            let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
+            let ending_slot = value_t!(arg_matches, "ending_slot", Slot).unwrap_or(Slot::MAX);
+            let allow_dead_slots = arg_matches.is_present("allow_dead_slots");
+            let only_rooted = arg_matches.is_present("only_rooted");
+            let output_format = OutputFormat::from_matches(arg_matches, "output_format", false);
+            let blockstore =
+                crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
+            if verbose_level > 0 {
+                println!("Slot,Total Vote Txs, Latency 1 Txs,  Latency 2 Txs, Latency 3 Txs, > Latency 3 Txs");
+            }
+            let mut summary: [SlotLatency; 4] = array::from_fn(|i| SlotLatency::new(i as u64));
+            let mut total_slots = 0;
+            for (slot, _meta) in blockstore
+                .slot_meta_iterator(starting_slot)?
+                .take_while(|(slot, _)| *slot <= ending_slot)
+            {
+                if only_rooted && !blockstore.is_root(slot) {
+                    continue;
+                }
+                if !allow_dead_slots && blockstore.is_dead(slot) {
+                    continue;
+                }
+                let Ok(slot_latency) = output_votes(
+                    &blockstore,
+                    slot,
+                    allow_dead_slots,
+                    &output_format,
+                    verbose_level,
+                ) else {
+                    continue;
+                };
+                total_slots += 1;
+                summary[(slot % 4) as usize].accumulate(slot_latency);
+            }
+
+            println!(
+                "Summary of {} slots from {} to {}",
+                total_slots, starting_slot, ending_slot
+            );
+            println!("Leader Slot,Total Vote Txs, Latency 1 Txs,  Latency 2 Txs, Latency 3 Txs, > Latency 3 Txs");
+            for slot_latency in summary {
+                slot_latency.output();
             }
         }
         _ => unreachable!(),
