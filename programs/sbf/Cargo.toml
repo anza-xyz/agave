@@ -98,6 +98,7 @@ solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-rbpf = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
@@ -106,7 +107,6 @@ solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-svm = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana-rbpf = { workspace = true }
 
 [[bench]]
 name = "bpf_loader"

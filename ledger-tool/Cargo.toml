@@ -41,6 +41,7 @@ solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-rbpf = { workspace = true, features = ["debugger"] }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true }
@@ -52,7 +53,6 @@ solana-type-overrides = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
-solana-rbpf = { workspace = true, features = ["debugger"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

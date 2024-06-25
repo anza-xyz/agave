@@ -13,9 +13,9 @@ log = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-rbpf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana-rbpf = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }

@@ -27,10 +27,10 @@ solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-rbpf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
-solana-rbpf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

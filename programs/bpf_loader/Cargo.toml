@@ -20,9 +20,9 @@ solana-curve25519 = { workspace = true }
 solana-measure = { workspace = true }
 solana-poseidon = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-rbpf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana-rbpf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

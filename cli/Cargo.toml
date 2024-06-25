@@ -42,6 +42,7 @@ solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
+solana-rbpf = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
@@ -54,7 +55,6 @@ solana-transaction-status = { workspace = true }
 solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
-solana-rbpf = { workspace = true }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
