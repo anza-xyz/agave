@@ -704,9 +704,29 @@ impl JsonRpcRequestProcessor {
                 .await?;
 
             for (partition_index, addresses) in partition_index_addresses.iter() {
-                let slot = *block_list
-                    .get(*partition_index)
-                    .ok_or_else(Error::internal_error)?;
+                let slot = *block_list.get(*partition_index).ok_or_else(|| {
+                    // If block_list.len() too short to contain
+                    // partition_index, the epoch rewards period must be
+                    // currently active.
+                    let rewards_complete_block_height = epoch_boundary_block
+                        .block_height
+                        .map(|block_height| {
+                            block_height
+                                .saturating_add(num_partitions as u64)
+                                .saturating_add(1)
+                        })
+                        .expect(
+                            "every block after partitioned_epoch_reward_enabled should have a \
+                             populated block_height",
+                        );
+                    {
+                        RpcCustomError::EpochRewardsPeriodActive {
+                            slot: bank.slot(),
+                            current_block_height: bank.block_height(),
+                            rewards_complete_block_height,
+                        }
+                    }
+                })?;
 
                 let Ok(Some(block)) = self
                     .get_block(
