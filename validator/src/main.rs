@@ -36,6 +36,7 @@ use {
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
             ValidatorConfig, ValidatorStartProgress,
         },
+        voting_service::VoteTxLeaderSelectionMethod,
     },
     solana_gossip::{
         cluster_info::{Node, NodeConfig},
@@ -1756,6 +1757,13 @@ pub fn main() {
     .unwrap_or_default();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
+
+    validator_config.vote_tx_leader_selection_method = value_t!(
+        matches,
+        "vote_tx_leader_selection_method",
+        VoteTxLeaderSelectionMethod
+    )
+    .unwrap_or_default();
 
     validator_config.ledger_column_options = LedgerColumnOptions {
         compression_type: match matches.value_of("rocksdb_ledger_compression") {

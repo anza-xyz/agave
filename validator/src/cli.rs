@@ -22,6 +22,7 @@ use {
     solana_core::{
         banking_trace::{DirByteLimit, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, BlockVerificationMethod},
+        voting_service::VoteTxLeaderSelectionMethod,
     },
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_ledger::use_snapshot_archives_at_startup,
@@ -1518,6 +1519,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     confirm that block's fork rather than our leader block's fork because it \
                     was created before we started creating ours.",
                 ),
+        )
+        .arg(
+            Arg::with_name("vote_tx_leader_selection_method")
+            .long("vote-tx-leader-selection-method")
+            .value_name("METHOD")
+            .takes_value(true)
+            .possible_values(VoteTxLeaderSelectionMethod::cli_names())
+            .help(VoteTxLeaderSelectionMethod::cli_message()),
         )
         .arg(
             Arg::with_name("block_verification_method")

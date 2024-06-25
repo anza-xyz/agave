@@ -26,6 +26,7 @@ use {
         },
         tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
+        voting_service::VoteTxLeaderSelectionMethod,
     },
     crossbeam_channel::{bounded, unbounded, Receiver},
     lazy_static::lazy_static,
@@ -274,6 +275,7 @@ pub struct ValidatorConfig {
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
+    pub vote_tx_leader_selection_method: VoteTxLeaderSelectionMethod,
 }
 
 impl Default for ValidatorConfig {
@@ -345,6 +347,7 @@ impl Default for ValidatorConfig {
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
+            vote_tx_leader_selection_method: VoteTxLeaderSelectionMethod::default(),
         }
     }
 }
@@ -358,6 +361,7 @@ impl ValidatorConfig {
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(get_max_thread_count())
                 .expect("thread count is non-zero"),
+            vote_tx_leader_selection_method: VoteTxLeaderSelectionMethod::VoteSlot,
             ..Self::default()
         }
     }
@@ -1366,6 +1370,7 @@ impl Validator {
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
+            config.vote_tx_leader_selection_method,
         )?;
 
         if in_wen_restart {

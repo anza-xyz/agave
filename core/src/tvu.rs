@@ -21,7 +21,7 @@ use {
         replay_stage::{ReplayStage, ReplayStageConfig},
         rewards_recorder_service::RewardsRecorderSender,
         shred_fetch_stage::ShredFetchStage,
-        voting_service::VotingService,
+        voting_service::{VoteTxLeaderSelectionMethod, VotingService},
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::WindowService,
     },
@@ -159,6 +159,7 @@ impl Tvu {
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
+        leader_selection_method: VoteTxLeaderSelectionMethod,
     ) -> Result<Self, String> {
         let TvuSockets {
             repair: repair_socket,
@@ -290,6 +291,7 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
+            leader_selection_method,
         );
 
         let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
@@ -520,6 +522,7 @@ pub mod tests {
             outstanding_repair_requests,
             cluster_slots,
             None,
+            VoteTxLeaderSelectionMethod::VoteSlot,
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);
