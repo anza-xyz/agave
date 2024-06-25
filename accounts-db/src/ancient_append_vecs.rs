@@ -696,11 +696,20 @@ impl AccountsDb {
             let slot = shrink_collect.slot;
 
             let shrink_in_progress = write_ancient_accounts.shrinks_in_progress.remove(&slot);
+
+            let mut reopen = false;
             if shrink_in_progress.is_none() {
                 dropped_roots.push(slot);
             } else {
-                self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
+                // Remember that we need to 'reopen' the storage for this
+                // 'slot'. Note that it is not *safe* to reopen the storage for
+                // the 'slot' here, because 'shrink_in_progress' is still alive.
+                // Storage map may still point to the old storage and will be
+                // updated to point to the new storage, after we drop
+                // 'shrink_in_progress'.
+                reopen = true;
             }
+
             self.remove_old_stores_shrink(
                 &shrink_collect,
                 &self.shrink_ancient_stats.shrink_stats,
@@ -710,6 +719,11 @@ impl AccountsDb {
 
             // If the slot is dead, remove the need to shrink the storage as the storage entries will be purged.
             self.shrink_candidate_slots.lock().unwrap().remove(&slot);
+
+            if reopen {
+                // 'shrink_in_progress' is dead now. We can safely 'reopen' the new storage for 'slot'.
+                self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
+            }
         }
         self.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
         metrics.accumulate(&write_ancient_accounts.metrics);
