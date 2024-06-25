@@ -7289,6 +7289,7 @@ dependencies = [
  "solana-program",
  "solana-sdk",
  "solana-sdk-macro",
+ "solana-secp256k1-recover",
  "static_assertions",
  "thiserror",
  "tiny-bip39",
@@ -7305,6 +7306,19 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 2.0.68",
+]
+
+[[package]]
+name = "solana-secp256k1-recover"
+version = "2.1.0"
+dependencies = [
+ "anyhow",
+ "borsh 1.5.1",
+ "libsecp256k1",
+ "rustc_version 0.4.0",
+ "solana-frozen-abi",
+ "solana-program",
+ "thiserror",
 ]
 
 [[package]]
