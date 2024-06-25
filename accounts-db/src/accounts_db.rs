@@ -3931,7 +3931,7 @@ impl AccountsDb {
 
     /// sort `accounts` by pubkey.
     /// Remove earlier entries with the same pubkey as later entries.
-    fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) -> usize {
+    pub fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) {
         // stable sort because we want the most recent only
         accounts.sort_by(|a, b| a.pubkey().cmp(b.pubkey()));
         let len0 = accounts.len();

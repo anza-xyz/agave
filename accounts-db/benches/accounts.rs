@@ -8,10 +8,11 @@ use {
     rand::Rng,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_accounts_db::{
+        account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
         accounts_db::{
-            test_utils::create_test_accounts, AccountShrinkThreshold, AccountsDb,
-            VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
+            test_utils::create_test_accounts, AccountFromStorage, AccountShrinkThreshold,
+            AccountsDb, VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         },
         accounts_index::{AccountSecondaryIndexes, ScanConfig},
         ancestors::Ancestors,
@@ -343,4 +344,26 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
             false,
         )
     });
+}
+
+// old: test bench_sort_and_dedups                             ... bench:     322,798 ns/iter (+/- 8,451)
+// new: test bench_sort_and_dedups                             ... bench:      89,960 ns/iter (+/- 2,934)
+#[bench]
+fn bench_sort_and_dedups(b: &mut Bencher) {
+    fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
+        // offset has to be 8 byte aligned
+        let offset = (i as usize) * std::mem::size_of::<u64>();
+        AccountFromStorage {
+            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+            data_len: i as u64,
+            pubkey: Pubkey::new_from_array([i; 32]),
+        }
+    }
+
+    let mut rng = rand::thread_rng();
+    let accounts: Vec<_> = (0..1000)
+        .map(|_i| generate_sample_account_from_storage(rng.gen::<u8>()))
+        .collect();
+
+    b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
 }
