@@ -1,4 +1,5 @@
 use {
+    ahash::AHashSet,
     bincode::deserialize,
     lazy_static::lazy_static,
     solana_sdk::{
@@ -7,11 +8,10 @@ use {
         reserved_account_keys::ReservedAccountKeys,
         transaction::SanitizedVersionedTransaction,
     },
-    std::collections::HashSet,
 };
 
 lazy_static! {
-    static ref RESERVED_IDS_SET: HashSet<Pubkey> = ReservedAccountKeys::new_all_activated().active;
+    static ref RESERVED_IDS_SET: AHashSet<Pubkey> = ReservedAccountKeys::new_all_activated().active;
 }
 
 pub struct ScannedLookupTableExtensions {

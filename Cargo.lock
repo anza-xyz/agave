@@ -6452,6 +6452,7 @@ dependencies = [
 name = "solana-ledger"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "assert_matches",
  "bincode",
  "bitflags 2.6.0",
@@ -7140,6 +7141,7 @@ dependencies = [
 name = "solana-runtime"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "aquamarine",
  "arrayref",
  "assert_matches",
@@ -7242,6 +7244,7 @@ dependencies = [
 name = "solana-sdk"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "anyhow",
  "assert_matches",
  "bincode",
