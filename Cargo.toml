@@ -85,7 +85,6 @@ members = [
     "rayon-threadlimit",
     "rbpf",
     "rbpf-cli",
-    "rbpf/test-utils",
     "remote-wallet",
     "rpc",
     "rpc-client",

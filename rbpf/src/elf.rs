@@ -1175,22 +1175,22 @@ pub(crate) fn get_ro_region(ro_section: &Section, elf: &[u8]) -> MemoryRegion {
 
 #[cfg(test)]
 mod test {
-    use crate::{
-        elf_parser::{
-            consts::{ELFCLASS32, ELFDATA2MSB, ET_REL},
-            types::{Elf64Ehdr, Elf64Shdr},
-            SECTION_NAME_LENGTH_MAXIMUM,
-        },
-        error::ProgramResult,
-        fuzz::fuzz,
-        program::BuiltinFunction,
-        syscalls,
-        vm::TestContextObject,
-    };
     use {
         super::*,
+        crate::{
+            assert_error,
+            elf_parser::{
+                consts::{ELFCLASS32, ELFDATA2MSB, ET_REL},
+                types::{Elf64Ehdr, Elf64Shdr},
+                SECTION_NAME_LENGTH_MAXIMUM,
+            },
+            error::ProgramResult,
+            fuzz::fuzz,
+            program::BuiltinFunction,
+            syscalls,
+            vm::TestContextObject,
+        },
         rand::{distributions::Uniform, Rng},
-        solana_rbpf_test_utils::assert_error,
         std::{fs::File, io::Read},
     };
     type ElfExecutable = Executable<TestContextObject>;

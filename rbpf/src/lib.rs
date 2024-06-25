@@ -47,6 +47,7 @@ pub mod memory_region;
 pub mod program;
 pub mod static_analysis;
 pub mod syscalls;
+mod utils;
 pub mod verifier;
 pub mod vm;
 #[cfg(all(feature = "jit", not(target_os = "windows"), target_arch = "x86_64"))]

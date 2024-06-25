@@ -961,7 +961,7 @@ impl MappingCache {
 mod test {
     use {
         super::*,
-        solana_rbpf_test_utils::assert_error,
+        crate::assert_error,
         std::{cell::RefCell, rc::Rc},
     };
 

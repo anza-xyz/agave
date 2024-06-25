@@ -28,9 +28,6 @@ rand = { workspace = true, features = ["small_rng"] }
 rustc-demangle = { workspace = true }
 thiserror = { workspace = true }
 
-[dev-dependencies]
-solana-rbpf-test-utils = { workspace = true }
-
 [target.'cfg(windows)'.dependencies]
 winapi = { workspace = true, features = ["memoryapi", "sysinfoapi", "winnt", "errhandlingapi"], optional = true }
 
