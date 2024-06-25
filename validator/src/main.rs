@@ -1549,6 +1549,21 @@ pub fn main() {
         } else {
             vec![ledger_path.join("accounts")]
         };
+
+    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
+        Path::new(snapshots)
+    } else {
+        &ledger_path
+    };
+
+    // they have the same subdirectory name, "snapshot". try to catch the directory collision error earlier
+    for account_path in account_paths.iter() {
+        if account_path.as_path() == snapshots_dir {
+            eprintln!("Please provide different values for --accounts and --snapshots");
+            exit(1);
+        }
+    }
+
     let account_paths = create_and_canonicalize_directories(account_paths).unwrap_or_else(|err| {
         eprintln!("Unable to access account path: {err}");
         exit(1);
@@ -1588,12 +1603,6 @@ pub fn main() {
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
-
-    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        Path::new(snapshots)
-    } else {
-        &ledger_path
-    };
 
     let bank_snapshots_dir = snapshots_dir.join("snapshots");
     fs::create_dir_all(&bank_snapshots_dir).unwrap_or_else(|err| {
