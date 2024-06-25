@@ -3235,6 +3235,11 @@ impl Bank {
         )
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn register_recent_blockhash_for_test(&self, hash: &Hash) {
+        self.register_recent_blockhash(hash, &BankWithScheduler::no_scheduler_available());
+    }
+
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls
     /// correspond to later entries, and will boot the oldest ones once its internal cache is full.
     /// Once boot, the bank will reject transactions using that `hash`.
