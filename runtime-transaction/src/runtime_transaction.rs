@@ -100,10 +100,10 @@ impl RuntimeTransaction<SanitizedVersionedMessage> {
 }
 
 impl RuntimeTransaction<SanitizedMessage> {
-    pub fn try_from(
+    pub fn try_from<S: core::hash::BuildHasher>(
         statically_loaded_runtime_tx: RuntimeTransaction<SanitizedVersionedMessage>,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Result<Self> {
         let mut tx = Self {
             signatures: statically_loaded_runtime_tx.signatures,

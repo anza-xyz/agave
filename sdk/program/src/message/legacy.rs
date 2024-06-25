@@ -632,10 +632,10 @@ impl Message {
     /// fetching the latest set of reserved account keys. If this method is
     /// called by the runtime, the latest set of reserved account keys must be
     /// passed.
-    pub fn is_maybe_writable(
+    pub fn is_maybe_writable<S: core::hash::BuildHasher>(
         &self,
         i: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, S>>,
     ) -> bool {
         (self.is_writable_index(i))
             && !self.is_account_maybe_reserved(i, reserved_account_keys)
@@ -644,10 +644,10 @@ impl Message {
 
     /// Returns true if the account at the specified index is in the optional
     /// reserved account keys set.
-    fn is_account_maybe_reserved(
+    fn is_account_maybe_reserved<S: core::hash::BuildHasher>(
         &self,
         key_index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, S>>,
     ) -> bool {
         let mut is_maybe_reserved = false;
         if let Some(reserved_account_keys) = reserved_account_keys {
@@ -667,7 +667,7 @@ impl Message {
         let mut writable_keys = vec![];
         let mut readonly_keys = vec![];
         for (i, key) in self.account_keys.iter().enumerate() {
-            if self.is_maybe_writable(i, None) {
+            if self.is_maybe_writable::<std::hash::RandomState>(i, None) {
                 writable_keys.push(key);
             } else {
                 readonly_keys.push(key);
@@ -881,7 +881,7 @@ mod tests {
         assert!(!message.is_maybe_writable(1, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(2, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(3, Some(&reserved_account_keys)));
-        assert!(message.is_maybe_writable(3, None));
+        assert!(message.is_maybe_writable::<std::hash::RandomState>(3, None));
         assert!(message.is_maybe_writable(4, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(5, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(6, Some(&reserved_account_keys)));
@@ -902,9 +902,9 @@ mod tests {
         assert!(!message.is_account_maybe_reserved(0, Some(&reserved_account_keys)));
         assert!(message.is_account_maybe_reserved(1, Some(&reserved_account_keys)));
         assert!(!message.is_account_maybe_reserved(2, Some(&reserved_account_keys)));
-        assert!(!message.is_account_maybe_reserved(0, None));
-        assert!(!message.is_account_maybe_reserved(1, None));
-        assert!(!message.is_account_maybe_reserved(2, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(0, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(1, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(2, None));
     }
 
     #[test]

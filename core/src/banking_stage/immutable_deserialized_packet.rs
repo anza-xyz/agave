@@ -103,11 +103,11 @@ impl ImmutableDeserializedPacket {
 
     // This function deserializes packets into transactions, computes the blake3 hash of transaction
     // messages.
-    pub fn build_sanitized_transaction(
+    pub fn build_sanitized_transaction<S: core::hash::BuildHasher>(
         &self,
         votes_only: bool,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Option<SanitizedTransaction> {
         if votes_only && !self.is_simple_vote() {
             return None;

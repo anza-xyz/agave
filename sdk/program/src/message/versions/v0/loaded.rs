@@ -55,10 +55,10 @@ impl LoadedAddresses {
 }
 
 impl<'a> LoadedMessage<'a> {
-    pub fn new(
+    pub fn new<S: core::hash::BuildHasher>(
         message: v0::Message,
         loaded_addresses: LoadedAddresses,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Self {
         let mut loaded_message = Self {
             message: Cow::Owned(message),
@@ -69,10 +69,10 @@ impl<'a> LoadedMessage<'a> {
         loaded_message
     }
 
-    pub fn new_borrowed(
+    pub fn new_borrowed<S: core::hash::BuildHasher>(
         message: &'a v0::Message,
         loaded_addresses: &'a LoadedAddresses,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Self {
         let mut loaded_message = Self {
             message: Cow::Borrowed(message),
@@ -83,7 +83,10 @@ impl<'a> LoadedMessage<'a> {
         loaded_message
     }
 
-    fn set_is_writable_account_cache(&mut self, reserved_account_keys: &HashSet<Pubkey>) {
+    fn set_is_writable_account_cache<S: core::hash::BuildHasher>(
+        &mut self,
+        reserved_account_keys: &HashSet<Pubkey, S>,
+    ) {
         let is_writable_account_cache = self
             .account_keys()
             .iter()
@@ -135,10 +138,10 @@ impl<'a> LoadedMessage<'a> {
     }
 
     /// Returns true if the account at the specified index was loaded as writable
-    fn is_writable_internal(
+    fn is_writable_internal<S: core::hash::BuildHasher>(
         &self,
         key_index: usize,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> bool {
         if self.is_writable_index(key_index) {
             if let Some(key) = self.account_keys().get(key_index) {
@@ -190,6 +193,8 @@ mod tests {
         crate::{instruction::CompiledInstruction, message::MessageHeader, system_program, sysvar},
         itertools::Itertools,
     };
+
+    type HashSet<T> = std::collections::HashSet<T, std::hash::RandomState>;
 
     fn check_test_loaded_message() -> (LoadedMessage<'static>, [Pubkey; 6]) {
         let key0 = Pubkey::new_unique();

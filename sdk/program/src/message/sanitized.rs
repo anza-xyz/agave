@@ -31,7 +31,10 @@ pub struct LegacyMessage<'a> {
 }
 
 impl<'a> LegacyMessage<'a> {
-    pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
+    pub fn new<S: core::hash::BuildHasher>(
+        message: legacy::Message,
+        reserved_account_keys: &HashSet<Pubkey, S>,
+    ) -> Self {
         let is_writable_account_cache = message
             .account_keys
             .iter()
@@ -106,10 +109,10 @@ impl SanitizedMessage {
     /// Create a sanitized message from a sanitized versioned message.
     /// If the input message uses address tables, attempt to look up the
     /// address for each table index.
-    pub fn try_new(
+    pub fn try_new<S: core::hash::BuildHasher>(
         sanitized_msg: SanitizedVersionedMessage,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Result<Self, SanitizeMessageError> {
         Ok(match sanitized_msg.message {
             VersionedMessage::Legacy(message) => {
@@ -128,9 +131,9 @@ impl SanitizedMessage {
     }
 
     /// Create a sanitized legacy message
-    pub fn try_from_legacy_message(
+    pub fn try_from_legacy_message<S: core::hash::BuildHasher>(
         message: legacy::Message,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Result<Self, SanitizeMessageError> {
         message.sanitize()?;
         Ok(Self::Legacy(LegacyMessage::new(
@@ -447,7 +450,9 @@ impl TransactionSignatureDetails {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::message::v0, std::collections::HashSet};
+    use {super::*, crate::message::v0};
+
+    type HashSet<T> = std::collections::HashSet<T, std::hash::RandomState>;
 
     #[test]
     fn test_try_from_legacy_message() {

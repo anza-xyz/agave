@@ -343,10 +343,10 @@ impl Message {
     /// so this should not be used by the runtime. The `reserved_account_keys`
     /// param is optional to allow clients to approximate writability without
     /// requiring fetching the latest set of reserved account keys.
-    pub fn is_maybe_writable(
+    pub fn is_maybe_writable<S: core::hash::BuildHasher>(
         &self,
         key_index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, S>>,
     ) -> bool {
         self.is_writable_index(key_index)
             && !self.is_account_maybe_reserved(key_index, reserved_account_keys)
@@ -360,10 +360,10 @@ impl Message {
     /// Returns true if the account at the specified index is in the reserved
     /// account keys set. Before loading addresses, we can't detect reserved
     /// account keys properly so this shouldn't be used by the runtime.
-    fn is_account_maybe_reserved(
+    fn is_account_maybe_reserved<S: core::hash::BuildHasher>(
         &self,
         key_index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, S>>,
     ) -> bool {
         let mut is_maybe_reserved = false;
         if let Some(reserved_account_keys) = reserved_account_keys {
@@ -737,7 +737,7 @@ mod tests {
         assert!(!message.is_maybe_writable(1, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(2, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(3, Some(&reserved_account_keys)));
-        assert!(message.is_maybe_writable(3, None));
+        assert!(message.is_maybe_writable::<std::hash::RandomState>(3, None));
         assert!(message.is_maybe_writable(4, Some(&reserved_account_keys)));
         assert!(!message.is_maybe_writable(5, Some(&reserved_account_keys)));
         assert!(message.is_maybe_writable(6, Some(&reserved_account_keys)));
@@ -767,10 +767,10 @@ mod tests {
         assert!(!message.is_account_maybe_reserved(2, Some(&reserved_account_keys)));
         assert!(!message.is_account_maybe_reserved(3, Some(&reserved_account_keys)));
         assert!(!message.is_account_maybe_reserved(4, Some(&reserved_account_keys)));
-        assert!(!message.is_account_maybe_reserved(0, None));
-        assert!(!message.is_account_maybe_reserved(1, None));
-        assert!(!message.is_account_maybe_reserved(2, None));
-        assert!(!message.is_account_maybe_reserved(3, None));
-        assert!(!message.is_account_maybe_reserved(4, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(0, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(1, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(2, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(3, None));
+        assert!(!message.is_account_maybe_reserved::<std::hash::RandomState>(4, None));
     }
 }

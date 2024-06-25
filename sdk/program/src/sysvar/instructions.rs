@@ -306,7 +306,7 @@ mod tests {
     };
 
     fn new_sanitized_message(message: LegacyMessage) -> SanitizedMessage {
-        SanitizedMessage::try_from_legacy_message(message, &HashSet::default()).unwrap()
+        SanitizedMessage::try_from_legacy_message(message, &HashSet::new()).unwrap()
     }
 
     #[test]

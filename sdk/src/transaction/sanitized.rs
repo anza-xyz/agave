@@ -63,12 +63,12 @@ impl SanitizedTransaction {
     /// Create a sanitized transaction from a sanitized versioned transaction.
     /// If the input transaction uses address tables, attempt to lookup the
     /// address for each table index.
-    pub fn try_new(
+    pub fn try_new<S: core::hash::BuildHasher>(
         tx: SanitizedVersionedTransaction,
         message_hash: Hash,
         is_simple_vote_tx: bool,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Result<Self> {
         let signatures = tx.signatures;
         let SanitizedVersionedMessage { message } = tx.message;
@@ -98,12 +98,12 @@ impl SanitizedTransaction {
     /// Create a sanitized transaction from an un-sanitized versioned
     /// transaction.  If the input transaction uses address tables, attempt to
     /// lookup the address for each table index.
-    pub fn try_create(
+    pub fn try_create<S: core::hash::BuildHasher>(
         tx: VersionedTransaction,
         message_hash: impl Into<MessageHash>,
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Result<Self> {
         let sanitized_versioned_tx = SanitizedVersionedTransaction::try_from(tx)?;
         let is_simple_vote_tx = is_simple_vote_tx
@@ -122,9 +122,9 @@ impl SanitizedTransaction {
     }
 
     /// Create a sanitized transaction from a legacy transaction
-    pub fn try_from_legacy_transaction(
+    pub fn try_from_legacy_transaction<S: core::hash::BuildHasher>(
         tx: Transaction,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, S>,
     ) -> Result<Self> {
         tx.sanitize()?;
 

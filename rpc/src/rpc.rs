@@ -4703,10 +4703,10 @@ where
         .map(|output| (wire_output, output))
 }
 
-fn sanitize_transaction(
+fn sanitize_transaction<S: core::hash::BuildHasher>(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
-    reserved_account_keys: &HashSet<Pubkey>,
+    reserved_account_keys: &HashSet<Pubkey, S>,
 ) -> Result<SanitizedTransaction> {
     SanitizedTransaction::try_create(
         transaction,

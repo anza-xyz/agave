@@ -81,10 +81,10 @@ impl VersionedMessage {
     /// instructions in this message. Since dynamically loaded addresses can't
     /// have write locks demoted without loading addresses, this shouldn't be
     /// used in the runtime.
-    pub fn is_maybe_writable(
+    pub fn is_maybe_writable<S: core::hash::BuildHasher>(
         &self,
         index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, S>>,
     ) -> bool {
         match self {
             Self::Legacy(message) => message.is_maybe_writable(index, reserved_account_keys),
