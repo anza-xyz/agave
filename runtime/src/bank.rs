@@ -2959,16 +2959,15 @@ impl Bank {
         self.collector_id =
             collector_id.expect("genesis processing failed because no staked nodes exist");
 
-
         #[cfg(not(feature = "dev-context-only-utils"))]
-        let default_genesis_hash = genesis_config.hash();
+        let genesis_hash = genesis_config.hash();
         #[cfg(feature = "dev-context-only-utils")]
-        let default_genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
+        let genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
 
-        self.blockhash_queue.write().unwrap().genesis_hash(
-            &default_genesis_hash,
-            self.fee_rate_governor.lamports_per_signature,
-        );
+        self.blockhash_queue
+            .write()
+            .unwrap()
+            .genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
 
         self.hashes_per_tick = genesis_config.hashes_per_tick();
         self.ticks_per_slot = genesis_config.ticks_per_slot();
