@@ -1549,21 +1549,6 @@ pub fn main() {
         } else {
             vec![ledger_path.join("accounts")]
         };
-
-    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        Path::new(snapshots)
-    } else {
-        &ledger_path
-    };
-
-    // they have the same subdirectory name, "snapshot". try to catch the directory collision error earlier
-    for account_path in account_paths.iter() {
-        if account_path.as_path() == snapshots_dir {
-            eprintln!("Please provide different values for --accounts and --snapshots");
-            exit(1);
-        }
-    }
-
     let account_paths = create_and_canonicalize_directories(account_paths).unwrap_or_else(|err| {
         eprintln!("Unable to access account path: {err}");
         exit(1);
@@ -1604,6 +1589,30 @@ pub fn main() {
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
+    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
+        Path::new(snapshots)
+    } else {
+        &ledger_path
+    };
+
+    let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
+        eprintln!(
+            "Failed to canonicalize snapshots path '{}': {err}",
+            snapshots_dir.display(),
+        );
+        exit(1);
+    });
+    if account_paths
+        .iter()
+        .any(|account_path| account_path == &snapshots_dir)
+    {
+        eprintln!(
+            "Failed: The --accounts and --snapshots paths must be unique since they \
+                     both create 'snapshots' subdirectories, otherwise there may be collisions",
+        );
+        exit(1);
+    }
+
     let bank_snapshots_dir = snapshots_dir.join("snapshots");
     fs::create_dir_all(&bank_snapshots_dir).unwrap_or_else(|err| {
         eprintln!(
@@ -1613,13 +1622,12 @@ pub fn main() {
         exit(1);
     });
 
-    let full_snapshot_archives_dir = PathBuf::from(
+    let full_snapshot_archives_dir =
         if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
-            Path::new(full_snapshot_archive_path)
+            PathBuf::from(full_snapshot_archive_path)
         } else {
-            snapshots_dir
-        },
-    );
+            snapshots_dir.clone()
+        };
     fs::create_dir_all(&full_snapshot_archives_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create full snapshot archives directory '{}': {err}",
@@ -1628,15 +1636,13 @@ pub fn main() {
         exit(1);
     });
 
-    let incremental_snapshot_archives_dir = PathBuf::from(
-        if let Some(incremental_snapshot_archive_path) =
-            matches.value_of("incremental_snapshot_archive_path")
-        {
-            Path::new(incremental_snapshot_archive_path)
-        } else {
-            snapshots_dir
-        },
-    );
+    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
+        matches.value_of("incremental_snapshot_archive_path")
+    {
+        PathBuf::from(incremental_snapshot_archive_path)
+    } else {
+        snapshots_dir.clone()
+    };
     fs::create_dir_all(&incremental_snapshot_archives_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create incremental snapshot archives directory '{}': {err}",

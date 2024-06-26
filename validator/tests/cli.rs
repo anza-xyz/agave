@@ -31,6 +31,6 @@ fn test_use_the_same_path_for_accounts_and_snapshots() {
         temp_dir_str,
     ]);
     cmd.assert().failure().stderr(predicates::str::contains(
-        "Please provide different values for --accounts and --snapshots",
+        "The --accounts and --snapshots paths must be unique",
     ));
 }
