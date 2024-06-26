@@ -7,7 +7,7 @@ macro_rules! define_syscall {
 			// this enum is used to force the hash to be computed in a const context
 			#[repr(usize)]
 			enum Syscall {
-				Code = sys_hash(stringify!($name)),
+				Code = $crate::sys_hash(stringify!($name)),
 			}
 
             let syscall: extern "C" fn($($arg: $typ),*) -> $ret = core::mem::transmute(Syscall::Code);
