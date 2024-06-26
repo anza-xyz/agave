@@ -10067,7 +10067,7 @@ pub mod tests {
         for account in accounts.iter() {
             map.insert(*account.pubkey(), *account);
         }
-        let accounts2: Vec<_> = map.values().cloned().collect();
+        let accounts2: Vec<_> = map.into_values().collect();
         assert_eq!(accounts1, accounts2);
     }
 

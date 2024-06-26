@@ -347,7 +347,7 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_sort_and_dedups(b: &mut Bencher) {
+fn bench_sort_and_remove_dups(b: &mut Bencher) {
     fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
         // offset has to be 8 byte aligned
         let offset = (i as usize) * std::mem::size_of::<u64>();
@@ -358,7 +358,8 @@ fn bench_sort_and_dedups(b: &mut Bencher) {
         }
     }
 
-    let mut rng = rand::thread_rng();
+    use rand::prelude::*;
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
     let accounts: Vec<_> =
         std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
             .take(1000)
