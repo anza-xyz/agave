@@ -949,7 +949,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 4. the handler thread processes the dispatched task.
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
-        let scheduler_main_loop = || {
+        let scheduler_main_loop = {
             let handler_count = self.pool.handler_count;
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
@@ -1015,6 +1015,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 };
                 let mut result_with_timings = initialized_result_with_timings();
 
+<<<<<<< HEAD
+=======
+                // The following loop maintains and updates ResultWithTimings as its
+                // externally-provided mutable state for each session in this way:
+                //
+                // 1. Initial result_with_timing is propagated implicitly by the moved variable.
+                // 2. Subsequent result_with_timings are propagated explicitly from
+                //    the new_task_receiver.recv() invocation located at the end of loop.
+>>>>>>> b8abc7e3a5 (Apply cosmetic changes to unified scheduler (#1861))
                 'nonaborted_main_loop: loop {
                     match new_task_receiver.recv() {
                         Ok(NewTaskPayload::OpenSubchannel((
@@ -1086,9 +1095,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     Ok(NewTaskPayload::CloseSubchannel) => {
                                         session_ending = true;
                                     }
-                                    Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) => {
-                                        unreachable!();
-                                    }
+                                    Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
+                                        unreachable!(),
                                     Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
@@ -1111,6 +1119,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         is_finished = session_ending && state_machine.has_no_active_task();
                     }
 
+<<<<<<< HEAD
                     if session_ending {
                         state_machine.reinitialize();
                         session_result_sender
@@ -1120,6 +1129,38 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             ))
                             .expect("always outlived receiver");
                         session_ending = false;
+=======
+                    // Finalize the current session after asserting it's explicitly requested so.
+                    assert!(session_ending);
+                    // Send result first because this is blocking the replay code-path.
+                    session_result_sender
+                        .send(result_with_timings)
+                        .expect("always outlived receiver");
+                    state_machine.reinitialize();
+                    session_ending = false;
+
+                    // Prepare for the new session.
+                    match new_task_receiver.recv() {
+                        Ok(NewTaskPayload::OpenSubchannel((
+                            new_context,
+                            new_result_with_timings,
+                        ))) => {
+                            // We just received subsequent (= not initial) session and about to
+                            // enter into the preceding `while(!is_finished) {...}` loop again.
+                            // Before that, propagate new SchedulingContext to handler threads
+                            runnable_task_sender
+                                .send_chained_channel(new_context, handler_count)
+                                .unwrap();
+                            result_with_timings = new_result_with_timings;
+                        }
+                        Err(_) => {
+                            // This unusual condition must be triggered by ThreadManager::drop().
+                            // Initialize result_with_timings with a harmless value...
+                            result_with_timings = initialized_result_with_timings();
+                            break 'nonaborted_main_loop;
+                        }
+                        Ok(_) => unreachable!(),
+>>>>>>> b8abc7e3a5 (Apply cosmetic changes to unified scheduler (#1861))
                     }
                 }
 
@@ -1206,7 +1247,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         self.scheduler_thread = Some(
             thread::Builder::new()
                 .name("solScheduler".to_owned())
-                .spawn_tracked(scheduler_main_loop())
+                .spawn_tracked(scheduler_main_loop)
                 .unwrap(),
         );
 
