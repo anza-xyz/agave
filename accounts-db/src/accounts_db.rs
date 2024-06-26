@@ -10060,15 +10060,19 @@ pub mod tests {
                 .collect();
 
         let mut accounts1 = accounts.clone();
-        AccountsDb::sort_and_remove_dups(&mut accounts1);
+        let num_dups1 = AccountsDb::sort_and_remove_dups(&mut accounts1);
 
         // Use BTreeMap to calculate sort and remove dups alternatively.
         let mut map = std::collections::BTreeMap::default();
+        let mut num_dups2 = 0;
         for account in accounts.iter() {
-            map.insert(*account.pubkey(), *account);
+            if map.insert(*account.pubkey(), *account).is_some() {
+                num_dups2 += 1;
+            }
         }
         let accounts2: Vec<_> = map.into_values().collect();
         assert_eq!(accounts1, accounts2);
+        assert_eq!(num_dups1, num_dups2);
     }
 
     /// Reserve ancient storage size is not supported for TiredStorage
