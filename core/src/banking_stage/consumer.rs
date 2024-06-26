@@ -2361,7 +2361,8 @@ mod tests {
                     bank.last_blockhash(),
                 ));
             let feature_set: Arc<FeatureSet> = bank.feature_set.clone();
-            let allow_self_conflicting_txns = feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
+            let allow_self_conflicting_txns =
+                feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
 
             let _ = bank_start.working_bank.accounts().lock_accounts(
                 std::iter::once(&manual_lock_tx),

@@ -42,24 +42,32 @@ pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
     transaction: &'a T,
 #[derive(Debug, Default)]
-struct EntryAcctLocks {
+struct BatchAccountLocks {
     writables: HashSet<Pubkey>,
     readables: HashSet<Pubkey>,
 }
 
-impl EntryAcctLocks {
+impl BatchAccountLocks {
     fn with_capacity(capacity: usize) -> Self {
-        EntryAcctLocks {
+        BatchAccountLocks {
             writables: HashSet::with_capacity(capacity),
             readables: HashSet::with_capacity(capacity),
         }
+    }
+
+    fn insert_read_lock(&mut self, key: &Pubkey) {
+        self.readables.insert(*key);
+    }
+
+    fn insert_write_lock(&mut self, key: &Pubkey) {
+        self.writables.insert(*key);
     }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default)]
 pub struct AccountLocks {
-    write_locks: AHashSet<Pubkey>,
+    write_locks: AHashMap<Pubkey, u64>,
     readonly_locks: AHashMap<Pubkey, u64>,
 }
 
@@ -76,6 +84,61 @@ impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
             .iter()
             .enumerate()
             .map(|(index, key)| (key, self.transaction.is_writable(index)))
+    }
+    fn is_locked_write(&self, key: &Pubkey) -> bool {
+        self.write_locks.get(key).map_or(false, |count| *count > 0)
+    }
+
+    fn insert_new_write(&mut self, key: &Pubkey) {
+        assert!(self.write_locks.insert(*key, 1).is_none());
+    }
+
+    fn lock_write(&mut self, key: &Pubkey) -> bool {
+        self.write_locks.get_mut(key).map_or(false, |count| {
+            *count += 1;
+            true
+        })
+    }
+
+    fn insert_new_readonly(&mut self, key: &Pubkey) {
+        assert!(self.readonly_locks.insert(*key, 1).is_none());
+    }
+
+    fn lock_readonly(&mut self, key: &Pubkey) -> bool {
+        self.readonly_locks.get_mut(key).map_or(false, |count| {
+            *count += 1;
+            true
+        })
+    }
+
+    fn unlock_readonly(&mut self, key: &Pubkey) {
+        if let hash_map::Entry::Occupied(mut occupied_entry) = self.readonly_locks.entry(*key) {
+            let count = occupied_entry.get_mut();
+            *count -= 1;
+            if *count == 0 {
+                occupied_entry.remove_entry();
+            }
+        } else {
+            debug_assert!(
+                false,
+                "Attempted to remove a read-lock for a key that wasn't read-locked"
+            );
+        }
+    }
+
+    fn unlock_write(&mut self, key: &Pubkey) {
+        if let hash_map::Entry::Occupied(mut occupied_entry) = self.write_locks.entry(*key) {
+            let count = occupied_entry.get_mut();
+            *count -= 1;
+            if *count == 0 {
+                occupied_entry.remove_entry();
+            }
+        } else {
+            debug_assert!(
+                false,
+                "Attempted to remove a write-lock for a key that wasn't write-locked"
+            );
+        }
     }
 }
 
@@ -538,48 +601,50 @@ impl Accounts {
         account_locks: &mut AccountLocks,
         writable_keys: Vec<&Pubkey>,
         readonly_keys: Vec<&Pubkey>,
-        entry_accts_lookup: &mut EntryAcctLocks,
+        batch_account_locks: &mut BatchAccountLocks,
         allow_self_conflicting_entries: bool,
     ) -> (Result<()>, bool) {
-        let mut self_conflicting_account: bool = false;
         let mut self_conflicting_tx = false;
         for k in writable_keys.iter() {
             if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
                 if allow_self_conflicting_entries {
-                    self_conflicting_account = entry_accts_lookup.writables.contains(k)
-                        || entry_accts_lookup.readables.contains(k);
-                }
-                if !self_conflicting_account {
-                    debug!("Writable account in use: {:?}", k);
-                    return (Err(TransactionError::AccountInUse), self_conflicting_tx);
-                } else {
+                    if !(batch_account_locks.writables.contains(k)
+                        || batch_account_locks.readables.contains(k))
+                    {
+                        debug!("Write-only account in use: {:?}", k);
+                        return (Err(TransactionError::AccountInUse), false);
+                    }
                     self_conflicting_tx = true;
+                } else {
+                    return (Err(TransactionError::AccountInUse), false);
                 }
             }
         }
         for k in readonly_keys.iter() {
             if account_locks.is_locked_write(k) {
                 if allow_self_conflicting_entries {
-                    self_conflicting_account = entry_accts_lookup.writables.contains(k);
-                }
-                if !self_conflicting_account {
-                    debug!("Read-only account in use: {:?}", k);
-                    return (Err(TransactionError::AccountInUse), self_conflicting_tx);
-                } else {
+                    if !batch_account_locks.writables.contains(k) {
+                        debug!("Read-only account in use: {:?}", k);
+                        return (Err(TransactionError::AccountInUse), false);
+                    }
                     self_conflicting_tx = true;
+                } else {
+                    return (Err(TransactionError::AccountInUse), false);
                 }
             }
         }
 
         for k in writable_keys {
-            account_locks.write_locks.insert(*k);
-            entry_accts_lookup.writables.insert(*k);
+            batch_account_locks.insert_write_lock(k);
+            if !account_locks.lock_write(k) {
+                account_locks.insert_new_write(k);
+            }
         }
 
         for k in readonly_keys {
+            batch_account_locks.insert_read_lock(k);
             if !account_locks.lock_readonly(k) {
                 account_locks.insert_new_readonly(k);
-                entry_accts_lookup.readables.insert(*k);
             }
         }
 
@@ -593,14 +658,10 @@ impl Accounts {
         readonly_keys: Vec<&Pubkey>,
     ) {
         for k in writable_keys {
-            if account_locks.is_locked_write(k) {
-                account_locks.unlock_write(k);
-            }
+            account_locks.unlock_write(k);
         }
         for k in readonly_keys {
-            if account_locks.is_locked_readonly(k) {
-                account_locks.unlock_readonly(k);
-            }
+            account_locks.unlock_readonly(k);
         }
     }
 
@@ -1134,7 +1195,6 @@ mod tests {
         accounts.store_for_tests(0, &keypair2.pubkey(), &account2);
         accounts.store_for_tests(0, &keypair3.pubkey(), &account3);
 
-
         // no conflicting locks
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -1146,8 +1206,7 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let (results0, _) =
-            accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
+        let (results0, _) = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
 
         assert_eq!(results0, vec![Ok(())]);
         assert_eq!(
@@ -1162,18 +1221,16 @@ mod tests {
         );
         assert_eq!(
             accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .write_locks
-            .contains(&keypair0.pubkey()),
+                .account_locks
+                .lock()
+                .unwrap()
+                .write_locks
+                .contains_key(&keypair0.pubkey()),
             true
         );
 
         accounts.unlock_accounts(iter::once(&tx).zip(&results0));
 
-
-        
         // batch write-read conflict. no outstanding conflicting lock
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -1217,14 +1274,13 @@ mod tests {
 
         accounts.unlock_accounts(txs.iter().zip(&results1));
 
-
         // batch write-write conflict. no outstanding conflicting lock
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
             1,
             0,
             2,
-            vec![keypair1.pubkey(), keypair2.pubkey(),  native_loader::id()],
+            vec![keypair1.pubkey(), keypair2.pubkey(), native_loader::id()],
             Hash::default(),
             instructions,
         );
@@ -1244,21 +1300,18 @@ mod tests {
         assert_eq!(
             results1,
             vec![
-                Ok(()), 
+                Ok(()),
                 Ok(()), // Both transactions acquire same account as writeable
             ],
         );
-        assert!(
-            accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .write_locks
-                .contains(&keypair1.pubkey())
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .write_locks
+            .contains_key(&keypair1.pubkey()));
 
         // accounts.unlock_accounts(txs.iter().zip(&results1));
-
 
         // batch write-write conflict. outstanding (read/write lock)
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
@@ -1266,7 +1319,7 @@ mod tests {
             1,
             0,
             2,
-            vec![keypair1.pubkey(), keypair2.pubkey(),  native_loader::id()],
+            vec![keypair1.pubkey(), keypair2.pubkey(), native_loader::id()],
             Hash::default(),
             instructions,
         );
@@ -1287,21 +1340,18 @@ mod tests {
             results2,
             vec![
                 Err(TransactionError::AccountInUse), // outstanding write lock
-                Ok(()), // outstanding read lock, acquired read lock
+                Ok(()),                              // outstanding read lock, acquired read lock
             ],
         );
-        assert!(
-            accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .write_locks
-                .contains(&keypair1.pubkey())
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .write_locks
+            .contains_key(&keypair1.pubkey()));
 
         accounts.unlock_accounts(txs.iter().zip(&results1));
         accounts.unlock_accounts(txs2.iter().zip(&results2));
-
 
         // batch write-read conflict. outstanding (read/write lock)
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
@@ -1314,11 +1364,7 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair3], message, Hash::default());
-        let (results0, _) =
-            accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
-
-
-
+        let (results0, _) = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -1345,22 +1391,19 @@ mod tests {
         assert_eq!(
             results1,
             vec![
-                Ok(()), 
+                Ok(()),
                 Err(TransactionError::AccountInUse), // acquiring read lock on (keypair3) which is write locked in another batch
             ],
         );
-        assert!(
-            accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .write_locks
-                .contains(&keypair3.pubkey())
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .write_locks
+            .contains_key(&keypair3.pubkey()));
 
         accounts.unlock_accounts(iter::once(&tx).zip(&results0));
         accounts.unlock_accounts(txs.iter().zip(&results1));
-
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -1386,7 +1429,6 @@ mod tests {
             .readonly_locks
             .contains_key(&keypair1.pubkey()));
     }
-
 
     #[test]
     fn test_accounts_locks_multithreaded() {
@@ -1511,12 +1553,14 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .is_locked_write(&keypair0.pubkey()));
+            .write_locks
+            .contains_key(&keypair0.pubkey()));
         assert!(accounts
             .account_locks
             .lock()
             .unwrap()
-            .is_locked_write(&keypair1.pubkey()));
+            .write_locks
+            .contains_key(&keypair1.pubkey()));
     }
 
     impl Accounts {
@@ -1617,7 +1661,24 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .is_locked_write(&keypair2.pubkey()));
+            .write_locks
+            .contains_key(&keypair2.pubkey()));
+
+        accounts.unlock_accounts(txs.iter().zip(&results));
+
+        // check all locks to be removed
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .readonly_locks
+            .is_empty());
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .write_locks
+            .is_empty());
     }
 
     #[test]
