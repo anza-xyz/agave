@@ -1530,12 +1530,13 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help(BlockProductionMethod::cli_message()),
         )
         .arg(
-            Arg::with_name("enable_block_production_forwarding")
-            .long("enable-block-production-forwarding")
+            Arg::with_name("disable_block_production_forwarding")
+            .long("disable-block-production-forwarding")
             .takes_value(false)
-            .help("Enable forwarding of non-vote transactions in block production. \
-                   This is required for validators with SWQOS side-deals that are \
-                   using the `central-scheduler` block-production-method."),
+            .help("Disable forwarding of non-vote transactions in block production. \
+                   By default, forwarding is already disabled, it is enabled by setting \
+                   \"staked-nodes-overrides\". This flag can be used to disable forwarding \
+                   even when \"staked-nodes-overrides\" is set."),
         )
         .arg(
             Arg::with_name("unified_scheduler_handler_threads")
