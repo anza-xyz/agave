@@ -44,12 +44,12 @@ pub use solana_program::program_stubs;
 #[cfg(target_arch = "wasm32")]
 pub use solana_program::wasm_bindgen;
 pub use solana_program::{
-    account_info, address_lookup_table, alt_bn128, big_mod_exp, blake3, bpf_loader,
-    bpf_loader_deprecated, bpf_loader_upgradeable, clock, config, custom_heap_default,
-    custom_panic_default, debug_account_data, declare_deprecated_sysvar_id, declare_sysvar_id,
-    decode_error, ed25519_program, epoch_rewards, epoch_schedule, fee_calculator, impl_sysvar_get,
-    incinerator, instruction, keccak, lamports, loader_instruction, loader_upgradeable_instruction,
-    loader_v4, loader_v4_instruction, message, msg, native_token, nonce, program, program_error,
+    account_info, address_lookup_table, big_mod_exp, blake3, bpf_loader, bpf_loader_deprecated,
+    bpf_loader_upgradeable, clock, config, custom_heap_default, custom_panic_default,
+    debug_account_data, declare_deprecated_sysvar_id, declare_sysvar_id, decode_error,
+    ed25519_program, epoch_rewards, epoch_schedule, fee_calculator, impl_sysvar_get, incinerator,
+    instruction, keccak, lamports, loader_instruction, loader_upgradeable_instruction, loader_v4,
+    loader_v4_instruction, message, msg, native_token, nonce, program, program_error,
     program_memory, program_option, program_pack, rent, sanitize, secp256k1_program,
     secp256k1_recover, serde_varint, serialize_utils, short_vec, slot_hashes, slot_history,
     stable_layout, stake, stake_history, syscalls, system_instruction, system_program, sysvar,

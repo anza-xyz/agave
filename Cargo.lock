@@ -5705,6 +5705,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-bn254"
+version = "2.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-serialize",
+ "array-bytes",
+ "bytemuck",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "solana-program",
+ "thiserror",
+]
+
+[[package]]
 name = "solana-bpf-loader-program"
 version = "2.1.0"
 dependencies = [
@@ -5716,6 +5733,7 @@ dependencies = [
  "memoffset 0.9.1",
  "rand 0.8.5",
  "scopeguard",
+ "solana-bn254",
  "solana-compute-budget",
  "solana-curve25519",
  "solana-measure",
@@ -6790,10 +6808,6 @@ version = "2.1.0"
 dependencies = [
  "anyhow",
  "arbitrary",
- "ark-bn254",
- "ark-ec",
- "ark-ff",
- "ark-serialize",
  "array-bytes",
  "assert_matches",
  "base64 0.22.1",
