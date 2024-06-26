@@ -719,12 +719,10 @@ impl JsonRpcRequestProcessor {
                             "every block after partitioned_epoch_reward_enabled should have a \
                              populated block_height",
                         );
-                    {
-                        RpcCustomError::EpochRewardsPeriodActive {
-                            slot: bank.slot(),
-                            current_block_height: bank.block_height(),
-                            rewards_complete_block_height,
-                        }
+                    RpcCustomError::EpochRewardsPeriodActive {
+                        slot: bank.slot(),
+                        current_block_height: bank.block_height(),
+                        rewards_complete_block_height,
                     }
                 })?;
 
