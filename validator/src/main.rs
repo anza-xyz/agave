@@ -1772,16 +1772,19 @@ pub fn main() {
             None => ShredStorageType::default(),
             Some(shred_compaction_string) => match shred_compaction_string {
                 "level" => ShredStorageType::RocksLevel,
-                "fifo" => match matches.value_of("rocksdb_fifo_shred_storage_size") {
-                    None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
-                        &validator_config,
-                    )),
-                    Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
-                        matches,
-                        "rocksdb_fifo_shred_storage_size",
-                        u64
-                    ))),
-                },
+                "fifo" => {
+                    // WARN HERE
+                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
+                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
+                            &validator_config,
+                        )),
+                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
+                            matches,
+                            "rocksdb_fifo_shred_storage_size",
+                            u64
+                        ))),
+                    }
+                }
                 _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
             },
         },
