@@ -399,6 +399,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .possible_values(&["pico", "full", "none"])
                 .help("Selects inflation"),
         )
+        .arg(
+            Arg::with_name("add_genesis_accounts")
+                .long("add-genesis-accounts")
+                .takes_value(true)
+                .value_name("BOOLEAN")
+                .default_value("true")
+                .help("Add genesis accounts"),
+        )
         .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
@@ -597,7 +605,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    if value_t_or_exit!(matches, "add_genesis_accounts", bool) {
+        add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    }
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {
