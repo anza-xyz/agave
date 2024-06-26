@@ -1594,7 +1594,6 @@ pub fn main() {
     } else {
         &ledger_path
     };
-
     let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to canonicalize snapshots path '{}': {err}",
