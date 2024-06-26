@@ -3931,7 +3931,8 @@ impl AccountsDb {
 
     /// sort `accounts` by pubkey.
     /// Remove earlier entries with the same pubkey as later entries.
-    pub fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) {
         // stable sort because we want the most recent only
         accounts.sort_by(|a, b| a.pubkey().cmp(b.pubkey()));
         let len0 = accounts.len();
@@ -3939,7 +3940,7 @@ impl AccountsDb {
             let mut last = 0;
             let mut curr = 1;
 
-            loop {
+            while curr < accounts.len() {
                 if accounts[curr].pubkey() == accounts[last].pubkey() {
                     accounts[last] = accounts[curr];
                 } else {
@@ -3947,9 +3948,6 @@ impl AccountsDb {
                     accounts[last] = accounts[curr];
                 }
                 curr += 1;
-                if curr == accounts.len() {
-                    break;
-                }
             }
             accounts.truncate(last + 1);
         }
@@ -10050,6 +10048,27 @@ pub mod tests {
         AccountsDb::sort_and_remove_dups(&mut test1);
         assert_eq!(test1, expected);
         assert_eq!(test1, expected);
+    }
+
+    #[test]
+    fn test_sort_and_remove_dups_random() {
+        use rand::prelude::*;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
+        let accounts: Vec<_> =
+            std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+                .take(1000)
+                .collect();
+
+        let mut accounts1 = accounts.clone();
+        AccountsDb::sort_and_remove_dups(&mut accounts1);
+
+        // Use BTreeMap to calculate sort and remove dups alternatively.
+        let mut map = std::collections::BTreeMap::default();
+        for account in accounts.iter() {
+            map.insert(*account.pubkey(), *account);
+        }
+        let accounts2: Vec<_> = map.values().cloned().collect();
+        assert_eq!(accounts1, accounts2);
     }
 
     /// Reserve ancient storage size is not supported for TiredStorage

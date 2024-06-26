@@ -346,8 +346,6 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
     });
 }
 
-// old: test bench_sort_and_dedups                             ... bench:     322,798 ns/iter (+/- 8,451)
-// new: test bench_sort_and_dedups                             ... bench:      89,960 ns/iter (+/- 2,934)
 #[bench]
 fn bench_sort_and_dedups(b: &mut Bencher) {
     fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
@@ -361,9 +359,10 @@ fn bench_sort_and_dedups(b: &mut Bencher) {
     }
 
     let mut rng = rand::thread_rng();
-    let accounts: Vec<_> = (0..1000)
-        .map(|_i| generate_sample_account_from_storage(rng.gen::<u8>()))
-        .collect();
+    let accounts: Vec<_> =
+        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+            .take(1000)
+            .collect();
 
     b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
 }
