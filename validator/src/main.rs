@@ -1773,7 +1773,14 @@ pub fn main() {
             Some(shred_compaction_string) => match shred_compaction_string {
                 "level" => ShredStorageType::RocksLevel,
                 "fifo" => {
-                    // WARN HERE
+                    warn!(
+                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
+                         Use of \"fifo\" will still work for now, but will be completely removed \
+                         in the future. To update, use \"level\" for --rocksdb-shred-compaction, \
+                         or remove the --rocksdb-shred-compaction argument altogether. Note that \
+                         the \"rocksdb_fifo\" subdirectory within the ledger directory will need \
+                         to be manually cleaned up once the validator is running with \"level\"."
+                    );
                     match matches.value_of("rocksdb_fifo_shred_storage_size") {
                         None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
                             &validator_config,
