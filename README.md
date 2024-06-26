@@ -1,6 +1,6 @@
 <p align="center">
-  <a href="https://solana.com">
-    <img alt="Solana" src="https://i.imgur.com/0vfIMHo.png" width="250" />
+  <a href="https://rakurai.io">
+    <img alt="Solana" src="https://raw.githubusercontent.com/rakurai-io/token-metadata/master/assets/Rakurai_Logo_White_BG.png" width="250"/>
   </a>
 </p>
 
@@ -8,6 +8,8 @@
 [![Solana documentation](https://docs.rs/solana-core/badge.svg)](https://docs.rs/solana-core)
 [![Build status](https://badge.buildkite.com/8cc350de251d61483db98bdfc895b9ea0ac8ffa4a32ee850ed.svg?branch=master)](https://buildkite.com/solana-labs/solana/builds?branch=master)
 [![codecov](https://codecov.io/gh/solana-labs/solana/branch/master/graph/badge.svg)](https://codecov.io/gh/solana-labs/solana)
+
+## **This repo is Rakurai’s high TPS Solana client forked from Agave and contains the upstream contributions, supporting [SIMD#83](https://github.com/solana-foundation/solana-improvement-documents/pull/83), to Agave. It will soon host a public version of Rakurai's high TPS client.**
 
 # Building
 
