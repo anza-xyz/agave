@@ -367,3 +367,27 @@ fn bench_sort_and_remove_dups(b: &mut Bencher) {
 
     b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
 }
+
+#[bench]
+fn bench_sort_and_remove_dups_no_dups(b: &mut Bencher) {
+    fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
+        // offset has to be 8 byte aligned
+        let offset = (i as usize) * std::mem::size_of::<u64>();
+        AccountFromStorage {
+            index_info: AccountInfo::new(StorageLocation::AppendVec(i as u32, offset), i as u64),
+            data_len: i as u64,
+            pubkey: Pubkey::new_unique(),
+        }
+    }
+
+    use rand::prelude::*;
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
+    let mut accounts: Vec<_> =
+        std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+            .take(1000)
+            .collect();
+
+    accounts.shuffle(&mut rng);
+
+    b.iter(|| AccountsDb::sort_and_remove_dups(&mut accounts.clone()));
+}
