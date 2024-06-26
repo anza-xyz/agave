@@ -122,13 +122,43 @@ pub struct ShredIndex {
 /// Erasure coding information
 pub struct ErasureMeta {
     /// Which erasure set in the slot this is
-    fec_set_index: u64,
+    #[serde(with = "serde_compat_u64")]
+    fec_set_index: u32,
     /// First coding index in the FEC set
     first_coding_index: u64,
     /// Index of the first received coding shred in the FEC set
     first_received_coding_index: u64,
     /// Erasure configuration for this erasure set
     config: ErasureConfig,
+}
+
+// Helper module to serde values as u64 for backward compatibility.
+mod serde_compat_u64 {
+    use super::*;
+
+    pub(super) fn serialize<S: Serializer, T: Copy>(
+        &val: &T,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        u64: TryFrom<T>,
+        <u64 as TryFrom<T>>::Error: std::fmt::Display,
+    {
+        u64::try_from(val)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: TryFrom<u64>,
+        <T as TryFrom<u64>>::Error: std::fmt::Display,
+    {
+        u64::deserialize(deserializer)
+            .map(T::try_from)?
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -349,7 +379,7 @@ impl ErasureMeta {
                 let first_coding_index = u64::from(shred.first_coding_index()?);
                 let first_received_coding_index = u64::from(shred.index());
                 let erasure_meta = ErasureMeta {
-                    fec_set_index: u64::from(shred.fec_set_index()),
+                    fec_set_index: shred.fec_set_index(),
                     config,
                     first_coding_index,
                     first_received_coding_index,
@@ -384,7 +414,8 @@ impl ErasureMeta {
 
     pub(crate) fn data_shreds_indices(&self) -> Range<u64> {
         let num_data = self.config.num_data as u64;
-        self.fec_set_index..self.fec_set_index + num_data
+        let fec_set_index = u64::from(self.fec_set_index);
+        fec_set_index..fec_set_index + num_data
     }
 
     pub(crate) fn coding_shreds_indices(&self) -> Range<u64> {
@@ -397,11 +428,8 @@ impl ErasureMeta {
     }
 
     pub(crate) fn next_fec_set_index(&self) -> Option<u32> {
-        let num_data = u64::try_from(self.config.num_data).ok()?;
-        self.fec_set_index
-            .checked_add(num_data)
-            .map(u32::try_from)?
-            .ok()
+        let num_data = u32::try_from(self.config.num_data).ok()?;
+        self.fec_set_index.checked_add(num_data)
     }
 
     pub(crate) fn status(&self, index: &Index) -> ErasureMetaStatus {
@@ -575,7 +603,7 @@ mod test {
         };
         let e_meta = ErasureMeta {
             fec_set_index,
-            first_coding_index: fec_set_index,
+            first_coding_index: u64::from(fec_set_index),
             config: erasure_config,
             first_received_coding_index: 0,
         };
@@ -754,7 +782,7 @@ mod test {
             config: erasure_config,
         };
         let mut new_erasure_meta = ErasureMeta {
-            fec_set_index: set_index,
+            fec_set_index: u32::try_from(set_index).unwrap(),
             first_coding_index: set_index,
             first_received_coding_index: 0,
             config: erasure_config,
