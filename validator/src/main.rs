@@ -1607,7 +1607,7 @@ pub fn main() {
     {
         eprintln!(
             "Failed: The --accounts and --snapshots paths must be unique since they \
-                     both create 'snapshots' subdirectories, otherwise there may be collisions",
+             both create 'snapshots' subdirectories, otherwise there may be collisions",
         );
         exit(1);
     }
