@@ -4939,7 +4939,7 @@ dependencies = [
 
 [[package]]
 name = "solana-define-syscall"
-version = "2.0.0"
+version = "2.1.0"
 
 [[package]]
 name = "solana-download-utils"
