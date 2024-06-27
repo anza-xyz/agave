@@ -1520,6 +1520,7 @@ pub fn process_ping(
         let to = config.signers[0].pubkey();
         lamports = lamports.saturating_add(1);
 
+        let compute_unit_limit = ComputeUnitLimit::Default;
         let build_message = |lamports| {
             let ixs = vec![system_instruction::transfer(
                 &config.signers[0].pubkey(),
@@ -1528,7 +1529,7 @@ pub fn process_ping(
             )]
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
-                compute_unit_limit: ComputeUnitLimit::Default,
+                compute_unit_limit,
             });
             Message::new(&ixs, Some(&config.signers[0].pubkey()))
         };
@@ -1538,6 +1539,7 @@ pub fn process_ping(
             SpendAmount::Some(lamports),
             &blockhash,
             &config.signers[0].pubkey(),
+            compute_unit_limit,
             build_message,
             config.commitment,
         )?;

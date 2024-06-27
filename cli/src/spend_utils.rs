@@ -4,7 +4,9 @@ use {
         cli::CliError,
     },
     clap::ArgMatches,
-    solana_clap_utils::{input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG},
+    solana_clap_utils::{
+        compute_budget::ComputeUnitLimit, input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG,
+    },
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         commitment_config::CommitmentConfig, hash::Hash, message::Message,
@@ -52,6 +54,7 @@ pub fn resolve_spend_tx_and_check_account_balance<F>(
     amount: SpendAmount,
     blockhash: &Hash,
     from_pubkey: &Pubkey,
+    compute_unit_limit: ComputeUnitLimit,
     build_message: F,
     commitment: CommitmentConfig,
 ) -> Result<(Message, u64), CliError>
@@ -65,6 +68,7 @@ where
         blockhash,
         from_pubkey,
         from_pubkey,
+        compute_unit_limit,
         build_message,
         commitment,
     )
@@ -77,6 +81,7 @@ pub fn resolve_spend_tx_and_check_account_balances<F>(
     blockhash: &Hash,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
+    compute_unit_limit: ComputeUnitLimit,
     build_message: F,
     commitment: CommitmentConfig,
 ) -> Result<(Message, u64), CliError>
@@ -92,6 +97,7 @@ where
             from_pubkey,
             fee_pubkey,
             0,
+            compute_unit_limit,
             build_message,
         )?;
         Ok((message, spend))
@@ -113,6 +119,7 @@ where
             from_pubkey,
             fee_pubkey,
             from_rent_exempt_minimum,
+            compute_unit_limit,
             build_message,
         )?;
         if from_pubkey == fee_pubkey {
@@ -150,6 +157,7 @@ fn resolve_spend_message<F>(
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
     from_rent_exempt_minimum: u64,
+    _compute_unit_limit: ComputeUnitLimit,
     build_message: F,
 ) -> Result<(Message, SpendAndFee), CliError>
 where

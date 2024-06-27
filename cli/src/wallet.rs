@@ -911,6 +911,7 @@ pub fn process_transfer(
         None
     };
 
+    let compute_unit_limit = ComputeUnitLimit::Default;
     let build_message = |lamports| {
         let ixs = if let Some((base_pubkey, seed, program_id, from_pubkey)) = with_seed.as_ref() {
             vec![system_instruction::transfer_with_seed(
@@ -924,14 +925,14 @@ pub fn process_transfer(
             .with_memo(memo)
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
-                compute_unit_limit: ComputeUnitLimit::Default,
+                compute_unit_limit,
             })
         } else {
             vec![system_instruction::transfer(&from_pubkey, to, lamports)]
                 .with_memo(memo)
                 .with_compute_unit_config(&ComputeUnitConfig {
                     compute_unit_price,
-                    compute_unit_limit: ComputeUnitLimit::Default,
+                    compute_unit_limit,
                 })
         };
 
@@ -954,6 +955,7 @@ pub fn process_transfer(
         &recent_blockhash,
         &from_pubkey,
         &fee_payer.pubkey(),
+        compute_unit_limit,
         build_message,
         config.commitment,
     )?;
