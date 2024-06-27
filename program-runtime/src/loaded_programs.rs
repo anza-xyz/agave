@@ -25,7 +25,7 @@ use {
         fmt::{Debug, Formatter},
         sync::{
             atomic::{AtomicU64, Ordering},
-            Arc, Condvar, Mutex, RwLock,
+            Arc, Condvar, Mutex, RwLock, Weak,
         },
     },
 };
@@ -549,7 +549,7 @@ pub struct LoadedPrograms<FG: ForkGraph> {
     /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
     pub programs_to_recompile: Vec<(Pubkey, Arc<LoadedProgram>)>,
     pub stats: Stats,
-    pub fork_graph: Option<Arc<RwLock<FG>>>,
+    pub fork_graph: Option<Weak<RwLock<FG>>>,
     pub loading_task_waiter: Arc<LoadingTaskWaiter>,
 }
 
@@ -691,7 +691,7 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
         }
     }
 
-    pub fn set_fork_graph(&mut self, fork_graph: Arc<RwLock<FG>>) {
+    pub fn set_fork_graph(&mut self, fork_graph: Weak<RwLock<FG>>) {
         self.fork_graph = Some(fork_graph);
     }
 
@@ -797,6 +797,7 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
             error!("Program cache doesn't have fork graph.");
             return;
         };
+        let fork_graph = fork_graph.upgrade().unwrap();
         let Ok(fork_graph) = fork_graph.read() else {
             error!("Failed to lock fork graph for reading.");
             return;
@@ -929,7 +930,8 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
         is_first_round: bool,
     ) -> Option<(Pubkey, u64)> {
         debug_assert!(self.fork_graph.is_some());
-        let locked_fork_graph = self.fork_graph.as_ref().unwrap().read().unwrap();
+        let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
+        let locked_fork_graph = fork_graph.read().unwrap();
         let mut cooperative_loading_task = None;
         search_for.retain(|(key, (match_criteria, usage_count))| {
             if let Some(second_level) = self.entries.get_mut(key) {
@@ -1030,6 +1032,8 @@ impl<FG: ForkGraph> LoadedPrograms<FG> {
             && !matches!(
                 self.fork_graph
                     .as_ref()
+                    .unwrap()
+                    .upgrade()
                     .unwrap()
                     .read()
                     .unwrap()
