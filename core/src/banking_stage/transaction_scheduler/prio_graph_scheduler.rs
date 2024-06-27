@@ -515,14 +515,18 @@ impl Batches {
 mod tests {
     use {
         super::*,
-        crate::banking_stage::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+        crate::banking_stage::{
+            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            immutable_deserialized_packet::ImmutableDeserializedPacket,
+        },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, pubkey::Pubkey,
-            signature::Keypair, signer::Signer, system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, packet::Packet,
+            pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction,
+            transaction::Transaction,
         },
-        std::borrow::Borrow,
+        std::{borrow::Borrow, sync::Arc},
     };
 
     macro_rules! txid {
@@ -593,12 +597,24 @@ mod tests {
             let id = TransactionId::new(index as u64);
             let transaction =
                 prioritized_tranfers(from_keypair.borrow(), to_pubkeys, lamports, priority);
+            let packet = Arc::new(
+                ImmutableDeserializedPacket::new(
+                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
+                )
+                .unwrap(),
+            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age_slot: Slot::MAX,
             };
             const TEST_TRANSACTION_COST: u64 = 5000;
-            container.insert_new_transaction(id, transaction_ttl, priority, TEST_TRANSACTION_COST);
+            container.insert_new_transaction(
+                id,
+                transaction_ttl,
+                packet,
+                priority,
+                TEST_TRANSACTION_COST,
+            );
         }
 
         container
