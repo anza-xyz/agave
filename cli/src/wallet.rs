@@ -911,7 +911,11 @@ pub fn process_transfer(
         None
     };
 
-    let compute_unit_limit = ComputeUnitLimit::Default;
+    let compute_unit_limit = if nonce_account.is_some() {
+        ComputeUnitLimit::Default
+    } else {
+        ComputeUnitLimit::Simulated
+    };
     let build_message = |lamports| {
         let ixs = if let Some((base_pubkey, seed, program_id, from_pubkey)) = with_seed.as_ref() {
             vec![system_instruction::transfer_with_seed(
