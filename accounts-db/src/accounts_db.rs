@@ -583,7 +583,7 @@ impl AccountFromStorage {
 pub struct GetUniqueAccountsResult {
     pub stored_accounts: Vec<AccountFromStorage>,
     pub capacity: u64,
-    pub num_dups: usize,
+    pub num_duplicated_accounts: usize,
 }
 
 pub struct AccountsAddRootTiming {
@@ -2024,7 +2024,7 @@ impl ShrinkStats {
                 ),
                 (
                     "num_duplicated_accounts",
-                    self.num_duplicated_accounts.swap(0, Ordering::Relaxed) as i64,
+                    self.num_duplicated_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -2130,7 +2130,7 @@ impl ShrinkAncientStats {
                 "num_duplicated_accounts",
                 self.shrink_stats
                     .num_duplicated_accounts
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -3914,12 +3914,12 @@ impl AccountsDb {
         });
 
         // sort by pubkey to keep account index lookups close
-        let num_dups = Self::sort_and_remove_dups(&mut stored_accounts);
+        let num_duplicated_accounts = Self::sort_and_remove_dups(&mut stored_accounts);
 
         GetUniqueAccountsResult {
             stored_accounts,
             capacity,
-            num_dups,
+            num_duplicated_accounts,
         }
     }
 
@@ -3959,7 +3959,7 @@ impl AccountsDb {
             .fetch_add(storage_read_elapsed_us, Ordering::Relaxed);
         stats
             .num_duplicated_accounts
-            .fetch_add(result.num_dups as u64, Ordering::Relaxed);
+            .fetch_add(result.num_duplicated_accounts as u64, Ordering::Relaxed);
         result
     }
 
@@ -3976,7 +3976,7 @@ impl AccountsDb {
         let GetUniqueAccountsResult {
             stored_accounts,
             capacity,
-            num_dups,
+            num_duplicated_accounts,
         } = unique_accounts;
 
         let mut index_read_elapsed = Measure::start("index_read_elapsed");
@@ -3989,7 +3989,7 @@ impl AccountsDb {
             .fetch_add(len as u64, Ordering::Relaxed);
         stats
             .num_duplicated_accounts
-            .fetch_add(*num_dups as u64, Ordering::Relaxed);
+            .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
         let all_are_zero_lamports_collect = Mutex::new(true);
         let index_entries_being_shrunk_outer = Mutex::new(Vec::default());
         self.thread_pool_clean.install(|| {
