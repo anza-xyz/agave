@@ -3929,8 +3929,10 @@ impl AccountsDb {
         }
     }
 
-    /// sort `accounts` by pubkey.
-    /// Remove earlier entries with the same pubkey as later entries.
+    /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
+    /// accounts in the vector with the same pubkey.
+    ///
+    /// Return the number of duplicated elements in the vector.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) -> usize {
         // stable sort because we want the most recent only
