@@ -2,13 +2,13 @@
 #[macro_export]
 macro_rules! define_syscall {
     (fn $name:ident($($arg:ident: $typ:ty),*) -> $ret:ty) => {
-		#[inline]
+        #[inline]
         pub unsafe fn $name($($arg: $typ),*) -> $ret {
-			// this enum is used to force the hash to be computed in a const context
-			#[repr(usize)]
-			enum Syscall {
-				Code = $crate::sys_hash(stringify!($name)),
-			}
+            // this enum is used to force the hash to be computed in a const context
+            #[repr(usize)]
+            enum Syscall {
+                Code = $crate::sys_hash(stringify!($name)),
+            }
 
             let syscall: extern "C" fn($($arg: $typ),*) -> $ret = core::mem::transmute(Syscall::Code);
             syscall($($arg),*)
@@ -23,14 +23,14 @@ macro_rules! define_syscall {
 #[cfg(not(target_feature = "static-syscalls"))]
 #[macro_export]
 macro_rules! define_syscall {
-	(fn $name:ident($($arg:ident: $typ:ty),*) -> $ret:ty) => {
-		extern "C" {
-			pub fn $name($($arg: $typ),*) -> $ret;
-		}
-	};
-	(fn $name:ident($($arg:ident: $typ:ty),*)) => {
-		define_syscall!(fn $name($($arg: $typ),*) -> ());
-	}
+    (fn $name:ident($($arg:ident: $typ:ty),*) -> $ret:ty) => {
+        extern "C" {
+            pub fn $name($($arg: $typ),*) -> $ret;
+        }
+    };
+    (fn $name:ident($($arg:ident: $typ:ty),*)) => {
+        define_syscall!(fn $name($($arg: $typ),*) -> ());
+    }
 }
 
 #[cfg(target_feature = "static-syscalls")]
