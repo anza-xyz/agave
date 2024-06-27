@@ -7,11 +7,6 @@
 //! [JSON-RPC]: https://www.jsonrpc.org/specification
 
 pub use crate::mock_sender::Mocks;
-#[allow(deprecated)]
-use solana_rpc_client_api::deprecated_config::{
-    RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig,
-    RpcGetConfirmedSignaturesForAddress2Config,
-};
 #[cfg(feature = "spinner")]
 use {crate::spinner, solana_sdk::clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {

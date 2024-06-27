@@ -10,10 +10,6 @@
 //! in [`crate::nonblocking::rpc_client`].
 
 pub use crate::mock_sender::Mocks;
-#[allow(deprecated)]
-use solana_rpc_client_api::deprecated_config::{
-    RpcConfirmedBlockConfig, RpcConfirmedTransactionConfig,
-};
 use {
     crate::{
         http_sender::HttpSender,
