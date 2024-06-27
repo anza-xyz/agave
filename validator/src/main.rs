@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
+use mimalloc::MiMalloc;
 use {
     agave_validator::{
         admin_rpc_service,
@@ -85,7 +85,7 @@ use {
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
@@ -926,6 +926,14 @@ pub fn main() {
 
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
+
+    if rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("solRayonGlob{i:02}"))
+        .build_global()
+        .is_err()
+    {
+        warn!("Rayon global thread pool already initialized");
+    }
 
     let cuda = matches.is_present("cuda");
     if cuda {

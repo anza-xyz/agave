@@ -71,7 +71,7 @@ solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-jemallocator = { workspace = true }
+mimalloc = { workspace = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }
