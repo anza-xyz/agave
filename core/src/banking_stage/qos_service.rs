@@ -141,42 +141,57 @@ impl QosService {
     ) {
         match transaction_committed_status {
             Some(transaction_committed_status) => {
-                let mut cost_tracker = bank.write_cost_tracker().unwrap();
-                let mut num_included = 0;
-                transaction_cost_results
-                    .zip(transaction_committed_status)
-                    .for_each(|(tx_cost, transaction_committed_details)| {
-                        // Only transactions that the qos service included have to be
-                        // checked for update
-                        if let Ok(tx_cost) = tx_cost {
-                            num_included += 1;
-                            match transaction_committed_details {
-                                CommitTransactionDetails::Committed {
-                                    compute_units,
-                                    loaded_accounts_data_size,
-                                } => {
-                                    cost_tracker.update_execution_cost(
-                                        tx_cost,
-                                        *compute_units,
-                                        CostModel::calculate_loaded_accounts_data_size_cost(
-                                            *loaded_accounts_data_size,
-                                            &bank.feature_set,
-                                        ),
-                                    );
-                                }
-                                CommitTransactionDetails::NotCommitted => {
-                                    cost_tracker.remove(tx_cost);
-                                }
-                            }
-                        }
-                    });
-                cost_tracker.sub_transactions_in_flight(num_included);
+                Self::remove_or_update_recorded_transaction_costs(
+                    transaction_cost_results,
+                    transaction_committed_status,
+                    bank,
+                )
             }
-            None => Self::remove_transaction_costs(transaction_cost_results, bank),
+            None => Self::remove_unrecorded_transaction_costs(transaction_cost_results, bank),
         }
     }
 
-    fn remove_transaction_costs<'a>(
+    /// For recorded transactions, remove units reserved by uncommitted transaction, or update
+    /// units for committed transactions.
+    fn remove_or_update_recorded_transaction_costs<'a>(
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
+        transaction_committed_status: &Vec<CommitTransactionDetails>,
+        bank: &Bank,
+    ) {
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        let mut num_included = 0;
+        transaction_cost_results
+            .zip(transaction_committed_status)
+            .for_each(|(tx_cost, transaction_committed_details)| {
+                // Only transactions that the qos service included have to be
+                // checked for update
+                if let Ok(tx_cost) = tx_cost {
+                    num_included += 1;
+                    match transaction_committed_details {
+                        CommitTransactionDetails::Committed {
+                            compute_units,
+                            loaded_accounts_data_size,
+                        } => {
+                            cost_tracker.update_execution_cost(
+                                tx_cost,
+                                *compute_units,
+                                CostModel::calculate_loaded_accounts_data_size_cost(
+                                    *loaded_accounts_data_size,
+                                    &bank.feature_set,
+                                ),
+                            );
+                        }
+                        CommitTransactionDetails::NotCommitted => {
+                            cost_tracker.remove(tx_cost);
+                        }
+                    }
+                }
+            });
+        cost_tracker.sub_transactions_in_flight(num_included);
+    }
+
+    /// Remove reserved units for transaction batch that unsuccessfully recorded.
+    fn remove_unrecorded_transaction_costs<'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         bank: &Bank,
     ) {
