@@ -571,23 +571,6 @@ impl RpcClient {
     }
 
     #[allow(deprecated)]
-    async fn maybe_map_request(&self, mut request: RpcRequest) -> Result<RpcRequest, RpcError> {
-        if self.get_node_version().await? < semver::Version::new(1, 7, 0) {
-            request = match request {
-                RpcRequest::GetBlock => RpcRequest::GetConfirmedBlock,
-                RpcRequest::GetBlocks => RpcRequest::GetConfirmedBlocks,
-                RpcRequest::GetBlocksWithLimit => RpcRequest::GetConfirmedBlocksWithLimit,
-                RpcRequest::GetSignaturesForAddress => {
-                    RpcRequest::GetConfirmedSignaturesForAddress2
-                }
-                RpcRequest::GetTransaction => RpcRequest::GetConfirmedTransaction,
-                _ => request,
-            };
-        }
-        Ok(request)
-    }
-
-    #[allow(deprecated)]
     async fn maybe_map_filters(
         &self,
         mut filters: Vec<RpcFilterType>,
@@ -2494,11 +2477,8 @@ impl RpcClient {
         slot: Slot,
         encoding: UiTransactionEncoding,
     ) -> ClientResult<EncodedConfirmedBlock> {
-        self.send(
-            self.maybe_map_request(RpcRequest::GetBlock).await?,
-            json!([slot, encoding]),
-        )
-        .await
+        self.send(RpcRequest::GetBlock, json!([slot, encoding]))
+            .await
     }
 
     /// Returns identity and transaction information about a confirmed block in the ledger.
@@ -2544,11 +2524,7 @@ impl RpcClient {
         slot: Slot,
         config: RpcBlockConfig,
     ) -> ClientResult<UiConfirmedBlock> {
-        self.send(
-            self.maybe_map_request(RpcRequest::GetBlock).await?,
-            json!([slot, config]),
-        )
-        .await
+        self.send(RpcRequest::GetBlock, json!([slot, config])).await
     }
 
     /// Returns a list of finalized blocks between two slots.
@@ -2575,12 +2551,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getBlocks`] RPC method, unless
-    /// the remote node version is less than 1.7, in which case it maps to the
-    /// [`getConfirmedBlocks`] RPC method.
+    /// This method corresponds directly to the [`getBlocks`] RPC method.
     ///
     /// [`getBlocks`]: https://solana.com/docs/rpc/http/getblocks
-    /// [`getConfirmedBlocks`]: https://solana.com/docs/rpc/deprecated/getconfirmedblocks
     ///
     /// # Examples
     ///
@@ -2602,11 +2575,8 @@ impl RpcClient {
         start_slot: Slot,
         end_slot: Option<Slot>,
     ) -> ClientResult<Vec<Slot>> {
-        self.send(
-            self.maybe_map_request(RpcRequest::GetBlocks).await?,
-            json!([start_slot, end_slot]),
-        )
-        .await
+        self.send(RpcRequest::GetBlocks, json!([start_slot, end_slot]))
+            .await
     }
 
     /// Returns a list of confirmed blocks between two slots.
@@ -2637,12 +2607,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getBlocks`] RPC method, unless
-    /// the remote node version is less than 1.7, in which case it maps to the
-    /// [`getConfirmedBlocks`] RPC method.
+    /// This method corresponds directly to the [`getBlocks`] RPC method.
     ///
     /// [`getBlocks`]: https://solana.com/docs/rpc/http/getblocks
-    /// [`getConfirmedBlocks`]: https://solana.com/docs/rpc/deprecated/getconfirmedblocks
     ///
     /// # Examples
     ///
@@ -2684,8 +2651,7 @@ impl RpcClient {
                 self.maybe_map_commitment(commitment_config).await?
             ])
         };
-        self.send(self.maybe_map_request(RpcRequest::GetBlocks).await?, json)
-            .await
+        self.send(RpcRequest::GetBlocks, json).await
     }
 
     /// Returns a list of finalized blocks starting at the given slot.
@@ -2702,11 +2668,9 @@ impl RpcClient {
     /// # RPC Reference
     ///
     /// This method corresponds directly to the [`getBlocksWithLimit`] RPC
-    /// method, unless the remote node version is less than 1.7, in which case
-    /// it maps to the [`getConfirmedBlocksWithLimit`] RPC method.
+    /// method.
     ///
     /// [`getBlocksWithLimit`]: https://solana.com/docs/rpc/http/getblockswithlimit
-    /// [`getConfirmedBlocksWithLimit`]: https://solana.com/docs/rpc/deprecated/getconfirmedblockswithlimit
     ///
     /// # Examples
     ///
@@ -2728,12 +2692,8 @@ impl RpcClient {
         start_slot: Slot,
         limit: usize,
     ) -> ClientResult<Vec<Slot>> {
-        self.send(
-            self.maybe_map_request(RpcRequest::GetBlocksWithLimit)
-                .await?,
-            json!([start_slot, limit]),
-        )
-        .await
+        self.send(RpcRequest::GetBlocksWithLimit, json!([start_slot, limit]))
+            .await
     }
 
     /// Returns a list of confirmed blocks starting at the given slot.
@@ -2751,11 +2711,9 @@ impl RpcClient {
     /// # RPC Reference
     ///
     /// This method corresponds directly to the [`getBlocksWithLimit`] RPC
-    /// method, unless the remote node version is less than 1.7, in which case
-    /// it maps to the `getConfirmedBlocksWithLimit` RPC method.
+    /// method.
     ///
     /// [`getBlocksWithLimit`]: https://solana.com/docs/rpc/http/getblockswithlimit
-    /// [`getConfirmedBlocksWithLimit`]: https://solana.com/docs/rpc/deprecated/getconfirmedblockswithlimit
     ///
     /// # Examples
     ///
@@ -2785,8 +2743,7 @@ impl RpcClient {
         commitment_config: CommitmentConfig,
     ) -> ClientResult<Vec<Slot>> {
         self.send(
-            self.maybe_map_request(RpcRequest::GetBlocksWithLimit)
-                .await?,
+            RpcRequest::GetBlocksWithLimit,
             json!([
                 start_slot,
                 limit,
@@ -2911,8 +2868,7 @@ impl RpcClient {
 
         let result: Vec<RpcConfirmedTransactionStatusWithSignature> = self
             .send(
-                self.maybe_map_request(RpcRequest::GetSignaturesForAddress)
-                    .await?,
+                RpcRequest::GetSignaturesForAddress,
                 json!([address.to_string(), config]),
             )
             .await?;
@@ -2929,12 +2885,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTransaction`] RPC method,
-    /// unless the remote node version is less than 1.7, in which case it maps
-    /// to the [`getConfirmedTransaction`] RPC method.
+    /// This method corresponds directly to the [`getTransaction`] RPC method.
     ///
     /// [`getTransaction`]: https://solana.com/docs/rpc/http/gettransaction
-    /// [`getConfirmedTransaction`]: https://solana.com/docs/rpc/deprecated/getConfirmedTransaction
     ///
     /// # Examples
     ///
@@ -2970,7 +2923,7 @@ impl RpcClient {
         encoding: UiTransactionEncoding,
     ) -> ClientResult<EncodedConfirmedTransactionWithStatusMeta> {
         self.send(
-            self.maybe_map_request(RpcRequest::GetTransaction).await?,
+            RpcRequest::GetTransaction,
             json!([signature.to_string(), encoding]),
         )
         .await
@@ -2988,12 +2941,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTransaction`] RPC method,
-    /// unless the remote node version is less than 1.7, in which case it maps
-    /// to the [`getConfirmedTransaction`] RPC method.
+    /// This method corresponds directly to the [`getTransaction`] RPC method.
     ///
     /// [`getTransaction`]: https://solana.com/docs/rpc/http/gettransaction
-    /// [`getConfirmedTransaction`]: https://solana.com/docs/rpc/deprecated/getConfirmedTransaction
     ///
     /// # Examples
     ///
@@ -3038,7 +2988,7 @@ impl RpcClient {
         config: RpcTransactionConfig,
     ) -> ClientResult<EncodedConfirmedTransactionWithStatusMeta> {
         self.send(
-            self.maybe_map_request(RpcRequest::GetTransaction).await?,
+            RpcRequest::GetTransaction,
             json!([signature.to_string(), config]),
         )
         .await

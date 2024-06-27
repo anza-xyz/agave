@@ -2132,12 +2132,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getBlocks`] RPC method, unless
-    /// the remote node version is less than 1.7, in which case it maps to the
-    /// [`getConfirmedBlocks`] RPC method.
+    /// This method corresponds directly to the [`getBlocks`] RPC method.
     ///
     /// [`getBlocks`]: https://solana.com/docs/rpc/http/getblocks
-    /// [`getConfirmedBlocks`]: https://solana.com/docs/rpc/deprecated/getconfirmedblocks
     ///
     /// # Examples
     ///
@@ -2183,12 +2180,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getBlocks`] RPC method, unless
-    /// the remote node version is less than 1.7, in which case it maps to the
-    /// [`getConfirmedBlocks`] RPC method.
+    /// This method corresponds directly to the [`getBlocks`] RPC method.
     ///
     /// [`getBlocks`]: https://solana.com/docs/rpc/http/getblocks
-    /// [`getConfirmedBlocks`]: https://solana.com/docs/rpc/deprecated/getconfirmedblocks
     ///
     /// # Examples
     ///
@@ -2236,11 +2230,9 @@ impl RpcClient {
     /// # RPC Reference
     ///
     /// This method corresponds directly to the [`getBlocksWithLimit`] RPC
-    /// method, unless the remote node version is less than 1.7, in which case
-    /// it maps to the [`getConfirmedBlocksWithLimit`] RPC method.
+    /// method.
     ///
     /// [`getBlocksWithLimit`]: https://solana.com/docs/rpc/http/getblockswithlimit
-    /// [`getConfirmedBlocksWithLimit`]: https://solana.com/docs/rpc/deprecated/getconfirmedblockswithlimit
     ///
     /// # Examples
     ///
@@ -2273,11 +2265,9 @@ impl RpcClient {
     /// # RPC Reference
     ///
     /// This method corresponds directly to the [`getBlocksWithLimit`] RPC
-    /// method, unless the remote node version is less than 1.7, in which case
-    /// it maps to the `getConfirmedBlocksWithLimit` RPC method.
+    /// method.
     ///
     /// [`getBlocksWithLimit`]: https://solana.com/docs/rpc/http/getblockswithlimit
-    /// [`getConfirmedBlocksWithLimit`]: https://solana.com/docs/rpc/deprecated/getconfirmedblockswithlimit
     ///
     /// # Examples
     ///
@@ -2418,12 +2408,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTransaction`] RPC method,
-    /// unless the remote node version is less than 1.7, in which case it maps
-    /// to the [`getConfirmedTransaction`] RPC method.
+    /// This method corresponds directly to the [`getTransaction`] RPC method.
     ///
     /// [`getTransaction`]: https://solana.com/docs/rpc/http/gettransaction
-    /// [`getConfirmedTransaction`]: https://solana.com/docs/rpc/deprecated/getConfirmedTransaction
     ///
     /// # Examples
     ///
@@ -2470,12 +2457,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getTransaction`] RPC method,
-    /// unless the remote node version is less than 1.7, in which case it maps
-    /// to the [`getConfirmedTransaction`] RPC method.
+    /// This method corresponds directly to the [`getTransaction`] RPC method.
     ///
     /// [`getTransaction`]: https://solana.com/docs/rpc/http/gettransaction
-    /// [`getConfirmedTransaction`]: https://solana.com/docs/rpc/deprecated/getConfirmedTransaction
     ///
     /// # Examples
     ///
