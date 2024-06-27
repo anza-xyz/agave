@@ -496,6 +496,7 @@ impl Validator {
         use_quic: bool,
         tpu_connection_pool_size: usize,
         tpu_enable_udp: bool,
+        tpu_max_connections_per_ipaddr_per_minute: u64,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     ) -> Result<Self, String> {
         let id = identity_keypair.pubkey();
@@ -1369,6 +1370,7 @@ impl Validator {
             banking_tracer,
             tracer_thread,
             tpu_enable_udp,
+            tpu_max_connections_per_ipaddr_per_minute,
             &prioritization_fee_cache,
             config.block_production_method.clone(),
             config.generator_config.clone(),
@@ -2552,6 +2554,7 @@ mod tests {
             DEFAULT_TPU_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
             DEFAULT_TPU_ENABLE_UDP,
+            32, // max connections per IpAddr per minute for test
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -2637,6 +2640,7 @@ mod tests {
                     DEFAULT_TPU_USE_QUIC,
                     DEFAULT_TPU_CONNECTION_POOL_SIZE,
                     DEFAULT_TPU_ENABLE_UDP,
+                    32, // max connections per IpAddr per minute for test
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")

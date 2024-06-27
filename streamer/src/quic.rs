@@ -174,6 +174,8 @@ pub struct StreamStats {
     pub(crate) connection_setup_error_locally_closed: AtomicUsize,
     pub(crate) connection_removed: AtomicUsize,
     pub(crate) connection_remove_failed: AtomicUsize,
+    pub(crate) connection_throttled_across_all: AtomicUsize,
+    pub(crate) connection_throttled_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
@@ -182,6 +184,7 @@ pub struct StreamStats {
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
+    pub(crate) connection_rate_limiter_length: AtomicUsize,
 }
 
 impl StreamStats {
@@ -306,6 +309,18 @@ impl StreamStats {
             (
                 "connection_setup_error_locally_closed",
                 self.connection_setup_error_locally_closed
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_throttled_across_all",
+                self.connection_throttled_across_all
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "connection_throttled_per_ipaddr",
+                self.connection_throttled_per_ipaddr
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -454,6 +469,11 @@ impl StreamStats {
                 self.throttled_staked_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "connection_rate_limiter_length",
+                self.connection_rate_limiter_length.load(Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -471,6 +491,7 @@ pub fn spawn_server(
     max_staked_connections: usize,
     max_unstaked_connections: usize,
     max_streams_per_ms: u64,
+    max_connections_per_ipaddr_per_min: u64,
     wait_for_chunk_timeout: Duration,
     coalesce: Duration,
 ) -> Result<SpawnServerResult, QuicServerError> {
@@ -489,6 +510,7 @@ pub fn spawn_server(
             max_staked_connections,
             max_unstaked_connections,
             max_streams_per_ms,
+            max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout,
             coalesce,
         )
@@ -520,7 +542,8 @@ mod test {
     use {
         super::*,
         crate::nonblocking::quic::{
-            test::*, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+            test::*, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         },
         crossbeam_channel::unbounded,
         solana_sdk::net::DEFAULT_TPU_COALESCE,
@@ -556,6 +579,7 @@ mod test {
             MAX_STAKED_CONNECTIONS,
             MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
         )
@@ -617,6 +641,7 @@ mod test {
             MAX_STAKED_CONNECTIONS,
             MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
         )
@@ -665,6 +690,7 @@ mod test {
             MAX_STAKED_CONNECTIONS,
             0, // Do not allow any connection from unstaked clients/nodes
             DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             DEFAULT_TPU_COALESCE,
         )
