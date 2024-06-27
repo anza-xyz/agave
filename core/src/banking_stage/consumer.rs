@@ -882,8 +882,7 @@ mod tests {
                 self,
                 state::{AddressLookupTable, LookupTableMeta},
             },
-            compute_budget,
-            feature_set::{self, FeatureSet},
+            compute_budget, feature_set,
             fee_calculator::FeeCalculator,
             hash::Hash,
             instruction::InstructionError,
@@ -2360,9 +2359,9 @@ mod tests {
                     1,
                     bank.last_blockhash(),
                 ));
-            let feature_set: Arc<FeatureSet> = bank.feature_set.clone();
-            let allow_self_conflicting_txns =
-                feature_set.is_active(&feature_set::allow_self_conflicting_entries::id());
+            let allow_self_conflicting_txns = bank
+                .feature_set
+                .is_active(&feature_set::allow_self_conflicting_entries::id());
 
             let _ = bank_start.working_bank.accounts().lock_accounts(
                 std::iter::once(&manual_lock_tx),
