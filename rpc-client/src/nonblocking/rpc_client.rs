@@ -1435,18 +1435,8 @@ impl RpcClient {
     /// # Ok::<(), Error>(())
     /// ```
     pub async fn get_highest_snapshot_slot(&self) -> ClientResult<RpcSnapshotSlotInfo> {
-        if self.get_node_version().await? < semver::Version::new(1, 9, 0) {
-            #[allow(deprecated)]
-            self.get_snapshot_slot()
-                .await
-                .map(|full| RpcSnapshotSlotInfo {
-                    full,
-                    incremental: None,
-                })
-        } else {
-            self.send(RpcRequest::GetHighestSnapshotSlot, Value::Null)
-                .await
-        }
+        self.send(RpcRequest::GetHighestSnapshotSlot, Value::Null)
+            .await
     }
 
     /// Check if a transaction has been processed with the default [commitment level][cl].
@@ -4837,61 +4827,41 @@ impl RpcClient {
         Ok(blockhash)
     }
 
-    #[allow(deprecated)]
     pub async fn get_latest_blockhash_with_commitment(
         &self,
         commitment: CommitmentConfig,
     ) -> ClientResult<(Hash, u64)> {
-        let (blockhash, last_valid_block_height) =
-            if self.get_node_version().await? < semver::Version::new(1, 9, 0) {
-                let Fees {
-                    blockhash,
-                    last_valid_block_height,
-                    ..
-                } = self.get_fees_with_commitment(commitment).await?.value;
-                (blockhash, last_valid_block_height)
-            } else {
-                let RpcBlockhash {
-                    blockhash,
-                    last_valid_block_height,
-                } = self
-                    .send::<Response<RpcBlockhash>>(
-                        RpcRequest::GetLatestBlockhash,
-                        json!([self.maybe_map_commitment(commitment).await?]),
-                    )
-                    .await?
-                    .value;
-                let blockhash = blockhash.parse().map_err(|_| {
-                    ClientError::new_with_request(
-                        RpcError::ParseError("Hash".to_string()).into(),
-                        RpcRequest::GetLatestBlockhash,
-                    )
-                })?;
-                (blockhash, last_valid_block_height)
-            };
+        let RpcBlockhash {
+            blockhash,
+            last_valid_block_height,
+        } = self
+            .send::<Response<RpcBlockhash>>(
+                RpcRequest::GetLatestBlockhash,
+                json!([self.maybe_map_commitment(commitment).await?]),
+            )
+            .await?
+            .value;
+        let blockhash = blockhash.parse().map_err(|_| {
+            ClientError::new_with_request(
+                RpcError::ParseError("Hash".to_string()).into(),
+                RpcRequest::GetLatestBlockhash,
+            )
+        })?;
         Ok((blockhash, last_valid_block_height))
     }
 
-    #[allow(deprecated)]
     pub async fn is_blockhash_valid(
         &self,
         blockhash: &Hash,
         commitment: CommitmentConfig,
     ) -> ClientResult<bool> {
-        let result = if self.get_node_version().await? < semver::Version::new(1, 9, 0) {
-            self.get_fee_calculator_for_blockhash_with_commitment(blockhash, commitment)
-                .await?
-                .value
-                .is_some()
-        } else {
-            self.send::<Response<bool>>(
+        Ok(self
+            .send::<Response<bool>>(
                 RpcRequest::IsBlockhashValid,
                 json!([blockhash.to_string(), commitment,]),
             )
             .await?
-            .value
-        };
-        Ok(result)
+            .value)
     }
 
     #[allow(deprecated)]

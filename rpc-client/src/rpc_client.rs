@@ -3754,7 +3754,6 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_latest_blockhash())
     }
 
-    #[allow(deprecated)]
     pub fn get_latest_blockhash_with_commitment(
         &self,
         commitment: CommitmentConfig,
@@ -3762,7 +3761,6 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_latest_blockhash_with_commitment(commitment))
     }
 
-    #[allow(deprecated)]
     pub fn is_blockhash_valid(
         &self,
         blockhash: &Hash,
