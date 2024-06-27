@@ -159,10 +159,39 @@ impl Forwarder {
         };
 
         self.update_data_budget();
+
+        let rpc_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(136, 144, 48, 141));
+
         let packet_vec: Vec<_> = forwardable_packets
             .filter(|p| !p.meta().forwarded())
             .filter(|p| p.meta().is_from_staked_node())
             .filter(|p| self.data_budget.take(p.meta().size))
+            // debug.
+            .filter(|p| {
+                if p.meta().addr == rpc_ip {
+                    match p
+                        .deserialize_slice::<solana_sdk::transaction::VersionedTransaction, _>(..)
+                    {
+                        Ok(tx) => {
+                            warn!(
+                                "FWD1: packet from target RPC w/ signature {:?} sent to {:?}",
+                                solana_client::rpc_client::SerializableTransaction::get_signature(
+                                    &tx
+                                ),
+                                leader_pubkey
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "FWD1: packet from target RPC w/ error {:?}, while leader is {:?}",
+                                e, leader_pubkey
+                            );
+                        }
+                    }
+                }
+                true
+            })
+            // end debug.
             .filter_map(|p| p.data(..).map(|data| data.to_vec()))
             .collect();
 
