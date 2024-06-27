@@ -11,9 +11,15 @@ output_file=${1:-/dev/stderr}
 if [[ -n $CI_PULL_REQUEST ]]; then
   # filter pr number from ci branch.
   [[ $CI_BRANCH =~ pull/([0-9]+)/head ]]
+  pr_number=${BASH_REMATCH[1]}
+  echo "get affected files from PR: $pr_number"
 
+  base_name=$(gh pr view "$pr_number" --json baseRefName --jq '.baseRefName')
+
+  # Fetch the updated base branch
+  git fetch origin "$base_name":"$base_name"
   # get affected files
-  readarray -t affected_files < <(git diff origin/master..HEAD --name-status | cut -f2)
+  readarray -t affected_files < <(git diff origin/"$base_name"..HEAD --name-status | cut -f2)
   if [[ ${#affected_files[*]} -eq 0 ]]; then
     echo "Unable to determine the files affected by this PR"
     exit 1
