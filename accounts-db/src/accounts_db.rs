@@ -1920,7 +1920,7 @@ impl LatestAccountsIndexRootsStats {
                 i64
             ),
             (
-                "append_vecs_reopen_as_file_io",
+                "append_vecs_open_as_file_io",
                 APPEND_VEC_REOPEN_AS_FILE_IO.load(Ordering::Relaxed),
                 i64
             )
