@@ -14,11 +14,6 @@ Release channels have their own copy of this changelog:
 
 <a name="edge-channel"></a>
 ## [2.1.0] - Unreleased
-<<<<<<< HEAD
-=======
-* Changes
-  * SDK: removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.
->>>>>>> 83527d9577 (Remove support for deprecated rpc endpoints (#1809))
 
 ## [2.0.0]
 * Breaking
