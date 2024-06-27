@@ -1,3 +1,4 @@
+pub use solana_define_syscall::sys_hash;
 use {
     crate::{
         instruction::{AccountMeta, ProcessedSiblingInstruction},
