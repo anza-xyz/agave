@@ -3749,7 +3749,6 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).is_blockhash_valid(blockhash, commitment))
     }
 
-    #[allow(deprecated)]
     pub fn get_fee_for_message(&self, message: &impl SerializableMessage) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_fee_for_message(message))
     }

@@ -4809,7 +4809,6 @@ impl RpcClient {
             .value)
     }
 
-    #[allow(deprecated)]
     pub async fn get_fee_for_message(
         &self,
         message: &impl SerializableMessage,
