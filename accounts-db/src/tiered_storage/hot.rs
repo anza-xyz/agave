@@ -442,6 +442,11 @@ impl HotStorageReader {
             index_offset.0.saturating_add(1) as usize,
         )))
     }
+
+    /// Returns a slice suitable for use when archiving hot storages
+    pub fn data_for_archive(&self) -> &[u8] {
+        self.mmap.as_ref()
+    }
 }
 
 /// The writer that creates a hot accounts file.

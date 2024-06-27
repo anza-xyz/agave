@@ -11,6 +11,7 @@ use {
     solana_sdk::{account::ReadableAccount, clock::Slot, pubkey::Pubkey},
     std::{
         borrow::Borrow,
+        io::Read,
         mem,
         path::{Path, PathBuf},
     },
@@ -171,6 +172,13 @@ impl AccountsFile {
     ) -> Option<Vec<StoredAccountInfo>> {
         match self {
             Self::AppendVec(av) => av.append_accounts(accounts, skip),
+        }
+    }
+
+    /// Returns a Read implementation suitable for use when archiving accounts files
+    pub fn data_for_archive(&self) -> impl Read + '_ {
+        match self {
+            Self::AppendVec(av) => av.data_for_archive(),
         }
     }
 }
