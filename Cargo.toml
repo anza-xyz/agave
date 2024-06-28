@@ -61,7 +61,7 @@ members = [
     "net-shaper",
     "net-utils",
     "notifier",
-    "perf",
+    "perf", "placeholder-transaction-trait",
     "poh",
     "poh-bench",
     "poseidon",
