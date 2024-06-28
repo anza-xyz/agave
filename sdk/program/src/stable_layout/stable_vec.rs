@@ -27,7 +27,7 @@ pub struct StableVec<T> {
     pub ptr: NonNull<T>,
     pub cap: usize,
     pub len: usize,
-    _marker: PhantomData<T>,
+    pub(super) _marker: PhantomData<T>,
 }
 
 // We shadow these slice methods of the same name to avoid going through
