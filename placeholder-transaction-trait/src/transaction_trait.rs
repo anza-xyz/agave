@@ -8,6 +8,7 @@ use {
     },
 };
 
+mod reference;
 mod sanitized_transaction;
 
 pub trait TransactionTrait: MessageTrait {
