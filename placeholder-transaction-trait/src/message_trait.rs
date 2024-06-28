@@ -14,6 +14,7 @@ use {
 };
 
 mod sanitized_message;
+mod sanitized_transaction;
 
 // - Clone to support possible cloning from holding in Vec
 // - Debug to support legacy logging
