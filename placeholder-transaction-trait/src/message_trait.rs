@@ -12,6 +12,9 @@ use {
         transaction::TransactionError,
     },
 };
+
+mod sanitized_message;
+
 // - Clone to support possible cloning from holding in Vec
 // - Debug to support legacy logging
 pub trait MessageTrait: Clone + Debug {
@@ -51,8 +54,16 @@ pub trait MessageTrait: Clone + Debug {
     /// program in top-level instructions of this message.
     fn is_invoked(&self, key_index: usize) -> bool;
 
-    /// Returns `true` if the account at `index` is not a loader key.
-    fn is_non_loader_key(&self, index: usize) -> bool;
+    /// Returns true if the account at the specified index is an input to some
+    /// program instruction in this message.
+    fn is_instruction_account(&self, key_index: usize) -> bool {
+        if let Ok(key_index) = u8::try_from(key_index) {
+            self.instructions_iter()
+                .any(|ix| ix.accounts.contains(&key_index))
+        } else {
+            false
+        }
+    }
 
     /// Return signature details.
     fn get_signature_details(&self) -> TransactionSignatureDetails {
