@@ -13,6 +13,7 @@ use {
     },
 };
 
+mod reference;
 mod sanitized_message;
 mod sanitized_transaction;
 
