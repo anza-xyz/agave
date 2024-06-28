@@ -513,7 +513,7 @@ impl Validator {
         tpu_enable_udp: bool,
         tpu_max_connections_per_ipaddr_per_minute: u64,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ValidatorError> {
         let start_time = Instant::now();
 
         let id = identity_keypair.pubkey();
@@ -579,15 +579,17 @@ impl Validator {
         info!("Initializing sigverify done.");
 
         if !ledger_path.is_dir() {
-            return Err(format!(
+            return Err(ValidatorError::Error(format!(
                 "ledger directory does not exist or is not accessible: {ledger_path:?}"
-            ));
+            )));
         }
         let genesis_config =
             open_genesis_config(ledger_path, config.max_genesis_archive_unpacked_size)
                 .map_err(|err| format!("Failed to open genesis config: {err}"))?;
 
-        metrics_config_sanity_check(genesis_config.cluster_type)?;
+        metrics_config_sanity_check(genesis_config.cluster_type).map_err(|err| {
+            format!("Invalid metrics configuration detected in genesis config: {err}")
+        })?;
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
@@ -743,11 +745,11 @@ impl Validator {
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if expected_shred_version != node.info.shred_version() {
-                return Err(format!(
+                return Err(ValidatorError::Error(format!(
                     "shred version mismatch: expected {} found: {}",
                     expected_shred_version,
                     node.info.shred_version(),
-                ));
+                )));
             }
         }
 
@@ -1385,9 +1387,13 @@ impl Validator {
                 exit: exit.clone(),
             }) {
                 Ok(()) => {
-                    return Err("wen_restart phase one completedy".to_string());
+                    return Err(ValidatorError::WenRestartReset);
                 }
-                Err(e) => return Err(format!("wait_for_wen_restart failed: {e:?}")),
+                Err(e) => {
+                    return Err(ValidatorError::Error(format!(
+                        "wait_for_wen_restart failed: {e:?}"
+                    )))
+                }
             };
         }
 
@@ -2326,11 +2332,20 @@ fn initialize_rpc_transaction_history_services(
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ValidatorError {
+#[derive(Debug, Display, PartialEq, Eq)]
+pub enum ValidatorError {
     BadExpectedBankHash,
     NotEnoughLedgerData,
     Error(String),
+    WenRestartReset,
+}
+
+impl std::error::Error for ValidatorError {}
+
+impl From<String> for ValidatorError {
+    fn from(err: String) -> Self {
+        ValidatorError::Error(err)
+    }
 }
 
 // Return if the validator waited on other nodes to start. In this case
@@ -2351,9 +2366,7 @@ fn wait_for_supermajority(
         None => Ok(false),
         Some(wait_for_supermajority_slot) => {
             if let Some(process_blockstore) = process_blockstore {
-                process_blockstore
-                    .process()
-                    .map_err(ValidatorError::Error)?;
+                process_blockstore.process()?;
             }
 
             let bank = bank_forks.read().unwrap().working_bank();

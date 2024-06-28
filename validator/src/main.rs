@@ -34,7 +34,7 @@ use {
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorStartProgress,
+            ValidatorConfig, ValidatorError, ValidatorStartProgress,
         },
     },
     solana_gossip::{
@@ -1523,6 +1523,7 @@ pub fn main() {
         replay_transactions_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
+        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         ..ValidatorConfig::default()
     };
 
@@ -1943,6 +1944,10 @@ pub fn main() {
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
+        if validator_config.wen_restart_proto_path.is_some() {
+            error!("--restricted-repair-only-mode is not compatible with --wen-restart-proto-path");
+            exit(1);
+        }
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -2016,7 +2021,7 @@ pub fn main() {
         return;
     }
 
-    let validator = Validator::new(
+    let validator = match Validator::new(
         node,
         identity_keypair,
         &ledger_path,
@@ -2033,11 +2038,17 @@ pub fn main() {
         tpu_enable_udp,
         tpu_max_connections_per_ipaddr_per_minute,
         admin_service_post_init,
-    )
-    .unwrap_or_else(|e| {
-        error!("Failed to start validator: {:?}", e);
-        exit(1);
-    });
+    ) {
+        Ok(validator) => validator,
+        Err(ValidatorError::WenRestartReset) => {
+            error!("Please remove --wen_restart and use --wait_for_supermajority now");
+            exit(200);
+        }
+        Err(err) => {
+            error!("Failed to start validator: {:?}", err);
+            exit(1);
+        }
+    };
 
     if let Some(filename) = init_complete_file {
         File::create(filename).unwrap_or_else(|_| {

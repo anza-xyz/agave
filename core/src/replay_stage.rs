@@ -291,6 +291,7 @@ pub struct ReplayStageConfig {
     pub wait_to_vote_slot: Option<Slot>,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub in_wen_restart: bool,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -575,6 +576,7 @@ impl ReplayStage {
             wait_to_vote_slot,
             replay_forks_threads,
             replay_transactions_threads,
+            in_wen_restart,
         } = config;
 
         trace!("replay stage");
@@ -685,6 +687,10 @@ impl ReplayStage {
                 // Stop getting entries if we get exit signal
                 if exit.load(Ordering::Relaxed) {
                     break;
+                }
+
+                if in_wen_restart {
+                    continue;
                 }
 
                 let mut generate_new_bank_forks_time =
