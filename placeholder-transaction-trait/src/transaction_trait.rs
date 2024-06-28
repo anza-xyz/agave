@@ -8,6 +8,8 @@ use {
     },
 };
 
+mod sanitized_transaction;
+
 pub trait TransactionTrait: MessageTrait {
     /// Get the first signature of the message.
     fn signature(&self) -> &Signature;
