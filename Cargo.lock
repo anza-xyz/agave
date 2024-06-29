@@ -6686,7 +6686,6 @@ dependencies = [
  "solana-logger",
  "solana-sdk",
  "solana-version",
- "static_assertions",
  "tokio",
  "url 2.5.2",
 ]
@@ -7692,7 +7691,6 @@ dependencies = [
 name = "solana-transaction-metrics-tracker"
 version = "2.1.0"
 dependencies = [
- "Inflector",
  "base64 0.22.1",
  "bincode",
  "lazy_static",
@@ -7929,9 +7927,7 @@ dependencies = [
  "bs58",
  "clap 3.2.23",
  "dirs-next",
- "num_cpus",
  "solana-clap-v3-utils",
- "solana-cli-config",
  "solana-remote-wallet",
  "solana-sdk",
  "solana-version",
