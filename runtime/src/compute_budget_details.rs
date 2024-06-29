@@ -23,7 +23,14 @@ pub trait GetComputeBudgetDetails {
         instructions: impl Iterator<Item = (&'a Pubkey, &'a CompiledInstruction)>,
         _round_compute_unit_price_enabled: bool,
     ) -> Option<ComputeBudgetDetails> {
-        let compute_budget_limits = process_compute_budget_instructions(instructions).ok()?;
+        // ComputeBudgetDetails does not concern with loaded_accounts_data_size_limit, hence safe
+        // to hardcode its feature gate `default_loaded_accounts_data_size_limit` as activated
+        let use_default_loaded_accounts_data_size = true;
+        let compute_budget_limits = process_compute_budget_instructions(
+            instructions,
+            use_default_loaded_accounts_data_size,
+        )
+        .ok()?;
         Some(ComputeBudgetDetails {
             compute_unit_price: compute_budget_limits.compute_unit_price,
             compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),

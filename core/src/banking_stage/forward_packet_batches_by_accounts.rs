@@ -187,6 +187,7 @@ mod tests {
         let transaction = Transaction::new_unsigned(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_price(priority),
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(64 * 1024 * 1024),
                 system_instruction::transfer(&from_account, write_to_account, 2),
             ],
             Some(&from_account),

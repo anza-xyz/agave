@@ -21,7 +21,10 @@ pub const MIN_HEAP_FRAME_BYTES: u32 = HEAP_LENGTH as u32;
 
 /// The total accounts data a transaction can load is limited to 64MiB to not break
 /// anyone in Mainnet-beta today. It can be set by set_loaded_accounts_data_size_limit instruction
-pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+/// The default accounts data size a transaction can load if sender didn't set specific
+/// value via set_loaded_accounts_data_size_limit
+const DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudgetLimits {
@@ -31,13 +34,35 @@ pub struct ComputeBudgetLimits {
     pub loaded_accounts_bytes: u32,
 }
 
+// Default is only usable from dev context (ie. tests, benches etc)
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 impl Default for ComputeBudgetLimits {
     fn default() -> Self {
+        Self::new_with(false)
+    }
+}
+
+impl ComputeBudgetLimits {
+    // default constructor with feature gate
+    pub fn new_with(use_default_loaded_accounts_data_size: bool) -> Self {
         ComputeBudgetLimits {
             updated_heap_bytes: MIN_HEAP_FRAME_BYTES,
             compute_unit_limit: MAX_COMPUTE_UNIT_LIMIT,
             compute_unit_price: 0,
-            loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+            loaded_accounts_bytes: Self::get_default_loaded_accounts_data_size_bytes(
+                use_default_loaded_accounts_data_size,
+            ),
+        }
+    }
+
+    // behavior before/after feature gate `default_loaded_accounts_data_size_limit`
+    pub fn get_default_loaded_accounts_data_size_bytes(
+        use_default_loaded_accounts_data_size: bool,
+    ) -> u32 {
+        if use_default_loaded_accounts_data_size {
+            DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_BYTES
+        } else {
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
         }
     }
 }
@@ -68,6 +93,7 @@ impl From<ComputeBudgetLimits> for FeeBudgetLimits {
 /// are retrieved and returned,
 pub fn process_compute_budget_instructions<'a>(
     instructions: impl Iterator<Item = (&'a Pubkey, &'a CompiledInstruction)>,
+    use_default_loaded_accounts_data_size: bool,
 ) -> Result<ComputeBudgetLimits, TransactionError> {
     let mut num_non_compute_budget_instructions: u32 = 0;
     let mut updated_compute_unit_limit = None;
@@ -136,7 +162,11 @@ pub fn process_compute_budget_instructions<'a>(
     let compute_unit_price = updated_compute_unit_price.unwrap_or(0);
 
     let loaded_accounts_bytes = updated_loaded_accounts_data_size_limit
-        .unwrap_or(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES)
+        .unwrap_or(
+            ComputeBudgetLimits::get_default_loaded_accounts_data_size_bytes(
+                use_default_loaded_accounts_data_size,
+            ),
+        )
         .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES);
 
     Ok(ComputeBudgetLimits {
@@ -168,16 +198,21 @@ mod tests {
     };
 
     macro_rules! test {
-        ( $instructions: expr, $expected_result: expr) => {
+        ( $instructions: expr, $expected_result: expr, $use_default_loaded_accounts_data_size: expr) => {
             let payer_keypair = Keypair::new();
             let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new(
                 &[&payer_keypair],
                 Message::new($instructions, Some(&payer_keypair.pubkey())),
                 Hash::default(),
             ));
-            let result =
-                process_compute_budget_instructions(tx.message().program_instructions_iter());
+            let result = process_compute_budget_instructions(
+                tx.message().program_instructions_iter(),
+                $use_default_loaded_accounts_data_size,
+            );
             assert_eq!($expected_result, result);
+        };
+        ( $instructions: expr, $expected_result: expr) => {
+            test!($instructions, $expected_result, true);
         };
     }
 
@@ -438,20 +473,26 @@ mod tests {
 
         // Assert when set_loaded_accounts_data_size_limit is not presented
         // budget is set to default data size
-        let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
-            loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
-            ..ComputeBudgetLimits::default()
-        });
+        for use_default_loaded_accounts_data_size in [true, false] {
+            let expected_result = Ok(ComputeBudgetLimits {
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                loaded_accounts_bytes:
+                    ComputeBudgetLimits::get_default_loaded_accounts_data_size_bytes(
+                        use_default_loaded_accounts_data_size,
+                    ),
+                ..ComputeBudgetLimits::default()
+            });
 
-        test!(
-            &[Instruction::new_with_bincode(
-                Pubkey::new_unique(),
-                &0_u8,
-                vec![]
-            ),],
-            expected_result
-        );
+            test!(
+                &[Instruction::new_with_bincode(
+                    Pubkey::new_unique(),
+                    &0_u8,
+                    vec![]
+                ),],
+                expected_result,
+                use_default_loaded_accounts_data_size
+            );
+        }
 
         // Assert when set_loaded_accounts_data_size_limit presents more than once,
         // return DuplicateInstruction
@@ -483,18 +524,26 @@ mod tests {
                 Hash::default(),
             ));
 
-        let result =
-            process_compute_budget_instructions(transaction.message().program_instructions_iter());
+        for use_default_loaded_accounts_data_size in [true, false] {
+            let result = process_compute_budget_instructions(
+                transaction.message().program_instructions_iter(),
+                use_default_loaded_accounts_data_size,
+            );
 
-        // assert process_instructions will be successful with default,
-        // and the default compute_unit_limit is 2 times default: one for bpf ix, one for
-        // builtin ix.
-        assert_eq!(
-            result,
-            Ok(ComputeBudgetLimits {
-                compute_unit_limit: 2 * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
-                ..ComputeBudgetLimits::default()
-            })
-        );
+            // assert process_instructions will be successful with default,
+            // and the default compute_unit_limit is 2 times default: one for bpf ix, one for
+            // builtin ix.
+            assert_eq!(
+                result,
+                Ok(ComputeBudgetLimits {
+                    compute_unit_limit: 2 * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                    loaded_accounts_bytes:
+                        ComputeBudgetLimits::get_default_loaded_accounts_data_size_bytes(
+                            use_default_loaded_accounts_data_size
+                        ),
+                    ..ComputeBudgetLimits::default()
+                })
+            );
+        }
     }
 }

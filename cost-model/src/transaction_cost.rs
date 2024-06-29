@@ -199,8 +199,10 @@ mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
+        solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
         solana_sdk::{
             feature_set::FeatureSet,
+            fee::ACCOUNT_DATA_COST_PAGE_SIZE,
             hash::Hash,
             message::SimpleAddressLoader,
             reserved_account_keys::ReservedAccountKeys,
@@ -246,16 +248,21 @@ mod tests {
         )
         .unwrap();
 
-        // expected vote tx cost: 2 write locks, 1 sig, 1 vote ix, 8cu of loaded accounts size,
+        // expected vote tx cost: 2 write locks, 1 sig, 1 vote ix, 8cu of ix data bytes,
         let expected_vote_cost = SIMPLE_VOTE_USAGE_COST;
-        // expected non-vote tx cost would include default loaded accounts size cost (16384) additionally
-        let expected_none_vote_cost = 20535;
+        // expected non-vote tx cost would include default loaded accounts size cost additionally
+        const DEFAULT_PAGE_COST: u64 = 8;
+        let expected_loaded_accounts_data_size_cost =
+            ComputeBudgetLimits::get_default_loaded_accounts_data_size_bytes(true) as u64
+                / ACCOUNT_DATA_COST_PAGE_SIZE
+                * DEFAULT_PAGE_COST;
+        let min_none_vote_cost = SIMPLE_VOTE_USAGE_COST + expected_loaded_accounts_data_size_cost;
 
         let vote_cost = CostModel::calculate_cost(&vote_transaction, &FeatureSet::all_enabled());
         let none_vote_cost =
             CostModel::calculate_cost(&none_vote_transaction, &FeatureSet::all_enabled());
 
         assert_eq!(expected_vote_cost, vote_cost.sum());
-        assert_eq!(expected_none_vote_cost, none_vote_cost.sum());
+        assert!(min_none_vote_cost < none_vote_cost.sum());
     }
 }

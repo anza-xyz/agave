@@ -202,8 +202,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut accounts_found = Vec::with_capacity(account_keys.len());
     let mut rent_debits = RentDebits::default();
 
-    let requested_loaded_accounts_data_size_limit =
-        get_requested_loaded_accounts_data_size_limit(message)?;
+    let requested_loaded_accounts_data_size_limit = get_requested_loaded_accounts_data_size_limit(
+        message,
+        feature_set.is_active(&feature_set::default_loaded_accounts_data_size_limit::id()),
+    )?;
     let mut accumulated_accounts_data_size: usize = 0;
 
     let instruction_accounts = message
@@ -377,10 +379,13 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 ///     Note, requesting zero bytes will result transaction error
 fn get_requested_loaded_accounts_data_size_limit(
     sanitized_message: &SanitizedMessage,
+    use_default_loaded_accounts_data_size: bool,
 ) -> Result<Option<NonZeroUsize>> {
-    let compute_budget_limits =
-        process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default();
+    let compute_budget_limits = process_compute_budget_instructions(
+        sanitized_message.program_instructions_iter(),
+        use_default_loaded_accounts_data_size,
+    )
+    .unwrap_or_else(|_| ComputeBudgetLimits::new_with(use_default_loaded_accounts_data_size));
     // sanitize against setting size limit to zero
     NonZeroUsize::new(
         usize::try_from(compute_budget_limits.loaded_accounts_bytes).unwrap_or_default(),
@@ -899,10 +904,10 @@ mod tests {
 
     #[test]
     fn test_get_requested_loaded_accounts_data_size_limit() {
-        // an prrivate helper function
         fn test(
             instructions: &[solana_sdk::instruction::Instruction],
             expected_result: &Result<Option<NonZeroUsize>>,
+            use_default_loaded_accounts_data_size: bool,
         ) {
             let payer_keypair = Keypair::new();
             let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new(
@@ -912,7 +917,10 @@ mod tests {
             ));
             assert_eq!(
                 *expected_result,
-                get_requested_loaded_accounts_data_size_limit(tx.message())
+                get_requested_loaded_accounts_data_size_limit(
+                    tx.message(),
+                    use_default_loaded_accounts_data_size
+                )
             );
         }
 
@@ -932,24 +940,37 @@ mod tests {
                 solana_sdk::instruction::Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ];
 
-        let result_default_limit = Ok(Some(
-            NonZeroUsize::new(
-                usize::try_from(compute_budget_processor::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES)
-                    .unwrap(),
-            )
-            .unwrap(),
-        ));
-        let result_requested_limit: Result<Option<NonZeroUsize>> =
-            Ok(Some(NonZeroUsize::new(99).unwrap()));
-        let result_invalid_limit = Err(TransactionError::InvalidLoadedAccountsDataSizeLimit);
-
         // the results should be:
-        //    if tx doesn't set limit, then default limit (64MiB)
+        //    if tx doesn't set limit, then default limit
         //    if tx sets limit, then requested limit
         //    if tx sets limit to zero, then TransactionError::InvalidLoadedAccountsDataSizeLimit
-        test(tx_not_set_limit, &result_default_limit);
-        test(tx_set_limit_99, &result_requested_limit);
-        test(tx_set_limit_0, &result_invalid_limit);
+        for use_default_loaded_accounts_data_size in [true, false] {
+            test(
+                tx_not_set_limit,
+                &Ok(Some(
+                    NonZeroUsize::new(
+                        usize::try_from(
+                            ComputeBudgetLimits::get_default_loaded_accounts_data_size_bytes(
+                                use_default_loaded_accounts_data_size,
+                            ),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap(),
+                )),
+                use_default_loaded_accounts_data_size,
+            );
+            test(
+                tx_set_limit_99,
+                &Ok(Some(NonZeroUsize::new(99).unwrap())),
+                use_default_loaded_accounts_data_size,
+            );
+            test(
+                tx_set_limit_0,
+                &Err(TransactionError::InvalidLoadedAccountsDataSizeLimit),
+                use_default_loaded_accounts_data_size,
+            );
+        }
     }
 
     struct ValidateFeePayerTestParameter {

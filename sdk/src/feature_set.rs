@@ -832,6 +832,10 @@ pub mod verify_retransmitter_signature {
     solana_sdk::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
 }
 
+pub mod default_loaded_accounts_data_size_limit {
+    solana_sdk::declare_id!("CVvWw7NMVCn2Yp5RfxqrcTHXnaYyh91A2bGbkk88XXMM");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1035,6 +1039,7 @@ lazy_static! {
         (migrate_address_lookup_table_program_to_core_bpf::id(), "Migrate Address Lookup Table program to Core BPF #1651"),
         (zk_elgamal_proof_program_enabled::id(), "Enable ZkElGamalProof program SIMD-0153"),
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
+        (default_loaded_accounts_data_size_limit::id(), "add default loaded_accounts_data_size_limit #1568"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

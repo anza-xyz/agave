@@ -17,6 +17,7 @@ solana-sdk = { workspace = true }
 rustc_version = { workspace = true }
 
 [features]
+dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
     "solana-sdk/frozen-abi",

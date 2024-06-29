@@ -6,6 +6,7 @@ use {
         account::AccountSharedData,
         account_utils::StateMut,
         bpf_loader_upgradeable::{id, UpgradeableLoaderState},
+        compute_budget::ComputeBudgetInstruction,
         instruction::{Instruction, InstructionError},
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -35,7 +36,10 @@ pub async fn assert_ix_error(
     }
 
     let transaction = Transaction::new_signed_with_payer(
-        &[ix],
+        &[
+            ix,
+            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(64 * 1024 * 1024),
+        ],
         Some(&fee_payer.pubkey()),
         &signers,
         recent_blockhash,

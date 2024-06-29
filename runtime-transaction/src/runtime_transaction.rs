@@ -15,6 +15,7 @@ use {
         process_compute_budget_instructions, ComputeBudgetLimits,
     },
     solana_sdk::{
+        feature_set::{default_loaded_accounts_data_size_limit, FeatureSet},
         hash::Hash,
         message::{AddressLoader, SanitizedMessage, SanitizedVersionedMessage},
         pubkey::Pubkey,
@@ -71,6 +72,7 @@ impl RuntimeTransaction<SanitizedVersionedMessage> {
         sanitized_versioned_tx: SanitizedVersionedTransaction,
         message_hash: Option<Hash>,
         is_simple_vote_tx: Option<bool>,
+        feature_set: &FeatureSet,
     ) -> Result<Self> {
         let mut meta = TransactionMeta::default();
         meta.set_is_simple_vote_tx(
@@ -86,7 +88,10 @@ impl RuntimeTransaction<SanitizedVersionedMessage> {
             compute_unit_price,
             loaded_accounts_bytes,
             ..
-        } = process_compute_budget_instructions(message.program_instructions_iter())?;
+        } = process_compute_budget_instructions(
+            message.program_instructions_iter(),
+            feature_set.is_active(&default_loaded_accounts_data_size_limit::id()),
+        )?;
         meta.set_compute_unit_limit(compute_unit_limit);
         meta.set_compute_unit_price(compute_unit_price);
         meta.set_loaded_accounts_bytes(loaded_accounts_bytes);
@@ -134,6 +139,7 @@ mod tests {
         },
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
+            feature_set::FeatureSet,
             instruction::Instruction,
             message::Message,
             reserved_account_keys::ReservedAccountKeys,
@@ -216,10 +222,15 @@ mod tests {
             svt: SanitizedVersionedTransaction,
             is_simple_vote: Option<bool>,
         ) -> bool {
-            RuntimeTransaction::<SanitizedVersionedMessage>::try_from(svt, None, is_simple_vote)
-                .unwrap()
-                .meta
-                .is_simple_vote_tx
+            RuntimeTransaction::<SanitizedVersionedMessage>::try_from(
+                svt,
+                None,
+                is_simple_vote,
+                &FeatureSet::default(),
+            )
+            .unwrap()
+            .meta
+            .is_simple_vote_tx
         }
 
         assert!(!get_is_simple_vote(
@@ -252,6 +263,7 @@ mod tests {
                 non_vote_sanitized_versioned_transaction(),
                 Some(hash),
                 None,
+                &FeatureSet::default(),
             )
             .unwrap();
 
@@ -286,6 +298,7 @@ mod tests {
                 .to_sanitized_versioned_transaction(),
             Some(hash),
             None,
+            &FeatureSet::default(),
         )
         .unwrap();
 

@@ -10061,9 +10061,15 @@ fn calculate_test_fee(
     lamports_per_signature: u64,
     fee_structure: &FeeStructure,
 ) -> u64 {
-    let budget_limits = process_compute_budget_instructions(message.program_instructions_iter())
-        .unwrap_or_default()
-        .into();
+    // feature gate `default_loaded_accounts_data_size_limit` status does not impact transaction
+    // fee. Safe to set it as activated for tests relate to fee
+    let use_default_loaded_accounts_data_size = true;
+    let budget_limits = process_compute_budget_instructions(
+        message.program_instructions_iter(),
+        use_default_loaded_accounts_data_size,
+    )
+    .unwrap_or_else(|_| ComputeBudgetLimits::new_with(use_default_loaded_accounts_data_size))
+    .into();
 
     fee_structure.calculate_fee(message, lamports_per_signature, &budget_limits, false, true)
 }
@@ -11138,7 +11144,10 @@ fn create_mock_realloc_tx(
         account_metas,
     );
     Transaction::new_signed_with_payer(
-        &[instruction],
+        &[
+            instruction,
+            ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(64 * 1024 * 1024),
+        ],
         Some(&payer.pubkey()),
         &[payer],
         recent_blockhash,

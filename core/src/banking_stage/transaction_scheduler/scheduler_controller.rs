@@ -30,6 +30,7 @@ use {
     solana_sdk::{
         self,
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
+        feature_set,
         fee::FeeBudgetLimits,
         saturating_add_assign,
         transaction::SanitizedTransaction,
@@ -508,9 +509,13 @@ impl SchedulerController {
                     .is_ok()
                 })
                 .filter_map(|(packet, tx)| {
-                    process_compute_budget_instructions(tx.message().program_instructions_iter())
-                        .map(|compute_budget| (packet, tx, compute_budget.into()))
-                        .ok()
+                    process_compute_budget_instructions(
+                        tx.message().program_instructions_iter(),
+                        bank.feature_set
+                            .is_active(&feature_set::default_loaded_accounts_data_size_limit::id()),
+                    )
+                    .map(|compute_budget| (packet, tx, compute_budget.into()))
+                    .ok()
                 })
                 .for_each(|(packet, tx, fee_budget_limits)| {
                     arc_packets.push(packet);

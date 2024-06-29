@@ -15,7 +15,7 @@ use {
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_processor::process_compute_budget_instructions,
+        compute_budget_processor::{process_compute_budget_instructions, ComputeBudgetLimits},
     },
     solana_ledger::token_balances::collect_token_balances,
     solana_program_runtime::{invoke_context::mock_process_instruction, timings::ExecuteTimings},
@@ -3848,6 +3848,9 @@ fn test_program_fees() {
     let fee_structure =
         FeeStructure::new(0.000005, 0.0, vec![(200, 0.0000005), (1400000, 0.000005)]);
     bank.set_fee_structure(&fee_structure);
+    let use_default_loaded_accounts_data_size = bank
+        .feature_set
+        .is_active(&feature_set::default_loaded_accounts_data_size_limit::id());
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank);
     let authority_keypair = Keypair::new();
@@ -3874,9 +3877,12 @@ fn test_program_fees() {
     let expected_normal_fee = fee_structure.calculate_fee(
         &sanitized_message,
         congestion_multiplier,
-        &process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default()
-            .into(),
+        &process_compute_budget_instructions(
+            sanitized_message.program_instructions_iter(),
+            use_default_loaded_accounts_data_size,
+        )
+        .unwrap_or_else(|_| ComputeBudgetLimits::new_with(use_default_loaded_accounts_data_size))
+        .into(),
         false,
         true,
     );
@@ -3902,9 +3908,12 @@ fn test_program_fees() {
     let expected_prioritized_fee = fee_structure.calculate_fee(
         &sanitized_message,
         congestion_multiplier,
-        &process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default()
-            .into(),
+        &process_compute_budget_instructions(
+            sanitized_message.program_instructions_iter(),
+            use_default_loaded_accounts_data_size,
+        )
+        .unwrap_or_else(|_| ComputeBudgetLimits::new_with(use_default_loaded_accounts_data_size))
+        .into(),
         false,
         true,
     );

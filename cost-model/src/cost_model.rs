@@ -173,8 +173,10 @@ impl CostModel {
 
         // if failed to process compute_budget instructions, the transaction will not be executed
         // by `bank`, therefore it should be considered as no execution cost by cost model.
-        match process_compute_budget_instructions(transaction.message().program_instructions_iter())
-        {
+        match process_compute_budget_instructions(
+            transaction.message().program_instructions_iter(),
+            feature_set.is_active(&feature_set::default_loaded_accounts_data_size_limit::id()),
+        ) {
             Ok(compute_budget_limits) => {
                 // if tx contained user-space instructions and a more accurate estimate available correct it,
                 // where "user-space instructions" must be specifically checked by
@@ -279,6 +281,7 @@ impl CostModel {
 mod tests {
     use {
         super::*,
+        solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
         solana_sdk::{
             compute_budget::{self, ComputeBudgetInstruction},
             fee::ACCOUNT_DATA_COST_PAGE_SIZE,
@@ -615,8 +618,7 @@ mod tests {
             .unwrap();
         const DEFAULT_PAGE_COST: u64 = 8;
         let expected_loaded_accounts_data_size_cost =
-            solana_compute_budget::compute_budget_processor::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
-                as u64
+            ComputeBudgetLimits::get_default_loaded_accounts_data_size_bytes(true) as u64
                 / ACCOUNT_DATA_COST_PAGE_SIZE
                 * DEFAULT_PAGE_COST;
 
