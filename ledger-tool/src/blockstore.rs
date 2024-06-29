@@ -21,8 +21,9 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
         blockstore_db::{self, Column, ColumnName, Database},
+        blockstore_meta::ErasureMeta,
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_FIFO},
-        shred::Shred,
+        shred::{Shred, ShredType},
     },
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
@@ -709,6 +710,47 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             for slot in blockstore.duplicate_slots_iterator(starting_slot)? {
                 println!("{slot}");
+                if verbose_level > 0 {
+                    let proof = blockstore.get_duplicate_slot(slot).unwrap();
+                    let shred1 = Shred::new_from_serialized_shred(proof.shred1).unwrap();
+                    let shred2 = Shred::new_from_serialized_shred(proof.shred2).unwrap();
+                    println!(
+                        "    Shred1 fec set index {}, index {}, shred type {:?}\n       \
+                         version {}, merkle root {:?}, chained merkle root {:?}, last in slot {}",
+                        shred1.fec_set_index(),
+                        shred1.index(),
+                        shred1.shred_type(),
+                        shred1.version(),
+                        shred1.merkle_root().ok(),
+                        shred1.chained_merkle_root().ok(),
+                        shred1.last_in_slot(),
+                    );
+                    if verbose_level > 1 {
+                        println!("       payload: {:?}", shred1.payload());
+                    }
+                    println!(
+                        "    Shred2 fec set index {}, index {}, shred type {:?}\n       \
+                         version {}, merkle root {:?}, chained merkle root {:?}, last in slot {}",
+                        shred2.fec_set_index(),
+                        shred2.index(),
+                        shred2.shred_type(),
+                        shred2.version(),
+                        shred2.merkle_root().ok(),
+                        shred2.chained_merkle_root().ok(),
+                        shred2.last_in_slot(),
+                    );
+                    if verbose_level > 1 {
+                        println!("       payload: {:?}", shred2.payload());
+                    }
+                    if shred1.shred_type() == ShredType::Code
+                        && shred2.shred_type() == ShredType::Code
+                    {
+                        println!(
+                            "    Erasure consistency {}",
+                            ErasureMeta::check_erasure_consistency(&shred1, &shred2)
+                        );
+                    }
+                }
             }
         }
         ("latest-optimistic-slots", Some(arg_matches)) => {
