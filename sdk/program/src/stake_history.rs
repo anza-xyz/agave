@@ -7,7 +7,7 @@
 //! [`sysvar::stake_history`]: crate::sysvar::stake_history
 
 pub use crate::clock::Epoch;
-use std::{ops::Deref, sync::Arc};
+use std::ops::Deref;
 
 pub const MAX_ENTRIES: usize = 512; // it should never take as many as 512 epochs to warm up or cool down
 
@@ -93,13 +93,6 @@ impl StakeHistoryGetEntry for StakeHistory {
         self.binary_search_by(|probe| epoch.cmp(&probe.0))
             .ok()
             .map(|index| self[index].1.clone())
-    }
-}
-
-// required for SysvarCache
-impl StakeHistoryGetEntry for Arc<StakeHistory> {
-    fn get_entry(&self, epoch: Epoch) -> Option<StakeHistoryEntry> {
-        self.deref().get_entry(epoch)
     }
 }
 
