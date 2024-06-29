@@ -48,7 +48,6 @@
 pub use crate::stake_history::StakeHistory;
 use crate::{
     clock::Epoch,
-    program_error::ProgramError,
     stake_history::{StakeHistoryEntry, StakeHistoryGetEntry, MAX_ENTRIES},
     sysvar::{get_sysvar, Sysvar, SysvarId},
 };
@@ -65,17 +64,7 @@ impl Sysvar for StakeHistory {
 
 // we do not provide Default because this requires the real current epoch
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct StakeHistorySysvar(Epoch);
-
-impl StakeHistorySysvar {
-    pub fn new(current_epoch: Epoch) -> Result<Self, ProgramError> {
-        if current_epoch > 0 {
-            Ok(Self(current_epoch))
-        } else {
-            Err(ProgramError::InvalidAccountData)
-        }
-    }
-}
+pub struct StakeHistorySysvar(pub Epoch);
 
 // precompute so we can statically allocate buffer
 const EPOCH_AND_ENTRY_SERIALIZED_SIZE: u64 = 32;
@@ -83,13 +72,10 @@ const EPOCH_AND_ENTRY_SERIALIZED_SIZE: u64 = 32;
 impl StakeHistoryGetEntry for StakeHistorySysvar {
     fn get_entry(&self, target_epoch: Epoch) -> Option<StakeHistoryEntry> {
         let current_epoch = self.0;
+
+        // if current epoch is zero this returns None because there is no history yet
         let newest_historical_epoch = current_epoch.checked_sub(1)?;
         let oldest_historical_epoch = current_epoch.saturating_sub(MAX_ENTRIES as u64);
-
-        // target epoch is before the beginning of time; this is a user error
-        if target_epoch == 0 {
-            return None;
-        }
 
         // target epoch is old enough to have fallen off history; presume fully active/deactive
         if target_epoch < oldest_historical_epoch {
@@ -187,7 +173,7 @@ mod tests {
         mock_get_sysvar_syscall(&bincode::serialize(&stake_history).unwrap());
 
         // make a syscall interface object
-        let stake_history_sysvar = StakeHistorySysvar::new(current_epoch).unwrap();
+        let stake_history_sysvar = StakeHistorySysvar(current_epoch);
 
         // now test the stake history interfaces
 
@@ -212,5 +198,53 @@ mod tests {
 
             assert_eq!(stake_history_sysvar.get_entry(i), entry,);
         }
+    }
+
+    #[serial]
+    #[test]
+    fn test_stake_history_get_entry_zero() {
+        let mut current_epoch = 0;
+
+        // first test that an empty history returns None
+        let stake_history = StakeHistory::default();
+        assert_eq!(stake_history.len(), 0);
+
+        mock_get_sysvar_syscall(&bincode::serialize(&stake_history).unwrap());
+        let stake_history_sysvar = StakeHistorySysvar(current_epoch);
+
+        assert_eq!(stake_history.get(0), None);
+        assert_eq!(stake_history.get_entry(0), None);
+        assert_eq!(stake_history_sysvar.get_entry(0), None);
+
+        // next test that we can get a zeroth entry in the first epoch
+        let entry_zero = StakeHistoryEntry {
+            effective: 100,
+            ..StakeHistoryEntry::default()
+        };
+        let entry = Some(entry_zero.clone());
+
+        let mut stake_history = StakeHistory::default();
+        stake_history.add(current_epoch, entry_zero);
+        assert_eq!(stake_history.len(), 1);
+        current_epoch = current_epoch.saturating_add(1);
+
+        mock_get_sysvar_syscall(&bincode::serialize(&stake_history).unwrap());
+        let stake_history_sysvar = StakeHistorySysvar(current_epoch);
+
+        assert_eq!(stake_history.get(0), entry.as_ref());
+        assert_eq!(stake_history.get_entry(0), entry);
+        assert_eq!(stake_history_sysvar.get_entry(0), entry);
+
+        // finally test that we can still get a zeroth entry in later epochs
+        stake_history.add(current_epoch, StakeHistoryEntry::default());
+        assert_eq!(stake_history.len(), 2);
+        current_epoch = current_epoch.saturating_add(1);
+
+        mock_get_sysvar_syscall(&bincode::serialize(&stake_history).unwrap());
+        let stake_history_sysvar = StakeHistorySysvar(current_epoch);
+
+        assert_eq!(stake_history.get(0), entry.as_ref());
+        assert_eq!(stake_history.get_entry(0), entry);
+        assert_eq!(stake_history_sysvar.get_entry(0), entry);
     }
 }
