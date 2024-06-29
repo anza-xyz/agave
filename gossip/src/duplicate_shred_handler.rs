@@ -48,6 +48,7 @@ pub struct DuplicateShredHandler {
     cached_slots_in_epoch: u64,
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
+    shred_version: u16,
 }
 
 impl DuplicateShredHandlerTrait for DuplicateShredHandler {
@@ -68,6 +69,7 @@ impl DuplicateShredHandler {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         duplicate_slots_sender: Sender<Slot>,
+        shred_version: u16,
     ) -> Self {
         Self {
             buffer: HashMap::<(Slot, Pubkey), BufferEntry>::default(),
@@ -80,6 +82,7 @@ impl DuplicateShredHandler {
             leader_schedule_cache,
             bank_forks,
             duplicate_slots_sender,
+            shred_version,
         }
     }
 
@@ -130,7 +133,8 @@ impl DuplicateShredHandler {
                 .leader_schedule_cache
                 .slot_leader_at(slot, /*bank:*/ None)
                 .ok_or(Error::UnknownSlotLeader(slot))?;
-            let (shred1, shred2) = duplicate_shred::into_shreds(&pubkey, chunks)?;
+            let (shred1, shred2) =
+                duplicate_shred::into_shreds(&pubkey, chunks, self.shred_version)?;
             if !self.blockstore.has_duplicate_shreds_in_slot(slot) {
                 self.blockstore.store_duplicate_slot(
                     slot,
@@ -283,6 +287,7 @@ mod tests {
             None::<fn(Slot) -> Option<Pubkey>>,
             timestamp(), // wallclock
             chunk_size,  // max_size
+            0,
         )?;
         Ok(chunks)
     }
@@ -322,6 +327,7 @@ mod tests {
             leader_schedule_cache,
             bank_forks_arc,
             sender,
+            0,
         );
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
@@ -410,6 +416,7 @@ mod tests {
             leader_schedule_cache,
             bank_forks_arc,
             sender,
+            0,
         );
         // The feature will only be activated at Epoch 1.
         let start_slot: Slot = slots_in_epoch + 1;
@@ -492,6 +499,7 @@ mod tests {
             leader_schedule_cache,
             bank_forks_arc,
             sender,
+            0,
         );
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
