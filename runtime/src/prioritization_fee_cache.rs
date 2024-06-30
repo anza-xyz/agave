@@ -413,7 +413,32 @@ impl PrioritizationFeeCache {
                     .unwrap_or_default();
                 for account_key in account_keys {
                     if let Some(account_fee) =
-                        slot_prioritization_fee.get_writable_account_fee(account_key)
+                        slot_prioritization_fee.get_min_writable_account_fee(account_key)
+                    {
+                        fee = std::cmp::max(fee, account_fee);
+                    }
+                }
+                (*slot, fee)
+            })
+            .collect()
+    }
+
+    pub fn get_prioritization_fees2(
+        &self,
+        account_keys: &[Pubkey],
+        percentile: u16,
+    ) -> Vec<(Slot, u64)> {
+        self.cache
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(slot, slot_prioritization_fee)| {
+                let mut fee = slot_prioritization_fee
+                    .get_transaction_fee(percentile)
+                    .unwrap_or_default();
+                for account_key in account_keys {
+                    if let Some(account_fee) =
+                        slot_prioritization_fee.get_writable_account_fee(account_key, percentile)
                     {
                         fee = std::cmp::max(fee, account_fee);
                     }
@@ -546,9 +571,18 @@ mod tests {
             let lock = prioritization_fee_cache.cache.read().unwrap();
             let fee = lock.get(&slot).unwrap();
             assert_eq!(2, fee.get_min_transaction_fee().unwrap());
-            assert!(fee.get_writable_account_fee(&write_account_a).is_none());
-            assert_eq!(5, fee.get_writable_account_fee(&write_account_b).unwrap());
-            assert!(fee.get_writable_account_fee(&write_account_c).is_none());
+            assert_eq!(
+                2,
+                fee.get_min_writable_account_fee(&write_account_a).unwrap()
+            );
+            assert_eq!(
+                5,
+                fee.get_min_writable_account_fee(&write_account_b).unwrap()
+            );
+            assert_eq!(
+                2,
+                fee.get_min_writable_account_fee(&write_account_c).unwrap()
+            );
         }
     }
 

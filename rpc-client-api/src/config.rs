@@ -342,3 +342,9 @@ pub struct RpcContextConfig {
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcRecentPrioritizationFeesConfig {
+    pub percentile: Option<u16>,
+}

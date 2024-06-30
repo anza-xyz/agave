@@ -136,13 +136,13 @@ pub enum PrioritizationFeeError {
 /// block; and the minimum fee for each writable account in all transactions in this block. The only relevant
 /// write account minimum fees are those greater than the block minimum transaction fee, because the minimum fee needed to land
 /// a transaction is determined by Max( min_transaction_fee, min_writable_account_fees(key), ...)
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PrioritizationFee {
-    // The minimum prioritization fee of transactions that landed in this block.
-    min_transaction_fee: u64,
+    // Prioritization fee of transactions that landed in this block.
+    transaction_fees: Vec<u64>,
 
-    // The minimum prioritization fee of each writable account in transactions in this block.
-    min_writable_account_fees: HashMap<Pubkey, u64>,
+    // Prioritization fee of each writable account in transactions in this block.
+    writable_account_fees: HashMap<Pubkey, Vec<u64>>,
 
     // Default to `false`, set to `true` when a block is completed, therefore the minimum fees recorded
     // are finalized, and can be made available for use (e.g., RPC query)
@@ -152,34 +152,19 @@ pub struct PrioritizationFee {
     metrics: PrioritizationFeeMetrics,
 }
 
-impl Default for PrioritizationFee {
-    fn default() -> Self {
-        PrioritizationFee {
-            min_transaction_fee: u64::MAX,
-            min_writable_account_fees: HashMap::new(),
-            is_finalized: false,
-            metrics: PrioritizationFeeMetrics::default(),
-        }
-    }
-}
-
 impl PrioritizationFee {
     /// Update self for minimum transaction fee in the block and minimum fee for each writable account.
     pub fn update(&mut self, transaction_fee: u64, writable_accounts: Vec<Pubkey>) {
         let (_, update_time) = measure!(
             {
                 if !self.is_finalized {
-                    if transaction_fee < self.min_transaction_fee {
-                        self.min_transaction_fee = transaction_fee;
-                    }
+                    self.transaction_fees.push(transaction_fee);
 
                     for write_account in writable_accounts {
-                        self.min_writable_account_fees
+                        self.writable_account_fees
                             .entry(write_account)
-                            .and_modify(|write_lock_fee| {
-                                *write_lock_fee = std::cmp::min(*write_lock_fee, transaction_fee)
-                            })
-                            .or_insert(transaction_fee);
+                            .or_default()
+                            .push(transaction_fee);
                     }
 
                     self.metrics
@@ -197,38 +182,54 @@ impl PrioritizationFee {
             .accumulate_total_update_elapsed_us(update_time.as_us());
     }
 
-    /// Accounts that have minimum fees lesser or equal to the minimum fee in the block are redundant, they are
-    /// removed to reduce memory footprint when mark_block_completed() is called.
-    fn prune_irrelevant_writable_accounts(&mut self) {
-        self.metrics.total_writable_accounts_count = self.get_writable_accounts_count() as u64;
-        self.min_writable_account_fees
-            .retain(|_, account_fee| account_fee > &mut self.min_transaction_fee);
-        self.metrics.relevant_writable_accounts_count = self.get_writable_accounts_count() as u64;
-    }
-
     pub fn mark_block_completed(&mut self) -> Result<(), PrioritizationFeeError> {
         if self.is_finalized {
             return Err(PrioritizationFeeError::BlockIsAlreadyFinalized);
         }
-        self.prune_irrelevant_writable_accounts();
         self.is_finalized = true;
+
+        self.transaction_fees.sort();
+        for fees in self.writable_account_fees.values_mut() {
+            fees.sort()
+        }
+
+        self.metrics.total_writable_accounts_count = self.get_writable_accounts_count() as u64;
+        self.metrics.relevant_writable_accounts_count = self.get_writable_accounts_count() as u64;
+
         Ok(())
     }
 
     pub fn get_min_transaction_fee(&self) -> Option<u64> {
-        (self.min_transaction_fee != u64::MAX).then_some(self.min_transaction_fee)
+        self.transaction_fees.first().copied()
     }
 
-    pub fn get_writable_account_fee(&self, key: &Pubkey) -> Option<u64> {
-        self.min_writable_account_fees.get(key).copied()
+    fn get_percentile(fees: &[u64], percentile: u16) -> Option<u64> {
+        let index = (percentile as usize).min(9_999) * fees.len() / 10_000;
+        fees.get(index).copied()
     }
 
-    pub fn get_writable_account_fees(&self) -> impl Iterator<Item = (&Pubkey, &u64)> {
-        self.min_writable_account_fees.iter()
+    pub fn get_transaction_fee(&self, percentile: u16) -> Option<u64> {
+        Self::get_percentile(&self.transaction_fees, percentile)
+    }
+
+    pub fn get_min_writable_account_fee(&self, key: &Pubkey) -> Option<u64> {
+        self.writable_account_fees
+            .get(key)
+            .and_then(|fees| fees.first().copied())
+    }
+
+    pub fn get_writable_account_fee(&self, key: &Pubkey, percentile: u16) -> Option<u64> {
+        self.writable_account_fees
+            .get(key)
+            .and_then(|fees| Self::get_percentile(fees, percentile))
+    }
+
+    pub fn get_writable_account_fees(&self) -> impl Iterator<Item = (&Pubkey, &Vec<u64>)> {
+        self.writable_account_fees.iter()
     }
 
     pub fn get_writable_accounts_count(&self) -> usize {
-        self.min_writable_account_fees.len()
+        self.writable_account_fees.len()
     }
 
     pub fn is_finalized(&self) -> bool {
@@ -240,20 +241,28 @@ impl PrioritizationFee {
 
         // report this slot's min_transaction_fee and top 10 min_writable_account_fees
         let min_transaction_fee = self.get_min_transaction_fee().unwrap_or(0);
-        let mut accounts_fees: Vec<_> = self.get_writable_account_fees().collect();
-        accounts_fees.sort_by(|lh, rh| rh.1.cmp(lh.1));
         datapoint_info!(
             "block_min_prioritization_fee",
             ("slot", slot as i64, i64),
             ("entity", "block", String),
             ("min_prioritization_fee", min_transaction_fee as i64, i64),
         );
-        for (account_key, fee) in accounts_fees.iter().take(10) {
+
+        let mut accounts_fees: Vec<(&Pubkey, u64)> = self
+            .get_writable_account_fees()
+            .filter_map(|(account, fees)| {
+                fees.first()
+                    .copied()
+                    .map(|min_account_fee| (account, min_transaction_fee.min(min_account_fee)))
+            })
+            .collect();
+        accounts_fees.sort_by(|lh, rh| rh.1.cmp(&lh.1));
+        for (account_key, fee) in accounts_fees.into_iter().take(10) {
             datapoint_trace!(
                 "block_min_prioritization_fee",
                 ("slot", slot as i64, i64),
                 ("entity", account_key.to_string(), String),
-                ("min_prioritization_fee", **fee as i64, i64),
+                ("min_prioritization_fee", fee as i64, i64),
             );
         }
     }
@@ -279,22 +288,26 @@ mod tests {
         // [5,   a, b             ]  -->  [5,     5,         5,         nil      ]
         {
             prioritization_fee.update(5, vec![write_account_a, write_account_b]);
+            assert!(prioritization_fee.mark_block_completed().is_ok());
+
             assert_eq!(5, prioritization_fee.get_min_transaction_fee().unwrap());
             assert_eq!(
                 5,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_a)
+                    .get_min_writable_account_fee(&write_account_a)
                     .unwrap()
             );
             assert_eq!(
                 5,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_b)
+                    .get_min_writable_account_fee(&write_account_b)
                     .unwrap()
             );
             assert!(prioritization_fee
-                .get_writable_account_fee(&write_account_c)
+                .get_min_writable_account_fee(&write_account_c)
                 .is_none());
+
+            prioritization_fee.is_finalized = false;
         }
 
         // Assert for second transaction:
@@ -303,25 +316,29 @@ mod tests {
         // [9,      b, c          ]  -->  [5,     5,         5,         9        ]
         {
             prioritization_fee.update(9, vec![write_account_b, write_account_c]);
+            assert!(prioritization_fee.mark_block_completed().is_ok());
+
             assert_eq!(5, prioritization_fee.get_min_transaction_fee().unwrap());
             assert_eq!(
                 5,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_a)
+                    .get_min_writable_account_fee(&write_account_a)
                     .unwrap()
             );
             assert_eq!(
                 5,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_b)
+                    .get_min_writable_account_fee(&write_account_b)
                     .unwrap()
             );
             assert_eq!(
                 9,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_c)
+                    .get_min_writable_account_fee(&write_account_c)
                     .unwrap()
             );
+
+            prioritization_fee.is_finalized = false;
         }
 
         // Assert for third transaction:
@@ -330,44 +347,56 @@ mod tests {
         // [2,   a,    c          ]  -->  [2,     2,         5,         2        ]
         {
             prioritization_fee.update(2, vec![write_account_a, write_account_c]);
+            assert!(prioritization_fee.mark_block_completed().is_ok());
+
             assert_eq!(2, prioritization_fee.get_min_transaction_fee().unwrap());
             assert_eq!(
                 2,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_a)
+                    .get_min_writable_account_fee(&write_account_a)
                     .unwrap()
             );
             assert_eq!(
                 5,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_b)
+                    .get_min_writable_account_fee(&write_account_b)
                     .unwrap()
             );
             assert_eq!(
                 2,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_c)
+                    .get_min_writable_account_fee(&write_account_c)
                     .unwrap()
             );
+
+            prioritization_fee.is_finalized = false;
         }
 
-        // assert after prune, account a and c should be removed from cache to save space
+        // assert after sort
         {
-            prioritization_fee.prune_irrelevant_writable_accounts();
-            assert_eq!(1, prioritization_fee.min_writable_account_fees.len());
+            prioritization_fee.update(2, vec![write_account_a, write_account_c]);
+            assert!(prioritization_fee.mark_block_completed().is_ok());
+
             assert_eq!(2, prioritization_fee.get_min_transaction_fee().unwrap());
-            assert!(prioritization_fee
-                .get_writable_account_fee(&write_account_a)
-                .is_none());
+            assert_eq!(3, prioritization_fee.writable_account_fees.len());
+            assert_eq!(
+                2,
+                prioritization_fee
+                    .get_min_writable_account_fee(&write_account_a)
+                    .unwrap()
+            );
             assert_eq!(
                 5,
                 prioritization_fee
-                    .get_writable_account_fee(&write_account_b)
+                    .get_min_writable_account_fee(&write_account_b)
                     .unwrap()
             );
-            assert!(prioritization_fee
-                .get_writable_account_fee(&write_account_c)
-                .is_none());
+            assert_eq!(
+                2,
+                prioritization_fee
+                    .get_min_writable_account_fee(&write_account_c)
+                    .unwrap()
+            );
         }
     }
 
