@@ -584,6 +584,111 @@ impl LoadingTaskWaiter {
     }
 }
 
+/// The program cache's V2 index implementation entry key.
+/// Hashes together the program address, environment, and slot last written to
+/// to optimize for deep-match searches.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct IndexV2Key {
+    /// The program address.
+    address: Pubkey,
+    /// The runtime environment the program was compiled with, stored as a
+    /// pointer to the environment structure in memory.
+    environment: u64,
+    /// The slot in which the program was last written to.
+    slot_last_written_to: Slot,
+}
+
+impl IndexV2Key {
+    #[allow(unused)]
+    pub fn new(
+        address: &Pubkey,
+        environment: Option<&ProgramRuntimeEnvironment>,
+        slot_last_written_to: u64,
+    ) -> Self {
+        Self {
+            address: *address,
+            environment: environment.map_or(0, |env| Arc::as_ptr(env) as u64),
+            slot_last_written_to,
+        }
+    }
+}
+
+/// The program cache's V2 index implementation.
+///
+/// This new index is designed to eventually replace the v1 index
+/// implementation.
+/// With it comes a number of optimizations and enhancements:
+///
+/// - The index is now a single level hash map, with the key being a hash of
+///   the program address, environments, and slot last written to.
+///   This allows deep-match searches to be resolved with O(1) complexity, such
+///   as those required by `assign_program` and `unload_program_entry`.
+///   The single-index structure also foregoes the need to track slot versions
+///   for an entry, since any entries whose address, environment, and slot last
+///   written to match will be considered the same entry, and subsequently
+///   stored in the same location in the index.
+///   This effectively removes the need to store duplicate entries across
+///   forks.
+#[allow(unused)]
+#[derive(Debug)]
+struct IndexV2 {
+    /// The collection of cache entries.
+    entries: HashMap<IndexV2Key, Arc<ProgramCacheEntry>>,
+}
+
+impl IndexV2 {
+    #[allow(unused)]
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Inserts an entry into the cache.
+    fn insert_entry(
+        &mut self,
+        address: &Pubkey,
+        entry: Arc<ProgramCacheEntry>,
+    ) -> Option<Arc<ProgramCacheEntry>> {
+        let key = IndexV2Key::new(
+            address,
+            entry.program.get_environment(),
+            entry.deployment_slot,
+        );
+        self.entries.insert(key, entry)
+    }
+
+    /// Prune by slot last written to.
+    /// Lookup/erase time is O(n), where n is the number of entries with the
+    /// given slot last written to.
+    fn prune_by_slot_last_written_to(&mut self, slot: Slot) {
+        let keys_to_remove = self
+            .entries
+            .keys()
+            .filter(|key| key.slot_last_written_to == slot)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for key in keys_to_remove {
+            self.entries.remove(&key);
+        }
+    }
+
+    /// Remove all entries for the provided addresses, for tests.
+    fn remove_programs_for_tests(&mut self, mut keys: impl Iterator<Item = Pubkey>) {
+        let keys_to_remove = self
+            .entries
+            .keys()
+            .filter(|key| keys.any(|k| k == key.address))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for key in keys_to_remove {
+            self.entries.remove(&key);
+        }
+    }
+}
+
 #[derive(Debug)]
 enum IndexImplementation {
     /// Fork-graph aware index implementation
@@ -603,6 +708,9 @@ enum IndexImplementation {
         /// so all loads for a given program key are serialized.
         loading_entries: Mutex<HashMap<Pubkey, (Slot, thread::ThreadId)>>,
     },
+    /// The program cache's V2 index implementation.
+    #[allow(unused)]
+    V2(IndexV2),
 }
 
 /// This structure is the global cache of loaded, verified and compiled programs.
@@ -808,12 +916,9 @@ pub enum ProgramCacheMatchCriteria {
 }
 
 impl<FG: ForkGraph> ProgramCache<FG> {
-    pub fn new(root_slot: Slot, root_epoch: Epoch) -> Self {
+    fn _new(root_slot: Slot, root_epoch: Epoch, index: IndexImplementation) -> Self {
         Self {
-            index: IndexImplementation::V1 {
-                entries: HashMap::new(),
-                loading_entries: Mutex::new(HashMap::new()),
-            },
+            index,
             latest_root_slot: root_slot,
             latest_root_epoch: root_epoch,
             environments: ProgramRuntimeEnvironments::default(),
@@ -823,6 +928,26 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             fork_graph: None,
             loading_task_waiter: Arc::new(LoadingTaskWaiter::default()),
         }
+    }
+
+    pub fn new(root_slot: Slot, root_epoch: Epoch) -> Self {
+        Self::_new(
+            root_slot,
+            root_epoch,
+            IndexImplementation::V1 {
+                entries: HashMap::new(),
+                loading_entries: Mutex::new(HashMap::new()),
+            },
+        )
+    }
+
+    #[allow(unused)]
+    fn new_with_index_v2(root_slot: Slot, root_epoch: Epoch) -> Self {
+        Self::_new(
+            root_slot,
+            root_epoch,
+            IndexImplementation::V2(IndexV2::new()),
+        )
     }
 
     pub fn set_fork_graph(&mut self, fork_graph: Arc<RwLock<FG>>) {
@@ -857,22 +982,23 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             &entry.program,
             ProgramCacheEntryType::DelayVisibility
         ));
-        // This function always returns `true` during normal operation.
-        // Only during the cache preparation phase this can return `false`
-        // for entries with `upcoming_environments`.
-        fn is_current_env(
-            environments: &ProgramRuntimeEnvironments,
-            env_opt: Option<&ProgramRuntimeEnvironment>,
-        ) -> bool {
-            env_opt
-                .map(|env| {
-                    Arc::ptr_eq(env, &environments.program_runtime_v1)
-                        || Arc::ptr_eq(env, &environments.program_runtime_v2)
-                })
-                .unwrap_or(true)
-        }
         match &mut self.index {
             IndexImplementation::V1 { entries, .. } => {
+                // This function always returns `true` during normal operation.
+                // Only during the cache preparation phase this can return `false`
+                // for entries with `upcoming_environments`.
+                fn is_current_env(
+                    environments: &ProgramRuntimeEnvironments,
+                    env_opt: Option<&ProgramRuntimeEnvironment>,
+                ) -> bool {
+                    env_opt
+                        .map(|env| {
+                            Arc::ptr_eq(env, &environments.program_runtime_v1)
+                                || Arc::ptr_eq(env, &environments.program_runtime_v2)
+                        })
+                        .unwrap_or(true)
+                }
+
                 let slot_versions = &mut entries.entry(key).or_default();
                 match slot_versions.binary_search_by(|at| {
                     at.effective_slot
@@ -927,6 +1053,69 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     }
                 }
             }
+            IndexImplementation::V2(index_v2) => {
+                let slot_last_written_to = entry.deployment_slot;
+
+                let mut existing_entry = None;
+
+                // This is a bug, but the tests don't catch it.
+                // We need to use `None` here in case the existing entry is
+                // `Builtin` or `Closed`, but if the reverse order _has_ an
+                // environment and we attempt to replace it with a `Builtin`,
+                // it won't panic.
+                // It successfully panics in the tests, but that's only because
+                // the cache's environment doesn't change, and is the same as
+                // both the `old` and `new` entries.
+                let potential_environments = [
+                    None,
+                    Some(&self.environments.program_runtime_v1),
+                    Some(&self.environments.program_runtime_v2),
+                ];
+                for env in potential_environments.into_iter() {
+                    let key = IndexV2Key::new(&key, env, slot_last_written_to);
+                    if index_v2.entries.contains_key(&key) {
+                        existing_entry = index_v2.entries.get_mut(&key);
+                        break;
+                    }
+                }
+
+                if let Some(existing) = existing_entry {
+                    // The entry was found, now update it.
+                    match (&entry.program, &existing.program) {
+                        // Only two types of replacements are considered valid.
+                        // * A builtin must replace a builtin.
+                        // * A loaded program must replace an unloaded program.
+                        // Any other replacement is invalid.
+                        (ProgramCacheEntryType::Builtin(_), ProgramCacheEntryType::Builtin(_))
+                        | (ProgramCacheEntryType::Loaded(_), ProgramCacheEntryType::Unloaded(_)) => {
+                        }
+                        _ => {
+                            // This needs to come out. It's a bug.
+                            // We should rearchitect the cache so we never end
+                            // up in this situation.
+                            error!("ProgramCache::assign_program() failed with index v2 key={:?} entry={:?}", key, entry);
+                            debug_assert!(false, "Unexpected replacement of an entry");
+                            self.stats.replacements.fetch_add(1, Ordering::Relaxed);
+                            return true;
+                        }
+                    }
+                    // Copy over the usage counter to the new entry.
+                    entry.tx_usage_counter.fetch_add(
+                        existing.tx_usage_counter.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    entry.ix_usage_counter.fetch_add(
+                        existing.ix_usage_counter.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    *existing = Arc::clone(&entry);
+                    self.stats.reloads.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    // The entry was not found. Add it.
+                    self.stats.insertions.fetch_add(1, Ordering::Relaxed);
+                    index_v2.insert_entry(&key, entry);
+                }
+            }
         }
         false
     }
@@ -938,6 +1127,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level.retain(|entry| entry.deployment_slot != slot);
                 }
                 self.remove_programs_with_no_entries();
+            }
+            IndexImplementation::V2(index_v2) => {
+                index_v2.prune_by_slot_last_written_to(slot);
             }
         }
     }
@@ -1020,6 +1212,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level.reverse();
                 }
             }
+            IndexImplementation::V2(_) => unimplemented!(),
         }
         self.remove_programs_with_no_entries();
         debug_assert!(self.latest_root_slot <= new_root_slot);
@@ -1133,6 +1326,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     true
                 });
             }
+            IndexImplementation::V2(_) => unimplemented!(),
         }
         drop(locked_fork_graph);
         if is_first_round {
@@ -1178,6 +1372,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 self.loading_task_waiter.notify();
                 was_occupied
             }
+            IndexImplementation::V2(_) => unimplemented!(),
         }
     }
 
@@ -1215,6 +1410,24 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         })
                 })
                 .collect(),
+            IndexImplementation::V2(index_v2) => index_v2
+                .entries
+                .iter()
+                .filter_map(|(key, entry)| match entry.program {
+                    ProgramCacheEntryType::Loaded(_) => {
+                        if (entry.account_owner != ProgramCacheEntryOwner::LoaderV4
+                            && include_program_runtime_v1)
+                            || (entry.account_owner == ProgramCacheEntryOwner::LoaderV4
+                                && include_program_runtime_v2)
+                        {
+                            Some((key.address, entry.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
         }
     }
 
@@ -1227,6 +1440,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     second_level.iter().map(|program| (*id, program.clone()))
                 })
                 .collect(),
+            IndexImplementation::V2(index_v2) => index_v2
+                .entries
+                .iter()
+                .map(|(key, entry)| (key.address, entry.clone()))
+                .collect(),
         }
     }
 
@@ -1237,6 +1455,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 .get(key)
                 .map(|second_level| second_level.as_ref())
                 .unwrap_or(&[]),
+            IndexImplementation::V2(_) => panic!("Index v2 does not keep slot versions"),
         }
     }
 
@@ -1296,6 +1515,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     entries.remove(&k);
                 }
             }
+            IndexImplementation::V2(index_v2) => {
+                index_v2.remove_programs_for_tests(keys);
+            }
         }
     }
 
@@ -1308,6 +1530,32 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 let candidate = second_level
                     .iter_mut()
                     .find(|entry| entry == &remove_entry)
+                    .expect("Program entry not found");
+
+                // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
+                // For such entries, `to_unloaded()` will return None.
+                // These entry types do not occupy much memory.
+                if let Some(unloaded) = candidate.to_unloaded() {
+                    if candidate.tx_usage_counter.load(Ordering::Relaxed) == 1 {
+                        self.stats.one_hit_wonders.fetch_add(1, Ordering::Relaxed);
+                    }
+                    self.stats
+                        .evictions
+                        .entry(*program)
+                        .and_modify(|c| saturating_add_assign!(*c, 1))
+                        .or_insert(1);
+                    *candidate = Arc::new(unloaded);
+                }
+            }
+            IndexImplementation::V2(index_v2) => {
+                let candidate_key = IndexV2Key::new(
+                    program,
+                    remove_entry.program.get_environment(),
+                    remove_entry.deployment_slot,
+                );
+                let candidate = index_v2
+                    .entries
+                    .get_mut(&candidate_key)
                     .expect("Program entry not found");
 
                 // Certain entry types cannot be unloaded, such as tombstones, or already unloaded entries.
@@ -1348,6 +1596,9 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         Ordering::Relaxed,
                     );
                 }
+            }
+            IndexImplementation::V2(_) => {
+                // Index v2 does not keep track of empty entries.
             }
         }
     }
@@ -1402,8 +1653,12 @@ mod tests {
             .clone()
     }
 
-    fn new_mock_cache<FG: ForkGraph>() -> ProgramCache<FG> {
-        let mut cache = ProgramCache::new(0, 0);
+    fn new_mock_cache<FG: ForkGraph>(use_index_v2: bool) -> ProgramCache<FG> {
+        let mut cache = if use_index_v2 {
+            ProgramCache::new_with_index_v2(0, 0)
+        } else {
+            ProgramCache::new(0, 0)
+        };
         cache.environments.program_runtime_v1 = get_mock_env();
         cache
     }
@@ -1495,7 +1750,7 @@ mod tests {
 
     #[test]
     fn test_usage_counter_decay() {
-        let _cache = new_mock_cache::<TestForkGraph>();
+        let _cache = new_mock_cache::<TestForkGraph>(false);
         let program = new_test_entry_with_usage(10, 11, AtomicU64::new(32));
         program.update_access_slot(15);
         assert_eq!(program.decayed_usage_counter(15), 32);
@@ -1567,7 +1822,7 @@ mod tests {
     fn test_random_eviction() {
         let mut programs = vec![];
 
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
 
         // This test adds different kind of entries to the cache.
         // Tombstones and unloaded entries are expected to not be evicted.
@@ -1659,7 +1914,7 @@ mod tests {
     #[test]
     fn test_eviction() {
         let mut programs = vec![];
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
 
         // Program 1
         program_deploy_test_helper(
@@ -1766,7 +2021,7 @@ mod tests {
 
     #[test]
     fn test_usage_count_of_unloaded_program() {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
 
         let program = Pubkey::new_unique();
         let evict_to_pct = 2;
@@ -1828,7 +2083,7 @@ mod tests {
         for _ in 0..1000 {
             let mut entries = EXPECTED_ENTRIES.to_vec();
             entries.shuffle(&mut rng);
-            let mut cache = new_mock_cache::<TestForkGraph>();
+            let mut cache = new_mock_cache::<TestForkGraph>(false);
             for (deployment_slot, effective_slot) in entries {
                 assert!(!cache
                     .assign_program(program_id, new_test_entry(deployment_slot, effective_slot)));
@@ -1855,7 +2110,8 @@ mod tests {
             ProgramCacheEntryType::Unloaded(get_mock_env()),
             new_loaded_entry(get_mock_env()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
-        )
+        ),
+        (false, true) // `use_index_v2`
     )]
     #[test_matrix(
         (
@@ -1866,7 +2122,8 @@ mod tests {
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_env()),
             ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
-        )
+        ),
+        (false, true) // `use_index_v2`
     )]
     #[test_matrix(
         (ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),),
@@ -1875,11 +2132,16 @@ mod tests {
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_env()),
             new_loaded_entry(get_mock_env()),
-        )
+        ),
+        (false, true) // `use_index_v2`
     )]
     #[should_panic(expected = "Unexpected replacement of an entry")]
-    fn test_assign_program_failure(old: ProgramCacheEntryType, new: ProgramCacheEntryType) {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+    fn test_assign_program_failure(
+        old: ProgramCacheEntryType,
+        new: ProgramCacheEntryType,
+        use_index_v2: bool,
+    ) {
+        let mut cache = new_mock_cache::<TestForkGraph>(use_index_v2);
         let program_id = Pubkey::new_unique();
         assert!(!cache.assign_program(
             program_id,
@@ -1909,16 +2171,22 @@ mod tests {
         );
     }
 
-    #[test_case(
+    #[test_matrix(
         ProgramCacheEntryType::Unloaded(Arc::new(BuiltinProgram::new_mock())),
-        new_loaded_entry(get_mock_env())
+        new_loaded_entry(get_mock_env()),
+        (false, true) // `use_index_v2`
     )]
-    #[test_case(
+    #[test_matrix(
         ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
-        ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock())
+        ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+        (false, true) // `use_index_v2`
     )]
-    fn test_assign_program_success(old: ProgramCacheEntryType, new: ProgramCacheEntryType) {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+    fn test_assign_program_success(
+        old: ProgramCacheEntryType,
+        new: ProgramCacheEntryType,
+        use_index_v2: bool,
+    ) {
+        let mut cache = new_mock_cache::<TestForkGraph>(use_index_v2);
         let program_id = Pubkey::new_unique();
         assert!(!cache.assign_program(
             program_id,
@@ -1974,7 +2242,7 @@ mod tests {
         assert_eq!(tombstone.deployment_slot, 100);
         assert_eq!(tombstone.effective_slot, 100);
 
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
         let program1 = Pubkey::new_unique();
         let tombstone = set_tombstone(
             &mut cache,
@@ -2021,7 +2289,7 @@ mod tests {
 
     #[test]
     fn test_prune_empty() {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Unrelated,
         }));
@@ -2034,7 +2302,7 @@ mod tests {
         cache.prune(10, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Ancestor,
         }));
@@ -2047,7 +2315,7 @@ mod tests {
         cache.prune(10, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Descendant,
         }));
@@ -2060,7 +2328,7 @@ mod tests {
         cache.prune(10, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
 
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Unknown,
         }));
@@ -2075,7 +2343,7 @@ mod tests {
 
     #[test]
     fn test_prune_different_env() {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+        let mut cache = new_mock_cache::<TestForkGraph>(false);
 
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Ancestor,
@@ -2216,7 +2484,7 @@ mod tests {
 
     #[test]
     fn test_fork_extract_and_prune() {
-        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>(false);
 
         // Fork graph created for the test
         //                   0
@@ -2411,7 +2679,7 @@ mod tests {
 
     #[test]
     fn test_extract_using_deployment_slot() {
-        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>(false);
 
         // Fork graph created for the test
         //                   0
@@ -2468,7 +2736,7 @@ mod tests {
 
     #[test]
     fn test_extract_unloaded() {
-        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>(false);
 
         // Fork graph created for the test
         //                   0
@@ -2544,7 +2812,7 @@ mod tests {
 
     #[test]
     fn test_extract_nonexistent() {
-        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>(false);
         let fork_graph = TestForkGraphSpecific::default();
         let fork_graph = Arc::new(RwLock::new(fork_graph));
         cache.set_fork_graph(fork_graph);
@@ -2556,9 +2824,10 @@ mod tests {
         assert!(match_missing(&missing, &program1, true));
     }
 
-    #[test]
-    fn test_unloaded() {
-        let mut cache = new_mock_cache::<TestForkGraph>();
+    #[test_case(false ; "index v1")]
+    #[test_case(true ; "index v2")]
+    fn test_unloaded(use_index_v2: bool) {
+        let mut cache = new_mock_cache::<TestForkGraph>(use_index_v2);
         for program_cache_entry_type in [
             ProgramCacheEntryType::FailedVerification(
                 cache.environments.program_runtime_v1.clone(),
@@ -2583,7 +2852,10 @@ mod tests {
             let program_id = Pubkey::new_unique();
             cache.assign_program(program_id, entry.clone());
             cache.unload_program_entry(&program_id, &entry);
-            assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
+            if !use_index_v2 {
+                // Index v2 does not keep slot versions.
+                assert_eq!(cache.get_slot_versions_for_tests(&program_id).len(), 1);
+            }
             assert!(cache.stats.evictions.is_empty());
         }
 
@@ -2603,7 +2875,7 @@ mod tests {
 
     #[test]
     fn test_fork_prune_find_first_ancestor() {
-        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>(false);
 
         // Fork graph created for the test
         //                   0
@@ -2641,9 +2913,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_prune_by_deployment_slot() {
-        let mut cache = new_mock_cache::<TestForkGraphSpecific>();
+    #[test_case(false ; "index v1")]
+    // #[test_case(true ; "index v2")] // Can't do this yet without `extract`.
+    fn test_prune_by_deployment_slot(use_index_v2: bool) {
+        let mut cache = new_mock_cache::<TestForkGraphSpecific>(use_index_v2);
 
         // Fork graph created for the test
         //                   0
@@ -2709,7 +2982,7 @@ mod tests {
 
     #[test]
     fn test_usable_entries_for_slot() {
-        new_mock_cache::<TestForkGraph>();
+        new_mock_cache::<TestForkGraph>(false);
         let tombstone = Arc::new(ProgramCacheEntry::new_tombstone(
             0,
             ProgramCacheEntryOwner::LoaderV2,
