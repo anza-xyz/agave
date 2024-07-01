@@ -207,13 +207,6 @@ pub fn execute_batch(
         ExecuteTimingType::CheckBlockLimitsUs,
         check_block_cost_limits_time.as_us(),
     );
-    for tx_loaded_accounts_stats in loaded_accounts_stats.iter().flatten() {
-        timings
-            .execute_accounts_details
-            .increment_loaded_accounts_data_size(
-                tx_loaded_accounts_stats.loaded_accounts_data_size as u64,
-            );
-    }
     check_block_cost_limits_result?;
 
     let executed_transactions = execution_results
