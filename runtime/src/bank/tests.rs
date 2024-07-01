@@ -7152,11 +7152,12 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             .copy_from_slice(&elf);
         account
     };
-    let program_account = AccountSharedData::new(
+    let mut program_account = AccountSharedData::new(
         min_programdata_balance,
         UpgradeableLoaderState::size_of_program(),
         &bpf_loader_upgradeable::id(),
     );
+    program_account.set_executable(true);
     let programdata_account = AccountSharedData::new(
         1,
         UpgradeableLoaderState::size_of_programdata(elf.len()),
@@ -7196,10 +7197,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::InvalidAccountData,
-        )),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();

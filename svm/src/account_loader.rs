@@ -9,7 +9,7 @@ use {
     solana_compute_budget::compute_budget_processor::{
         process_compute_budget_instructions, ComputeBudgetLimits,
     },
-    solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+    solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         feature_set::{self, FeatureSet},
@@ -240,12 +240,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     .then_some(())
                     .and_then(|_| loaded_programs.find(key))
                 {
-                    callbacks
+                    let program_account = callbacks
                         .get_account_shared_data(key)
                         .ok_or(TransactionError::AccountNotFound)?;
-                    // Optimization to skip loading of accounts which are only used as
-                    // programs in top-level instructions and not passed as instruction accounts.
-                    let program_account = account_shared_data_from_program(&program);
                     (program.account_size, program_account, 0)
                 } else {
                     callbacks
@@ -389,16 +386,6 @@ fn get_requested_loaded_accounts_data_size_limit(
         Err(TransactionError::InvalidLoadedAccountsDataSizeLimit),
         |v| Ok(Some(v)),
     )
-}
-
-fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {
-    // It's an executable program account. The program is already loaded in the cache.
-    // So the account data is not needed. Return a dummy AccountSharedData with meta
-    // information.
-    let mut program_account = AccountSharedData::default();
-    program_account.set_owner(loaded_program.account_owner());
-    program_account.set_executable(true);
-    program_account
 }
 
 /// Accumulate loaded account data size into `accumulated_accounts_data_size`.

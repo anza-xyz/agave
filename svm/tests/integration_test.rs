@@ -191,6 +191,7 @@ fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
     let mut account_data = AccountSharedData::default();
     account_data.set_data(bincode::serialize(&state).unwrap());
     account_data.set_lamports(25);
+    account_data.set_executable(true);
     account_data.set_owner(bpf_loader_upgradeable::id());
     mock_bank
         .account_shared_data
