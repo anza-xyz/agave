@@ -7486,8 +7486,6 @@ dependencies = [
  "log",
  "percentage",
  "prost",
- "prost-build",
- "prost-types",
  "qualifier_attr",
  "rand 0.8.5",
  "rustc_version 0.4.0",
@@ -7505,9 +7503,19 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk",
  "solana-svm",
+ "solana-svm-conformance",
  "solana-system-program",
  "solana-type-overrides",
  "solana-vote",
+]
+
+[[package]]
+name = "solana-svm-conformance"
+version = "2.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "prost-types",
 ]
 
 [[package]]
