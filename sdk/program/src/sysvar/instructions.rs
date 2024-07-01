@@ -231,11 +231,10 @@ fn deserialize_instruction(index: usize, data: &[u8]) -> Result<Instruction, San
 /// specified index.
 ///
 /// `data` is the instructions sysvar account data.
-#[deprecated(
-    since = "1.8.0",
-    note = "Unsafe because the sysvar accounts address is not checked, please use `load_instruction_at_checked` instead"
-)]
-pub fn load_instruction_at(index: usize, data: &[u8]) -> Result<Instruction, SanitizeError> {
+///
+/// Unsafe because the sysvar accounts address is not checked; only used
+/// internally after such a check.
+fn load_instruction_at(index: usize, data: &[u8]) -> Result<Instruction, SanitizeError> {
     deserialize_instruction(index, data)
 }
 
@@ -254,7 +253,7 @@ pub fn load_instruction_at_checked(
     }
 
     let instruction_sysvar = instruction_sysvar_account_info.try_borrow_data()?;
-    deserialize_instruction(index, &instruction_sysvar).map_err(|err| match err {
+    load_instruction_at(index, &instruction_sysvar).map_err(|err| match err {
         SanitizeError::IndexOutOfBounds => ProgramError::InvalidArgument,
         _ => ProgramError::InvalidInstructionData,
     })
