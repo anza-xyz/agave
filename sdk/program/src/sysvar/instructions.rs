@@ -274,13 +274,11 @@ pub fn get_instruction_relative(
     }
 
     let instruction_sysvar = instruction_sysvar_account_info.data.borrow();
-    #[allow(deprecated)]
     let current_index = load_current_index(&instruction_sysvar) as i64;
     let index = current_index.saturating_add(index_relative_to_current);
     if index < 0 {
         return Err(ProgramError::InvalidArgument);
     }
-    #[allow(deprecated)]
     load_instruction_at(
         current_index.saturating_add(index_relative_to_current) as usize,
         &instruction_sysvar,
