@@ -6533,6 +6533,7 @@ name = "solana-vote-program"
 version = "2.1.0"
 dependencies = [
  "bincode",
+ "lazy_static",
  "log",
  "num-derive",
  "num-traits",
