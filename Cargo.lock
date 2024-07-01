@@ -7717,7 +7717,6 @@ dependencies = [
 name = "solana-turbine"
 version = "2.1.0"
 dependencies = [
- "assert_matches",
  "bincode",
  "bytes",
  "crossbeam-channel",
