@@ -1,6 +1,8 @@
 mod instruction;
 mod message_address_table_lookup;
-mod message_trait;
-mod transaction_trait;
+mod solana_message;
+mod solana_transaction;
 
-pub use {instruction::*, message_address_table_lookup::*, message_trait::*, transaction_trait::*};
+pub use {
+    instruction::*, message_address_table_lookup::*, solana_message::*, solana_transaction::*,
+};
