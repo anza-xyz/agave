@@ -36,7 +36,7 @@ cargo_audit_ignores=(
 
   # curve25519-dalek
   # Patches to address the advisory have been pulled into a fork of the repo.
-  # See Cargo.toml for more information
+  # See `[patch.crates-io.curve25519-dalek]` in Cargo.toml for more information
   --ignore RUSTSEC-2024-0344
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
