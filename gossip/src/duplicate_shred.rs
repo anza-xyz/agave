@@ -101,7 +101,7 @@ pub enum Error {
 ///       LAST_SHRED_IN_SLOT, however the other shred must have a higher index.
 ///     - If `shred1` and `shred2` do not share the same index and are coding shreds
 ///       verify that they have conflicting erasure metas
-fn check_shreds<F>(
+pub fn check_shreds<F>(
     leader_schedule: Option<F>,
     shred1: &Shred,
     shred2: &Shred,

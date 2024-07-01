@@ -36,7 +36,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_entry::entry::VerifyRecyclers,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, duplicate_shred},
     solana_ledger::{
         block_error::BlockError,
         blockstore::Blockstore,
@@ -47,6 +47,7 @@ use {
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
         leader_schedule_utils::first_of_consecutive_leader_slots,
+        shred::Shred,
     },
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
@@ -291,6 +292,7 @@ pub struct ReplayStageConfig {
     pub wait_to_vote_slot: Option<Slot>,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub shred_version: u16,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -575,6 +577,7 @@ impl ReplayStage {
             wait_to_vote_slot,
             replay_forks_threads,
             replay_transactions_threads,
+            shred_version,
         } = config;
 
         trace!("replay stage");
@@ -623,6 +626,8 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &blockstore,
+                    &leader_schedule_cache,
+                    shred_version,
                 );
             let mut current_leader = None;
             let mut last_reset = Hash::default();
@@ -1387,6 +1392,8 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         blockstore: &Blockstore,
+        leader_schedule_cache: &LeaderScheduleCache,
+        shred_version: u16,
     ) -> (ProgressMap, HeaviestSubtreeForkChoice) {
         let (root_bank, frozen_banks, duplicate_slot_hashes) = {
             let bank_forks = bank_forks.read().unwrap();
@@ -1395,6 +1402,26 @@ impl ReplayStage {
                 .unwrap();
             let duplicate_slot_hashes = duplicate_slots.filter_map(|slot| {
                 let bank = bank_forks.get(slot)?;
+                let proof = blockstore.get_duplicate_slot(slot)?;
+                let shred1 = Shred::new_from_serialized_shred(proof.shred1).ok()?;
+                let shred2 = Shred::new_from_serialized_shred(proof.shred2).ok()?;
+                let slot_leader =
+                    leader_schedule_cache.slot_leader_at(slot, Some(&*bank_forks.root_bank()));
+                // Verify that this proof is valid, as an upgrade to the logic or
+                // previous shred version proofs should not be considered.
+                if let Err(e) = duplicate_shred::check_shreds(
+                    Some(|_| slot_leader),
+                    &shred1,
+                    &shred2,
+                    shred_version,
+                ) {
+                    warn!("Ignoring invalid duplicate proof for {slot}: {e:?}");
+                    return None;
+                }
+                if slot == bank_forks.root_bank().slot() {
+                    error!("Observed a duplicate proof for the root bank {slot}. Ignoring");
+                    return None;
+                }
                 Some((slot, bank.hash()))
             });
             (
