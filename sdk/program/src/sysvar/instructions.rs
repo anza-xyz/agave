@@ -149,11 +149,10 @@ fn serialize_instructions(instructions: &[BorrowedInstruction]) -> Vec<u8> {
 /// `Transaction`.
 ///
 /// `data` is the instructions sysvar account data.
-#[deprecated(
-    since = "1.8.0",
-    note = "Unsafe because the sysvar accounts address is not checked, please use `load_current_index_checked` instead"
-)]
-pub fn load_current_index(data: &[u8]) -> u16 {
+///
+/// Unsafe because the sysvar accounts address is not checked; only used
+/// internally after such a check.
+fn load_current_index(data: &[u8]) -> u16 {
     let mut instr_fixed_data = [0u8; 2];
     let len = data.len();
     instr_fixed_data.copy_from_slice(&data[len - 2..len]);
@@ -174,10 +173,8 @@ pub fn load_current_index_checked(
     }
 
     let instruction_sysvar = instruction_sysvar_account_info.try_borrow_data()?;
-    let mut instr_fixed_data = [0u8; 2];
-    let len = instruction_sysvar.len();
-    instr_fixed_data.copy_from_slice(&instruction_sysvar[len - 2..len]);
-    Ok(u16::from_le_bytes(instr_fixed_data))
+    let index = load_current_index(&instruction_sysvar);
+    Ok(index)
 }
 
 /// Store the current `Instruction`'s index in the instructions sysvar data.
