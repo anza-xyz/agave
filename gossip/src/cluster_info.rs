@@ -1260,6 +1260,7 @@ impl ClusterInfo {
             other_payload,
             None::<fn(Slot) -> Option<Pubkey>>, // Leader schedule
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            self.my_shred_version(),
         )?;
         Ok(())
     }
@@ -3639,6 +3640,7 @@ mod tests {
             Some(leader_schedule),
             timestamp(),
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            version,
         )
         .unwrap()
         .collect();
