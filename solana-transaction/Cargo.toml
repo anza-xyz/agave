@@ -1,5 +1,7 @@
 [package]
-name = "placeholder-transaction-trait"
+name = "solana-transaction"
+description = "Solana Transaction"
+documentation = "https://docs.rs/solana-transaction"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
