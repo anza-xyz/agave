@@ -1,5 +1,5 @@
 use {
-    crate::{Instruction, MessageAddressTableLookup, MessageTrait},
+    crate::{Instruction, MessageAddressTableLookup, SolanaMessage},
     solana_sdk::{
         hash::Hash,
         message::{AccountKeys, SanitizedMessage},
@@ -8,7 +8,7 @@ use {
 };
 
 // Implement for the "reference" `SanitizedMessage` type.
-impl MessageTrait for SanitizedMessage {
+impl SolanaMessage for SanitizedMessage {
     fn num_signatures(&self) -> u64 {
         SanitizedMessage::num_signatures(self)
     }

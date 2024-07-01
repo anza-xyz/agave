@@ -19,7 +19,7 @@ mod sanitized_transaction;
 
 // - Clone to support possible cloning from holding in Vec
 // - Debug to support legacy logging
-pub trait MessageTrait: Clone + Debug {
+pub trait SolanaMessage: Clone + Debug {
     /// Return the number of signatures in the message.
     fn num_signatures(&self) -> u64;
 

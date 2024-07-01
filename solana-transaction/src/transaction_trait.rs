@@ -1,5 +1,5 @@
 use {
-    crate::MessageTrait,
+    crate::SolanaMessage,
     solana_sdk::{
         hash::Hash,
         packet::Packet,
@@ -11,7 +11,7 @@ use {
 mod reference;
 mod sanitized_transaction;
 
-pub trait TransactionTrait: MessageTrait {
+pub trait SolanaTransaction: SolanaMessage {
     /// Get the first signature of the message.
     fn signature(&self) -> &Signature;
 
