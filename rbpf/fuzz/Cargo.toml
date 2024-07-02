@@ -1,0 +1,52 @@
+[package]
+name = "solana-rbpf-fuzz"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { workspace = true, features = ["derive"] }
+libfuzzer-sys = { workspace = true }
+num-traits = { workspace = true }
+rayon = { workspace = true }
+solana-rbpf = { workspace = true, features = ["fuzzer-not-safe-for-production"] }
+
+[features]
+only-verified = []
+
+[[bin]]
+name = "dumb"
+path = "fuzz_targets/dumb.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "smart"
+path = "fuzz_targets/smart.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "smart-jit-diff"
+path = "fuzz_targets/smart_jit_diff.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "smarter-jit-diff"
+path = "fuzz_targets/smarter_jit_diff.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "verify-semantic-aware"
+path = "fuzz_targets/verify_semantic_aware.rs"
+test = false
+doc = false

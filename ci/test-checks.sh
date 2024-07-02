@@ -21,6 +21,13 @@ ERROR: cargo hack failed.
 EOF
 fi
 
+if ! cargo fuzz --version >/dev/null 2>&1; then
+  cat >&2 <<EOF
+ERROR: cargo-fuzz is not installed. install with \`cargo install cargo-fuzz\`
+EOF
+  exit 1
+fi
+
 echo --- build environment
 (
   set -x
@@ -44,6 +51,8 @@ echo --- build environment
   sccache --version
 
   wasm-pack --version
+
+  cargo fuzz --version
 )
 
 export RUST_BACKTRACE=1
@@ -73,7 +82,7 @@ _ scripts/cargo-clippy.sh
 
 if [[ -n $CI ]]; then
   # exclude from printing "Checking xxx ..."
-  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check > /dev/null
+  _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check >/dev/null
 else
   _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" sort --workspace --check
 fi
@@ -81,6 +90,8 @@ fi
 _ scripts/check-dev-context-only-utils.sh tree
 
 _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
+
+_ cargo "+${rust_nightly}" fuzz build --fuzz-dir rbpf/fuzz
 
 _ ci/do-audit.sh
 
