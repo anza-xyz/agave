@@ -96,7 +96,7 @@ fn main() {
                             Arg::with_name("then_diff_files")
                                 .long("then_diff_files")
                                 .takes_value(false)
-                                .help("After diff-ing the directories, diff the files that were found to have mismatches."),
+                                .help("After diff-ing the directories, diff the files that were found to have mismatches"),
                         ),
                 ),
         )
