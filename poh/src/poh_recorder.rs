@@ -393,6 +393,10 @@ impl PohRecorder {
             .map(|leader| (leader, target_slot))
     }
 
+    pub fn leader_at_slot(&self, slot: Slot) -> Option<Pubkey> {
+        self.leader_schedule_cache.slot_leader_at(slot, None)
+    }
+
     pub fn next_slot_leader(&self) -> Option<Pubkey> {
         self.leader_after_n_slots(1)
     }

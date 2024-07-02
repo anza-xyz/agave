@@ -1,7 +1,10 @@
 use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, pubkey::Pubkey},
+    solana_sdk::{
+        clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
+        pubkey::Pubkey,
+    },
     std::{net::SocketAddr, sync::RwLock},
 };
 
@@ -10,6 +13,18 @@ pub(crate) fn next_leader_tpu_vote(
     poh_recorder: &RwLock<PohRecorder>,
 ) -> Option<(Pubkey, SocketAddr)> {
     next_leader(cluster_info, poh_recorder, ContactInfo::tpu_vote)
+}
+
+pub(crate) fn next_vote_slot_leader_tpu_vote(
+    vote_slot: Slot,
+    cluster_info: &ClusterInfo,
+    poh_recorder: &RwLock<PohRecorder>,
+) -> Option<(Pubkey, SocketAddr)> {
+    let leader_pubkey = poh_recorder.read().unwrap().leader_at_slot(vote_slot + 1)?;
+    cluster_info
+        .lookup_contact_info(&leader_pubkey, ContactInfo::tpu_vote)?
+        .map(|addr| (leader_pubkey, addr))
+        .ok()
 }
 
 pub(crate) fn next_leader<F, E>(
