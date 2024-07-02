@@ -302,7 +302,7 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(),
 fn do_diff_dirs(
     dir1: impl AsRef<Path>,
     dir2: impl AsRef<Path>,
-    file_diff: bool,
+    then_diff_files: bool,
 ) -> Result<(), String> {
     let get_files_in = |dir: &Path| {
         let mut files = Vec::new();
