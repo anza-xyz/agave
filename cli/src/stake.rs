@@ -1437,6 +1437,7 @@ pub fn process_create_stake_account(
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
 
+    let compute_unit_limit = ComputeUnitLimit::Default;
     let build_message = |lamports| {
         let authorized = Authorized {
             staker: staker.unwrap_or(from.pubkey()),
@@ -1480,7 +1481,7 @@ pub fn process_create_stake_account(
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_limit,
         });
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
@@ -1503,6 +1504,7 @@ pub fn process_create_stake_account(
         &recent_blockhash,
         &from.pubkey(),
         &fee_payer.pubkey(),
+        compute_unit_limit,
         build_message,
         config.commitment,
     )?;
@@ -1869,6 +1871,7 @@ pub fn process_withdraw_stake(
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
 
+    let compute_unit_limit = ComputeUnitLimit::Default;
     let build_message = |lamports| {
         let ixs = vec![stake_instruction::withdraw(
             &stake_account_address,
@@ -1880,7 +1883,7 @@ pub fn process_withdraw_stake(
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_limit,
         });
 
         if let Some(nonce_account) = &nonce_account {
@@ -1902,6 +1905,7 @@ pub fn process_withdraw_stake(
         &recent_blockhash,
         &stake_account_address,
         &fee_payer.pubkey(),
+        compute_unit_limit,
         build_message,
         config.commitment,
     )?;
