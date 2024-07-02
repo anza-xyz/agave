@@ -6842,6 +6842,7 @@ dependencies = [
  "solana-sanitize",
  "solana-sdk-macro",
  "static_assertions",
+ "test-case",
  "thiserror",
  "wasm-bindgen",
 ]
