@@ -27,25 +27,25 @@ impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
 #[derive(Default, Clone, Debug)]
 pub struct SysvarCache {
     // full account data as provided by bank, including any trailing zero bytes
-    clock: Option<Vec<u8>>,
-    epoch_schedule: Option<Vec<u8>>,
-    epoch_rewards: Option<Vec<u8>>,
-    rent: Option<Vec<u8>>,
-    slot_hashes: Option<Vec<u8>>,
-    stake_history: Option<Vec<u8>>,
-    last_restart_slot: Option<Vec<u8>>,
+    pub clock: Option<Vec<u8>>,
+    pub epoch_schedule: Option<Vec<u8>>,
+    pub epoch_rewards: Option<Vec<u8>>,
+    pub rent: Option<Vec<u8>>,
+    pub slot_hashes: Option<Vec<u8>>,
+    pub stake_history: Option<Vec<u8>>,
+    pub last_restart_slot: Option<Vec<u8>>,
 
     // object representations of large sysvars for convenience
     // these are used by the stake and vote builtin programs
     // these should be removed once those programs are ported to bpf
-    slot_hashes_obj: Option<Arc<SlotHashes>>,
-    stake_history_obj: Option<Arc<StakeHistory>>,
+    pub slot_hashes_obj: Option<Arc<SlotHashes>>,
+    pub stake_history_obj: Option<Arc<StakeHistory>>,
 
     // deprecated sysvars, these should be removed once practical
     #[allow(deprecated)]
-    fees: Option<Fees>,
+    pub fees: Option<Fees>,
     #[allow(deprecated)]
-    recent_blockhashes: Option<RecentBlockhashes>,
+    pub recent_blockhashes: Option<RecentBlockhashes>,
 }
 
 impl SysvarCache {
