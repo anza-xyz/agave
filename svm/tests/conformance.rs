@@ -257,7 +257,8 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
                 FunctionRegistry::default(),
             )),
         };
-        program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+        let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
     }
 
     batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);

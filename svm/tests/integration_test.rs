@@ -142,7 +142,8 @@ fn create_executable_environment(
         )),
     };
 
-    program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+    program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
 
     // We must fill in the sysvar cache entries
     let time_now = SystemTime::now()
