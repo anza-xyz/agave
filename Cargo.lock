@@ -6827,6 +6827,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "parking_lot 0.12.3",
+ "qualifier_attr",
  "rand 0.8.5",
  "rustc_version 0.4.0",
  "serde",

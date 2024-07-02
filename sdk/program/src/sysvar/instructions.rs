@@ -29,6 +29,8 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::serialize_utils::{append_slice, append_u16, append_u8},
@@ -234,6 +236,7 @@ fn deserialize_instruction(index: usize, data: &[u8]) -> Result<Instruction, San
 ///
 /// Unsafe because the sysvar accounts address is not checked; only used
 /// internally after such a check.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn load_instruction_at(index: usize, data: &[u8]) -> Result<Instruction, SanitizeError> {
     deserialize_instruction(index, data)
 }
