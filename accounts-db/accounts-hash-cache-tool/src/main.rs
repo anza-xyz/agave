@@ -151,8 +151,8 @@ fn cmd_diff_dirs(
 ) -> Result<(), String> {
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
-    let file_diff = subcommand_matches.is_present("filediff");
-    do_diff_dirs(path1, path2, file_diff)
+    let then_diff_files = subcommand_matches.is_present("then_diff_files");
+    do_diff_dirs(path1, path2, then_diff_files)
 }
 
 fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
