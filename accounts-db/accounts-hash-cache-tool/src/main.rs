@@ -460,7 +460,11 @@ fn do_diff_dirs(
         }
         if then_diff_files {
             for (file1, file2) in &mismatches {
-                println!("Differences between '{}' and '{}':", file1.0.0.display(), file2.0.0.display());
+                println!(
+                    "Differences between '{}' and '{}':",
+                    file1.0 .0.display(),
+                    file2.0 .0.display(),
+                );
                 if let Err(err) = do_diff_files(&file1.0 .0, &file2.0 .0) {
                     eprintln!("Error: failed to diff files: {err}");
                 }
