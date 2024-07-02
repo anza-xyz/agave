@@ -21,6 +21,7 @@ use {
     std::{
         borrow::Borrow,
         convert::TryInto,
+        fs::File,
         io::{Seek, SeekFrom, Write},
         path::PathBuf,
         sync::{
@@ -60,51 +61,38 @@ impl MmapAccountHashesFile {
 }
 
 /// 1 file containing account hashes sorted by pubkey
-struct AccountHashesFile {
+#[derive(Debug)]
+pub struct AccountHashesFile {
     /// # hashes and an open file that will be deleted on drop. None if there are zero hashes to represent, and thus, no file.
-    writer: Option<MmapAccountHashesFile>,
+    writer: Option<File>,
     /// The directory where temporary cache files are put
     dir_for_temp_cache_files: PathBuf,
     /// # bytes allocated
     capacity: usize,
+    bin: usize,
 }
 
 impl AccountHashesFile {
     /// return a mmap reader that can be accessed  by slice
     fn get_reader(&mut self) -> Option<MmapAccountHashesFile> {
-        std::mem::take(&mut self.writer)
+        None
     }
 
     /// # hashes stored in this file
     fn count(&self) -> usize {
-        self.writer
-            .as_ref()
-            .map(|writer| writer.count)
-            .unwrap_or_default()
+        0
     }
 
     /// write 'hash' to the file
     /// If the file isn't open, create it first.
-    fn write(&mut self, hash: &Hash) {
+    fn write(&mut self, entry: &CalculateHashIntermediate) {
         if self.writer.is_none() {
             // we have hashes to write but no file yet, so create a file that will auto-delete on drop
 
             let get_file = || -> Result<_, std::io::Error> {
-                let mut data = tempfile_in(&self.dir_for_temp_cache_files).unwrap_or_else(|err| {
-                    panic!(
-                        "Unable to create file within {}: {err}",
-                        self.dir_for_temp_cache_files.display()
-                    )
-                });
+                let file_name = format!("dedup_bin_{:0>5}", self.bin);
+                let data = std::fs::File::create(file_name).unwrap();
 
-                // Theoretical performance optimization: write a zero to the end of
-                // the file so that we won't have to resize it later, which may be
-                // expensive.
-                assert!(self.capacity > 0);
-                data.seek(SeekFrom::Start((self.capacity - 1) as u64))?;
-                data.write_all(&[0])?;
-                data.rewind()?;
-                data.flush()?;
                 Ok(data)
             };
 
@@ -143,23 +131,9 @@ impl AccountHashesFile {
                 }
             };
 
-            //UNSAFE: Required to create a Mmap
-            let map = unsafe { MmapMut::map_mut(&data) };
-            let map = map.unwrap_or_else(|e| {
-                error!(
-                    "Failed to map the data file (size: {}): {}.\n
-                        Please increase sysctl vm.max_map_count or equivalent for your platform.",
-                    self.capacity, e
-                );
-                std::process::exit(1);
-            });
-
-            self.writer = Some(MmapAccountHashesFile {
-                mmap: map,
-                count: 0,
-            });
+            self.writer = Some(data);
         }
-        self.writer.as_mut().unwrap().write(hash);
+        writeln!(self.writer.as_mut().unwrap(), "{}", entry).unwrap();
     }
 }
 
@@ -478,6 +452,20 @@ pub struct AccountsHasher<'a> {
     /// The directory where temporary cache files are put
     pub dir_for_temp_cache_files: PathBuf,
     pub(crate) active_stats: &'a ActiveStats,
+}
+
+lazy_static! {
+    static ref ACTIVE_STATS: ActiveStats = ActiveStats::default();
+}
+
+impl<'a> AccountsHasher<'a> {
+    pub fn new(dir_for_temp_cache_files: PathBuf) -> Self {
+        Self {
+            zero_lamport_accounts: ZeroLamportAccounts::Excluded,
+            dir_for_temp_cache_files,
+            active_stats: &ACTIVE_STATS,
+        }
+    }
 }
 
 /// Pointer to a specific item in chunked accounts hash slices.
@@ -802,7 +790,7 @@ impl<'a> AccountsHasher<'a> {
     /// Vec, with one entry per bin
     ///  for each entry, Vec<Hash> in pubkey order
     /// If return Vec<AccountHashesFile> was flattened, it would be all hashes, in pubkey order.
-    fn de_dup_accounts(
+    pub fn de_dup_accounts(
         &self,
         sorted_data_by_pubkey: &[&[CalculateHashIntermediate]],
         stats: &mut HashStats,
@@ -1151,6 +1139,7 @@ impl<'a> AccountsHasher<'a> {
             writer: None,
             dir_for_temp_cache_files: self.dir_for_temp_cache_files.clone(),
             capacity: max_inclusive_num_pubkeys * std::mem::size_of::<Hash>(),
+            bin: pubkey_bin,
         };
 
         let mut overall_sum: u64 = 0;
@@ -1171,16 +1160,7 @@ impl<'a> AccountsHasher<'a> {
                 overall_sum = overall_sum
                     .checked_add(item.lamports)
                     .expect("summing lamports cannot overflow");
-                hashes.write(&item.hash.0);
-            } else {
-                // if lamports == 0, check if they should be included
-                if self.zero_lamport_accounts == ZeroLamportAccounts::Included {
-                    // For incremental accounts hash, the hash of a zero lamport account is
-                    // the hash of its pubkey
-                    let hash = blake3::hash(bytemuck::bytes_of(&item.pubkey));
-                    let hash = Hash::new_from_array(hash.into());
-                    hashes.write(&hash);
-                }
+                hashes.write(&item);
             }
 
             Self::add_next_item(
@@ -1337,7 +1317,7 @@ mod tests {
     }
 
     impl<'a> AccountsHasher<'a> {
-        fn new(dir_for_temp_cache_files: PathBuf) -> Self {
+        pub fn new(dir_for_temp_cache_files: PathBuf) -> Self {
             Self {
                 zero_lamport_accounts: ZeroLamportAccounts::Excluded,
                 dir_for_temp_cache_files,
@@ -1352,6 +1332,7 @@ mod tests {
                 writer: None,
                 dir_for_temp_cache_files,
                 capacity: 1024, /* default 1k for tests */
+                bin: 0,
             }
         }
     }
