@@ -10,10 +10,10 @@ use {
     memmap2::MmapMut,
     rayon::prelude::*,
     solana_measure::{measure::Measure, measure_us},
+    solana_rent_collector::RentCollector,
     solana_sdk::{
         hash::{Hash, Hasher},
         pubkey::Pubkey,
-        rent_collector::RentCollector,
         slot_history::Slot,
         sysvar::epoch_schedule::EpochSchedule,
     },

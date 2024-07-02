@@ -43,6 +43,7 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
+solana-rent-collector = { workspace = true }
 solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true, optional = true }
 solana-svm = { workspace = true }

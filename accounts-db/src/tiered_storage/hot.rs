@@ -22,10 +22,10 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     memmap2::{Mmap, MmapOptions},
     modular_bitfield::prelude::*,
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         pubkey::Pubkey,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         stake_history::Epoch,
     },
     std::{io::Write, option::Option, path::Path},

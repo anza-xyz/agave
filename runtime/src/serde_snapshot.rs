@@ -31,6 +31,7 @@ use {
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_measure::measure::Measure,
+    solana_rent_collector::RentCollector,
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
         deserialize_utils::{default_on_eof, ignore_eof_error},
@@ -41,7 +42,6 @@ use {
         hash::Hash,
         inflation::Inflation,
         pubkey::Pubkey,
-        rent_collector::RentCollector,
         stake::state::Delegation,
     },
     std::{

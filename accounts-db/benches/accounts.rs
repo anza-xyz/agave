@@ -17,12 +17,12 @@ use {
         accounts_index::{AccountSecondaryIndexes, ScanConfig},
         ancestors::Ancestors,
     },
+    solana_rent_collector::RentCollector,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
         genesis_config::ClusterType,
         hash::Hash,
         pubkey::Pubkey,
-        rent_collector::RentCollector,
         sysvar::epoch_schedule::EpochSchedule,
     },
     std::{

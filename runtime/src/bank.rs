@@ -101,6 +101,7 @@ use {
         loaded_programs::ProgramCacheEntry,
         timings::{ExecuteTimingType, ExecuteTimings},
     },
+    solana_rent_collector::{CollectedInfo, RentCollector},
     solana_sdk::{
         account::{
             create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -137,7 +138,6 @@ use {
         packet::PACKET_DATA_SIZE,
         precompiles::get_precompiles,
         pubkey::Pubkey,
-        rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
         reserved_account_keys::ReservedAccountKeys,
         reward_info::RewardInfo,

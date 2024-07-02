@@ -1,0 +1,27 @@
+[package]
+name = "solana-rent-collector"
+description = "Solana rent collector"
+documentation = "https://docs.rs/solana-rent-collector"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+serde = { workspace = true }
+serde_derive = { workspace = true }
+
+solana-frozen-abi = { workspace = true, optional = true }
+solana-sdk = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+solana-logger = { workspace = true }
+
+[features]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "solana-sdk/frozen-abi",
+]

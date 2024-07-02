@@ -83,6 +83,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{IntMap, IntSet},
     solana_rayon_threadlimit::get_thread_count,
+    solana_rent_collector::RentCollector,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
         clock::{BankId, Epoch, Slot},
@@ -90,7 +91,6 @@ use {
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         pubkey::Pubkey,
-        rent_collector::RentCollector,
         timing::AtomicInterval,
         transaction::SanitizedTransaction,
     },

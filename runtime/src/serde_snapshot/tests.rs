@@ -24,6 +24,7 @@ mod serde_snapshot_tests {
             accounts_index::AccountSecondaryIndexes,
             ancestors::Ancestors,
         },
+        solana_rent_collector::RentCollector,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
             clock::Slot,
@@ -31,7 +32,6 @@ mod serde_snapshot_tests {
             genesis_config::{ClusterType, GenesisConfig},
             hash::Hash,
             pubkey::Pubkey,
-            rent_collector::RentCollector,
         },
         std::{
             fs::File,

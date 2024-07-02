@@ -46,6 +46,7 @@ use {
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
         timings::ExecuteTimings,
     },
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_sdk::{
         account::{
             accounts_equal, create_account_shared_data_with_fields as create_account, from_account,
@@ -82,7 +83,6 @@ use {
         program::MAX_RETURN_DATA,
         pubkey::Pubkey,
         rent::Rent,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         reward_type::RewardType,
         secp256k1_program,
         signature::{keypair_from_seed, Keypair, Signature, Signer},

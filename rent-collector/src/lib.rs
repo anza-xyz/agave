@@ -1,14 +1,15 @@
-#![cfg(feature = "full")]
-
 //! calculate and collect rent from Accounts
-use solana_sdk::{
-    account::{AccountSharedData, ReadableAccount, WritableAccount},
-    clock::Epoch,
-    epoch_schedule::EpochSchedule,
-    genesis_config::GenesisConfig,
-    incinerator,
-    pubkey::Pubkey,
-    rent::{Rent, RentDue},
+use {
+    serde_derive::{Deserialize, Serialize},
+    solana_sdk::{
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        clock::Epoch,
+        epoch_schedule::EpochSchedule,
+        genesis_config::GenesisConfig,
+        incinerator,
+        pubkey::Pubkey,
+        rent::{Rent, RentDue},
+    },
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

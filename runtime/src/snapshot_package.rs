@@ -12,10 +12,8 @@ use {
         accounts_hash::{AccountsDeltaHash, AccountsHash, AccountsHashKind},
         epoch_accounts_hash::EpochAccountsHash,
     },
-    solana_sdk::{
-        clock::Slot, hash::Hash, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_rent_collector::RentCollector,
+    solana_sdk::{clock::Slot, hash::Hash, sysvar::epoch_schedule::EpochSchedule},
     std::{
         sync::{atomic::Ordering, Arc},
         time::Instant,

@@ -5,10 +5,8 @@ use {
         append_vec::{self, AppendVec},
         tiered_storage::hot::HotStorageWriter,
     },
-    solana_sdk::{
-        account::AccountSharedData, clock::Slot, pubkey::Pubkey,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-    },
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
+    solana_sdk::{account::AccountSharedData, clock::Slot, pubkey::Pubkey},
 };
 
 const ACCOUNTS_COUNTS: [usize; 4] = [

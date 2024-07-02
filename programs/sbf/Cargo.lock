@@ -4576,6 +4576,7 @@ dependencies = [
  "solana-metrics",
  "solana-nohash-hasher",
  "solana-rayon-threadlimit",
+ "solana-rent-collector",
  "solana-sdk",
  "solana-svm",
  "static_assertions",
@@ -5450,6 +5451,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-rent-collector"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-rpc"
 version = "2.1.0"
 dependencies = [
@@ -5620,6 +5630,7 @@ dependencies = [
  "solana-perf",
  "solana-program-runtime",
  "solana-rayon-threadlimit",
+ "solana-rent-collector",
  "solana-sdk",
  "solana-stake-program",
  "solana-svm",
@@ -6294,6 +6305,7 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-program-runtime",
+ "solana-rent-collector",
  "solana-sdk",
  "solana-system-program",
  "solana-type-overrides",
