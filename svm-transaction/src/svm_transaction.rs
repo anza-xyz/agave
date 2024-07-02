@@ -1,12 +1,12 @@
 use {
-    crate::SolanaMessage,
+    crate::SVMMessage,
     solana_sdk::{hash::Hash, signature::Signature, transaction::VersionedTransaction},
 };
 
 mod reference;
 mod sanitized_transaction;
 
-pub trait SolanaTransaction: SolanaMessage {
+pub trait SVMTransaction: SVMMessage {
     /// Get the first signature of the message.
     fn signature(&self) -> &Signature;
 

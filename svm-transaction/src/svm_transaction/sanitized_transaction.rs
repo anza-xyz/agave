@@ -1,5 +1,5 @@
 use {
-    crate::SolanaTransaction,
+    crate::SVMTransaction,
     solana_sdk::{
         hash::Hash,
         signature::Signature,
@@ -7,7 +7,7 @@ use {
     },
 };
 
-impl SolanaTransaction for SanitizedTransaction {
+impl SVMTransaction for SanitizedTransaction {
     fn signature(&self) -> &Signature {
         self.signatures().first().unwrap()
     }

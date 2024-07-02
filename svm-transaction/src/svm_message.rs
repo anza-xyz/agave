@@ -9,7 +9,7 @@ mod sanitized_message;
 mod sanitized_transaction;
 
 // - Debug to support legacy logging
-pub trait SolanaMessage: Debug {
+pub trait SVMMessage: Debug {
     /// Return the number of signatures in the message.
     fn num_signatures(&self) -> u64;
 
