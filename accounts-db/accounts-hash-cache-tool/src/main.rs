@@ -91,6 +91,13 @@ fn main() {
                                 .takes_value(true)
                                 .value_name("PATH2")
                                 .help("Accounts hash cache directory 2 to diff"),
+                        )
+                        .arg(
+                            Arg::with_name("filediff")
+                                .long("include-file-diff")
+                                .short("f")
+                                .takes_value(false)
+                                .help("Include file diff"),
                         ),
                 ),
         )
@@ -144,7 +151,8 @@ fn cmd_diff_dirs(
 ) -> Result<(), String> {
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
-    do_diff_dirs(path1, path2)
+    let file_diff = subcommand_matches.is_present("filediff");
+    do_diff_dirs(path1, path2, file_diff)
 }
 
 fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
@@ -291,7 +299,11 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(),
     Ok(())
 }
 
-fn do_diff_dirs(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), String> {
+fn do_diff_dirs(
+    dir1: impl AsRef<Path>,
+    dir2: impl AsRef<Path>,
+    file_diff: bool,
+) -> Result<(), String> {
     let get_files_in = |dir: &Path| {
         let mut files = Vec::new();
         let entries = fs::read_dir(dir)?;
@@ -446,6 +458,11 @@ fn do_diff_dirs(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), St
                 file1.0 .0.display(),
                 file2.0 .0.display(),
             );
+            if file_diff {
+                if let Err(e) = do_diff_files(&file1.0 .0, &file2.0 .0) {
+                    println!("Failed to compare files {}", e);
+                }
+            }
         }
     }
 
