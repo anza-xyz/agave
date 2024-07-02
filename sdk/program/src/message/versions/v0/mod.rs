@@ -12,7 +12,7 @@
 pub use loaded::*;
 use {
     crate::{
-        address_lookup_table_account::AddressLookupTableAccount,
+        address_lookup_table::AddressLookupTableAccount,
         bpf_loader_upgradeable,
         hash::Hash,
         instruction::{CompiledInstruction, Instruction},
