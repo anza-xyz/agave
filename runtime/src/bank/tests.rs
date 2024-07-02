@@ -291,6 +291,7 @@ fn test_bank_new() {
         lamports_per_byte_year: 5,
         exemption_threshold: 1.2,
         burn_percent: 5,
+        _padding: Default::default(),
     };
 
     let bank = Bank::new_for_tests(&genesis_config);
@@ -440,6 +441,7 @@ fn rent_with_exemption_threshold(exemption_threshold: f64) -> Rent {
         lamports_per_byte_year: 1,
         exemption_threshold,
         burn_percent: 10,
+        _padding: Default::default(),
     }
 }
 

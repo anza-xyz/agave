@@ -309,38 +309,19 @@ pub fn pubkeys(input: TokenStream) -> TokenStream {
     TokenStream::from(quote! {#pubkeys})
 }
 
-// Sets padding in structures to zero explicitly.
-// Otherwise padding could be inconsistent across the network and lead to divergence / consensus failures.
-#[proc_macro_derive(CloneZeroed)]
-pub fn derive_clone_zeroed(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+// Asserts that the struct has no padding.
+// Otherwise, padding could be inconsistent across the network and lead to divergence / consensus failures.
+#[proc_macro_derive(NoPadding)]
+pub fn derive_no_padding(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     match parse_macro_input!(input as syn::Item) {
         syn::Item::Struct(item_struct) => {
-            let clone_statements = match item_struct.fields {
-                syn::Fields::Named(ref fields) => fields.named.iter().map(|f| {
-                    let name = &f.ident;
-                    quote! {
-                        std::ptr::addr_of_mut!((*ptr).#name).write(self.#name);
-                    }
-                }),
+            let field_tys = match item_struct.fields {
+                syn::Fields::Named(ref fields) => fields.named.iter().map(|f| &f.ty),
                 _ => unimplemented!(),
             };
             let name = &item_struct.ident;
             quote! {
-                impl Clone for #name {
-                    // Clippy lint `incorrect_clone_impl_on_copy_type` requires that clone
-                    // implementations on `Copy` types are simply wrappers of `Copy`.
-                    // This is not the case here, and intentionally so because we want to
-                    // guarantee zeroed padding.
-                    fn clone(&self) -> Self {
-                        let mut value = std::mem::MaybeUninit::<Self>::uninit();
-                        unsafe {
-                            std::ptr::write_bytes(&mut value, 0, 1);
-                            let ptr = value.as_mut_ptr();
-                            #(#clone_statements)*
-                            value.assume_init()
-                        }
-                    }
-                }
+                const _: [(); 0 - !{ const ASSERT: bool = 0 #(+ ::std::mem::size_of::<#field_tys>())* == ::std::mem::size_of::<#name>(); ASSERT } as usize] = [];
             }
         }
         _ => unimplemented!(),

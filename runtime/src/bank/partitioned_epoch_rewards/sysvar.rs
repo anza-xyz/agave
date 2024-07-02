@@ -44,6 +44,7 @@ impl Bank {
             total_rewards,
             distributed_rewards,
             active: true,
+            _padding: Default::default(),
         };
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
@@ -147,6 +148,7 @@ mod tests {
             total_rewards,
             distributed_rewards: 10,
             active: true,
+            _padding: Default::default(),
         };
 
         let epoch_rewards = bank.get_epoch_rewards_sysvar();
@@ -179,6 +181,7 @@ mod tests {
             total_rewards,
             distributed_rewards: 10,
             active: true,
+            _padding: Default::default(),
         };
 
         let epoch_rewards = bank.get_epoch_rewards_sysvar();
@@ -198,6 +201,7 @@ mod tests {
             total_rewards,
             distributed_rewards: 20,
             active: true,
+            _padding: Default::default(),
         };
         assert_eq!(epoch_rewards, expected_epoch_rewards);
     }
