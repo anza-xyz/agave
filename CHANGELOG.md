@@ -23,6 +23,7 @@ Release channels have their own copy of this changelog:
     * Support for Borsh v0.9 removed, please use v1 or v0.10 (#1440)
     * `Copy` is no longer derived on `Rent` and `EpochSchedule`, please switch to using `clone()` (solana-labs#32767)
     * Deprecated symbols removed
+  * `solana-program`: deprecated symbols removed
   * RPC: obsolete and deprecated v1 endpoints are removed. These endpoints are:
     confirmTransaction, getSignatureStatus, getSignatureConfirmation, getTotalSupply,
     getConfirmedSignaturesForAddress, getConfirmedBlock, getConfirmedBlocks, getConfirmedBlocksWithLimit,
