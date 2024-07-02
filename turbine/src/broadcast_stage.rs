@@ -80,6 +80,8 @@ pub enum Error {
     Serialize(#[from] std::boxed::Box<bincode::ErrorKind>),
     #[error("Shred not found, slot: {slot}, index: {index}")]
     ShredNotFound { slot: Slot, index: u64 },
+    #[error("Too many shreds for slot {0}")]
+    TooManyShreds(Slot),
     #[error(transparent)]
     TransportError(#[from] solana_sdk::transport::TransportError),
     #[error("Unknown last index, slot: {0}")]
