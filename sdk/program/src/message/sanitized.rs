@@ -416,9 +416,9 @@ impl SanitizedMessage {
 /// Transaction signature details including the number of transaction signatures
 /// and precompile signatures.
 pub struct TransactionSignatureDetails {
-    num_transaction_signatures: u64,
-    num_secp256k1_instruction_signatures: u64,
-    num_ed25519_instruction_signatures: u64,
+    pub num_transaction_signatures: u64,
+    pub num_secp256k1_instruction_signatures: u64,
+    pub num_ed25519_instruction_signatures: u64,
 }
 
 impl TransactionSignatureDetails {
