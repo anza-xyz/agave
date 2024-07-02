@@ -53,7 +53,13 @@ jobs:
       - shell: bash
         run: |
           source .github/scripts/downstream-project-spl-common.sh
+<<<<<<< HEAD
           source .github/scripts/downstream-project-spl-install-deps.sh
+=======
+          if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
+            exit 0
+          fi
+>>>>>>> 4d9d27f1ff (ci: skip spl test when version is too high (#1945))
 
           cargo check
 
@@ -102,7 +108,13 @@ jobs:
       - shell: bash
         run: |
           source .github/scripts/downstream-project-spl-common.sh
+<<<<<<< HEAD
           source .github/scripts/downstream-project-spl-install-deps.sh
+=======
+          if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
+            exit 0
+          fi
+>>>>>>> 4d9d27f1ff (ci: skip spl test when version is too high (#1945))
 
           programStr="${{ tojson(matrix.arrays.required_programs) }}"
           IFS=', ' read -ra programs <<<"${programStr//[\[\]$'\n'$'\r' ]/}"
@@ -153,6 +165,9 @@ jobs:
       - shell: bash
         run: |
           source .github/scripts/downstream-project-spl-common.sh
+          if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
+            exit 0
+          fi
 
           programStr="${{ tojson(matrix.programs) }}"
           IFS=', ' read -ra programs <<<"${programStr//[\[\]$'\n'$'\r' ]/}"
