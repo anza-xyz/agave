@@ -1078,7 +1078,7 @@ fn verify_ticks(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn confirm_full_slot(
+pub fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
@@ -1684,7 +1684,7 @@ fn confirm_slot_entries(
 }
 
 // Special handling required for processing the entries in slot 0
-fn process_bank_0(
+pub fn process_bank_0(
     bank0: &BankWithScheduler,
     blockstore: &Blockstore,
     replay_tx_thread_pool: &ThreadPool,
