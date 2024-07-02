@@ -105,7 +105,6 @@ members = [
     "sdk/package-metadata-macro",
     "sdk/program",
     "send-transaction-service",
-    "solana-transaction",
     "stake-accounts",
     "storage-bigtable",
     "storage-bigtable/build-proto",
@@ -113,6 +112,7 @@ members = [
     "streamer",
     "svm",
     "svm-conformance",
+    "svm-transaction",
     "test-validator",
     "thin-client",
     "tokens",
@@ -402,11 +402,11 @@ solana-storage-proto = { path = "storage-proto", version = "=2.1.0" }
 solana-streamer = { path = "streamer", version = "=2.1.0" }
 solana-svm = { path = "svm", version = "=2.1.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.1.0" }
+solana-svm-transaction = { path = "svm-transaction", version = "=2.1.0" }
 solana-system-program = { path = "programs/system", version = "=2.1.0" }
 solana-test-validator = { path = "test-validator", version = "=2.1.0" }
 solana-thin-client = { path = "thin-client", version = "=2.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.1.0", default-features = false }
-solana-transaction = { path = "solana-transaction", version = "=2.1.0" }
 solana-transaction-status = { path = "transaction-status", version = "=2.1.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.1.0" }
 solana-turbine = { path = "turbine", version = "=2.1.0" }

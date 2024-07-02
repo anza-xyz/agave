@@ -7509,6 +7509,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-svm-transaction"
+version = "2.1.0"
+dependencies = [
+ "solana-program",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-system-program"
 version = "2.1.0"
 dependencies = [
@@ -7644,14 +7652,6 @@ dependencies = [
  "solana-sdk",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "solana-transaction"
-version = "2.1.0"
-dependencies = [
- "solana-program",
- "solana-sdk",
 ]
 
 [[package]]
