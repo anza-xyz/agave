@@ -1,0 +1,63 @@
+# Why should I care about or use the pre-commit tool?
+#    Automate away your pre-commit and pre-push checks and steps.
+#    The longer and more nuanced answer is in the links below.
+#
+# Pre-commit Documentation: https://pre-commit.com/
+# Pre-commit hooks documentation: https://pre-commit.com/hooks.html
+#
+# Tool installation:
+#   $pip install pre-commit
+#
+# All pre-commit commands are to be run from the root dir of the repo,
+# or wherever the '.pre-commit-config.yaml' file is located.
+#
+# Hooks default (local) installation:
+#   $pre-commit install
+#
+# Hooks (local) removal:
+#   $pre-commit uninstall
+#
+# Install only a subset of the hooks:
+#   $pre-commit install --hook-type pre-commit
+#
+# Run default hooks manually:
+# This only works on staged un-committed files.
+# Unstaged files are stashed, the checks performed, then the stash is restored.
+#   $pre-commit run
+#
+# Run default hooks on all files in repo:
+#   $pre-commit run --all-files
+#
+# [For CI/DevOps only]
+# Hook repos version update (run in the root dir):
+#   $pre-commit autoupdate
+
+default_install_hook_types: [pre-commit, pre-push]
+
+default_stages: [pre-commit]
+
+repos:
+    # Rust hooks.
+    - repo: https://github.com/doublify/pre-commit-rust
+      rev: v1.0
+      hooks:
+        # FIXME: enable fmt hook when it no longer emits warnings with
+        # stable build. Currently it requires nightly build.
+        # Until then, devs should run `cargo +nightly fmt` manually.
+        #- id: fmt
+        - id: clippy
+          stages: [pre-push]
+        - id: cargo-check
+          stages: [pre-push]
+
+    # Language-agnostic hooks.
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v4.6.0
+      hooks:
+        - id: check-merge-conflict
+        - id: check-yaml
+        - id: check-toml
+        - id: end-of-file-fixer
+        - id: trailing-whitespace
+        - id: detect-private-key
+        - id: check-added-large-files
