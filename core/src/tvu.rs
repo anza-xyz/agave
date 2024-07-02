@@ -282,7 +282,6 @@ impl Tvu {
             wait_to_vote_slot,
             replay_forks_threads: tvu_config.replay_forks_threads,
             replay_transactions_threads: tvu_config.replay_transactions_threads,
-            in_wen_restart: wen_restart_repair_slots.is_some(),
         };
 
         let (voting_sender, voting_receiver) = unbounded();
