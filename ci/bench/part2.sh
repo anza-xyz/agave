@@ -14,6 +14,10 @@ _ cargo +"$rust_nightly" bench --manifest-path sdk/Cargo.toml ${V:+--verbose} \
 _ cargo +"$rust_nightly" bench --manifest-path runtime/Cargo.toml ${V:+--verbose} \
   -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
 
+# Run rbpf benches
+_ cargo +"$rust_nightly" bench --manifest-path rbpf/Cargo.toml ${V:+--verbose} \
+  -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
+
 (
   # solana-keygen required when building C programs
   _ cargo build --manifest-path=keygen/Cargo.toml
