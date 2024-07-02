@@ -6122,7 +6122,7 @@ dependencies = [
  "ed25519-dalek",
  "ed25519-dalek-bip32",
  "generic-array",
- "getrandom 0.1.14",
+ "getrandom 0.2.10",
  "hmac 0.12.1",
  "itertools 0.12.1",
  "js-sys",
