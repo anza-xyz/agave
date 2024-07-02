@@ -1,5 +1,6 @@
 use {
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_load_program_metrics_submit::submit_datapoint,
     solana_measure::measure::Measure,
     solana_program_runtime::{
         ic_logger_msg,
@@ -432,7 +433,7 @@ pub fn process_instruction_deploy(
         ic_logger_msg!(log_collector, "{}", err);
         InstructionError::InvalidAccountData
     })?;
-    load_program_metrics.submit_datapoint(&mut invoke_context.timings);
+    submit_datapoint(load_program_metrics, &mut invoke_context.timings);
     if let Some(mut source_program) = source_program {
         let rent = invoke_context.get_sysvar_cache().get_rent()?;
         let required_lamports = rent.minimum_balance(source_program.get_data().len());

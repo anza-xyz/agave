@@ -165,7 +165,7 @@ macro_rules! deploy_program {
         }
         $drop
         load_program_metrics.program_id = $program_id.to_string();
-        load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
+        ::solana_load_program_metrics_submit::submit_datapoint(load_program_metrics, &mut $invoke_context.timings);
         $invoke_context.program_cache_for_tx_batch.store_modified_entry($program_id, Arc::new(executor));
     }};
 }

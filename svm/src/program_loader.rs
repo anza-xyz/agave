@@ -1,5 +1,6 @@
 use {
     crate::transaction_processing_callback::TransactionProcessingCallback,
+    solana_load_program_metrics_submit::submit_datapoint,
     solana_program_runtime::{
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
@@ -213,7 +214,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     });
 
     let mut timings = ExecuteDetailsTimings::default();
-    load_program_metrics.submit_datapoint(&mut timings);
+    submit_datapoint(load_program_metrics, &mut timings);
     loaded_program.update_access_slot(slot);
     Some(Arc::new(loaded_program))
 }

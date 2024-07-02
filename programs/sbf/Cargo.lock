@@ -4670,6 +4670,7 @@ dependencies = [
  "scopeguard",
  "solana-compute-budget",
  "solana-curve25519",
+ "solana-load-program-metrics-submit",
  "solana-measure",
  "solana-poseidon",
  "solana-program-runtime",
@@ -5149,11 +5150,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-load-program-metrics-submit"
+version = "2.1.0"
+dependencies = [
+ "log",
+ "solana-metrics",
+ "solana-program-runtime",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-loader-v4-program"
 version = "2.1.0"
 dependencies = [
  "log",
  "solana-compute-budget",
+ "solana-load-program-metrics-submit",
  "solana-measure",
  "solana-program-runtime",
  "solana-sdk",
@@ -5339,7 +5351,6 @@ dependencies = [
  "serde",
  "solana-compute-budget",
  "solana-measure",
- "solana-metrics",
  "solana-sdk",
  "solana-type-overrides",
  "solana-vote",
@@ -6290,6 +6301,7 @@ dependencies = [
  "serde_derive",
  "solana-bpf-loader-program",
  "solana-compute-budget",
+ "solana-load-program-metrics-submit",
  "solana-loader-v4-program",
  "solana-measure",
  "solana-metrics",
