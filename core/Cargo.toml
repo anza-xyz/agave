@@ -68,6 +68,7 @@ solana-runtime = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk = { workspace = true }
 solana-send-transaction-service = { workspace = true }
+solana-short-vec = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-tpu-client = { workspace = true }

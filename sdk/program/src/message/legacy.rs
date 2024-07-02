@@ -22,9 +22,10 @@ use {
         instruction::{CompiledInstruction, Instruction},
         message::{compiled_keys::CompiledKeys, MessageHeader},
         pubkey::Pubkey,
-        short_vec, system_instruction, system_program, sysvar,
+        system_instruction, system_program, sysvar,
     },
     solana_sanitize::{Sanitize, SanitizeError},
+    solana_short_vec as short_vec,
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
 };
 

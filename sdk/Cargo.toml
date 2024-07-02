@@ -84,6 +84,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
+solana-short-vec = { workspace = true }
 thiserror = { workspace = true }
 uriparse = { workspace = true }
 

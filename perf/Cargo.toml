@@ -26,6 +26,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-metrics = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-sdk = { workspace = true }
+solana-short-vec = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [target."cfg(target_os = \"linux\")".dependencies]

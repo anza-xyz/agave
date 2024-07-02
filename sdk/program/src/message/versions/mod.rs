@@ -4,7 +4,6 @@ use {
         instruction::CompiledInstruction,
         message::{legacy::Message as LegacyMessage, v0::MessageAddressTableLookup, MessageHeader},
         pubkey::Pubkey,
-        short_vec,
     },
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
@@ -12,6 +11,7 @@ use {
     },
     serde_derive::{Deserialize, Serialize},
     solana_sanitize::{Sanitize, SanitizeError},
+    solana_short_vec as short_vec,
     std::{collections::HashSet, fmt},
 };
 

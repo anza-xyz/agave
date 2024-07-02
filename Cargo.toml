@@ -104,6 +104,7 @@ members = [
     "sdk/package-metadata-macro",
     "sdk/program",
     "send-transaction-service",
+    "short-vec",
     "stake-accounts",
     "storage-bigtable",
     "storage-bigtable/build-proto",
@@ -390,6 +391,7 @@ solana-runtime-transaction = { path = "runtime-transaction", version = "=2.1.0" 
 solana-sdk = { path = "sdk", version = "=2.1.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.1.0" }
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.1.0" }
+solana-short-vec = { path = "short-vec", version = "=2.1.0" }
 solana-stake-program = { path = "programs/stake", version = "=2.1.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.1.0" }
 solana-storage-proto = { path = "storage-proto", version = "=2.1.0" }
