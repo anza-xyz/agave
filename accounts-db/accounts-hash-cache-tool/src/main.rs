@@ -93,9 +93,8 @@ fn main() {
                                 .help("Accounts hash cache directory 2 to diff"),
                         )
                         .arg(
-                            Arg::with_name("then_diff_files") // <-- use same name as long
+                            Arg::with_name("then_diff_files")
                                 .long("then_diff_files")
-                                // remove .short(), since "f" is almost always used to mean "force"
                                 .takes_value(false)
                                 .help("After diff-ing the directories, diff the files that were found to have mismatches."),
                         ),
