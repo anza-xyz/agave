@@ -49,10 +49,6 @@ impl<T: SolanaMessage> SolanaMessage for &T {
         SolanaMessage::is_invoked(*self, key_index)
     }
 
-    fn has_duplicates(&self) -> bool {
-        SolanaMessage::has_duplicates(*self)
-    }
-
     fn num_lookup_tables(&self) -> usize {
         SolanaMessage::num_lookup_tables(*self)
     }

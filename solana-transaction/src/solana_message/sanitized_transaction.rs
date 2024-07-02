@@ -50,10 +50,6 @@ impl SolanaMessage for SanitizedTransaction {
         SolanaMessage::is_invoked(self.message(), key_index)
     }
 
-    fn has_duplicates(&self) -> bool {
-        SolanaMessage::has_duplicates(self.message())
-    }
-
     fn num_lookup_tables(&self) -> usize {
         SolanaMessage::num_lookup_tables(self.message())
     }

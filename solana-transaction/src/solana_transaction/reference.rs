@@ -1,10 +1,6 @@
 use {
     crate::SolanaTransaction,
-    solana_sdk::{
-        hash::Hash,
-        signature::Signature,
-        transaction::{TransactionAccountLocks, VersionedTransaction},
-    },
+    solana_sdk::{hash::Hash, signature::Signature, transaction::VersionedTransaction},
 };
 
 // For any type that implements `TransactionTrait`, a reference to that type
@@ -24,10 +20,6 @@ impl<T: SolanaTransaction> SolanaTransaction for &T {
 
     fn is_simple_vote_transaction(&self) -> bool {
         SolanaTransaction::is_simple_vote_transaction(*self)
-    }
-
-    fn get_account_locks_unchecked(&self) -> TransactionAccountLocks {
-        SolanaTransaction::get_account_locks_unchecked(*self)
     }
 
     fn to_versioned_transaction(&self) -> VersionedTransaction {

@@ -2,14 +2,10 @@ use {
     crate::{Instruction, MessageAddressTableLookup},
     core::fmt::Debug,
     solana_sdk::{
-        feature_set::FeatureSet,
         hash::Hash,
         message::{AccountKeys, TransactionSignatureDetails},
         nonce::NONCED_TX_MARKER_IX_INDEX,
-        precompiles::{get_precompiles, is_precompile},
         pubkey::Pubkey,
-        sysvar::instructions::{BorrowedAccountMeta, BorrowedInstruction},
-        transaction::TransactionError,
     },
 };
 
@@ -141,77 +137,9 @@ pub trait SolanaMessage: Clone + Debug {
             })
     }
 
-    /// Checks for duplicate accounts in the message
-    fn has_duplicates(&self) -> bool;
-
-    /// Decompile message instructions without cloning account keys
-    /// TODO: Remove this - there's an allocation!
-    fn decompile_instructions(&self) -> Vec<BorrowedInstruction> {
-        let account_keys = self.account_keys();
-        self.program_instructions_iter()
-            .map(|(program_id, instruction)| {
-                let accounts = instruction
-                    .accounts
-                    .iter()
-                    .map(|account_index| {
-                        let account_index = *account_index as usize;
-                        BorrowedAccountMeta {
-                            is_signer: self.is_signer(account_index),
-                            is_writable: self.is_writable(account_index),
-                            pubkey: account_keys.get(account_index).unwrap(),
-                        }
-                    })
-                    .collect();
-
-                BorrowedInstruction {
-                    accounts,
-                    data: instruction.data,
-                    program_id,
-                }
-            })
-            .collect()
-    }
-
-    /// Validate a transaction message against locked accounts
-    fn validate_account_locks(&self, tx_account_lock_limit: usize) -> Result<(), TransactionError> {
-        if self.has_duplicates() {
-            Err(TransactionError::AccountLoadedTwice)
-        } else if self.account_keys().len() > tx_account_lock_limit {
-            Err(TransactionError::TooManyAccountLocks)
-        } else {
-            Ok(())
-        }
-    }
-
     /// Get the number of lookup tables.
     fn num_lookup_tables(&self) -> usize;
 
     /// Get message address table lookups used in the message
     fn message_address_table_lookups(&self) -> impl Iterator<Item = MessageAddressTableLookup>;
-
-    /// Verify precompiles in the message
-    fn verify_precompiles(&self, feature_set: &FeatureSet) -> Result<(), TransactionError> {
-        let is_enabled = |feature_id: &Pubkey| feature_set.is_active(feature_id);
-        let has_precompiles = self
-            .program_instructions_iter()
-            .any(|(program_id, _)| is_precompile(program_id, is_enabled));
-
-        if has_precompiles {
-            let instructions_data: Vec<_> = self
-                .instructions_iter()
-                .map(|instruction| instruction.data)
-                .collect();
-            for (program_id, instruction) in self.program_instructions_iter() {
-                if let Some(precompile) = get_precompiles()
-                    .iter()
-                    .find(|precompile| precompile.check_id(program_id, is_enabled))
-                {
-                    precompile
-                        .verify(instruction.data, &instructions_data, feature_set)
-                        .map_err(|_| TransactionError::InvalidAccountIndex)?;
-                }
-            }
-        }
-        Ok(())
-    }
 }

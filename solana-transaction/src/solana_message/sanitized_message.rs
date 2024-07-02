@@ -54,10 +54,6 @@ impl SolanaMessage for SanitizedMessage {
         SanitizedMessage::is_invoked(self, key_index)
     }
 
-    fn has_duplicates(&self) -> bool {
-        SanitizedMessage::has_duplicates(self)
-    }
-
     fn num_lookup_tables(&self) -> usize {
         SanitizedMessage::message_address_table_lookups(self).len()
     }

@@ -3,7 +3,7 @@ use {
     solana_sdk::{
         hash::Hash,
         signature::Signature,
-        transaction::{SanitizedTransaction, TransactionAccountLocks, VersionedTransaction},
+        transaction::{SanitizedTransaction, VersionedTransaction},
     },
 };
 
@@ -22,10 +22,6 @@ impl SolanaTransaction for SanitizedTransaction {
 
     fn is_simple_vote_transaction(&self) -> bool {
         self.is_simple_vote_transaction()
-    }
-
-    fn get_account_locks_unchecked(&self) -> TransactionAccountLocks {
-        SanitizedTransaction::get_account_locks_unchecked(self)
     }
 
     fn to_versioned_transaction(&self) -> VersionedTransaction {
