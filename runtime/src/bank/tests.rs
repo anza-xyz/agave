@@ -1,6 +1,4 @@
 #![cfg(test)]
-#[allow(deprecated)]
-use solana_sdk::sysvar::fees::Fees;
 use {
     super::{
         test_utils::{goto_end_of_slot, update_vote_account_timestamp},
@@ -4251,22 +4249,6 @@ fn test_bank_cloned_stake_delegations() {
     let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
     assert_eq!(stake_delegations.len(), 2);
     assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
-}
-
-#[allow(deprecated)]
-#[test]
-fn test_bank_fees_account() {
-    let (mut genesis_config, _) = create_genesis_config(500);
-    genesis_config.fee_rate_governor = FeeRateGovernor::new(12345, 0);
-    let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-    let fees_account = bank.get_account(&sysvar::fees::id()).unwrap();
-    let fees = from_account::<Fees, _>(&fees_account).unwrap();
-    assert_eq!(
-        bank.fee_rate_governor.lamports_per_signature,
-        fees.fee_calculator.lamports_per_signature
-    );
-    assert_eq!(fees.fee_calculator.lamports_per_signature, 12345);
 }
 
 #[test]
