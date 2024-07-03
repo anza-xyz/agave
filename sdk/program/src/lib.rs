@@ -537,6 +537,7 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
+<<<<<<< HEAD
 #[deprecated(
     since = "1.17.0",
     note = "Please use `solana_sdk::address_lookup_table::AddressLookupTableAccount` instead"
@@ -545,6 +546,10 @@ pub mod address_lookup_table_account {
     pub use crate::address_lookup_table::AddressLookupTableAccount;
 }
 
+=======
+#[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
+pub use solana_sanitize as sanitize;
+>>>>>>> f681fe87d5 (Remove deprecated address_lookup_table_account re-export (#1972))
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
 
