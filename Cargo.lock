@@ -6206,6 +6206,7 @@ dependencies = [
  "serde",
  "solana-bench-tps",
  "solana-client",
+ "solana-connection-cache",
  "solana-core",
  "solana-faucet",
  "solana-gossip",
