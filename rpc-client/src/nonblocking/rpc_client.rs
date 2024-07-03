@@ -2082,6 +2082,7 @@ impl RpcClient {
                 use the stake account and StakeHistory sysvar to call \
                 `Delegation::stake_activating_and_deactivating()` instead"
     )]
+    #[allow(deprecated)]
     pub async fn get_stake_activation(
         &self,
         stake_account: Pubkey,
