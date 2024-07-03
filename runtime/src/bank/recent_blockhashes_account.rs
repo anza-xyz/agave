@@ -15,15 +15,8 @@ use {
     std::{collections::BinaryHeap, iter::FromIterator},
 };
 
-#[deprecated(
-    since = "1.9.0",
-    note = "Please do not use, will no longer be available in the future"
-)]
 #[allow(deprecated)]
-pub fn update_account<'a, I>(
-    account: &mut AccountSharedData,
-    recent_blockhash_iter: I,
-) -> Option<()>
+fn update_account<'a, I>(account: &mut AccountSharedData, recent_blockhash_iter: I) -> Option<()>
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
@@ -50,12 +43,8 @@ where
     create_account_with_data_and_fields(recent_blockhash_iter, (lamports, INITIAL_RENT_EPOCH))
 }
 
-#[deprecated(
-    since = "1.9.0",
-    note = "Please do not use, will no longer be available in the future"
-)]
 #[allow(deprecated)]
-pub fn create_account_with_data_and_fields<'a, I>(
+pub(in crate::bank) fn create_account_with_data_and_fields<'a, I>(
     recent_blockhash_iter: I,
     fields: InheritableAccountFields,
 ) -> AccountSharedData
