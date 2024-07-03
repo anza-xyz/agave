@@ -190,6 +190,7 @@ pub struct StreamStats {
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
+    pub(crate) timeout_streams: AtomicUsize,
     pub(crate) connection_rate_limiter_length: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
@@ -477,6 +478,11 @@ impl StreamStats {
             (
                 "throttled_unstaked_streams",
                 self.throttled_unstaked_streams.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "timeout_streams",
+                self.timeout_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
             (

@@ -950,104 +950,106 @@ async fn handle_connection(
     let stable_id = connection.stable_id();
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
     while !stream_exit.load(Ordering::Relaxed) {
-        if let Ok(stream) =
+        let Ok(stream) =
             tokio::time::timeout(WAIT_FOR_STREAM_TIMEOUT, connection.accept_uni()).await
-        {
-            match stream {
-                Ok(mut stream) => {
-                    let max_streams_per_throttling_interval = stream_load_ema
-                        .available_load_capacity_in_throttling_duration(
-                            params.peer_type,
-                            params.total_stake,
-                        );
+        else {
+            stats.timeout_streams.fetch_add(1, Ordering::Relaxed);
+            continue;
+        };
 
-                    let throttle_interval_start =
-                        stream_counter.reset_throttling_params_if_needed();
-                    let streams_read_in_throttle_interval =
-                        stream_counter.stream_count.load(Ordering::Relaxed);
-                    if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
-                        // The peer is sending faster than we're willing to read. Sleep for what's
-                        // left of this read interval so the peer backs off.
-                        let throttle_duration = STREAM_THROTTLING_INTERVAL
-                            .saturating_sub(throttle_interval_start.elapsed());
+        match stream {
+            Ok(mut stream) => {
+                let max_streams_per_throttling_interval = stream_load_ema
+                    .available_load_capacity_in_throttling_duration(
+                        params.peer_type,
+                        params.total_stake,
+                    );
 
-                        if !throttle_duration.is_zero() {
-                            debug!("Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
+                let throttle_interval_start = stream_counter.reset_throttling_params_if_needed();
+                let streams_read_in_throttle_interval =
+                    stream_counter.stream_count.load(Ordering::Relaxed);
+                if streams_read_in_throttle_interval >= max_streams_per_throttling_interval {
+                    // The peer is sending faster than we're willing to read. Sleep for what's
+                    // left of this read interval so the peer backs off.
+                    let throttle_duration = STREAM_THROTTLING_INTERVAL
+                        .saturating_sub(throttle_interval_start.elapsed());
+
+                    if !throttle_duration.is_zero() {
+                        debug!("Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
                                     max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
                                     throttle_duration: {throttle_duration:?}",
                                     params.peer_type, params.total_stake);
-                            stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
-                            match params.peer_type {
-                                ConnectionPeerType::Unstaked => {
-                                    stats
-                                        .throttled_unstaked_streams
-                                        .fetch_add(1, Ordering::Relaxed);
-                                }
-                                ConnectionPeerType::Staked(_) => {
-                                    stats
-                                        .throttled_staked_streams
-                                        .fetch_add(1, Ordering::Relaxed);
-                                }
+                        stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
+                        match params.peer_type {
+                            ConnectionPeerType::Unstaked => {
+                                stats
+                                    .throttled_unstaked_streams
+                                    .fetch_add(1, Ordering::Relaxed);
                             }
-                            sleep(throttle_duration).await;
+                            ConnectionPeerType::Staked(_) => {
+                                stats
+                                    .throttled_staked_streams
+                                    .fetch_add(1, Ordering::Relaxed);
+                            }
                         }
+                        sleep(throttle_duration).await;
                     }
-                    stream_load_ema.increment_load(params.peer_type);
-                    stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
-                    stats.total_streams.fetch_add(1, Ordering::Relaxed);
-                    stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
-                    let stream_exit = stream_exit.clone();
-                    let stats = stats.clone();
-                    let packet_sender = params.packet_sender.clone();
-                    let last_update = last_update.clone();
-                    let stream_load_ema = stream_load_ema.clone();
-                    tokio::spawn(async move {
-                        let mut maybe_batch = None;
-                        // The min is to guard against a value too small which can wake up unnecessarily
-                        // frequently and wasting CPU cycles. The max guard against waiting for too long
-                        // which delay exit and cause some test failures when the timeout value is large.
-                        // Within this value, the heuristic is to wake up 10 times to check for exit
-                        // for the set timeout if there are no data.
-                        let exit_check_interval = (wait_for_chunk_timeout / 10)
-                            .clamp(Duration::from_millis(10), Duration::from_secs(1));
-                        let mut start = Instant::now();
-                        while !stream_exit.load(Ordering::Relaxed) {
-                            if let Ok(chunk) = tokio::time::timeout(
-                                exit_check_interval,
-                                stream.read_chunk(PACKET_DATA_SIZE, true),
+                }
+                stream_load_ema.increment_load(params.peer_type);
+                stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
+                stats.total_streams.fetch_add(1, Ordering::Relaxed);
+                stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
+                let stream_exit = stream_exit.clone();
+                let stats = stats.clone();
+                let packet_sender = params.packet_sender.clone();
+                let last_update = last_update.clone();
+                let stream_load_ema = stream_load_ema.clone();
+                tokio::spawn(async move {
+                    let mut maybe_batch = None;
+                    // The min is to guard against a value too small which can wake up unnecessarily
+                    // frequently and wasting CPU cycles. The max guard against waiting for too long
+                    // which delay exit and cause some test failures when the timeout value is large.
+                    // Within this value, the heuristic is to wake up 10 times to check for exit
+                    // for the set timeout if there are no data.
+                    let exit_check_interval = (wait_for_chunk_timeout / 10)
+                        .clamp(Duration::from_millis(10), Duration::from_secs(1));
+                    let mut start = Instant::now();
+                    while !stream_exit.load(Ordering::Relaxed) {
+                        if let Ok(chunk) = tokio::time::timeout(
+                            exit_check_interval,
+                            stream.read_chunk(PACKET_DATA_SIZE, true),
+                        )
+                        .await
+                        {
+                            if handle_chunk(
+                                chunk,
+                                &mut maybe_batch,
+                                &remote_addr,
+                                &packet_sender,
+                                stats.clone(),
+                                params.peer_type,
                             )
                             .await
                             {
-                                if handle_chunk(
-                                    chunk,
-                                    &mut maybe_batch,
-                                    &remote_addr,
-                                    &packet_sender,
-                                    stats.clone(),
-                                    params.peer_type,
-                                )
-                                .await
-                                {
-                                    last_update.store(timing::timestamp(), Ordering::Relaxed);
-                                    break;
-                                }
-                                start = Instant::now();
-                            } else if start.elapsed() > wait_for_chunk_timeout {
-                                debug!("Timeout in receiving on stream");
-                                stats
-                                    .total_stream_read_timeouts
-                                    .fetch_add(1, Ordering::Relaxed);
+                                last_update.store(timing::timestamp(), Ordering::Relaxed);
                                 break;
                             }
+                            start = Instant::now();
+                        } else if start.elapsed() > wait_for_chunk_timeout {
+                            debug!("Timeout in receiving on stream");
+                            stats
+                                .total_stream_read_timeouts
+                                .fetch_add(1, Ordering::Relaxed);
+                            break;
                         }
-                        stats.total_streams.fetch_sub(1, Ordering::Relaxed);
-                        stream_load_ema.update_ema_if_needed();
-                    });
-                }
-                Err(e) => {
-                    debug!("stream error: {:?}", e);
-                    break;
-                }
+                    }
+                    stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+                    stream_load_ema.update_ema_if_needed();
+                });
+            }
+            Err(e) => {
+                debug!("stream error: {:?}", e);
+                break;
             }
         }
     }
