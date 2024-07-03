@@ -7342,6 +7342,7 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "solana-client",
+ "solana-connection-cache",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
