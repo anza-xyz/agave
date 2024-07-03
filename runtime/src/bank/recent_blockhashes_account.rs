@@ -1,11 +1,11 @@
 //! Helpers for the recent blockhashes sysvar.
 
 #[allow(deprecated)]
-use solana_program::sysvar::recent_blockhashes::{
+use solana_sdk::sysvar::recent_blockhashes::{
     IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES,
 };
 use {
-    crate::{
+    solana_sdk::{
         account::{
             create_account_shared_data_with_fields, to_account, AccountSharedData,
             InheritableAccountFields, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
@@ -87,9 +87,9 @@ mod tests {
     #![allow(deprecated)]
     use {
         super::*,
-        crate::account::from_account,
         rand::{seq::SliceRandom, thread_rng},
-        solana_program::{
+        solana_sdk::{
+            account::from_account,
             hash::{Hash, HASH_BYTES},
             sysvar::recent_blockhashes::Entry,
         },
