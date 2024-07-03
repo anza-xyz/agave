@@ -31,6 +31,7 @@ Release channels have their own copy of this changelog:
     getFeeCalculatorForBlockhash, getFeeRateGovernor, getSnapshotSlot getStakeActivation
   * `--enable-rpc-obsolete_v1_7` flag removed
   * Deprecated methods are removed from `RpcClient` and `RpcClient::nonblocking`
+  * `solana-client`: deprecated re-exports removed; please import `solana-connection-cache`, `solana-quic-client`, or `solana-udp-client` directly
 * Changes
   * `central-scheduler` as default option for `--block-production-method` (#34891)
   * `solana-rpc-client-api`: `RpcFilterError` depends on `base64` version 0.22, so users may need to upgrade to `base64` version 0.22
