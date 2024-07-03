@@ -48,15 +48,8 @@ use {
     solana_ledger::shred::Shred,
     solana_measure::measure::Measure,
     solana_net_utils::{
-<<<<<<< HEAD
         bind_common, bind_common_in_range, bind_in_range, bind_two_in_range_with_offset,
-        find_available_port_in_range, multi_bind_in_range, PortRange,
-=======
-        bind_common, bind_common_in_range, bind_in_range, bind_in_range_with_config,
-        bind_more_with_config, bind_two_in_range_with_offset_and_config,
-        find_available_port_in_range, multi_bind_in_range, PortRange, SocketConfig,
-        VALIDATOR_PORT_RANGE,
->>>>>>> efdbdc00ce (Remove assorted deprecated symbols (#1995))
+        find_available_port_in_range, multi_bind_in_range, PortRange, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
