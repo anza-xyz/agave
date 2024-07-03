@@ -2,7 +2,6 @@
 
 pub mod connection_cache;
 pub mod nonblocking;
-pub mod quic_client;
 pub mod send_and_confirm_transactions_in_parallel;
 pub mod thin_client;
 pub mod tpu_client;
