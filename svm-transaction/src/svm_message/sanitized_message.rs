@@ -22,11 +22,13 @@ impl SVMMessage for SanitizedMessage {
     }
 
     fn num_instructions(&self) -> usize {
-        self.instructions().len()
+        SanitizedMessage::instructions(self).len()
     }
 
     fn instructions_iter(&self) -> impl Iterator<Item = Instruction> {
-        self.instructions().iter().map(Instruction::from)
+        SanitizedMessage::instructions(self)
+            .iter()
+            .map(Instruction::from)
     }
 
     fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, Instruction)> {

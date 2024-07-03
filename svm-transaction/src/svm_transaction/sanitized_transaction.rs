@@ -9,19 +9,19 @@ use {
 
 impl SVMTransaction for SanitizedTransaction {
     fn signature(&self) -> &Signature {
-        self.signatures().first().unwrap()
+        SanitizedTransaction::signature(self)
     }
 
     fn signatures(&self) -> &[Signature] {
-        self.signatures()
+        SanitizedTransaction::signatures(self)
     }
 
     fn message_hash(&self) -> &Hash {
-        self.message_hash()
+        SanitizedTransaction::message_hash(self)
     }
 
     fn is_simple_vote_transaction(&self) -> bool {
-        self.is_simple_vote_transaction()
+        SanitizedTransaction::is_simple_vote_transaction(self)
     }
 
     fn to_versioned_transaction(&self) -> VersionedTransaction {
