@@ -30,19 +30,6 @@ where
     to_account(&recent_blockhashes, account)
 }
 
-#[deprecated(
-    since = "1.5.17",
-    note = "Please use `create_account_with_data_for_test` instead"
-)]
-#[allow(deprecated)]
-pub fn create_account_with_data<'a, I>(lamports: u64, recent_blockhash_iter: I) -> AccountSharedData
-where
-    I: IntoIterator<Item = IterItem<'a>>,
-{
-    #[allow(deprecated)]
-    create_account_with_data_and_fields(recent_blockhash_iter, (lamports, INITIAL_RENT_EPOCH))
-}
-
 #[allow(deprecated)]
 pub(in crate::bank) fn create_account_with_data_and_fields<'a, I>(
     recent_blockhash_iter: I,
