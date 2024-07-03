@@ -6103,6 +6103,7 @@ dependencies = [
  "solana-bloom",
  "solana-client",
  "solana-compute-budget",
+ "solana-connection-cache",
  "solana-core",
  "solana-cost-model",
  "solana-entry",
