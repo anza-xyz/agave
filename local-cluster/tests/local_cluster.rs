@@ -1793,12 +1793,9 @@ fn test_validator_saves_tower() {
 
     // Wait for the first new root
     let last_replayed_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
         if let Ok(root) = validator_client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::root())
+            .get_slot_with_commitment(CommitmentConfig::finalized())
         {
             trace!("current root: {}", root);
             if root > 0 {
@@ -1825,12 +1822,9 @@ fn test_validator_saves_tower() {
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
         if let Ok(root) = validator_client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::root())
+            .get_slot_with_commitment(CommitmentConfig::finalized())
         {
             trace!(
                 "current root: {}, last_replayed_root: {}",
@@ -1861,12 +1855,9 @@ fn test_validator_saves_tower() {
 
     // Wait for another new root
     let new_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
         if let Ok(root) = validator_client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::root())
+            .get_slot_with_commitment(CommitmentConfig::finalized())
         {
             trace!("current root: {}, last tower root: {}", root, tower3_root);
             if root > tower3_root {
