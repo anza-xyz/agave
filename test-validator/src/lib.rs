@@ -307,11 +307,6 @@ impl TestValidatorGenesis {
         self
     }
 
-    #[deprecated(note = "Please use `compute_unit_limit` instead")]
-    pub fn max_compute_units(&mut self, max_compute_units: u64) -> &mut Self {
-        self.compute_unit_limit(max_compute_units)
-    }
-
     /// Add an account to the test environment
     pub fn add_account(&mut self, address: Pubkey, account: AccountSharedData) -> &mut Self {
         self.accounts.insert(address, account);
