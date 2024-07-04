@@ -2,11 +2,10 @@
 //!
 //! Within the SBF environment, these are implemented as syscalls and executed by
 //! the runtime in native code.
-#[cfg(target_os = "solana")]
-use solana_define_syscall::define_syscall;
 
 #[cfg(target_os = "solana")]
 pub mod syscalls {
+    use solana_define_syscall::define_syscall;
     define_syscall!(fn sol_memcpy_(dst: *mut u8, src: *const u8, n: u64));
     define_syscall!(fn sol_memmove_(dst: *mut u8, src: *const u8, n: u64));
     define_syscall!(fn sol_memcmp_(s1: *const u8, s2: *const u8, n: u64, result: *mut i32));
