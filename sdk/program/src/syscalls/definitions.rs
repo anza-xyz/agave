@@ -2,6 +2,11 @@
 pub use solana_define_syscall::sys_hash;
 #[deprecated(
     since = "2.1.0",
+    note = "Use `solana_program_memory::syscalls` instead"
+)]
+pub use solana_program_memory::syscalls::{sol_memcmp_, sol_memcpy_, sol_memmove_, sol_memset_};
+#[deprecated(
+    since = "2.1.0",
     note = "Use `solana_secp256k1_recover::sol_secp256k1_recover` instead"
 )]
 pub use solana_secp256k1_recover::sol_secp256k1_recover;
