@@ -215,6 +215,7 @@ pub struct ValidatorConfig {
     pub rpc_config: JsonRpcConfig,
     /// Specifies which plugins to start up with
     pub on_start_geyser_plugin_config_files: Option<Vec<PathBuf>>,
+    pub skip_notify_account_restore_from_snapshot: bool,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: SnapshotConfig,
@@ -290,6 +291,7 @@ impl Default for ValidatorConfig {
             account_snapshot_paths: Vec::new(),
             rpc_config: JsonRpcConfig::default(),
             on_start_geyser_plugin_config_files: None,
+            skip_notify_account_restore_from_snapshot: false,
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default(),
             snapshot_config: SnapshotConfig::new_load_only(),
@@ -545,6 +547,7 @@ impl Validator {
                         confirmed_bank_receiver,
                         geyser_plugin_config_files,
                         rpc_to_plugin_manager_receiver_and_exit,
+                        config.skip_notify_account_restore_from_snapshot,
                     )
                     .map_err(|err| format!("Failed to load the Geyser plugin: {err:?}"))?,
                 )

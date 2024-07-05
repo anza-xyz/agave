@@ -55,8 +55,9 @@ impl GeyserPluginService {
     pub fn new(
         confirmed_bank_receiver: Receiver<SlotNotification>,
         geyser_plugin_config_files: &[PathBuf],
+        skip_notify_account_restore_from_snapshot: bool,
     ) -> Result<Self, GeyserPluginServiceError> {
-        Self::new_with_receiver(confirmed_bank_receiver, geyser_plugin_config_files, None)
+        Self::new_with_receiver(confirmed_bank_receiver, geyser_plugin_config_files, None, skip_notify_account_restore_from_snapshot)
     }
 
     pub fn new_with_receiver(
@@ -66,6 +67,7 @@ impl GeyserPluginService {
             Receiver<GeyserPluginManagerRequest>,
             Arc<AtomicBool>,
         )>,
+        skip_notify_account_restore_from_snapshot: bool,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!(
             "Starting GeyserPluginService from config files: {:?}",
@@ -86,7 +88,7 @@ impl GeyserPluginService {
         let accounts_update_notifier: Option<AccountsUpdateNotifier> =
             if account_data_notifications_enabled {
                 let accounts_update_notifier =
-                    AccountsUpdateNotifierImpl::new(plugin_manager.clone());
+                    AccountsUpdateNotifierImpl::new(plugin_manager.clone(), skip_notify_account_restore_from_snapshot);
                 Some(Arc::new(accounts_update_notifier))
             } else {
                 None

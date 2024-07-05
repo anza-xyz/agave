@@ -1179,6 +1179,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Specify the configuration file for the Geyser plugin."),
         )
         .arg(
+            Arg::with_name("skip_notify_account_restore_from_snapshot")
+                .long("skip-notify-account-restore-from-snapshot")
+                .help("Do not notify geyser plugins about account updates during restore from snapshot"),
+        )
+        .arg(
             Arg::with_name("snapshot_archive_format")
                 .long("snapshot-archive-format")
                 .alias("snapshot-compression") // Legacy name used by Solana v1.5.x and older

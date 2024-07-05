@@ -22,6 +22,7 @@ use {
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    skip_notify_account_restore_from_snapshot: bool,
 }
 
 impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
@@ -94,11 +95,21 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             );
         }
     }
+
+    fn should_skip_notify_account_restore_from_snapshot(&self) -> bool {
+        self.skip_notify_account_restore_from_snapshot
+    }
 }
 
 impl AccountsUpdateNotifierImpl {
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
-        AccountsUpdateNotifierImpl { plugin_manager }
+    pub fn new(
+        plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+        skip_notify_account_restore_from_snapshot: bool,
+    ) -> Self {
+        AccountsUpdateNotifierImpl {
+            plugin_manager,
+            skip_notify_account_restore_from_snapshot,
+        }
     }
 
     fn accountinfo_from_shared_account_data<'a>(

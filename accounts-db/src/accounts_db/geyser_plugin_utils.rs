@@ -39,7 +39,13 @@ impl AccountsDb {
     /// in the reverse order of the slots so that an account is only streamed once. At a slot, if the accounts is updated
     /// multiple times only the last write (with highest write_version) is notified.
     pub fn notify_account_restore_from_snapshot(&self) {
-        if self.accounts_update_notifier.is_none() {
+        if self
+            .accounts_update_notifier
+            .as_ref()
+            .map_or(true, |notifier| {
+                notifier.should_skip_notify_account_restore_from_snapshot()
+            })
+        {
             return;
         }
 
@@ -224,6 +230,10 @@ pub mod tests {
 
         fn notify_end_of_restore_from_snapshot(&self) {
             self.is_startup_done.store(true, Ordering::Relaxed);
+        }
+
+        fn should_skip_notify_account_restore_from_snapshot(&self) -> bool {
+            false
         }
     }
 
