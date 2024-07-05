@@ -7023,6 +7023,7 @@ impl Bank {
             .transaction_processor
             .get_environments_for_epoch(effective_epoch)?;
         load_program_with_pubkey(self, &environments, pubkey, self.slot(), reload)
+            .map(|(program, _last_written_slot)| program)
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {

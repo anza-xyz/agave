@@ -568,7 +568,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 let program_to_store = program_to_load.map(|(key, count)| {
                     // Load, verify and compile one program.
-                    let program = load_program_with_pubkey(
+                    let (program, last_written_slot) = load_program_with_pubkey(
                         callback,
                         &program_cache.get_environments_for_epoch(self.epoch),
                         &key,
@@ -577,7 +577,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
                     program.tx_usage_counter.store(count, Ordering::Relaxed);
-                    (key, program)
+                    (key, program, last_written_slot)
                 });
 
                 let task_waiter = Arc::clone(&program_cache.loading_task_waiter);
@@ -585,7 +585,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 // Unlock the global cache again.
             };
 
-            if let Some((key, program)) = program_to_store {
+            if let Some((key, program, _last_written_slot)) = program_to_store {
                 let mut program_cache = self.program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if program_cache.finish_cooperative_loading_task(self.slot, key, program)
@@ -639,7 +639,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .read()
                     .unwrap()
                     .get_environments_for_epoch(effective_epoch);
-                if let Some(recompiled) = load_program_with_pubkey(
+                if let Some((recompiled, _last_written_slot)) = load_program_with_pubkey(
                     callbacks,
                     &environments_for_epoch,
                     &key,

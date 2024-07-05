@@ -68,11 +68,11 @@ pub(crate) fn load_program_from_bytes(
 pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
-) -> Option<ProgramAccountLoadResult> {
+) -> Option<(ProgramAccountLoadResult, Slot)> {
     let (program_account, last_written_slot) = callbacks.get_account_shared_data(pubkey)?;
 
     if loader_v4::check_id(program_account.owner()) {
-        return Some(
+        return Some((
             solana_loader_v4_program::get_state(program_account.data())
                 .ok()
                 .and_then(|state| {
@@ -82,15 +82,22 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                 .unwrap_or(ProgramAccountLoadResult::InvalidAccountData(
                     ProgramCacheEntryOwner::LoaderV4,
                 )),
-        );
+            last_written_slot,
+        ));
     }
 
     if bpf_loader_deprecated::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV1(program_account));
+        return Some((
+            ProgramAccountLoadResult::ProgramOfLoaderV1(program_account),
+            last_written_slot,
+        ));
     }
 
     if bpf_loader::check_id(program_account.owner()) {
-        return Some(ProgramAccountLoadResult::ProgramOfLoaderV2(program_account));
+        return Some((
+            ProgramAccountLoadResult::ProgramOfLoaderV2(program_account),
+            last_written_slot,
+        ));
     }
 
     if let Ok(UpgradeableLoaderState::Program {
@@ -105,16 +112,20 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
                 upgrade_authority_address: _,
             }) = programdata_account.state()
             {
-                return Some(ProgramAccountLoadResult::ProgramOfLoaderV3(
-                    program_account,
-                    programdata_account,
-                    slot,
+                return Some((
+                    ProgramAccountLoadResult::ProgramOfLoaderV3(
+                        program_account,
+                        programdata_account,
+                        slot,
+                    ),
+                    last_written_slot,
                 ));
             }
         }
     }
-    Some(ProgramAccountLoadResult::InvalidAccountData(
-        ProgramCacheEntryOwner::LoaderV3,
+    Some((
+        ProgramAccountLoadResult::InvalidAccountData(ProgramCacheEntryOwner::LoaderV3),
+        last_written_slot,
     ))
 }
 
@@ -129,13 +140,14 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     pubkey: &Pubkey,
     slot: Slot,
     reload: bool,
-) -> Option<Arc<ProgramCacheEntry>> {
+) -> Option<(Arc<ProgramCacheEntry>, Slot)> {
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: pubkey.to_string(),
         ..LoadProgramMetrics::default()
     };
 
-    let loaded_program = match load_program_accounts(callbacks, pubkey)? {
+    let (load_result, last_written_slot) = load_program_accounts(callbacks, pubkey)?;
+    let loaded_program = match load_result {
         ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
             ProgramCacheEntry::new_tombstone(slot, owner, ProgramCacheEntryType::Closed),
         ),
@@ -217,7 +229,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     let mut timings = ExecuteDetailsTimings::default();
     load_program_metrics.submit_datapoint(&mut timings);
     loaded_program.update_access_slot(slot);
-    Some(Arc::new(loaded_program))
+    Some((Arc::new(loaded_program), last_written_slot))
 }
 
 /// Find the slot in which the program was most recently modified.
@@ -338,7 +350,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         account_data.set_data(Vec::new());
@@ -351,7 +363,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
     }
 
@@ -369,7 +381,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         account_data.set_data(vec![0; 64]);
@@ -380,7 +392,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
-            Some(ProgramAccountLoadResult::InvalidAccountData(_))
+            Some((ProgramAccountLoadResult::InvalidAccountData(_), _))
         ));
 
         let loader_data = LoaderV4State {
@@ -402,7 +414,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key);
 
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV4(data, slot)) => {
+            Some((ProgramAccountLoadResult::ProgramOfLoaderV4(data, slot), _)) => {
                 assert_eq!(data, account_data);
                 assert_eq!(slot, 25);
             }
@@ -424,8 +436,8 @@ mod tests {
 
         let result = load_program_accounts(&mock_bank, &key);
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV1(data))
-            | Some(ProgramAccountLoadResult::ProgramOfLoaderV2(data)) => {
+            Some((ProgramAccountLoadResult::ProgramOfLoaderV1(data), _))
+            | Some((ProgramAccountLoadResult::ProgramOfLoaderV2(data), _)) => {
                 assert_eq!(data, account_data);
             }
             _ => panic!("Invalid result"),
@@ -464,7 +476,7 @@ mod tests {
         let result = load_program_accounts(&mock_bank, &key1);
 
         match result {
-            Some(ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, slot)) => {
+            Some((ProgramAccountLoadResult::ProgramOfLoaderV3(data1, data2, slot), _)) => {
                 assert_eq!(data1, account_data);
                 assert_eq!(data2, account_data2);
                 assert_eq!(slot, 25);
@@ -568,7 +580,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap().0, Arc::new(loaded_program));
     }
 
     #[test]
@@ -601,7 +613,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap().0, Arc::new(loaded_program));
 
         let buffer = load_test_program();
         account_data.set_data(buffer);
@@ -630,7 +642,7 @@ mod tests {
             false,
         );
 
-        assert_eq!(result.unwrap(), Arc::new(expected.unwrap()));
+        assert_eq!(result.unwrap().0, Arc::new(expected.unwrap()));
     }
 
     #[test]
@@ -681,7 +693,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap().0, Arc::new(loaded_program));
 
         let mut buffer = load_test_program();
         let mut header = bincode::serialize(&state).unwrap();
@@ -723,7 +735,7 @@ mod tests {
             environments.program_runtime_v1.clone(),
             false,
         );
-        assert_eq!(result.unwrap(), Arc::new(expected.unwrap()));
+        assert_eq!(result.unwrap().0, Arc::new(expected.unwrap()));
     }
 
     #[test]
@@ -767,7 +779,7 @@ mod tests {
                     .program_runtime_v1,
             ),
         );
-        assert_eq!(result.unwrap(), Arc::new(loaded_program));
+        assert_eq!(result.unwrap().0, Arc::new(loaded_program));
 
         let mut header = account_data.data().to_vec();
         let mut complement =
@@ -808,7 +820,7 @@ mod tests {
             environments.program_runtime_v1.clone(),
             false,
         );
-        assert_eq!(result.unwrap(), Arc::new(expected.unwrap()));
+        assert_eq!(result.unwrap().0, Arc::new(expected.unwrap()));
     }
 
     #[test]
@@ -840,7 +852,8 @@ mod tests {
                 200,
                 false,
             )
-            .unwrap();
+            .unwrap()
+            .0;
             assert_ne!(
                 is_upcoming_env,
                 Arc::ptr_eq(

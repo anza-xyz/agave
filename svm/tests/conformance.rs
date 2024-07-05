@@ -437,7 +437,8 @@ fn execute_fixture_as_instr(
         42,
         false,
     )
-    .unwrap();
+    .unwrap()
+    .0;
 
     loaded_programs.replenish(program_id, loaded_program);
     loaded_programs.replenish(
