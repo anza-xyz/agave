@@ -1022,7 +1022,8 @@ mod tests {
         };
 
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
-        let (results, _) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        let (results, self_conflicting_batch) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert_eq!(self_conflicting_batch, false);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
     }
 
@@ -1050,7 +1051,9 @@ mod tests {
             };
 
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
-            let (results, _) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+            let (results, self_conflicting_batch) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+            assert_eq!(self_conflicting_batch, false);
+
             assert_eq!(results, vec![Ok(())]);
             accounts.unlock_accounts(txs.iter().zip(&results));
         }
@@ -1072,7 +1075,8 @@ mod tests {
             };
 
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
-            let (results, _) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+            let (results, self_conflicting_batch) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+            assert_eq!(self_conflicting_batch, false);
             assert_eq!(results[0], Err(TransactionError::TooManyAccountLocks));
         }
     }
@@ -1106,9 +1110,10 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let (results0, _) =
+        let (results0, self_conflicting_batch) =
             accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, false);
 
+        assert_eq!(self_conflicting_batch, false);
         assert_eq!(results0, vec![Ok(())]);
         assert!(accounts
             .account_locks
@@ -1137,7 +1142,8 @@ mod tests {
         );
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
         let txs = vec![tx0, tx1];
-        let (results1, _) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        let (results1, self_conflicting_batch) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert_eq!(self_conflicting_batch, false);
         assert_eq!(
             results1,
             vec![
@@ -1163,7 +1169,8 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let (results2, _) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        let (results2, self_conflicting_batch) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert_eq!(self_conflicting_batch, false);
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -1372,7 +1379,8 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair3], message, Hash::default());
-        let (results0, _) = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
+        let (results0, self_conflicting_batch) = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
+        assert_eq!(self_conflicting_batch, false);
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -1395,10 +1403,9 @@ mod tests {
         );
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
         let txs = vec![tx0, tx1];
-        let (results1, self_conflicting_batch) =
-            accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, true);
-
-        assert_eq!(self_conflicting_batch, true);
+        let (results1, self_conflicting_batch) = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, true);
+        
+        assert_eq!(self_conflicting_batch, false);
         assert_eq!(
             results1,
             vec![
@@ -1426,7 +1433,8 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let (results2, _) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        let (results2, self_conflicting_batch) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert_eq!(self_conflicting_batch, false);
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -1550,8 +1558,8 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let (results0, _) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
-
+        let (results0, self_conflicting_batch) = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert_eq!(self_conflicting_batch, false);
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
         assert!(accounts
