@@ -31,12 +31,12 @@ impl ForkGraph for MockForkGraph {
 #[derive(Default)]
 pub struct MockBankCallback {
     pub feature_set: Arc<FeatureSet>,
-    pub account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
+    pub account_shared_data: RefCell<HashMap<Pubkey, (AccountSharedData, Slot)>>,
 }
 
 impl TransactionProcessingCallback for MockBankCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        if let Some(data) = self.account_shared_data.borrow().get(account) {
+        if let Some((data, _last_written_slot)) = self.account_shared_data.borrow().get(account) {
             if data.lamports() == 0 {
                 None
             } else {
@@ -47,7 +47,7 @@ impl TransactionProcessingCallback for MockBankCallback {
         }
     }
 
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.account_shared_data.borrow().get(pubkey).cloned()
     }
 
@@ -56,7 +56,7 @@ impl TransactionProcessingCallback for MockBankCallback {
 
         self.account_shared_data
             .borrow_mut()
-            .insert(*program_id, account_data);
+            .insert(*program_id, (account_data, 0));
     }
 }
 

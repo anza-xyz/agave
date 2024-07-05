@@ -430,7 +430,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         })?;
 
         let fee_payer_address = message.fee_payer();
-        let Some(mut fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
+        let Some((mut fee_payer_account, _last_written_slot)) =
+            callbacks.get_account_shared_data(fee_payer_address)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
@@ -947,7 +948,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) {
         let mut sysvar_cache = self.sysvar_cache.write().unwrap();
         sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-            if let Some(account) = callbacks.get_account_shared_data(pubkey) {
+            if let Some((account, _last_written_slot)) = callbacks.get_account_shared_data(pubkey) {
                 set_sysvar(account.data());
             }
         });
@@ -1037,12 +1038,14 @@ mod tests {
 
     #[derive(Default, Clone)]
     pub struct MockBankCallback {
-        pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
+        pub account_shared_data: Arc<RwLock<HashMap<Pubkey, (AccountSharedData, Slot)>>>,
     }
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
+            if let Some((data, _last_written_slot)) =
+                self.account_shared_data.read().unwrap().get(account)
+            {
                 if data.lamports() == 0 {
                     None
                 } else {
@@ -1053,7 +1056,7 @@ mod tests {
             }
         }
 
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.account_shared_data
                 .read()
                 .unwrap()
@@ -1067,7 +1070,7 @@ mod tests {
             self.account_shared_data
                 .write()
                 .unwrap()
-                .insert(*program_id, account_data);
+                .insert(*program_id, (account_data, 0));
         }
     }
 
@@ -1329,7 +1332,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(key, account_data);
+            .insert(key, (account_data, 0));
 
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
         account_maps.insert(key, 4);
@@ -1363,7 +1366,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(key1, data);
+            .insert(key1, (data, 0));
 
         let message = Message {
             account_keys: vec![key1],
@@ -1394,7 +1397,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(key2, account_data);
+            .insert(key2, (account_data, 0));
 
         let message = Message {
             account_keys: vec![key1, key2],
@@ -1458,35 +1461,35 @@ mod tests {
         let bank = MockBankCallback::default();
         bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey1,
-            AccountSharedData::new(1, 10, &account5_pubkey),
+            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey2,
-            AccountSharedData::new(1, 10, &account5_pubkey),
+            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             program1_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
+            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             program2_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
+            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account1_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey1),
+            (AccountSharedData::new(1, 10, &non_program_pubkey1), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account2_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey2),
+            (AccountSharedData::new(1, 10, &non_program_pubkey2), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account3_pubkey,
-            AccountSharedData::new(40, 1, &program1_pubkey),
+            (AccountSharedData::new(40, 1, &program1_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account4_pubkey,
-            AccountSharedData::new(40, 1, &program2_pubkey),
+            (AccountSharedData::new(40, 1, &program2_pubkey), 0),
         );
 
         let tx1 = Transaction::new_with_compiled_instructions(
@@ -1554,35 +1557,35 @@ mod tests {
         let bank = MockBankCallback::default();
         bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey1,
-            AccountSharedData::new(1, 10, &account5_pubkey),
+            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             non_program_pubkey2,
-            AccountSharedData::new(1, 10, &account5_pubkey),
+            (AccountSharedData::new(1, 10, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             program1_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
+            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             program2_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
+            (AccountSharedData::new(40, 1, &account5_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account1_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey1),
+            (AccountSharedData::new(1, 10, &non_program_pubkey1), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account2_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey2),
+            (AccountSharedData::new(1, 10, &non_program_pubkey2), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account3_pubkey,
-            AccountSharedData::new(40, 1, &program1_pubkey),
+            (AccountSharedData::new(40, 1, &program1_pubkey), 0),
         );
         bank.account_shared_data.write().unwrap().insert(
             account4_pubkey,
-            AccountSharedData::new(40, 1, &program2_pubkey),
+            (AccountSharedData::new(40, 1, &program2_pubkey), 0),
         );
 
         let tx1 = Transaction::new_with_compiled_instructions(
@@ -1644,7 +1647,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::clock::id(), clock_account);
+            .insert(sysvar::clock::id(), (clock_account, 0));
 
         let epoch_schedule = EpochSchedule::custom(64, 2, true);
         let epoch_schedule_account = create_account_shared_data_for_test(&epoch_schedule);
@@ -1652,7 +1655,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
+            .insert(sysvar::epoch_schedule::id(), (epoch_schedule_account, 0));
 
         let fees = sysvar::fees::Fees {
             fee_calculator: FeeCalculator {
@@ -1664,7 +1667,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::fees::id(), fees_account);
+            .insert(sysvar::fees::id(), (fees_account, 0));
 
         let rent = Rent::with_slots_per_epoch(2048);
         let rent_account = create_account_shared_data_for_test(&rent);
@@ -1672,7 +1675,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::rent::id(), rent_account);
+            .insert(sysvar::rent::id(), (rent_account, 0));
 
         let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         transaction_processor.fill_missing_sysvar_cache_entries(&mock_bank);
@@ -1720,7 +1723,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::clock::id(), clock_account);
+            .insert(sysvar::clock::id(), (clock_account, 0));
 
         let epoch_schedule = EpochSchedule::custom(64, 2, true);
         let epoch_schedule_account = create_account_shared_data_for_test(&epoch_schedule);
@@ -1728,7 +1731,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
+            .insert(sysvar::epoch_schedule::id(), (epoch_schedule_account, 0));
 
         let fees = sysvar::fees::Fees {
             fee_calculator: FeeCalculator {
@@ -1740,7 +1743,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::fees::id(), fees_account);
+            .insert(sysvar::fees::id(), (fees_account, 0));
 
         let rent = Rent::with_slots_per_epoch(2048);
         let rent_account = create_account_shared_data_for_test(&rent);
@@ -1748,7 +1751,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(sysvar::rent::id(), rent_account);
+            .insert(sysvar::rent::id(), (rent_account, 0));
 
         let transaction_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         // Fill the sysvar cache
@@ -1814,7 +1817,7 @@ mod tests {
         batch_processor.add_builtin(&mock_bank, key, name, program);
 
         assert_eq!(
-            mock_bank.account_shared_data.read().unwrap()[&key].data(),
+            mock_bank.account_shared_data.read().unwrap()[&key].0.data(),
             name.as_bytes()
         );
 
@@ -1905,7 +1908,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(program_account, account_data);
+            .insert(program_account, (account_data, 0));
 
         let mut account_data = AccountSharedData::default();
         let state = UpgradeableLoaderState::ProgramData {
@@ -1939,7 +1942,7 @@ mod tests {
             .account_shared_data
             .write()
             .unwrap()
-            .insert(program_data_account, account_data);
+            .insert(program_data_account, (account_data, 0));
 
         program_account
     }
@@ -1982,7 +1985,7 @@ mod tests {
             fee_payer_rent_epoch,
         );
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
         };
@@ -2054,7 +2057,7 @@ mod tests {
         assert!(fee_payer_rent_debit > 0);
 
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
         };
@@ -2133,7 +2136,7 @@ mod tests {
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
         };
@@ -2169,7 +2172,7 @@ mod tests {
         let starting_balance = min_balance + transaction_fee - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
         };
@@ -2203,7 +2206,7 @@ mod tests {
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
         let mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
         };
@@ -2291,7 +2294,7 @@ mod tests {
             .unwrap();
 
             let mut mock_accounts = HashMap::new();
-            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
             let mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             };
@@ -2352,7 +2355,7 @@ mod tests {
             .unwrap();
 
             let mut mock_accounts = HashMap::new();
-            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            mock_accounts.insert(*fee_payer_address, (fee_payer_account.clone(), 0));
             let mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             };

@@ -69,7 +69,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {
-    let program_account = callbacks.get_account_shared_data(pubkey)?;
+    let (program_account, last_written_slot) = callbacks.get_account_shared_data(pubkey)?;
 
     if loader_v4::check_id(program_account.owner()) {
         return Some(
@@ -97,7 +97,9 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
         programdata_address,
     }) = program_account.state()
     {
-        if let Some(programdata_account) = callbacks.get_account_shared_data(&programdata_address) {
+        if let Some((programdata_account, last_written_slot)) =
+            callbacks.get_account_shared_data(&programdata_address)
+        {
             if let Ok(UpgradeableLoaderState::ProgramData {
                 slot,
                 upgrade_authority_address: _,
@@ -226,7 +228,7 @@ pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> transaction::Result<Slot> {
-    let program = callbacks
+    let (program, _last_written_slot) = callbacks
         .get_account_shared_data(pubkey)
         .ok_or(TransactionError::ProgramAccountNotFound)?;
     if bpf_loader_upgradeable::check_id(program.owner()) {
@@ -234,7 +236,7 @@ pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
             programdata_address,
         }) = program.state()
         {
-            let programdata = callbacks
+            let (programdata, _last_written_slot) = callbacks
                 .get_account_shared_data(&programdata_address)
                 .ok_or(TransactionError::ProgramAccountNotFound)?;
             if let Ok(UpgradeableLoaderState::ProgramData {
@@ -284,12 +286,13 @@ mod tests {
 
     #[derive(Default, Clone)]
     pub struct MockBankCallback {
-        pub account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
+        pub account_shared_data: RefCell<HashMap<Pubkey, (AccountSharedData, Slot)>>,
     }
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.borrow().get(account) {
+            if let Some((data, _last_written_slot)) = self.account_shared_data.borrow().get(account)
+            {
                 if data.lamports() == 0 {
                     None
                 } else {
@@ -300,7 +303,7 @@ mod tests {
             }
         }
 
-        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
             self.account_shared_data.borrow().get(pubkey).cloned()
         }
 
@@ -309,7 +312,7 @@ mod tests {
             account_data.set_data(name.as_bytes().to_vec());
             self.account_shared_data
                 .borrow_mut()
-                .insert(*program_id, account_data);
+                .insert(*program_id, (account_data, 0));
         }
     }
 
@@ -330,7 +333,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
@@ -342,7 +345,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data);
+            .insert(key, (account_data, 0));
 
         let result = load_program_accounts(&mock_bank, &key);
 
@@ -361,7 +364,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
@@ -373,7 +376,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
         let result = load_program_accounts(&mock_bank, &key);
         assert!(matches!(
             result,
@@ -394,7 +397,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
 
@@ -417,7 +420,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key);
         match result {
@@ -445,7 +448,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data.clone());
+            .insert(key1, (account_data.clone(), 0));
 
         let state = UpgradeableLoaderState::ProgramData {
             slot: 25,
@@ -456,7 +459,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data2.clone());
+            .insert(key2, (account_data2.clone(), 0));
 
         let result = load_program_accounts(&mock_bank, &key1);
 
@@ -545,7 +548,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -578,7 +581,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         // This should return an error
         let result = load_program_with_pubkey(
@@ -606,7 +609,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -647,7 +650,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data.clone());
+            .insert(key1, (account_data.clone(), 0));
 
         let state = UpgradeableLoaderState::ProgramData {
             slot: 0,
@@ -658,7 +661,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data2.clone());
+            .insert(key2, (account_data2.clone(), 0));
 
         // This should return an error
         let result = load_program_with_pubkey(
@@ -696,7 +699,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data.clone());
+            .insert(key2, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -745,7 +748,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -778,7 +781,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = load_program_with_pubkey(
             &mock_bank,
@@ -793,7 +796,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let environments = ProgramRuntimeEnvironments::default();
         let expected = load_program_from_bytes(
@@ -825,7 +828,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         for is_upcoming_env in [false, true] {
             let result = load_program_with_pubkey(
@@ -868,7 +871,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = get_program_modification_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -880,7 +883,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data.clone());
+            .insert(key, (account_data.clone(), 0));
 
         let result = get_program_modification_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -889,7 +892,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key, account_data);
+            .insert(key, (account_data, 0));
 
         let result = get_program_modification_slot(&mock_bank, &key);
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -913,7 +916,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data);
+            .insert(key1, (account_data, 0));
 
         let account_data = AccountSharedData::new_data(
             100,
@@ -927,7 +930,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data);
+            .insert(key2, (account_data, 0));
 
         let result = get_program_modification_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 77);
@@ -947,7 +950,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key1, account_data.clone());
+            .insert(key1, (account_data.clone(), 0));
 
         let result = get_program_modification_slot(&mock_bank, &key1);
         assert_eq!(result.unwrap(), 58);
@@ -956,7 +959,7 @@ mod tests {
         mock_bank
             .account_shared_data
             .borrow_mut()
-            .insert(key2, account_data);
+            .insert(key2, (account_data, 0));
 
         let result = get_program_modification_slot(&mock_bank, &key2);
         assert_eq!(result.unwrap(), 0);

@@ -162,7 +162,7 @@ fn create_executable_environment(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(Clock::id(), account_data);
+        .insert(Clock::id(), (account_data, 0));
 }
 
 fn load_program(name: String) -> Vec<u8> {
@@ -195,7 +195,7 @@ fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(program_account, account_data);
+        .insert(program_account, (account_data, 0));
 
     let mut account_data = AccountSharedData::default();
     let state = UpgradeableLoaderState::ProgramData {
@@ -217,7 +217,7 @@ fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(program_data_account, account_data);
+        .insert(program_data_account, (account_data, 0));
 
     program_account
 }
@@ -280,7 +280,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(fee_payer, account_data);
+        .insert(fee_payer, (account_data, 0));
 
     // A simple funds transfer between accounts
     let transfer_program_account = deploy_program("simple-transfer".to_string(), mock_bank);
@@ -328,7 +328,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(fee_payer, account_data);
+        .insert(fee_payer, (account_data, 0));
 
     // sender
     let mut account_data = AccountSharedData::default();
@@ -336,7 +336,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(sender, account_data);
+        .insert(sender, (account_data, 0));
 
     // recipient
     let mut account_data = AccountSharedData::default();
@@ -344,7 +344,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(recipient, account_data);
+        .insert(recipient, (account_data, 0));
 
     // The system account is set in `create_executable_environment`
 
@@ -367,7 +367,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(fee_payer, account_data);
+        .insert(fee_payer, (account_data, 0));
 
     // A transaction that fails
     let sender = Pubkey::new_unique();
@@ -412,7 +412,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(fee_payer, account_data);
+        .insert(fee_payer, (account_data, 0));
 
     // Sender without enough funds
     let mut account_data = AccountSharedData::default();
@@ -420,7 +420,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(sender, account_data);
+        .insert(sender, (account_data, 0));
 
     // recipient
     let mut account_data = AccountSharedData::default();
@@ -428,7 +428,7 @@ fn prepare_transactions(
     mock_bank
         .account_shared_data
         .borrow_mut()
-        .insert(recipient, account_data);
+        .insert(recipient, (account_data, 0));
 
     // A transaction whose verification has already failed
     all_transactions.push(sanitized_transaction.unwrap());
@@ -511,7 +511,7 @@ fn svm_integration() {
         .as_ref()
         .unwrap();
     let time = i64::from_be_bytes(return_data.data[0..8].try_into().unwrap());
-    let clock_data = mock_bank.get_account_shared_data(&Clock::id()).unwrap();
+    let (clock_data, _last_written_slot) = mock_bank.get_account_shared_data(&Clock::id()).unwrap();
     let clock_info: Clock = bincode::deserialize(clock_data.data()).unwrap();
     assert_eq!(clock_info.unix_timestamp, time);
 

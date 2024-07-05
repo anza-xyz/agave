@@ -207,7 +207,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
             account_data.set_executable(item.executable);
             account_data.set_rent_epoch(item.rent_epoch);
 
-            account_data_map.insert(pubkey, account_data);
+            account_data_map.insert(pubkey, (account_data, 0));
         }
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(800000);
@@ -216,7 +216,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
             // The fee payer must not coincide with any of the previous accounts
             fee_payer = Pubkey::new_unique();
         }
-        account_data_map.insert(fee_payer, account_data);
+        account_data_map.insert(fee_payer, (account_data, 0));
     }
 
     let Ok(transaction) =
@@ -405,7 +405,7 @@ fn execute_fixture_as_instr(
     let transaction_accounts: Vec<TransactionAccount> = sanitized_message
         .account_keys()
         .iter()
-        .map(|key| (*key, mock_bank.get_account_shared_data(key).unwrap()))
+        .map(|key| (*key, mock_bank.get_account_shared_data(key).unwrap().0))
         .collect();
 
     let mut transaction_context = TransactionContext::new(
