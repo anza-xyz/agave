@@ -8,17 +8,16 @@ use {
     solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        ic_logger_msg, ic_msg,
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             DELAY_VISIBILITY_SLOT_OFFSET,
         },
-        log_collector::LogCollector,
         mem_pool::VmMemoryPool,
         stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
+    solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_rbpf::{
         declare_builtin_function,
         ebpf::{self, MM_HEAP_START},

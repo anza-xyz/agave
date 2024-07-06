@@ -2,15 +2,14 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        ic_logger_msg,
         invoke_context::InvokeContext,
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryType,
             DELAY_VISIBILITY_SLOT_OFFSET,
         },
-        log_collector::LogCollector,
         stable_log,
     },
+    solana_log_collector::{ic_logger_msg, LogCollector},
     solana_rbpf::{
         aligned_memory::AlignedMemory,
         declare_builtin_function, ebpf,
