@@ -13,11 +13,9 @@ pub use self::{
 #[allow(deprecated)]
 use {
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_poseidon as poseidon,
     solana_log_collector::{ic_logger_msg, ic_msg},
-    solana_program_runtime::{
-        invoke_context::InvokeContext, stable_log, timings::ExecuteTimings,
-    },
+    solana_poseidon as poseidon,
+    solana_program_runtime::{invoke_context::InvokeContext, stable_log, timings::ExecuteTimings},
     solana_rbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},

@@ -6,6 +6,7 @@ pub mod syscalls;
 
 use {
     solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
+    solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_program_runtime::{
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
@@ -17,7 +18,6 @@ use {
         stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
-    solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_rbpf::{
         declare_builtin_function,
         ebpf::{self, MM_HEAP_START},
