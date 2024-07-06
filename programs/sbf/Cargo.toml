@@ -94,8 +94,8 @@ solana-bpf-loader-program = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-ledger = { workspace = true }
-solana-logger = { workspace = true }
 solana-log-collector = { workspace = true }
+solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
