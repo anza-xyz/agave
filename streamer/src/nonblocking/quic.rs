@@ -99,7 +99,7 @@ const TOTAL_CONNECTIONS_PER_SECOND: u64 = 2500;
 /// The threshold of the size of the connection rate limiter map. When
 /// the map size is above this, we will trigger a cleanup of older
 /// entries used by past requests.
-const CONNECITON_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
+const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
 
 // A sequence of bytes that is part of a packet
 // along with where in the packet it is
@@ -331,7 +331,7 @@ async fn run_server(
                 continue;
             }
 
-            if rate_limiter.len() > CONNECITON_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
+            if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
                 rate_limiter.retain_recent();
             }
             stats
