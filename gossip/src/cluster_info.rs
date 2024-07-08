@@ -13,12 +13,6 @@
 //!
 //! Bank needs to provide an interface for us to query the stake weight
 
-#[deprecated(
-    since = "1.10.6",
-    note = "Please use `solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE}` instead"
-)]
-#[allow(deprecated)]
-pub use solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE};
 use {
     crate::{
         cluster_info_metrics::{
@@ -57,6 +51,7 @@ use {
         bind_common, bind_common_in_range, bind_in_range, bind_in_range_with_config,
         bind_more_with_config, bind_two_in_range_with_offset_and_config,
         find_available_port_in_range, multi_bind_in_range, PortRange, SocketConfig,
+        VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -64,13 +59,13 @@ use {
     },
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
+    solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
         feature_set::FeatureSet,
         hash::Hash,
         pubkey::Pubkey,
         quic::QUIC_PORT_OFFSET,
-        sanitize::{Sanitize, SanitizeError},
         signature::{Keypair, Signable, Signature, Signer},
         timing::timestamp,
         transaction::Transaction,
@@ -1261,6 +1256,7 @@ impl ClusterInfo {
             other_payload,
             None::<fn(Slot) -> Option<Pubkey>>, // Leader schedule
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            self.my_shred_version(),
         )?;
         Ok(())
     }
@@ -2076,7 +2072,7 @@ impl ClusterInfo {
     //
     // allow lint false positive trait bound requirement (`CryptoRng` only
     // implemented on `&'a mut T`
-    #[rustversion::attr(since(1.73), allow(clippy::needless_pass_by_ref_mut))]
+    #[allow(clippy::needless_pass_by_ref_mut)]
     fn check_pull_request<'a, R>(
         &'a self,
         now: Instant,
@@ -3698,6 +3694,7 @@ mod tests {
             Some(leader_schedule),
             timestamp(),
             DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            version,
         )
         .unwrap()
         .collect();

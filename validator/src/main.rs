@@ -1402,7 +1402,6 @@ pub fn main() {
                 solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
             }),
             full_api,
-            obsolete_v1_7_api: matches.is_present("obsolete_v1_7_rpc_api"),
             max_multiple_accounts: Some(value_t_or_exit!(
                 matches,
                 "rpc_max_multiple_accounts",
@@ -1594,6 +1593,23 @@ pub fn main() {
     } else {
         &ledger_path
     };
+    let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
+        eprintln!(
+            "Failed to canonicalize snapshots path '{}': {err}",
+            snapshots_dir.display(),
+        );
+        exit(1);
+    });
+    if account_paths
+        .iter()
+        .any(|account_path| account_path == &snapshots_dir)
+    {
+        eprintln!(
+            "Failed: The --accounts and --snapshots paths must be unique since they \
+             both create 'snapshots' subdirectories, otherwise there may be collisions",
+        );
+        exit(1);
+    }
 
     let bank_snapshots_dir = snapshots_dir.join("snapshots");
     fs::create_dir_all(&bank_snapshots_dir).unwrap_or_else(|err| {
@@ -1604,13 +1620,12 @@ pub fn main() {
         exit(1);
     });
 
-    let full_snapshot_archives_dir = PathBuf::from(
+    let full_snapshot_archives_dir =
         if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
-            Path::new(full_snapshot_archive_path)
+            PathBuf::from(full_snapshot_archive_path)
         } else {
-            snapshots_dir
-        },
-    );
+            snapshots_dir.clone()
+        };
     fs::create_dir_all(&full_snapshot_archives_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create full snapshot archives directory '{}': {err}",
@@ -1619,15 +1634,13 @@ pub fn main() {
         exit(1);
     });
 
-    let incremental_snapshot_archives_dir = PathBuf::from(
-        if let Some(incremental_snapshot_archive_path) =
-            matches.value_of("incremental_snapshot_archive_path")
-        {
-            Path::new(incremental_snapshot_archive_path)
-        } else {
-            snapshots_dir
-        },
-    );
+    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
+        matches.value_of("incremental_snapshot_archive_path")
+    {
+        PathBuf::from(incremental_snapshot_archive_path)
+    } else {
+        snapshots_dir.clone()
+    };
     fs::create_dir_all(&incremental_snapshot_archives_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create incremental snapshot archives directory '{}': {err}",
@@ -1772,16 +1785,26 @@ pub fn main() {
             None => ShredStorageType::default(),
             Some(shred_compaction_string) => match shred_compaction_string {
                 "level" => ShredStorageType::RocksLevel,
-                "fifo" => match matches.value_of("rocksdb_fifo_shred_storage_size") {
-                    None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
-                        &validator_config,
-                    )),
-                    Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
-                        matches,
-                        "rocksdb_fifo_shred_storage_size",
-                        u64
-                    ))),
-                },
+                "fifo" => {
+                    warn!(
+                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
+                         Use of \"fifo\" will still work for now, but is planned for full removal \
+                         in v2.1. To update, use \"level\" for --rocksdb-shred-compaction, or \
+                         remove the --rocksdb-shred-compaction argument altogether. Note that the \
+                         entire \"rocksdb_fifo\" subdirectory within the ledger directory will \
+                         need to be manually removed once the validator is running with \"level\"."
+                    );
+                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
+                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
+                            &validator_config,
+                        )),
+                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
+                            matches,
+                            "rocksdb_fifo_shred_storage_size",
+                            u64
+                        ))),
+                    }
+                }
                 _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
             },
         },

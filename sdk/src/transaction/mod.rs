@@ -122,13 +122,13 @@ use {
         precompiles::verify_if_precompile,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
-        sanitize::{Sanitize, SanitizeError},
         short_vec,
         signature::{Signature, SignerError},
         signers::Signers,
     },
     serde::Serialize,
     solana_program::{system_instruction::SystemInstruction, system_program},
+    solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::feature_set,
     std::result,
 };
@@ -1125,17 +1125,6 @@ pub fn uses_durable_nonce(tx: &Transaction) -> Option<&CompiledInstruction> {
         })
 }
 
-#[deprecated]
-pub fn get_nonce_pubkey_from_instruction<'a>(
-    ix: &CompiledInstruction,
-    tx: &'a Transaction,
-) -> Option<&'a Pubkey> {
-    ix.accounts.first().and_then(|idx| {
-        let idx = *idx as usize;
-        tx.message().account_keys.get(idx)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(deprecated)]
@@ -1628,34 +1617,6 @@ mod tests {
         let message = Message::new(&instructions, Some(&nonce_pubkey));
         let tx = Transaction::new(&[&from_keypair, &nonce_keypair], message, Hash::default());
         assert!(uses_durable_nonce(&tx).is_none());
-    }
-
-    #[test]
-    fn get_nonce_pub_from_ix_ok() {
-        let (_, nonce_pubkey, tx) = nonced_transfer_tx();
-        let nonce_ix = uses_durable_nonce(&tx).unwrap();
-        assert_eq!(
-            get_nonce_pubkey_from_instruction(nonce_ix, &tx),
-            Some(&nonce_pubkey),
-        );
-    }
-
-    #[test]
-    fn get_nonce_pub_from_ix_no_accounts_fail() {
-        let (_, _, tx) = nonced_transfer_tx();
-        let nonce_ix = uses_durable_nonce(&tx).unwrap();
-        let mut nonce_ix = nonce_ix.clone();
-        nonce_ix.accounts.clear();
-        assert_eq!(get_nonce_pubkey_from_instruction(&nonce_ix, &tx), None,);
-    }
-
-    #[test]
-    fn get_nonce_pub_from_ix_bad_acc_idx_fail() {
-        let (_, _, tx) = nonced_transfer_tx();
-        let nonce_ix = uses_durable_nonce(&tx).unwrap();
-        let mut nonce_ix = nonce_ix.clone();
-        nonce_ix.accounts[0] = 255u8;
-        assert_eq!(get_nonce_pubkey_from_instruction(&nonce_ix, &tx), None,);
     }
 
     #[test]

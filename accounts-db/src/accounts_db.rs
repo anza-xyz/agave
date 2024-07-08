@@ -56,7 +56,7 @@ use {
         },
         append_vec::{
             aligned_stored_size, APPEND_VEC_MMAPPED_FILES_DIRTY, APPEND_VEC_MMAPPED_FILES_OPEN,
-            STORE_META_OVERHEAD,
+            APPEND_VEC_REOPEN_AS_FILE_IO, STORE_META_OVERHEAD,
         },
         cache_hash_data::{
             CacheHashData, CacheHashDataFileReference, DeletionPolicy as CacheHashDeletionPolicy,
@@ -583,6 +583,7 @@ impl AccountFromStorage {
 pub struct GetUniqueAccountsResult {
     pub stored_accounts: Vec<AccountFromStorage>,
     pub capacity: u64,
+    pub num_duplicated_accounts: usize,
 }
 
 pub struct AccountsAddRootTiming {
@@ -1121,6 +1122,7 @@ impl AccountStorageEntry {
             return None;
         }
 
+        APPEND_VEC_REOPEN_AS_FILE_IO.fetch_add(1, Ordering::Relaxed);
         let count_and_status = self.count_and_status.lock_write();
         self.accounts.reopen_as_readonly().map(|accounts| Self {
             id: self.id,
@@ -1917,6 +1919,11 @@ impl LatestAccountsIndexRootsStats {
                 "append_vecs_dirty",
                 APPEND_VEC_MMAPPED_FILES_DIRTY.load(Ordering::Relaxed),
                 i64
+            ),
+            (
+                "append_vecs_open_as_file_io",
+                APPEND_VEC_REOPEN_AS_FILE_IO.load(Ordering::Relaxed),
+                i64
             )
         );
 
@@ -1986,6 +1993,7 @@ pub struct ShrinkStats {
     last_report: AtomicInterval,
     pub(crate) num_slots_shrunk: AtomicUsize,
     storage_read_elapsed: AtomicU64,
+    num_duplicated_accounts: AtomicU64,
     index_read_elapsed: AtomicU64,
     create_and_insert_store_elapsed: AtomicU64,
     store_accounts_elapsed: AtomicU64,
@@ -2018,6 +2026,11 @@ impl ShrinkStats {
                 (
                     "storage_read_elapsed",
                     self.storage_read_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    i64
+                ),
+                (
+                    "num_duplicated_accounts",
+                    self.num_duplicated_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -2117,6 +2130,13 @@ impl ShrinkAncientStats {
                 self.shrink_stats
                     .storage_read_elapsed
                     .swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "num_duplicated_accounts",
+                self.shrink_stats
+                    .num_duplicated_accounts
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -3900,34 +3920,40 @@ impl AccountsDb {
         });
 
         // sort by pubkey to keep account index lookups close
-        Self::sort_and_remove_dups(&mut stored_accounts);
+        let num_duplicated_accounts = Self::sort_and_remove_dups(&mut stored_accounts);
 
         GetUniqueAccountsResult {
             stored_accounts,
             capacity,
+            num_duplicated_accounts,
         }
     }
 
-    /// sort `accounts` by pubkey.
-    /// Remove earlier entries with the same pubkey as later entries.
-    fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) {
+    /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
+    /// accounts in the vector with the same pubkey.
+    ///
+    /// Return the number of duplicated elements in the vector.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn sort_and_remove_dups(accounts: &mut Vec<AccountFromStorage>) -> usize {
         // stable sort because we want the most recent only
         accounts.sort_by(|a, b| a.pubkey().cmp(b.pubkey()));
+        let len0 = accounts.len();
         if accounts.len() > 1 {
-            let mut i = 0;
-            // iterate 0..1 less than end
-            while i < accounts.len() - 1 {
-                let current = accounts[i];
-                let next = accounts[i + 1];
-                if current.pubkey() == next.pubkey() {
-                    // remove the first duplicate
-                    accounts.remove(i);
-                    // do not advance i, we just removed an element at i
-                    continue;
+            let mut last = 0;
+            let mut curr = 1;
+
+            while curr < accounts.len() {
+                if accounts[curr].pubkey() == accounts[last].pubkey() {
+                    accounts[last] = accounts[curr];
+                } else {
+                    last += 1;
+                    accounts[last] = accounts[curr];
                 }
-                i += 1;
+                curr += 1;
             }
+            accounts.truncate(last + 1);
         }
+        len0 - accounts.len()
     }
 
     pub(crate) fn get_unique_accounts_from_storage_for_shrink(
@@ -3940,6 +3966,9 @@ impl AccountsDb {
         stats
             .storage_read_elapsed
             .fetch_add(storage_read_elapsed_us, Ordering::Relaxed);
+        stats
+            .num_duplicated_accounts
+            .fetch_add(result.num_duplicated_accounts as u64, Ordering::Relaxed);
         result
     }
 
@@ -3956,6 +3985,7 @@ impl AccountsDb {
         let GetUniqueAccountsResult {
             stored_accounts,
             capacity,
+            num_duplicated_accounts,
         } = unique_accounts;
 
         let mut index_read_elapsed = Measure::start("index_read_elapsed");
@@ -3966,6 +3996,9 @@ impl AccountsDb {
         stats
             .accounts_loaded
             .fetch_add(len as u64, Ordering::Relaxed);
+        stats
+            .num_duplicated_accounts
+            .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
         let all_are_zero_lamports_collect = Mutex::new(true);
         let index_entries_being_shrunk_outer = Mutex::new(Vec::default());
         self.thread_pool_clean.install(|| {
@@ -6977,30 +7010,26 @@ impl AccountsDb {
     /// return true iff storage is valid for loading from cache
     fn hash_storage_info(
         hasher: &mut impl StdHasher,
-        storage: Option<&Arc<AccountStorageEntry>>,
+        storage: &AccountStorageEntry,
         slot: Slot,
     ) -> bool {
-        if let Some(append_vec) = storage {
-            // hash info about this storage
-            append_vec.written_bytes().hash(hasher);
-            let storage_file = append_vec.accounts.path();
-            slot.hash(hasher);
-            storage_file.hash(hasher);
-            let amod = std::fs::metadata(storage_file);
-            if amod.is_err() {
-                return false;
-            }
-            let amod = amod.unwrap().modified();
-            if amod.is_err() {
-                return false;
-            }
-            let amod = amod
-                .unwrap()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            amod.hash(hasher);
-        }
+        // hash info about this storage
+        storage.written_bytes().hash(hasher);
+        slot.hash(hasher);
+        let storage_file = storage.accounts.path();
+        storage_file.hash(hasher);
+        let Ok(metadata) = std::fs::metadata(storage_file) else {
+            return false;
+        };
+        let Ok(amod) = metadata.modified() else {
+            return false;
+        };
+        let amod = amod
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        amod.hash(hasher);
+
         // if we made it here, we have hashed info and we should try to load from the cache
         true
     }
@@ -7056,9 +7085,12 @@ impl AccountsDb {
                     if is_first_scan_pass && slot < one_epoch_old {
                         self.update_old_slot_stats(stats, storage);
                     }
-                    if !Self::hash_storage_info(&mut hasher, storage, slot) {
-                        load_from_cache = false;
-                        break;
+                    if let Some(storage) = storage {
+                        let ok = Self::hash_storage_info(&mut hasher, storage, slot);
+                        if !ok {
+                            load_from_cache = false;
+                            break;
+                        }
                     }
                 }
                 if empty {
@@ -10017,6 +10049,31 @@ pub mod tests {
         AccountsDb::sort_and_remove_dups(&mut test1);
         assert_eq!(test1, expected);
         assert_eq!(test1, expected);
+    }
+
+    #[test]
+    fn test_sort_and_remove_dups_random() {
+        use rand::prelude::*;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1234);
+        let accounts: Vec<_> =
+            std::iter::repeat_with(|| generate_sample_account_from_storage(rng.gen::<u8>()))
+                .take(1000)
+                .collect();
+
+        let mut accounts1 = accounts.clone();
+        let num_dups1 = AccountsDb::sort_and_remove_dups(&mut accounts1);
+
+        // Use BTreeMap to calculate sort and remove dups alternatively.
+        let mut map = std::collections::BTreeMap::default();
+        let mut num_dups2 = 0;
+        for account in accounts.iter() {
+            if map.insert(*account.pubkey(), *account).is_some() {
+                num_dups2 += 1;
+            }
+        }
+        let accounts2: Vec<_> = map.into_values().collect();
+        assert_eq!(accounts1, accounts2);
+        assert_eq!(num_dups1, num_dups2);
     }
 
     /// Reserve ancient storage size is not supported for TiredStorage
@@ -16411,13 +16468,9 @@ pub mod tests {
     #[test]
     fn test_hash_storage_info() {
         {
-            let mut hasher = hash_map::DefaultHasher::new();
-            let storages = None;
-            let slot = 1;
-            let load = AccountsDb::hash_storage_info(&mut hasher, storages, slot);
+            let hasher = hash_map::DefaultHasher::new();
             let hash = hasher.finish();
             assert_eq!(15130871412783076140, hash);
-            assert!(load);
         }
         {
             let mut hasher = hash_map::DefaultHasher::new();
@@ -16429,26 +16482,26 @@ pub mod tests {
             let mark_alive = false;
             let storage = sample_storage_with_entries(&tf, slot, &pubkey1, mark_alive);
 
-            let load = AccountsDb::hash_storage_info(&mut hasher, Some(&storage), slot);
+            let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
             let hash = hasher.finish();
             // can't assert hash here - it is a function of mod date
             assert!(load);
             let slot = 2; // changed this
             let mut hasher = hash_map::DefaultHasher::new();
-            let load = AccountsDb::hash_storage_info(&mut hasher, Some(&storage), slot);
+            let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
             let hash2 = hasher.finish();
             assert_ne!(hash, hash2); // slot changed, these should be different
                                      // can't assert hash here - it is a function of mod date
             assert!(load);
             let mut hasher = hash_map::DefaultHasher::new();
             append_sample_data_to_storage(&storage, &solana_sdk::pubkey::new_rand(), false, None);
-            let load = AccountsDb::hash_storage_info(&mut hasher, Some(&storage), slot);
+            let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
             let hash3 = hasher.finish();
             assert_ne!(hash2, hash3); // moddate and written size changed
                                       // can't assert hash here - it is a function of mod date
             assert!(load);
             let mut hasher = hash_map::DefaultHasher::new();
-            let load = AccountsDb::hash_storage_info(&mut hasher, Some(&storage), slot);
+            let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
             let hash4 = hasher.finish();
             assert_eq!(hash4, hash3); // same
                                       // can't assert hash here - it is a function of mod date
@@ -17139,6 +17192,7 @@ pub mod tests {
         let GetUniqueAccountsResult {
             stored_accounts: after_stored_accounts,
             capacity: after_capacity,
+            ..
         } = db.get_unique_accounts_from_storage(&after_store);
         assert!(created_accounts.capacity <= after_capacity);
         assert_eq!(created_accounts.stored_accounts.len(), 1);
@@ -17153,6 +17207,7 @@ pub mod tests {
         let GetUniqueAccountsResult {
             stored_accounts: after_stored_accounts,
             capacity: after_capacity,
+            ..
         } = db.get_unique_accounts_from_storage(&after_store);
         assert!(created_accounts.capacity <= after_capacity);
         assert_eq!(created_accounts.stored_accounts.len(), 1);
@@ -17629,6 +17684,7 @@ pub mod tests {
         let GetUniqueAccountsResult {
             stored_accounts: after_stored_accounts,
             capacity: after_capacity,
+            ..
         } = db.get_unique_accounts_from_storage(&after_store);
         if alive {
             assert!(created_accounts.capacity <= after_capacity);

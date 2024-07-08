@@ -43,9 +43,41 @@ impl CostModel {
             Self::get_signature_cost(&mut tx_cost, transaction);
             Self::get_write_lock_cost(&mut tx_cost, transaction, feature_set);
             Self::get_transaction_cost(&mut tx_cost, transaction, feature_set);
-            tx_cost.account_data_size = Self::calculate_account_data_size(transaction);
+            tx_cost.allocated_accounts_data_size =
+                Self::calculate_allocated_accounts_data_size(transaction);
 
             debug!("transaction {:?} has cost {:?}", transaction, tx_cost);
+            TransactionCost::Transaction(tx_cost)
+        }
+    }
+
+    // Calculate executed transaction CU cost, with actual execution and loaded accounts size
+    // costs.
+    pub fn calculate_cost_for_executed_transaction(
+        transaction: &SanitizedTransaction,
+        actual_programs_execution_cost: u64,
+        actual_loaded_accounts_data_size_bytes: usize,
+        feature_set: &FeatureSet,
+    ) -> TransactionCost {
+        if transaction.is_simple_vote_transaction() {
+            TransactionCost::SimpleVote {
+                writable_accounts: Self::get_writable_accounts(transaction),
+            }
+        } else {
+            let mut tx_cost = UsageCostDetails::new_with_default_capacity();
+
+            Self::get_signature_cost(&mut tx_cost, transaction);
+            Self::get_write_lock_cost(&mut tx_cost, transaction, feature_set);
+            Self::get_instructions_data_cost(&mut tx_cost, transaction);
+            tx_cost.allocated_accounts_data_size =
+                Self::calculate_allocated_accounts_data_size(transaction);
+
+            tx_cost.programs_execution_cost = actual_programs_execution_cost;
+            tx_cost.loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
+                actual_loaded_accounts_data_size_bytes,
+                feature_set,
+            );
+
             TransactionCost::Transaction(tx_cost)
         }
     }
@@ -168,6 +200,20 @@ impl CostModel {
         tx_cost.data_bytes_cost = data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST;
     }
 
+    fn get_instructions_data_cost(
+        tx_cost: &mut UsageCostDetails,
+        transaction: &SanitizedTransaction,
+    ) {
+        let ix_data_bytes_len_total: u64 = transaction
+            .message()
+            .instructions()
+            .iter()
+            .map(|instruction| instruction.data.len() as u64)
+            .sum();
+
+        tx_cost.data_bytes_cost = ix_data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST;
+    }
+
     pub fn calculate_loaded_accounts_data_size_cost(
         loaded_accounts_data_size: usize,
         _feature_set: &FeatureSet,
@@ -218,7 +264,7 @@ impl CostModel {
 
     /// eventually, potentially determine account data size of all writable accounts
     /// at the moment, calculate account data size of account creation
-    fn calculate_account_data_size(transaction: &SanitizedTransaction) -> u64 {
+    fn calculate_allocated_accounts_data_size(transaction: &SanitizedTransaction) -> u64 {
         transaction
             .message()
             .program_instructions_iter()

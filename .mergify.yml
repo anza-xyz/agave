@@ -91,51 +91,14 @@ pull_request_rules:
           - automerge
       comment:
         message: automerge label removed due to a CI failure
-  - name: v1.17 feature-gate backport
-    conditions:
-      - label=v1.17
-      - label=feature-gate
-    actions:
-      backport:
-        assignees: &BackportAssignee
-          - "{{ merged_by|replace('mergify[bot]', label|select('equalto', 'community')|first|default(author)|replace('community', '@anza-xyz/community-pr-subscribers')) }}"
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        labels:
-          - feature-gate
-        branches:
-          - v1.17
-  - name: v1.17 non-feature-gate backport
-    conditions:
-      - label=v1.17
-      - label!=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        branches:
-          - v1.17
-  - name: v1.17 backport warning comment
-    conditions:
-      - label=v1.17
-    actions:
-      comment:
-        message: >
-          Backports to the stable branch are to be avoided unless absolutely
-          necessary for fixing bugs, security issues, and perf regressions.
-          Changes intended for backport should be structured such that a
-          minimum effective diff can be committed separately from any
-          refactoring, plumbing, cleanup, etc that are not strictly
-          necessary to achieve the goal. Any of the latter should go only
-          into master and ride the normal stabilization schedule.
   - name: v1.18 feature-gate backport
     conditions:
       - label=v1.18
       - label=feature-gate
     actions:
       backport:
-        assignees: *BackportAssignee
+        assignees: &BackportAssignee
+          - "{{ merged_by|replace('mergify[bot]', label|select('equalto', 'community')|first|default(author)|replace('community', '@anza-xyz/community-pr-subscribers')) }}"
         title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
         ignore_conflicts: true
         labels:
@@ -159,6 +122,43 @@ pull_request_rules:
     actions:
       comment:
         message: >
+          Backports to the stable branch are to be avoided unless absolutely
+          necessary for fixing bugs, security issues, and perf regressions.
+          Changes intended for backport should be structured such that a
+          minimum effective diff can be committed separately from any
+          refactoring, plumbing, cleanup, etc that are not strictly
+          necessary to achieve the goal. Any of the latter should go only
+          into master and ride the normal stabilization schedule.
+  - name: v2.0 feature-gate backport
+    conditions:
+      - label=v2.0
+      - label=feature-gate
+    actions:
+      backport:
+        assignees: *BackportAssignee
+        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
+        ignore_conflicts: true
+        labels:
+          - feature-gate
+        branches:
+          - v2.0
+  - name: v2.0 non-feature-gate backport
+    conditions:
+      - label=v2.0
+      - label!=feature-gate
+    actions:
+      backport:
+        assignees: *BackportAssignee
+        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
+        ignore_conflicts: true
+        branches:
+          - v2.0
+  - name: v2.0 backport warning comment
+    conditions:
+      - label=v2.0
+    actions:
+      comment:
+        message: >
           Backports to the beta branch are to be avoided unless absolutely
           necessary for fixing bugs, security issues, and perf regressions.
           Changes intended for backport should be structured such that a
@@ -168,6 +168,21 @@ pull_request_rules:
           into master and ride the normal stabilization schedule. Exceptions
           include CI/metrics changes, CLI improvements and documentation
           updates on a case by case basis.
+  - name: Reminder to update RPC clients for changes in `rpc/`
+    conditions:
+      - or:
+        - files~=^rpc/src/rpc\.rs$
+        - files~=^rpc/src/rpc_pubsub\.rs$
+        - files~=^rpc-client-api/src/.*\.rs$
+    actions:
+      comment:
+        message: |
+          If this PR represents a change to the public RPC API:
+
+          1. Make sure it includes a complementary update to `rpc-client/` ([example](https://github.com/solana-labs/solana/pull/29558/files))
+          2. Open a follow-up PR to update the JavaScript client `@solana/web3.js` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
+
+          Thank you for keeping the RPC clients in sync with the server API @{{author}}.
 
 commands_restrictions:
   # The author of copied PRs is the Mergify user.

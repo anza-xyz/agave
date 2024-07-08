@@ -95,7 +95,7 @@ impl From<u64> for PubkeyError {
 #[cfg_attr(test, derive(Arbitrary))]
 pub struct Pubkey(pub(crate) [u8; 32]);
 
-impl crate::sanitize::Sanitize for Pubkey {}
+impl solana_sanitize::Sanitize for Pubkey {}
 
 #[derive(Error, Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub enum ParsePubkeyError {
@@ -180,28 +180,13 @@ pub fn bytes_are_curve_point<T: AsRef<[u8]>>(_bytes: T) -> bool {
 }
 
 impl Pubkey {
-    #[deprecated(
-        since = "1.14.14",
-        note = "Please use 'Pubkey::from' or 'Pubkey::try_from' instead"
-    )]
-    pub fn new(pubkey_vec: &[u8]) -> Self {
-        Self::try_from(pubkey_vec).expect("Slice must be the same length as a Pubkey")
-    }
-
     pub const fn new_from_array(pubkey_array: [u8; 32]) -> Self {
         Self(pubkey_array)
     }
 
-    #[deprecated(since = "1.3.9", note = "Please use 'Pubkey::new_unique' instead")]
-    #[cfg(not(target_os = "solana"))]
-    pub fn new_rand() -> Self {
-        // Consider removing Pubkey::new_rand() entirely in the v1.5 or v1.6 timeframe
-        Pubkey::from(rand::random::<[u8; 32]>())
-    }
-
     /// unique Pubkey for tests and benchmarks.
     pub fn new_unique() -> Self {
-        use crate::atomic_u64::AtomicU64;
+        use solana_atomic_u64::AtomicU64;
         static I: AtomicU64 = AtomicU64::new(1);
 
         let mut b = [0u8; 32];
