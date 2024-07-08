@@ -1,7 +1,6 @@
 use {
     crate::{
         mock_bank::{MockBankCallback, MockForkGraph},
-        proto::{InstrEffects, InstrFixture},
         transaction_builder::SanitizedTransactionBuilder,
     },
     lazy_static::lazy_static,
@@ -43,6 +42,7 @@ use {
             TransactionProcessingEnvironment,
         },
     },
+    solana_svm_conformance::proto::{InstrEffects, InstrFixture},
     std::{
         collections::{HashMap, HashSet},
         env,
@@ -55,9 +55,6 @@ use {
     },
 };
 
-mod proto {
-    include!(concat!(env!("OUT_DIR"), "/org.solana.sealevel.v1.rs"));
-}
 mod mock_bank;
 mod transaction_builder;
 
@@ -151,7 +148,7 @@ fn run_from_folder(base_dir: &PathBuf, run_as_instr: &HashSet<OsString>) {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).expect("Failed to read file");
 
-        let fixture = proto::InstrFixture::decode(buffer.as_slice()).unwrap();
+        let fixture = InstrFixture::decode(buffer.as_slice()).unwrap();
         let execute_as_instr = run_as_instr.contains(&filename);
         run_fixture(fixture, filename, execute_as_instr);
     }
@@ -279,6 +276,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
     let processor_config = TransactionProcessingConfig {
         account_overrides: None,
+        check_program_modification_slot: false,
         compute_budget: None,
         log_messages_bytes_limit: None,
         limit_to_load_programs: true,

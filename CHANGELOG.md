@@ -8,15 +8,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.0](#edge-channel)
-* [beta - v1.18](https://github.com/solana-labs/solana/blob/v1.18/CHANGELOG.md)
-* [stable - v1.17](https://github.com/solana-labs/solana/blob/v1.17/CHANGELOG.md)
+* [edge - v2.1](#edge-channel)
+* [beta - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
+* [stable - v1.18](https://github.com/solana-labs/solana/blob/v1.18/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## [2.0.0] - Unreleased
+## [2.1.0] - Unreleased
+* Changes
+  * SDK: removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.
+
+## [2.0.0]
 * Breaking
   * SDK: Support for Borsh v0.9 removed, please use v1 or v0.10 (#1440)
   * SDK: `Copy` is no longer derived on `Rent` and `EpochSchedule`, please switch to using `clone()` (solana-labs#32767)
+  * SDK: deprecated SyncClient trait methods removed
+  * RPC: obsolete and deprecated v1 endpoints are removed. These endpoints are:
+    confirmTransaction, getSignatureStatus, getSignatureConfirmation, getTotalSupply,
+    getConfirmedSignaturesForAddress, getConfirmedBlock, getConfirmedBlocks, getConfirmedBlocksWithLimit,
+    getConfirmedTransaction, getConfirmedSignaturesForAddress2, getRecentBlockhash, getFees,
+    getFeeCalculatorForBlockhash, getFeeRateGovernor, getSnapshotSlot getStakeActivation
+  * `--enable-rpc-obsolete_v1_7` flag removed
+  * Deprecated methods are removed from `RpcClient` and `RpcClient::nonblocking`
 * Changes
   * `central-scheduler` as default option for `--block-production-method` (#34891)
   * `solana-rpc-client-api`: `RpcFilterError` depends on `base64` version 0.22, so users may need to upgrade to `base64` version 0.22
@@ -27,6 +39,15 @@ Release channels have their own copy of this changelog:
   * SDK: `cargo test-sbf` accepts `--tools-version`, just like `build-sbf` (#1359)
   * CLI: Can specify `--full-snapshot-archive-path` (#1631)
   * transaction-status: The SPL Token `amountToUiAmount` instruction parses the amount into a string instead of a number (#1737)
+  * Implemented partitioned epoch rewards as per [SIMD-0118](https://github.com/solana-foundation/solana-improvement-documents/blob/fae25d5a950f43bd787f1f5d75897ef1fdd425a7/proposals/0118-partitioned-epoch-reward-distribution.md). Feature gate: #426. Specific changes include:
+    * EpochRewards sysvar expanded and made persistent (#428, #572)
+    * Stake Program credits now allowed during distribution (#631)
+    * Updated type in Bank::epoch_rewards_status (#1277)
+    * Partitions are recalculated on boot from snapshot (#1159)
+    * `epoch_rewards_status` removed from snapshot (#1274)
+  * Added `unified-scheduler` option for `--block-verification-method` (#1668)
+  * Deprecate the `fifo` option for `--rocksdb-shred-compaction` (#1882)
+    * `fifo` will remain supported in v2.0 with plans to fully remove in v2.1
 
 ## [1.18.0]
 * Changes

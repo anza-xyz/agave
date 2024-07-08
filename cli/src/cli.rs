@@ -65,9 +65,6 @@ pub enum CliCommand {
     ClusterVersion,
     Feature(FeatureCliCommand),
     Inflation(InflationCliCommand),
-    Fees {
-        blockhash: Option<Hash>,
-    },
     FindProgramDerivedAddress {
         seeds: Vec<Vec<u8>>,
         program_id: Pubkey,
@@ -640,12 +637,6 @@ pub fn parse_command(
         ("feature", Some(matches)) => {
             parse_feature_subcommand(matches, default_signer, wallet_manager)
         }
-        ("fees", Some(matches)) => {
-            let blockhash = value_of::<Hash>(matches, "blockhash");
-            Ok(CliCommandInfo::without_signers(CliCommand::Fees {
-                blockhash,
-            }))
-        }
         ("first-available-block", Some(_matches)) => Ok(CliCommandInfo::without_signers(
             CliCommand::FirstAvailableBlock,
         )),
@@ -911,7 +902,6 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             seed,
             program_id,
         } => process_create_address_with_seed(config, from_pubkey.as_ref(), seed, program_id),
-        CliCommand::Fees { ref blockhash } => process_fees(&rpc_client, config, blockhash.as_ref()),
         CliCommand::Feature(feature_subcommand) => {
             process_feature_subcommand(&rpc_client, config, feature_subcommand)
         }
@@ -996,7 +986,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
                 timeout,
                 blockhash,
                 *print_timestamp,
-                compute_unit_price.as_ref(),
+                *compute_unit_price,
                 &rpc_client,
             )
         }
@@ -1075,7 +1065,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             new_authority,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         // Create nonce account
         CliCommand::CreateNonceAccount {
@@ -1093,7 +1083,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *amount,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         // Get the current nonce
         CliCommand::GetNonce(nonce_account_pubkey) => {
@@ -1111,7 +1101,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             nonce_account,
             *nonce_authority,
             memo.as_ref(),
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         // Show the contents of a nonce account
         CliCommand::ShowNonceAccount {
@@ -1139,7 +1129,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             destination_account_pubkey,
             *lamports,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         // Upgrade nonce account out of blockhash domain.
         CliCommand::UpgradeNonceAccount {
@@ -1151,7 +1141,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             config,
             *nonce_account,
             memo.as_ref(),
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
 
         // Program Deployment
@@ -1209,7 +1199,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             *fee_payer,
             *from,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::DeactivateStake {
             stake_account_pubkey,
@@ -1238,7 +1228,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             seed.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::DelegateStake {
             stake_account_pubkey,
@@ -1269,7 +1259,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             *fee_payer,
             *redelegation_stake_account,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::SplitStake {
             stake_account_pubkey,
@@ -1301,7 +1291,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             seed,
             *lamports,
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
             rent_exempt_reserve.as_ref(),
         ),
         CliCommand::MergeStake {
@@ -1329,7 +1319,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::ShowStakeAccount {
             pubkey: stake_account_pubkey,
@@ -1375,7 +1365,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             *fee_payer,
             *no_wait,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::StakeSetLockup {
             stake_account_pubkey,
@@ -1404,7 +1394,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::WithdrawStake {
             stake_account_pubkey,
@@ -1437,7 +1427,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             memo.as_ref(),
             seed.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::StakeMinimumDelegation { use_lamports_unit } => {
             process_stake_minimum_delegation(&rpc_client, config, *use_lamports_unit)
@@ -1461,7 +1451,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             validator_info,
             *force_keybase,
             *info_pubkey,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
 
         // Vote Commands
@@ -1498,7 +1488,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::ShowVoteAccount {
             pubkey: vote_account_pubkey,
@@ -1540,7 +1530,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::CloseVoteAccount {
             vote_account_pubkey,
@@ -1557,7 +1547,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             destination_account_pubkey,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::VoteAuthorize {
             vote_account_pubkey,
@@ -1588,7 +1578,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::VoteUpdateValidator {
             vote_account_pubkey,
@@ -1615,7 +1605,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         CliCommand::VoteUpdateCommission {
             vote_account_pubkey,
@@ -1642,7 +1632,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *nonce_authority,
             memo.as_ref(),
             *fee_payer,
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
 
         // Wallet Commands
@@ -1706,7 +1696,7 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *fee_payer,
             derived_address_seed.clone(),
             derived_address_program_id.as_ref(),
-            compute_unit_price.as_ref(),
+            *compute_unit_price,
         ),
         // Address Lookup Table Commands
         CliCommand::AddressLookupTable(subcommand) => {

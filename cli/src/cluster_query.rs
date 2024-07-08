@@ -1,7 +1,7 @@
 use {
     crate::{
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
-        compute_budget::WithComputeUnitPrice,
+        compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         feature::get_feature_activation_epoch,
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
@@ -10,7 +10,7 @@ use {
     crossbeam_channel::unbounded,
     serde::{Deserialize, Serialize},
     solana_clap_utils::{
-        compute_unit_price::{compute_unit_price_arg, COMPUTE_UNIT_PRICE_ARG},
+        compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         input_parsers::*,
         input_validators::*,
         keypair::DefaultSigner,
@@ -170,19 +170,6 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         .subcommand(
             SubCommand::with_name("cluster-version")
                 .about("Get the version of the cluster entrypoint"),
-        )
-        // Deprecated in v1.8.0
-        .subcommand(
-            SubCommand::with_name("fees")
-                .about("Display current cluster fees (Deprecated in v1.8.0)")
-                .arg(
-                    Arg::with_name("blockhash")
-                        .long("blockhash")
-                        .takes_value(true)
-                        .value_name("BLOCKHASH")
-                        .validator(is_hash)
-                        .help("Query fees for BLOCKHASH instead of the most recent blockhash"),
-                ),
         )
         .subcommand(
             SubCommand::with_name("first-available-block")
@@ -982,42 +969,6 @@ pub fn process_cluster_version(rpc_client: &RpcClient, config: &CliConfig) -> Pr
     }
 }
 
-pub fn process_fees(
-    rpc_client: &RpcClient,
-    config: &CliConfig,
-    blockhash: Option<&Hash>,
-) -> ProcessResult {
-    let fees = if let Some(recent_blockhash) = blockhash {
-        #[allow(deprecated)]
-        let result = rpc_client.get_fee_calculator_for_blockhash_with_commitment(
-            recent_blockhash,
-            config.commitment,
-        )?;
-        if let Some(fee_calculator) = result.value {
-            CliFees::some(
-                result.context.slot,
-                *recent_blockhash,
-                fee_calculator.lamports_per_signature,
-                None,
-                None,
-            )
-        } else {
-            CliFees::none()
-        }
-    } else {
-        #[allow(deprecated)]
-        let result = rpc_client.get_fees_with_commitment(config.commitment)?;
-        CliFees::some(
-            result.context.slot,
-            result.value.blockhash,
-            result.value.fee_calculator.lamports_per_signature,
-            None,
-            Some(result.value.last_valid_block_height),
-        )
-    };
-    Ok(config.output_format.formatted_string(&fees))
-}
-
 pub fn process_first_available_block(rpc_client: &RpcClient) -> ProcessResult {
     let first_available_block = rpc_client.get_first_available_block()?;
     Ok(format!("{first_available_block}"))
@@ -1480,7 +1431,7 @@ pub fn process_ping(
     timeout: &Duration,
     fixed_blockhash: &Option<Hash>,
     print_timestamp: bool,
-    compute_unit_price: Option<&u64>,
+    compute_unit_price: Option<u64>,
     rpc_client: &RpcClient,
 ) -> ProcessResult {
     let (signal_sender, signal_receiver) = unbounded();
@@ -1526,7 +1477,10 @@ pub fn process_ping(
                 &to,
                 lamports,
             )]
-            .with_compute_unit_price(compute_unit_price);
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit: ComputeUnitLimit::Default,
+            });
             Message::new(&ixs, Some(&config.signers[0].pubkey()))
         };
         let (message, _) = resolve_spend_tx_and_check_account_balance(
@@ -2371,26 +2325,6 @@ mod tests {
         assert_eq!(
             parse_command(&test_cluster_version, &default_signer, &mut None).unwrap(),
             CliCommandInfo::without_signers(CliCommand::ClusterVersion)
-        );
-
-        let test_fees = test_commands.clone().get_matches_from(vec!["test", "fees"]);
-        assert_eq!(
-            parse_command(&test_fees, &default_signer, &mut None).unwrap(),
-            CliCommandInfo::without_signers(CliCommand::Fees { blockhash: None })
-        );
-
-        let blockhash = Hash::new_unique();
-        let test_fees = test_commands.clone().get_matches_from(vec![
-            "test",
-            "fees",
-            "--blockhash",
-            &blockhash.to_string(),
-        ]);
-        assert_eq!(
-            parse_command(&test_fees, &default_signer, &mut None).unwrap(),
-            CliCommandInfo::without_signers(CliCommand::Fees {
-                blockhash: Some(blockhash)
-            })
         );
 
         let slot = 100;

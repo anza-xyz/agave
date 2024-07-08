@@ -210,10 +210,11 @@ impl AncientSlotInfos {
         let low_threshold = tuning.max_ancient_slots * 50 / 100;
         let mut bytes_from_must_shrink = 0;
         let mut bytes_from_smallest_storages = 0;
+        let mut bytes_from_newest_storages = 0;
         for (i, info) in self.all_infos.iter().enumerate() {
             cumulative_bytes += info.alive_bytes;
             let ancient_storages_required =
-                (cumulative_bytes.0 / tuning.ideal_storage_size + 1) as usize;
+                div_ceil(cumulative_bytes.0, tuning.ideal_storage_size) as usize;
             let storages_remaining = total_storages - i - 1;
 
             // if the remaining uncombined storages and the # of resulting
@@ -235,6 +236,8 @@ impl AncientSlotInfos {
             }
             if info.should_shrink {
                 bytes_from_must_shrink += info.alive_bytes;
+            } else if info.is_high_slot {
+                bytes_from_newest_storages += info.alive_bytes;
             } else {
                 bytes_from_smallest_storages += info.alive_bytes;
             }
@@ -245,12 +248,15 @@ impl AncientSlotInfos {
         stats
             .bytes_from_smallest_storages
             .fetch_add(bytes_from_smallest_storages, Ordering::Relaxed);
+        stats
+            .bytes_from_newest_storages
+            .fetch_add(bytes_from_newest_storages, Ordering::Relaxed);
     }
 
     /// remove entries from 'all_infos' such that combining
     /// the remaining entries into storages of 'ideal_storage_size'
     /// will get us below 'max_storages'
-    /// The entires that are removed will be reconsidered the next time around.
+    /// The entries that are removed will be reconsidered the next time around.
     /// Combining too many storages costs i/o and cpu so the goal is to find the sweet spot so
     /// that we make progress in cleaning/shrinking/combining but that we don't cause unnecessary
     /// churn.
@@ -1109,6 +1115,25 @@ pub fn is_ancient(storage: &AccountsFile) -> bool {
     storage.capacity() >= get_ancient_append_vec_capacity()
 }
 
+/// Divides `x` by `y` and rounds up
+///
+/// # Notes
+///
+/// It is undefined behavior if `x + y` overflows a u64.
+/// Debug builds check this invariant, and will panic if broken.
+fn div_ceil(x: u64, y: NonZeroU64) -> u64 {
+    let y = y.get();
+    debug_assert!(
+        x.checked_add(y).is_some(),
+        "x + y must not overflow! x: {x}, y: {y}",
+    );
+    // SAFETY: The caller guaranteed `x + y` does not overflow
+    // SAFETY: Since `y` is NonZero:
+    // - we know the denominator is > 0, and thus safe (cannot have divide-by-zero)
+    // - we know `x + y` is non-zero, and thus the numerator is safe (cannot underflow)
+    (x + y - 1) / y
+}
+
 #[cfg(test)]
 pub mod tests {
     use {
@@ -1128,7 +1153,10 @@ pub mod tests {
             },
             accounts_hash::AccountHash,
             accounts_index::UpsertReclaim,
-            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{
+                aligned_stored_size, AppendVec, AppendVecStoredAccountMeta,
+                MAXIMUM_APPEND_VEC_FILE_SIZE,
+            },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
@@ -1140,6 +1168,7 @@ pub mod tests {
         std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
         strum_macros::EnumIter,
+        test_case::test_case,
     };
 
     fn get_sample_storages(
@@ -2875,7 +2904,7 @@ pub mod tests {
             .collect();
         assert_eq!(
             infos.all_infos.len() as u64,
-            tuning.max_resulting_storages.get() - 1,
+            tuning.max_resulting_storages.get(),
         );
         assert!(high_slots
             .iter()
@@ -3807,5 +3836,30 @@ pub mod tests {
             // should have removed all of them
             assert!(expected_ref_counts.is_empty());
         }
+    }
+
+    #[test_case(0, 1 => 0)]
+    #[test_case(1, 1 => 1)]
+    #[test_case(2, 1 => 2)]
+    #[test_case(2, 2 => 1)]
+    #[test_case(2, 3 => 1)]
+    #[test_case(2, 4 => 1)]
+    #[test_case(3, 4 => 1)]
+    #[test_case(4, 4 => 1)]
+    #[test_case(5, 4 => 2)]
+    #[test_case(0, u64::MAX => 0)]
+    #[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE - 1, MAXIMUM_APPEND_VEC_FILE_SIZE => 1)]
+    #[test_case(MAXIMUM_APPEND_VEC_FILE_SIZE + 1, MAXIMUM_APPEND_VEC_FILE_SIZE => 2)]
+    fn test_div_ceil(x: u64, y: u64) -> u64 {
+        div_ceil(x, NonZeroU64::new(y).unwrap())
+    }
+
+    #[should_panic(expected = "x + y must not overflow")]
+    #[test_case(1, u64::MAX)]
+    #[test_case(u64::MAX, 1)]
+    #[test_case(u64::MAX/2 + 2, u64::MAX/2)]
+    #[test_case(u64::MAX/2,     u64::MAX/2 + 2)]
+    fn test_div_ceil_overflow(x: u64, y: u64) {
+        div_ceil(x, NonZeroU64::new(y).unwrap());
     }
 }
