@@ -25,20 +25,6 @@ impl RpcFilterType {
             RpcFilterType::Memcmp(compare) => {
                 use MemcmpEncodedBytes::*;
                 match &compare.bytes {
-                    // DEPRECATED
-                    Binary(bytes) => {
-                        if bytes.len() > MAX_DATA_BASE58_SIZE {
-                            return Err(RpcFilterError::Base58DataTooLarge);
-                        }
-                        let bytes = bs58::decode(&bytes)
-                            .into_vec()
-                            .map_err(RpcFilterError::DecodeError)?;
-                        if bytes.len() > MAX_DATA_SIZE {
-                            Err(RpcFilterError::Base58DataTooLarge)
-                        } else {
-                            Ok(())
-                        }
-                    }
                     Base58(bytes) => {
                         if bytes.len() > MAX_DATA_BASE58_SIZE {
                             return Err(RpcFilterError::DataTooLarge);
@@ -109,19 +95,8 @@ pub enum RpcFilterError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum MemcmpEncoding {
-    Binary,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "encoding", content = "bytes")]
 pub enum MemcmpEncodedBytes {
-    #[deprecated(
-        since = "1.8.1",
-        note = "Please use MemcmpEncodedBytes::Base58 instead"
-    )]
-    Binary(String),
     Base58(String),
     Base64(String),
     Bytes(Vec<u8>),
@@ -131,7 +106,7 @@ pub enum MemcmpEncodedBytes {
 pub struct Memcmp {
     /// Data offset to begin match
     offset: usize,
-    /// Bytes, encoded with specified encoding, or default Binary
+    /// Bytes, encoded with specified encoding
     #[serde(flatten)]
     bytes: MemcmpEncodedBytes,
 }
@@ -161,7 +136,7 @@ impl Memcmp {
     pub fn bytes(&self) -> Option<Cow<Vec<u8>>> {
         use MemcmpEncodedBytes::*;
         match &self.bytes {
-            Binary(bytes) | Base58(bytes) => bs58::decode(bytes).into_vec().ok().map(Cow::Owned),
+            Base58(bytes) => bs58::decode(bytes).into_vec().ok().map(Cow::Owned),
             Base64(bytes) => base64::decode(bytes).ok().map(Cow::Owned),
             Bytes(bytes) => Some(Cow::Borrowed(bytes)),
         }
@@ -170,7 +145,7 @@ impl Memcmp {
     pub fn convert_to_raw_bytes(&mut self) -> Result<(), RpcFilterError> {
         use MemcmpEncodedBytes::*;
         match &self.bytes {
-            Binary(bytes) | Base58(bytes) => {
+            Base58(bytes) => {
                 let bytes = bs58::decode(bytes).into_vec()?;
                 self.bytes = Bytes(bytes);
                 Ok(())
