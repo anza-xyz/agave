@@ -1965,8 +1965,29 @@ mod tests {
                 progress,
             )
         );
+        let last_vote_slot = test_state.last_voted_fork_slots[0];
+        let snapshot_slot_hash = Hash::new_unique();
         let progress = WenRestartProgress {
             state: RestartState::Done.into(),
+            my_last_voted_fork_slots: Some(LastVotedForkSlotsRecord {
+                last_voted_fork_slots: test_state.last_voted_fork_slots.clone(),
+                last_vote_bankhash: last_vote_bankhash.to_string(),
+                shred_version: SHRED_VERSION as u32,
+                wallclock: 0,
+            }),
+            my_heaviest_fork: Some(HeaviestForkRecord {
+                slot: last_vote_slot,
+                bankhash: snapshot_slot_hash.to_string(),
+                total_active_stake: 0,
+                shred_version: SHRED_VERSION as u32,
+                wallclock: 0,
+            }),
+            my_snapshot: Some(GenerateSnapshotRecord {
+                slot: last_vote_slot,
+                bankhash: snapshot_slot_hash.to_string(),
+                shred_version: SHRED_VERSION as u32,
+                path: "/path/to/snapshot".to_string(),
+            }),
             ..Default::default()
         };
         assert!(write_wen_restart_records(&test_state.wen_restart_proto_path, &progress,).is_ok());
@@ -1977,7 +1998,12 @@ mod tests {
                 test_state.blockstore.clone()
             )
             .unwrap(),
-            (WenRestartProgressInternalState::Done, progress)
+            (WenRestartProgressInternalState::Done {
+                slot: last_vote_slot,
+                hash: snapshot_slot_hash,
+                shred_version: SHRED_VERSION,
+                snapshot_path: "/path/to/snapshot".to_string(),
+            }, progress)
         );
     }
 
