@@ -1367,6 +1367,7 @@ fn execute<'a, 'b: 'a>(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
+        Some(invoke_context.program_cache_for_tx_batch),
     )?;
     serialize_time.stop();
 

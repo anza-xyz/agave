@@ -4,6 +4,7 @@ extern crate test;
 
 use {
     solana_bpf_loader_program::serialization::serialize_parameters,
+    solana_program_runtime::loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
     solana_sdk::{
         account::{Account, AccountSharedData},
         bpf_loader, bpf_loader_deprecated,
@@ -125,8 +126,16 @@ fn bench_serialize_unaligned(bencher: &mut Bencher) {
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
+    let program_cache_for_tx_batch =
+        ProgramCacheForTxBatch::new(0, ProgramRuntimeEnvironments::default(), None, 0);
     bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        let _ = serialize_parameters(
+            &transaction_context,
+            instruction_context,
+            false,
+            Some(&program_cache_for_tx_batch),
+        )
+        .unwrap();
     });
 }
 
@@ -136,8 +145,16 @@ fn bench_serialize_unaligned_copy_account_data(bencher: &mut Bencher) {
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
+    let program_cache_for_tx_batch =
+        ProgramCacheForTxBatch::new(0, ProgramRuntimeEnvironments::default(), None, 0);
     bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+        let _ = serialize_parameters(
+            &transaction_context,
+            instruction_context,
+            true,
+            Some(&program_cache_for_tx_batch),
+        )
+        .unwrap();
     });
 }
 
@@ -147,9 +164,16 @@ fn bench_serialize_aligned(bencher: &mut Bencher) {
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
-
+    let program_cache_for_tx_batch =
+        ProgramCacheForTxBatch::new(0, ProgramRuntimeEnvironments::default(), None, 0);
     bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        let _ = serialize_parameters(
+            &transaction_context,
+            instruction_context,
+            false,
+            Some(&program_cache_for_tx_batch),
+        )
+        .unwrap();
     });
 }
 
@@ -159,9 +183,16 @@ fn bench_serialize_aligned_copy_account_data(bencher: &mut Bencher) {
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
-
+    let program_cache_for_tx_batch =
+        ProgramCacheForTxBatch::new(0, ProgramRuntimeEnvironments::default(), None, 0);
     bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+        let _ = serialize_parameters(
+            &transaction_context,
+            instruction_context,
+            true,
+            Some(&program_cache_for_tx_batch),
+        )
+        .unwrap();
     });
 }
 
@@ -171,8 +202,16 @@ fn bench_serialize_unaligned_max_accounts(bencher: &mut Bencher) {
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
+    let program_cache_for_tx_batch =
+        ProgramCacheForTxBatch::new(0, ProgramRuntimeEnvironments::default(), None, 0);
     bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        let _ = serialize_parameters(
+            &transaction_context,
+            instruction_context,
+            false,
+            Some(&program_cache_for_tx_batch),
+        )
+        .unwrap();
     });
 }
 
@@ -182,8 +221,15 @@ fn bench_serialize_aligned_max_accounts(bencher: &mut Bencher) {
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
-
+    let program_cache_for_tx_batch =
+        ProgramCacheForTxBatch::new(0, ProgramRuntimeEnvironments::default(), None, 0);
     bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        let _ = serialize_parameters(
+            &transaction_context,
+            instruction_context,
+            false,
+            Some(&program_cache_for_tx_batch),
+        )
+        .unwrap();
     });
 }

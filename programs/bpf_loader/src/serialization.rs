@@ -2,7 +2,10 @@
 
 use {
     byteorder::{ByteOrder, LittleEndian},
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_program_runtime::{
+        invoke_context::SerializedAccountMetadata,
+        loaded_programs::{ProgramCacheEntryType, ProgramCacheForTxBatch},
+    },
     solana_rbpf::{
         aligned_memory::{AlignedMemory, Pod},
         ebpf::{HOST_ALIGN, MM_INPUT_START},
@@ -31,17 +34,24 @@ enum SerializeAccount<'a> {
     Duplicate(IndexOfAccount),
 }
 
-struct Serializer {
+struct Serializer<'a> {
     pub buffer: AlignedMemory<HOST_ALIGN>,
     regions: Vec<MemoryRegion>,
     vaddr: u64,
     region_start: usize,
     aligned: bool,
     copy_account_data: bool,
+    program_cache_for_tx_batch: Option<&'a ProgramCacheForTxBatch>,
 }
 
-impl Serializer {
-    fn new(size: usize, start_addr: u64, aligned: bool, copy_account_data: bool) -> Serializer {
+impl<'a> Serializer<'a> {
+    fn new(
+        size: usize,
+        start_addr: u64,
+        aligned: bool,
+        copy_account_data: bool,
+        program_cache_for_tx_batch: Option<&'a ProgramCacheForTxBatch>,
+    ) -> Serializer {
         Serializer {
             buffer: AlignedMemory::with_capacity(size),
             regions: Vec::new(),
@@ -49,6 +59,7 @@ impl Serializer {
             vaddr: start_addr,
             aligned,
             copy_account_data,
+            program_cache_for_tx_batch,
         }
     }
 
@@ -174,6 +185,18 @@ impl Serializer {
         (self.buffer, self.regions)
     }
 
+    /// Replaces `account.is_executable()`
+    fn infer_is_executable(&self, account: &BorrowedAccount<'_>) -> bool {
+        if let Some(program_cache_for_tx_batch) = self.program_cache_for_tx_batch {
+            program_cache_for_tx_batch
+                .find(account.get_key())
+                .map(|entry| !matches!(entry.program, ProgramCacheEntryType::Closed))
+                .unwrap_or(false)
+        } else {
+            account.is_executable()
+        }
+    }
+
     fn debug_assert_alignment<T>(&self) {
         debug_assert!(
             !self.aligned
@@ -192,6 +215,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    program_cache_for_tx_batch: Option<&ProgramCacheForTxBatch>,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -240,6 +264,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
+            program_cache_for_tx_batch,
         )
     } else {
         serialize_parameters_aligned(
@@ -247,6 +272,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
+            program_cache_for_tx_batch,
         )
     }
 }
@@ -287,6 +313,7 @@ fn serialize_parameters_unaligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
+    program_cache_for_tx_batch: Option<&ProgramCacheForTxBatch>,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -320,7 +347,13 @@ fn serialize_parameters_unaligned(
          + instruction_data.len() // instruction data
          + size_of::<Pubkey>(); // program id
 
-    let mut s = Serializer::new(size, MM_INPUT_START, false, copy_account_data);
+    let mut s = Serializer::new(
+        size,
+        MM_INPUT_START,
+        false,
+        copy_account_data,
+        program_cache_for_tx_batch,
+    );
 
     let mut accounts_metadata: Vec<SerializedAccountMetadata> = Vec::with_capacity(accounts.len());
     s.write::<u64>((accounts.len() as u64).to_le());
@@ -339,7 +372,7 @@ fn serialize_parameters_unaligned(
                 s.write::<u64>((account.get_data().len() as u64).to_le());
                 let vm_data_addr = s.write_account(&mut account)?;
                 let vm_owner_addr = s.write_all(account.get_owner().as_ref());
-                s.write::<u8>(account.is_executable() as u8);
+                s.write::<u8>(s.infer_is_executable(&account) as u8);
                 s.write::<u64>((account.get_rent_epoch()).to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
                     original_data_len: account.get_data().len(),
@@ -418,6 +451,7 @@ fn serialize_parameters_aligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
+    program_cache_for_tx_batch: Option<&ProgramCacheForTxBatch>,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -457,7 +491,13 @@ fn serialize_parameters_aligned(
     + instruction_data.len()
     + size_of::<Pubkey>(); // program id;
 
-    let mut s = Serializer::new(size, MM_INPUT_START, true, copy_account_data);
+    let mut s = Serializer::new(
+        size,
+        MM_INPUT_START,
+        true,
+        copy_account_data,
+        program_cache_for_tx_batch,
+    );
 
     // Serialize into the buffer
     s.write::<u64>((accounts.len() as u64).to_le());
@@ -467,7 +507,7 @@ fn serialize_parameters_aligned(
                 s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
-                s.write::<u8>(borrowed_account.is_executable() as u8);
+                s.write::<u8>(s.infer_is_executable(&borrowed_account) as u8);
                 s.write_all(&[0u8, 0, 0, 0]);
                 let vm_key_addr = s.write_all(borrowed_account.get_key().as_ref());
                 let vm_owner_addr = s.write_all(borrowed_account.get_owner().as_ref());
@@ -729,6 +769,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
+                    Some(invoke_context.program_cache_for_tx_batch),
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -883,6 +924,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                Some(invoke_context.program_cache_for_tx_batch),
             )
             .unwrap();
 
@@ -974,6 +1016,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                Some(invoke_context.program_cache_for_tx_batch),
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);

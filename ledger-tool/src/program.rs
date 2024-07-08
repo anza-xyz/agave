@@ -544,6 +544,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .get_current_instruction_context()
             .unwrap(),
         true, // copy_account_data
+        Some(invoke_context.program_cache_for_tx_batch),
     )
     .unwrap();
 
