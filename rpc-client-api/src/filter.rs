@@ -135,18 +135,10 @@ pub enum MemcmpEncodedBytes {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Memcmp {
     /// Data offset to begin match
-    #[deprecated(
-        since = "1.15.0",
-        note = "Field will be made private in future. Please use a constructor method instead."
-    )]
-    pub offset: usize,
+    offset: usize,
     /// Bytes, encoded with specified encoding, or default Binary
-    #[deprecated(
-        since = "1.15.0",
-        note = "Field will be made private in future. Please use a constructor method instead."
-    )]
     #[serde(flatten)]
-    pub bytes: MemcmpEncodedBytes,
+    bytes: MemcmpEncodedBytes,
     /// Optional encoding specification
     #[deprecated(
         since = "1.11.2",
