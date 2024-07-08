@@ -1998,12 +1998,15 @@ mod tests {
                 test_state.blockstore.clone()
             )
             .unwrap(),
-            (WenRestartProgressInternalState::Done {
-                slot: last_vote_slot,
-                hash: snapshot_slot_hash,
-                shred_version: SHRED_VERSION,
-                snapshot_path: "/path/to/snapshot".to_string(),
-            }, progress)
+            (
+                WenRestartProgressInternalState::Done {
+                    slot: last_vote_slot,
+                    hash: snapshot_slot_hash,
+                    shred_version: SHRED_VERSION,
+                    snapshot_path: "/path/to/snapshot".to_string(),
+                },
+                progress
+            )
         );
     }
 
