@@ -76,18 +76,6 @@ impl RpcFilterType {
 pub enum RpcFilterError {
     #[error("encoded binary data should be less than 129 bytes")]
     DataTooLarge,
-    #[deprecated(
-        since = "1.8.1",
-        note = "Error for MemcmpEncodedBytes::Binary which is deprecated"
-    )]
-    #[error("encoded binary (base 58) data should be less than 129 bytes")]
-    Base58DataTooLarge,
-    #[deprecated(
-        since = "1.8.1",
-        note = "Error for MemcmpEncodedBytes::Binary which is deprecated"
-    )]
-    #[error("bs58 decode error")]
-    DecodeError(bs58::decode::Error),
     #[error("base58 decode error")]
     Base58DecodeError(#[from] bs58::decode::Error),
     #[error("base64 decode error")]
