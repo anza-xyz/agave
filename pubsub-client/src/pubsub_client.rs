@@ -206,35 +206,6 @@ where
             .map_err(|err| err.into())
     }
 
-    fn get_version(
-        writable_socket: &Arc<RwLock<WebSocket<MaybeTlsStream<TcpStream>>>>,
-    ) -> Result<semver::Version, PubsubClientError> {
-        writable_socket.write().unwrap().send(Message::Text(
-            json!({
-                "jsonrpc":"2.0","id":1,"method":"getVersion",
-            })
-            .to_string(),
-        ))?;
-        let message = writable_socket.write().unwrap().read()?;
-        let message_text = &message.into_text()?;
-
-        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
-            if let Some(Object(version_map)) = json_msg.get("result") {
-                if let Some(node_version) = version_map.get("solana-core") {
-                    if let Some(node_version) = node_version.as_str() {
-                        if let Ok(parsed) = semver::Version::parse(node_version) {
-                            return Ok(parsed);
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(PubsubClientError::UnexpectedGetVersionResponse(format!(
-            "msg={message_text}"
-        )))
-    }
-
     fn read_message(
         writable_socket: &Arc<RwLock<WebSocket<MaybeTlsStream<TcpStream>>>>,
     ) -> Result<Option<T>, PubsubClientError> {
