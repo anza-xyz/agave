@@ -23,54 +23,49 @@ impl RpcFilterType {
         match self {
             RpcFilterType::DataSize(_) => Ok(()),
             RpcFilterType::Memcmp(compare) => {
-                let encoding = compare.encoding.as_ref().unwrap_or(&MemcmpEncoding::Binary);
-                match encoding {
-                    MemcmpEncoding::Binary => {
-                        use MemcmpEncodedBytes::*;
-                        match &compare.bytes {
-                            // DEPRECATED
-                            Binary(bytes) => {
-                                if bytes.len() > MAX_DATA_BASE58_SIZE {
-                                    return Err(RpcFilterError::Base58DataTooLarge);
-                                }
-                                let bytes = bs58::decode(&bytes)
-                                    .into_vec()
-                                    .map_err(RpcFilterError::DecodeError)?;
-                                if bytes.len() > MAX_DATA_SIZE {
-                                    Err(RpcFilterError::Base58DataTooLarge)
-                                } else {
-                                    Ok(())
-                                }
-                            }
-                            Base58(bytes) => {
-                                if bytes.len() > MAX_DATA_BASE58_SIZE {
-                                    return Err(RpcFilterError::DataTooLarge);
-                                }
-                                let bytes = bs58::decode(&bytes).into_vec()?;
-                                if bytes.len() > MAX_DATA_SIZE {
-                                    Err(RpcFilterError::DataTooLarge)
-                                } else {
-                                    Ok(())
-                                }
-                            }
-                            Base64(bytes) => {
-                                if bytes.len() > MAX_DATA_BASE64_SIZE {
-                                    return Err(RpcFilterError::DataTooLarge);
-                                }
-                                let bytes = base64::decode(bytes)?;
-                                if bytes.len() > MAX_DATA_SIZE {
-                                    Err(RpcFilterError::DataTooLarge)
-                                } else {
-                                    Ok(())
-                                }
-                            }
-                            Bytes(bytes) => {
-                                if bytes.len() > MAX_DATA_SIZE {
-                                    return Err(RpcFilterError::DataTooLarge);
-                                }
-                                Ok(())
-                            }
+                use MemcmpEncodedBytes::*;
+                match &compare.bytes {
+                    // DEPRECATED
+                    Binary(bytes) => {
+                        if bytes.len() > MAX_DATA_BASE58_SIZE {
+                            return Err(RpcFilterError::Base58DataTooLarge);
                         }
+                        let bytes = bs58::decode(&bytes)
+                            .into_vec()
+                            .map_err(RpcFilterError::DecodeError)?;
+                        if bytes.len() > MAX_DATA_SIZE {
+                            Err(RpcFilterError::Base58DataTooLarge)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    Base58(bytes) => {
+                        if bytes.len() > MAX_DATA_BASE58_SIZE {
+                            return Err(RpcFilterError::DataTooLarge);
+                        }
+                        let bytes = bs58::decode(&bytes).into_vec()?;
+                        if bytes.len() > MAX_DATA_SIZE {
+                            Err(RpcFilterError::DataTooLarge)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    Base64(bytes) => {
+                        if bytes.len() > MAX_DATA_BASE64_SIZE {
+                            return Err(RpcFilterError::DataTooLarge);
+                        }
+                        let bytes = base64::decode(bytes)?;
+                        if bytes.len() > MAX_DATA_SIZE {
+                            Err(RpcFilterError::DataTooLarge)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    Bytes(bytes) => {
+                        if bytes.len() > MAX_DATA_SIZE {
+                            return Err(RpcFilterError::DataTooLarge);
+                        }
+                        Ok(())
                     }
                 }
             }
@@ -139,14 +134,6 @@ pub struct Memcmp {
     /// Bytes, encoded with specified encoding, or default Binary
     #[serde(flatten)]
     bytes: MemcmpEncodedBytes,
-    /// Optional encoding specification
-    #[deprecated(
-        since = "1.11.2",
-        note = "Field has no server-side effect. Specify encoding with `MemcmpEncodedBytes` variant instead. \
-            Field will be made private in future. Please use a constructor method instead."
-    )]
-    #[serde(skip)]
-    pub encoding: Option<MemcmpEncoding>,
 }
 
 impl Memcmp {
@@ -154,7 +141,6 @@ impl Memcmp {
         Self {
             offset,
             bytes: encoded_bytes,
-            encoding: None,
         }
     }
 
@@ -162,7 +148,6 @@ impl Memcmp {
         Self {
             offset,
             bytes: MemcmpEncodedBytes::Bytes(bytes),
-            encoding: None,
         }
     }
 
@@ -170,7 +155,6 @@ impl Memcmp {
         Self {
             offset,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(bytes).into_string()),
-            encoding: None,
         }
     }
 
@@ -241,7 +225,6 @@ mod tests {
         assert!(Memcmp {
             offset: 0,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(vec![1, 2, 3, 4, 5]).into_string()),
-            encoding: None,
         }
         .bytes_match(&data));
 
@@ -249,7 +232,6 @@ mod tests {
         assert!(Memcmp {
             offset: 0,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(vec![1, 2]).into_string()),
-            encoding: None,
         }
         .bytes_match(&data));
 
@@ -257,7 +239,6 @@ mod tests {
         assert!(Memcmp {
             offset: 2,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(vec![3, 4]).into_string()),
-            encoding: None,
         }
         .bytes_match(&data));
 
@@ -265,7 +246,6 @@ mod tests {
         assert!(!Memcmp {
             offset: 0,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(vec![2]).into_string()),
-            encoding: None,
         }
         .bytes_match(&data));
 
@@ -273,7 +253,6 @@ mod tests {
         assert!(!Memcmp {
             offset: 2,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(vec![3, 4, 5, 6]).into_string()),
-            encoding: None,
         }
         .bytes_match(&data));
 
@@ -281,7 +260,6 @@ mod tests {
         assert!(!Memcmp {
             offset: 6,
             bytes: MemcmpEncodedBytes::Base58(bs58::encode(vec![5]).into_string()),
-            encoding: None,
         }
         .bytes_match(&data));
 
@@ -289,7 +267,6 @@ mod tests {
         assert!(!Memcmp {
             offset: 0,
             bytes: MemcmpEncodedBytes::Base58("III".to_string()),
-            encoding: None,
         }
         .bytes_match(&data));
     }
@@ -304,7 +281,6 @@ mod tests {
             RpcFilterType::Memcmp(Memcmp {
                 offset: 0,
                 bytes: MemcmpEncodedBytes::Base58(base58_bytes.to_string()),
-                encoding: None,
             })
             .verify(),
             Ok(())
@@ -319,7 +295,6 @@ mod tests {
             RpcFilterType::Memcmp(Memcmp {
                 offset: 0,
                 bytes: MemcmpEncodedBytes::Base58(base58_bytes.to_string()),
-                encoding: None,
             })
             .verify(),
             Err(RpcFilterError::DataTooLarge)
