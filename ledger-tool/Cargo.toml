@@ -53,7 +53,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-jemallocator = { workspace = true }
+mimalloc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
