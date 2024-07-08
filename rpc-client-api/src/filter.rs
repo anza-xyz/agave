@@ -120,7 +120,7 @@ pub enum MemcmpEncoding {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", untagged)]
+#[serde(rename_all = "camelCase", tag = "encoding", content = "bytes")]
 pub enum MemcmpEncodedBytes {
     #[deprecated(
         since = "1.8.1",
@@ -133,7 +133,6 @@ pub enum MemcmpEncodedBytes {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(into = "RpcMemcmp", from = "RpcMemcmp")]
 pub struct Memcmp {
     /// Data offset to begin match
     #[deprecated(
@@ -146,6 +145,7 @@ pub struct Memcmp {
         since = "1.15.0",
         note = "Field will be made private in future. Please use a constructor method instead."
     )]
+    #[serde(flatten)]
     pub bytes: MemcmpEncodedBytes,
     /// Optional encoding specification
     #[deprecated(
@@ -153,6 +153,7 @@ pub struct Memcmp {
         note = "Field has no server-side effect. Specify encoding with `MemcmpEncodedBytes` variant instead. \
             Field will be made private in future. Please use a constructor method instead."
     )]
+    #[serde(skip)]
     pub encoding: Option<MemcmpEncoding>,
 }
 
@@ -219,80 +220,6 @@ impl Memcmp {
                 data[self.offset..self.offset + bytes.len()] == bytes[..]
             }
             None => false,
-        }
-    }
-}
-
-// Internal struct to hold Memcmp filter data as either encoded String or raw Bytes
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(untagged)]
-enum DataType {
-    Encoded(String),
-    Raw(Vec<u8>),
-}
-
-// Internal struct used to specify explicit Base58 and Base64 encoding
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum RpcMemcmpEncoding {
-    Base58,
-    Base64,
-    // This variant exists only to preserve backward compatibility with generic `Memcmp` serde
-    #[serde(other)]
-    Binary,
-}
-
-// Internal struct to enable Memcmp filters with explicit Base58 and Base64 encoding. The From
-// implementations emulate `#[serde(tag = "encoding", content = "bytes")]` for
-// `MemcmpEncodedBytes`. On the next major version, all these internal elements should be removed
-// and replaced with adjacent tagging of `MemcmpEncodedBytes`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct RpcMemcmp {
-    offset: usize,
-    bytes: DataType,
-    encoding: Option<RpcMemcmpEncoding>,
-}
-
-impl From<Memcmp> for RpcMemcmp {
-    fn from(memcmp: Memcmp) -> RpcMemcmp {
-        let (bytes, encoding) = match memcmp.bytes {
-            MemcmpEncodedBytes::Binary(string) => {
-                (DataType::Encoded(string), Some(RpcMemcmpEncoding::Binary))
-            }
-            MemcmpEncodedBytes::Base58(string) => {
-                (DataType::Encoded(string), Some(RpcMemcmpEncoding::Base58))
-            }
-            MemcmpEncodedBytes::Base64(string) => {
-                (DataType::Encoded(string), Some(RpcMemcmpEncoding::Base64))
-            }
-            MemcmpEncodedBytes::Bytes(vector) => (DataType::Raw(vector), None),
-        };
-        RpcMemcmp {
-            offset: memcmp.offset,
-            bytes,
-            encoding,
-        }
-    }
-}
-
-impl From<RpcMemcmp> for Memcmp {
-    fn from(memcmp: RpcMemcmp) -> Memcmp {
-        let encoding = memcmp.encoding.unwrap_or(RpcMemcmpEncoding::Binary);
-        let bytes = match (encoding, memcmp.bytes) {
-            (RpcMemcmpEncoding::Binary, DataType::Encoded(string))
-            | (RpcMemcmpEncoding::Base58, DataType::Encoded(string)) => {
-                MemcmpEncodedBytes::Base58(string)
-            }
-            (RpcMemcmpEncoding::Binary, DataType::Raw(vector)) => MemcmpEncodedBytes::Bytes(vector),
-            (RpcMemcmpEncoding::Base64, DataType::Encoded(string)) => {
-                MemcmpEncodedBytes::Base64(string)
-            }
-            _ => unreachable!(),
-        };
-        Memcmp {
-            offset: memcmp.offset,
-            bytes,
-            encoding: None,
         }
     }
 }
