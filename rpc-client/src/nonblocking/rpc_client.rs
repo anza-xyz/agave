@@ -32,7 +32,6 @@ use {
             Error as ClientError, ErrorKind as ClientErrorKind, Result as ClientResult,
         },
         config::{RpcAccountInfoConfig, *},
-        filter::{self, RpcFilterType},
         request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
         response::*,
     },
@@ -548,17 +547,6 @@ impl RpcClient {
     /// [`RpcClient::confirm_transaction_with_commitment`].
     pub fn commitment(&self) -> CommitmentConfig {
         self.config.commitment_config
-    }
-
-    #[allow(deprecated)]
-    async fn maybe_map_filters(
-        &self,
-        mut filters: Vec<RpcFilterType>,
-    ) -> Result<Vec<RpcFilterType>, RpcError> {
-        let node_version = self.get_node_version().await?;
-        filter::maybe_map_filters(Some(node_version), &mut filters)
-            .map_err(RpcError::RpcRequestError)?;
-        Ok(filters)
     }
 
     /// Submit a transaction and wait for confirmation.
@@ -4046,9 +4034,6 @@ impl RpcClient {
             .commitment
             .unwrap_or_else(|| self.commitment());
         config.account_config.commitment = Some(commitment);
-        if let Some(filters) = config.filters {
-            config.filters = Some(self.maybe_map_filters(filters).await?);
-        }
 
         let accounts = self
             .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
