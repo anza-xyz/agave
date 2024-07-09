@@ -3,7 +3,6 @@ use {
     solana_sdk::{hash::Hash, signature::Signature, transaction::VersionedTransaction},
 };
 
-mod reference;
 mod sanitized_transaction;
 
 pub trait SVMTransaction: SVMMessage {

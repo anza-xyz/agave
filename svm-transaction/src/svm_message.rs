@@ -4,7 +4,6 @@ use {
     solana_sdk::{hash::Hash, message::AccountKeys, pubkey::Pubkey},
 };
 
-mod reference;
 mod sanitized_message;
 mod sanitized_transaction;
 
