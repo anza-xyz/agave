@@ -13,6 +13,7 @@ jobs:
     name: rust benchmark
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         pkg:
           - solana-runtime
