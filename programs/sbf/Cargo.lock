@@ -5152,6 +5152,7 @@ dependencies = [
  "solana-runtime",
  "solana-sanitize",
  "solana-sdk",
+ "solana-serde-varint",
  "solana-short-vec",
  "solana-streamer",
  "solana-tpu-client",
@@ -5428,6 +5429,7 @@ dependencies = [
  "solana-sanitize",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
+ "solana-serde-varint",
  "solana-short-vec",
  "thiserror",
  "wasm-bindgen",
@@ -6361,6 +6363,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-serde-varint"
+version = "2.1.0"
+dependencies = [
+ "rustc_version",
+ "serde",
+]
+
+[[package]]
 name = "solana-stake-program"
 version = "2.1.0"
 dependencies = [
@@ -6719,6 +6729,7 @@ dependencies = [
  "serde_derive",
  "solana-sanitize",
  "solana-sdk",
+ "solana-serde-varint",
 ]
 
 [[package]]
