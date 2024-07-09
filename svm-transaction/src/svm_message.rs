@@ -1,5 +1,5 @@
 use {
-    crate::{Instruction, MessageAddressTableLookup},
+    crate::{instruction::Instruction, message_address_table_lookup::MessageAddressTableLookup},
     core::fmt::Debug,
     solana_sdk::{hash::Hash, message::AccountKeys, pubkey::Pubkey},
 };

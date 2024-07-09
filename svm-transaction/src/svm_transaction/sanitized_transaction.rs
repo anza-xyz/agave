@@ -1,5 +1,5 @@
 use {
-    crate::SVMTransaction,
+    crate::svm_transaction::SVMTransaction,
     solana_sdk::{
         hash::Hash,
         signature::Signature,

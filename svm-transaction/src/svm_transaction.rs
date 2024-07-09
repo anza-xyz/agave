@@ -1,5 +1,5 @@
 use {
-    crate::SVMMessage,
+    crate::svm_message::SVMMessage,
     solana_sdk::{hash::Hash, signature::Signature, transaction::VersionedTransaction},
 };
 

@@ -1,5 +1,8 @@
 use {
-    crate::{Instruction, MessageAddressTableLookup, SVMMessage},
+    crate::{
+        instruction::Instruction, message_address_table_lookup::MessageAddressTableLookup,
+        svm_message::SVMMessage,
+    },
     solana_sdk::{
         hash::Hash, message::AccountKeys, pubkey::Pubkey, transaction::SanitizedTransaction,
     },
