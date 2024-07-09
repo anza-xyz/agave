@@ -23,7 +23,7 @@ use {
 };
 
 /// called on a struct while scanning append vecs
-pub trait AppendVecScan: Send + Sync + Clone {
+trait AppendVecScan: Send + Sync + Clone {
     /// return true if this pubkey should be included
     fn filter(&mut self, pubkey: &Pubkey) -> bool;
     /// set current slot of the scan
