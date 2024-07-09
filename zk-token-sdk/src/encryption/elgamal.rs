@@ -221,7 +221,7 @@ impl ElGamalKeypair {
         &self.secret
     }
 
-    #[deprecated(note = "please use `into()` instead")]
+    #[deprecated(since = "2.0.0", note = "please use `into()` instead")]
     #[allow(deprecated)]
     pub fn to_bytes(&self) -> [u8; ELGAMAL_KEYPAIR_LEN] {
         let mut bytes = [0u8; ELGAMAL_KEYPAIR_LEN];
@@ -230,7 +230,7 @@ impl ElGamalKeypair {
         bytes
     }
 
-    #[deprecated(note = "please use `try_from()` instead")]
+    #[deprecated(since = "2.0.0", note = "please use `try_from()` instead")]
     #[allow(deprecated)]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != ELGAMAL_KEYPAIR_LEN {
@@ -358,7 +358,7 @@ impl ElGamalPubkey {
     #[allow(non_snake_case)]
     pub fn new(secret: &ElGamalSecretKey) -> Self {
         let s = &secret.0;
-        assert!(s != &Scalar::zero());
+        assert_ne!(s, &Scalar::ZERO);
 
         ElGamalPubkey(s.invert() * &(*H))
     }
@@ -367,20 +367,21 @@ impl ElGamalPubkey {
         &self.0
     }
 
-    #[deprecated(note = "please use `into()` instead")]
+    #[deprecated(since = "2.0.0", note = "please use `into()` instead")]
     pub fn to_bytes(&self) -> [u8; ELGAMAL_PUBKEY_LEN] {
         self.0.compress().to_bytes()
     }
 
-    #[deprecated(note = "please use `try_from()` instead")]
+    #[deprecated(since = "2.0.0", note = "please use `try_from()` instead")]
     pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalPubkey> {
         if bytes.len() != ELGAMAL_PUBKEY_LEN {
             return None;
         }
+        let Ok(compressed_ristretto) = CompressedRistretto::from_slice(bytes) else {
+            return None;
+        };
 
-        Some(ElGamalPubkey(
-            CompressedRistretto::from_slice(bytes).decompress()?,
-        ))
+        compressed_ristretto.decompress().map(ElGamalPubkey)
     }
 
     /// Encrypts an amount under the public key.
@@ -440,8 +441,12 @@ impl TryFrom<&[u8]> for ElGamalPubkey {
             return Err(ElGamalError::PubkeyDeserialization);
         }
 
+        let Ok(compressed_ristretto) = CompressedRistretto::from_slice(bytes) else {
+            return Err(ElGamalError::PubkeyDeserialization);
+        };
+
         Ok(ElGamalPubkey(
-            CompressedRistretto::from_slice(bytes)
+            compressed_ristretto
                 .decompress()
                 .ok_or(ElGamalError::PubkeyDeserialization)?,
         ))
@@ -544,15 +549,17 @@ impl ElGamalSecretKey {
         self.0.as_bytes()
     }
 
-    #[deprecated(note = "please use `into()` instead")]
+    #[deprecated(since = "2.0.0", note = "please use `into()` instead")]
     pub fn to_bytes(&self) -> [u8; ELGAMAL_SECRET_KEY_LEN] {
         self.0.to_bytes()
     }
 
-    #[deprecated(note = "please use `try_from()` instead")]
+    #[deprecated(since = "2.0.0", note = "please use `try_from()` instead")]
     pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalSecretKey> {
         match bytes.try_into() {
-            Ok(bytes) => Scalar::from_canonical_bytes(bytes).map(ElGamalSecretKey),
+            Ok(bytes) => Scalar::from_canonical_bytes(bytes)
+                .map(ElGamalSecretKey)
+                .into(),
             _ => None,
         }
     }
@@ -611,6 +618,7 @@ impl TryFrom<&[u8]> for ElGamalSecretKey {
         match bytes.try_into() {
             Ok(bytes) => Ok(ElGamalSecretKey::from(
                 Scalar::from_canonical_bytes(bytes)
+                    .into_option()
                     .ok_or(ElGamalError::SecretKeyDeserialization)?,
             )),
             _ => Err(ElGamalError::SecretKeyDeserialization),
@@ -799,9 +807,11 @@ impl DecryptHandle {
             return None;
         }
 
-        Some(DecryptHandle(
-            CompressedRistretto::from_slice(bytes).decompress()?,
-        ))
+        let Ok(compressed_ristretto) = CompressedRistretto::from_slice(bytes) else {
+            return None;
+        };
+
+        compressed_ristretto.decompress().map(DecryptHandle)
     }
 }
 

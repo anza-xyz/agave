@@ -33,8 +33,6 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
-#[allow(deprecated)]
-use solana_sdk::recent_blockhashes_account;
 use {
     crate::{
         bank::{
@@ -228,6 +226,7 @@ pub mod epoch_accounts_hash_utils;
 mod fee_distribution;
 mod metrics;
 pub(crate) mod partitioned_epoch_rewards;
+mod recent_blockhashes_account;
 mod serde_snapshot;
 mod sysvar_cache;
 pub(crate) mod tests;
@@ -1299,7 +1298,6 @@ impl Bank {
             new.update_slot_hashes();
             new.update_stake_history(Some(parent.epoch()));
             new.update_clock(Some(parent.epoch()));
-            new.update_fees();
             new.update_last_restart_slot()
         });
 
@@ -2031,21 +2029,6 @@ impl Bank {
             }
             self.epoch_stakes
                 .insert(leader_schedule_epoch, new_epoch_stakes);
-        }
-    }
-
-    #[allow(deprecated)]
-    fn update_fees(&self) {
-        if !self
-            .feature_set
-            .is_active(&feature_set::disable_fees_sysvar::id())
-        {
-            self.update_sysvar_account(&sysvar::fees::id(), |account| {
-                create_account(
-                    &sysvar::fees::Fees::new(&self.fee_rate_governor.create_fee_calculator()),
-                    self.inherit_specially_retained_account_fields(account),
-                )
-            });
         }
     }
 
@@ -2936,9 +2919,6 @@ impl Bank {
             self.capitalization.fetch_add(account.lamports(), Relaxed);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
-        // updating sysvars (the fees sysvar in this case) now depends on feature activations in
-        // genesis_config.accounts above
-        self.update_fees();
 
         for (pubkey, account) in genesis_config.rewards_pools.iter() {
             assert!(
