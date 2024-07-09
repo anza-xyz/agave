@@ -7573,6 +7573,7 @@ dependencies = [
  "bincode",
  "rand 0.8.5",
  "serde",
+ "serde_derive",
  "solana-program",
 ]
 

@@ -15,6 +15,7 @@ serde = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true }
 rand = { workspace = true }
+serde_derive = { workspace = true }
 solana-program = { workspace = true }
 
 [package.metadata.docs.rs]
