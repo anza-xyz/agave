@@ -7564,6 +7564,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-serde-varint"
+version = "2.1.0"
+dependencies = [
+ "bincode",
+ "rand 0.8.5",
+ "serde",
+ "solana-program",
+]
+
+[[package]]
 name = "solana-short-vec"
 version = "2.1.0"
 dependencies = [
