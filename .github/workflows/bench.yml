@@ -20,7 +20,6 @@ jobs:
           - solana-gossip
           - solana-poh
           - solana-sdk
-          - solana-core
     steps:
       - uses: actions/checkout@v4
 
