@@ -1,4 +1,4 @@
-name: Rust Example
+name: Benchmark
 on:
   push:
     branches:
