@@ -10,20 +10,28 @@ permissions:
 
 jobs:
   benchmark:
-    name: Run Rust benchmark example
+    name: rust benchmark
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pkg:
+          - solana-runtime
+          - solana-gossip
+          - solana-poh
+          - solana-sdk
+          - solana-core
     steps:
       - uses: actions/checkout@v4
 
       - name: Run benchmark
         run: |
           source ci/rust-version.sh all
-          cargo +$rust_nightly bench -p solana-runtime | tee output.txt
+          cargo +$rust_nightly bench -p ${{matrix.pkg}} | tee output.txt
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          name: bench-solana-runtime
+          name: ${{matrix.pkg}}
           tool: "cargo"
           output-file-path: output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
