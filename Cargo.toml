@@ -3,6 +3,9 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 
+[profile.bench]
+lto = true
+
 [workspace]
 members = [
     "account-decoder",
