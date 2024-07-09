@@ -24,6 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup
+        run: |
+          source ci/rust-version.sh nightly
+          sudo apt update
+          sudo apt install protobuf-compiler -y
+
       - name: Run benchmark
         run: |
           source ci/rust-version.sh all
