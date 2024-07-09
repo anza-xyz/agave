@@ -1,5 +1,6 @@
 #![allow(deprecated)]
 use {
+    serde::Deserialize,
     solana_inline_spl::{token::GenericTokenAccount, token_2022::Account},
     solana_sdk::account::{AccountSharedData, ReadableAccount},
     std::borrow::Cow,
@@ -82,12 +83,53 @@ pub enum RpcFilterError {
     Base64DecodeError(#[from] base64::DecodeError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "camelCase", tag = "encoding", content = "bytes")]
 pub enum MemcmpEncodedBytes {
     Base58(String),
     Base64(String),
     Bytes(Vec<u8>),
+}
+
+impl<'de> Deserialize<'de> for MemcmpEncodedBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum DataType {
+            Encoded(String),
+            Raw(Vec<u8>),
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum RpcMemcmpEncoding {
+            Base58,
+            Base64,
+            Bytes,
+        }
+
+        #[derive(Deserialize)]
+        struct RpcMemcmpInner {
+            bytes: DataType,
+            encoding: Option<RpcMemcmpEncoding>,
+        }
+
+        let data = RpcMemcmpInner::deserialize(deserializer)?;
+
+        let memcmp_encoded_bytes = match data.bytes {
+            DataType::Encoded(bytes) => match data.encoding.unwrap_or(RpcMemcmpEncoding::Base58) {
+                RpcMemcmpEncoding::Base58 => MemcmpEncodedBytes::Base58(bytes),
+                RpcMemcmpEncoding::Base64 => MemcmpEncodedBytes::Base64(bytes),
+                _ => unreachable!(),
+            },
+            DataType::Raw(bytes) => MemcmpEncodedBytes::Bytes(bytes),
+        };
+
+        Ok(memcmp_encoded_bytes)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
