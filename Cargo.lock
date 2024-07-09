@@ -7511,6 +7511,7 @@ dependencies = [
  "solana-sdk",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
+ "solana-serde-varint",
  "solana-short-vec",
  "static_assertions",
  "thiserror",
