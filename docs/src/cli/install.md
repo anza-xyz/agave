@@ -24,7 +24,7 @@ on your preferred workflow:
   on your machine by running:
 
 ```bash
-sh -c "$(curl -sSfL https://release.solana.com/LATEST_AGAVE_RELEASE_VERSION/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/LATEST_AGAVE_RELEASE_VERSION/install)"
 ```
 
 - You can replace `LATEST_AGAVE_RELEASE_VERSION` with the release tag matching
@@ -74,7 +74,7 @@ solana --version
   installer into a temporary directory:
 
 ```bash
-cmd /c "curl https://release.solana.com/LATEST_AGAVE_RELEASE_VERSION/agave-install-init-x86_64-pc-windows-msvc.exe --output C:\agave-install-tmp\agave-install-init.exe --create-dirs"
+cmd /c "curl https://release.anza.xyz/LATEST_AGAVE_RELEASE_VERSION/agave-install-init-x86_64-pc-windows-msvc.exe --output C:\agave-install-tmp\agave-install-init.exe --create-dirs"
 ```
 
 - Copy and paste the following command, then press Enter to install the latest
