@@ -1034,10 +1034,18 @@ impl AppendVec {
                     offset = next.next_account_offset;
                 }
             }
-            AppendVecFileBacking::File(_file) => {
-                self.scan_accounts(|stored_meta| {
-                    callback(stored_meta.pubkey());
-                });
+            AppendVecFileBacking::File(file) => {
+                let buffer_size = std::cmp::min(SCAN_BUFFER_SIZE, self.len());
+                let mut reader =
+                    BufferedReader::new(buffer_size, self.len(), file, STORE_META_OVERHEAD);
+                while reader.read().ok() == Some(BufferedReaderStatus::Success) {
+                    let (_offset, bytes) = reader.get_offset_and_data();
+                    let (stored_meta, _next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
+                    callback(&stored_meta.pubkey);
+                    // since we only needed to read the pubkey, skip ahead to the next account
+                    let stored_size = aligned_stored_size(stored_meta.data_len as usize);
+                    reader.advance_offset(stored_size);
+                }
             }
         }
     }
