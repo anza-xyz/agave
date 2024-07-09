@@ -163,6 +163,10 @@ impl Memcmp {
         }
     }
 
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
     pub fn bytes(&self) -> Option<Cow<Vec<u8>>> {
         use MemcmpEncodedBytes::*;
         match &self.bytes {
@@ -201,6 +205,18 @@ impl Memcmp {
                 data[self.offset..self.offset + bytes.len()] == bytes[..]
             }
             None => false,
+        }
+    }
+
+    /// Returns reference to bytes if variant is MemcmpEncodedBytes::Bytes;
+    /// otherwise returns None. Used exclusively by solana-rpc to check
+    /// SPL-token filters.
+    pub fn raw_bytes_as_ref(&self) -> Option<&[u8]> {
+        use MemcmpEncodedBytes::*;
+        if let Bytes(bytes) = &self.bytes {
+            Some(bytes)
+        } else {
+            None
         }
     }
 }
