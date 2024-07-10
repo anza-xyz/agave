@@ -9077,7 +9077,7 @@ pub(crate) mod tests {
             last_hash =
                 fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, i + 1, i, last_hash);
         }
-        // Artifically root
+        // Artifically root 3 and 4
         blockstore.set_roots([3, 4].iter()).unwrap();
 
         // Set up bank0
@@ -9100,7 +9100,7 @@ pub(crate) mod tests {
             None,
         );
 
-        // Mark block 1, 3 , 4, 5 as duplicate
+        // Mark block 1, 3, 4, 5 as duplicate
         blockstore.store_duplicate_slot(1, vec![], vec![]).unwrap();
         blockstore.store_duplicate_slot(3, vec![], vec![]).unwrap();
         blockstore.store_duplicate_slot(4, vec![], vec![]).unwrap();
@@ -9168,7 +9168,7 @@ pub(crate) mod tests {
             .is_candidate(&(4, bank_forks.bank_hash(4).unwrap()))
             .unwrap());
 
-        // 5 is still duplicate,
+        // 5 is still considered duplicate, so it is not a valid fork choice candidate
         assert!(!fork_choice
             .is_candidate(&(5, bank_forks.bank_hash(5).unwrap()))
             .unwrap());
