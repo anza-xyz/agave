@@ -1,14 +1,13 @@
 use {
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::{ic_logger_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        ic_logger_msg,
         invoke_context::InvokeContext,
         loaded_programs::{
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryType,
             DELAY_VISIBILITY_SLOT_OFFSET,
         },
-        log_collector::LogCollector,
         stable_log,
     },
     solana_rbpf::{
@@ -85,7 +84,6 @@ pub fn create_program_runtime_environment_v2<'a>(
         enable_sbpf_v1: false,
         enable_sbpf_v2: true,
         optimize_rodata: true,
-        new_elf_parser: true,
         aligned_memory_mapping: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };

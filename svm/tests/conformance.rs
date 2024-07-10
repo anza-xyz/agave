@@ -7,10 +7,10 @@ use {
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        log_collector::LogCollector,
         solana_rbpf::{
             program::{BuiltinProgram, FunctionRegistry},
             vm::Config,
@@ -245,6 +245,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     mock_bank.override_feature_set(feature_set);
     let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
 
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     {
         let mut program_cache = batch_processor.program_cache.write().unwrap();
         program_cache.environments = ProgramRuntimeEnvironments {
@@ -254,7 +255,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
                 FunctionRegistry::default(),
             )),
         };
-        program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph.clone()));
     }
 
     batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);

@@ -51,6 +51,7 @@ members = [
     "ledger-tool",
     "local-cluster",
     "log-analyzer",
+    "log-collector",
     "logger",
     "measure",
     "memory-management",
@@ -97,9 +98,7 @@ members = [
     "sanitize",
     "sdk",
     "sdk/atomic-u64",
-    "sdk/cargo-build-bpf",
     "sdk/cargo-build-sbf",
-    "sdk/cargo-test-bpf",
     "sdk/cargo-test-sbf",
     "sdk/gen-headers",
     "sdk/macro",
@@ -167,7 +166,7 @@ assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
 async-mutex = "1.4.0"
-async-trait = "0.1.80"
+async-trait = "0.1.81"
 atty = "0.2.11"
 backoff = "0.4.0"
 base64 = "0.22.1"
@@ -199,7 +198,7 @@ criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.13"
 csv = "1.3.0"
 ctrlc = "3.4.4"
-curve25519-dalek = "3.2.1"
+curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
 derivative = "2.2.0"
@@ -308,9 +307,9 @@ rustls = { version = "0.21.12", default-features = false, features = ["quic"] }
 scopeguard = "1.2.0"
 semver = "1.0.23"
 seqlock = "0.2.0"
-serde = "1.0.203" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = "1.0.204" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_bytes = "0.11.15"
-serde_derive = "1.0.203" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde_derive = "1.0.204" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_json = "1.0.120"
 serde_with = { version = "2.3.3", default-features = false }
 serde_yaml = "0.9.34"
@@ -365,6 +364,7 @@ solana-inline-spl = { path = "inline-spl", version = "=2.1.0" }
 solana-ledger = { path = "ledger", version = "=2.1.0" }
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.1.0" }
 solana-local-cluster = { path = "local-cluster", version = "=2.1.0" }
+solana-log-collector = { path = "log-collector", version = "=2.1.0" }
 solana-logger = { path = "logger", version = "=2.1.0" }
 solana-measure = { path = "measure", version = "=2.1.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.1.0" }
@@ -419,7 +419,7 @@ solana-zk-keygen = { path = "zk-keygen", version = "=2.1.0" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.1.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.1.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.1.0" }
-solana_rbpf = "=0.8.1"
+solana_rbpf = "=0.8.2"
 spl-associated-token-account = "=4.0.0"
 spl-instruction-padding = "0.2"
 spl-memo = "=5.0.0"
@@ -506,39 +506,6 @@ solana-curve25519 = { path = "curves/curve25519" }
 solana-program = { path = "sdk/program" }
 solana-zk-sdk = { path = "zk-sdk" }
 solana-zk-token-sdk = { path = "zk-token-sdk" }
-
-# Our dependency tree has `curve25519-dalek` v3.2.1.  They have removed the
-# constraint in the next major release. The commit that removes the `zeroize`
-# constraint was added to multiple release branches, but not to the 3.2 branch.
-#
-# `curve25519-dalek` maintainers are saying they do not want to invest any more
-# time in the 3.2 release:
-#
-# https://github.com/dalek-cryptography/curve25519-dalek/issues/452#issuecomment-1749809428
-#
-# So we have to fork and create our own release, based on v3.2.1, with the
-# commit that removed `zeroize` constraint on the `main` branch cherry-picked on
-# top.
-#
-# `curve25519-dalek` v3.2.1 release:
-#
-# https://github.com/dalek-cryptography/curve25519-dalek/releases/tag/3.2.1
-#
-# Corresponds to commit
-#
-# https://github.com/dalek-cryptography/curve25519-dalek/commit/29e5c29b0e5c6821e4586af58b0d0891dd2ec639
-#
-# Comparison with `b500cdc2a920cd5bff9e2dd974d7b97349d61464`:
-#
-# https://github.com/dalek-cryptography/curve25519-dalek/compare/3.2.1...solana-labs:curve25519-dalek:b500cdc2a920cd5bff9e2dd974d7b97349d61464
-#
-# Or, using the branch name instead of the hash:
-#
-# https://github.com/dalek-cryptography/curve25519-dalek/compare/3.2.1...solana-labs:curve25519-dalek:3.2.1-unpin-zeroize
-#
-[patch.crates-io.curve25519-dalek]
-git = "https://github.com/anza-xyz/curve25519-dalek.git"
-rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464"
 
 # Solana RPC nodes experience stalls when running with `tokio` containing this
 # commit:
