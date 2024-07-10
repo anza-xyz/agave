@@ -1000,26 +1000,21 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(SCAN_BUFFER_SIZE, self.len());
-                let mut reader =
-                    BufferedReader::new(buffer_size, self.len(), file, STORE_META_OVERHEAD);
-
-                let mut prev_offset = 0;
-                for &curr_offset in sorted_offsets {
-                    debug_assert!(
-                        curr_offset >= prev_offset,
-                        "sorted_offsets must be sorted: {sorted_offsets:?}",
-                    );
-                    reader.advance_offset(curr_offset - prev_offset);
-                    let read_result = reader.read();
-                    if read_result.ok() != Some(BufferedReaderStatus::Success) {
+                // self.len() is an atomic load, so only do it once
+                let valid_file_len = self.len();
+                let mut buffer = [0u8; mem::size_of::<StoredMeta>()];
+                for offset in sorted_offsets {
+                    let Some(bytes_read) =
+                        read_into_buffer(file, valid_file_len, *offset, &mut buffer).ok()
+                    else {
                         break;
-                    }
-                    let (_offset, bytes) = reader.get_offset_and_data();
-                    let (stored_meta, _next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
+                    };
+                    let bytes = ValidSlice(&buffer[..bytes_read]);
+                    let Some((stored_meta, _next)) = Self::get_type::<StoredMeta>(bytes, 0) else {
+                        break;
+                    };
                     let stored_size = aligned_stored_size(stored_meta.data_len as usize);
                     account_sizes.push(stored_size);
-                    prev_offset = curr_offset
                 }
             }
         }
