@@ -1,5 +1,5 @@
-#![allow(deprecated)]
 use {
+    base64::{prelude::BASE64_STANDARD, Engine},
     serde::Deserialize,
     solana_inline_spl::{token::GenericTokenAccount, token_2022::Account},
     solana_sdk::account::{AccountSharedData, ReadableAccount},
@@ -41,7 +41,7 @@ impl RpcFilterType {
                         if bytes.len() > MAX_DATA_BASE64_SIZE {
                             return Err(RpcFilterError::DataTooLarge);
                         }
-                        let bytes = base64::decode(bytes)?;
+                        let bytes = BASE64_STANDARD.decode(bytes)?;
                         if bytes.len() > MAX_DATA_SIZE {
                             Err(RpcFilterError::DataTooLarge)
                         } else {
@@ -171,7 +171,7 @@ impl Memcmp {
         use MemcmpEncodedBytes::*;
         match &self.bytes {
             Base58(bytes) => bs58::decode(bytes).into_vec().ok().map(Cow::Owned),
-            Base64(bytes) => base64::decode(bytes).ok().map(Cow::Owned),
+            Base64(bytes) => BASE64_STANDARD.decode(bytes).ok().map(Cow::Owned),
             Bytes(bytes) => Some(Cow::Borrowed(bytes)),
         }
     }
@@ -185,7 +185,7 @@ impl Memcmp {
                 Ok(())
             }
             Base64(bytes) => {
-                let bytes = base64::decode(bytes)?;
+                let bytes = BASE64_STANDARD.decode(bytes)?;
                 self.bytes = Bytes(bytes);
                 Ok(())
             }
@@ -234,7 +234,7 @@ mod tests {
         let ff_data = vec![0xffu8; MAX_DATA_SIZE];
         let data58 = bs58::encode(&ff_data).into_string();
         assert_eq!(data58.len(), MAX_DATA_BASE58_SIZE);
-        let data64 = base64::encode(&ff_data);
+        let data64 = BASE64_STANDARD.encode(&ff_data);
         assert_eq!(data64.len(), MAX_DATA_BASE64_SIZE);
     }
 
