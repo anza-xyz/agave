@@ -299,7 +299,11 @@ impl From<RpcMemcmp> for Memcmp {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        const_format::formatcp,
+        serde_json::{json, Value},
+    };
 
     #[test]
     fn test_worst_case_encoded_tx_goldens() {
@@ -400,6 +404,186 @@ mod tests {
             })
             .verify(),
             Err(RpcFilterError::DataTooLarge)
+        );
+    }
+
+    const BASE58_STR: &str = "Bpf4ERpEvSFmCSTNh1PzTWTkALrKXvMXEdthxHuwCQcf";
+    const BASE64_STR: &str = "oMoycDvJzrjQpCfukbO4VW/FLGLfnbqBEc9KUEVgj2g=";
+    const BYTES: [u8; 4] = [0, 1, 2, 3];
+    const OFFSET: usize = 42;
+    const DEFAULT_ENCODING_FILTER: &str =
+        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET}}}"#);
+    const BINARY_FILTER: &str =
+        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET},"encoding":"binary"}}"#);
+    const BASE58_FILTER: &str =
+        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET},"encoding":"base58"}}"#);
+    const BASE64_FILTER: &str =
+        formatcp!(r#"{{"bytes":"{BASE64_STR}","offset":{OFFSET},"encoding":"base64"}}"#);
+    const BYTES_FILTER: &str =
+        formatcp!(r#"{{"bytes":[0, 1, 2, 3],"offset":{OFFSET},"encoding":null}}"#);
+    const BYTES_FILTER_WITH_ENCODING: &str =
+        formatcp!(r#"{{"bytes":[0, 1, 2, 3],"offset":{OFFSET},"encoding":"bytes"}}"#);
+
+    #[test]
+    fn test_filter_deserialize() {
+        // Base58 is the default encoding
+        let default: Memcmp = serde_json::from_str(DEFAULT_ENCODING_FILTER).unwrap();
+        assert_eq!(
+            default,
+            Memcmp {
+                offset: OFFSET,
+                bytes: MemcmpEncodedBytes::Base58(BASE58_STR.to_string()),
+                encoding: None,
+            }
+        );
+
+        // Binary input is deserialized as Base58
+        let binary: Memcmp = serde_json::from_str(BINARY_FILTER).unwrap();
+        assert_eq!(
+            binary,
+            Memcmp {
+                offset: OFFSET,
+                bytes: MemcmpEncodedBytes::Base58(BASE58_STR.to_string()),
+                encoding: None,
+            }
+        );
+
+        // Base58 input
+        let base58_filter: Memcmp = serde_json::from_str(BASE58_FILTER).unwrap();
+        assert_eq!(
+            base58_filter,
+            Memcmp {
+                offset: OFFSET,
+                bytes: MemcmpEncodedBytes::Base58(BASE58_STR.to_string()),
+                encoding: None,
+            }
+        );
+
+        // Base64 input
+        let base64_filter: Memcmp = serde_json::from_str(BASE64_FILTER).unwrap();
+        assert_eq!(
+            base64_filter,
+            Memcmp {
+                offset: OFFSET,
+                bytes: MemcmpEncodedBytes::Base64(BASE64_STR.to_string()),
+                encoding: None,
+            }
+        );
+
+        // Raw bytes input
+        let bytes_filter: Memcmp = serde_json::from_str(BYTES_FILTER).unwrap();
+        assert_eq!(
+            bytes_filter,
+            Memcmp {
+                offset: OFFSET,
+                bytes: MemcmpEncodedBytes::Bytes(BYTES.to_vec()),
+                encoding: None,
+            }
+        );
+
+        let bytes_filter: Memcmp = serde_json::from_str(BYTES_FILTER_WITH_ENCODING).unwrap();
+        assert_eq!(
+            bytes_filter,
+            Memcmp {
+                offset: OFFSET,
+                bytes: MemcmpEncodedBytes::Bytes(BYTES.to_vec()),
+                encoding: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_filter_serialize() {
+        // Binary variants
+        let binary_default = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Binary(BASE58_STR.to_string()),
+            encoding: None,
+        };
+        let serialized_json = json!(binary_default);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BINARY_FILTER).unwrap()
+        );
+
+        let binary_default = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Binary(BASE58_STR.to_string()),
+            encoding: Some(MemcmpEncoding::Binary),
+        };
+        let serialized_json = json!(binary_default);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BINARY_FILTER).unwrap()
+        );
+
+        let binary_base58 = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Base58(BASE58_STR.to_string()),
+            encoding: Some(MemcmpEncoding::Binary),
+        };
+        let serialized_json = json!(binary_base58);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BASE58_FILTER).unwrap()
+        );
+
+        let binary_base64 = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Base64(BASE64_STR.to_string()),
+            encoding: Some(MemcmpEncoding::Binary),
+        };
+        let serialized_json = json!(binary_base64);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BASE64_FILTER).unwrap()
+        );
+
+        let binary_bytes = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Bytes(BYTES.to_vec()),
+            encoding: Some(MemcmpEncoding::Binary),
+        };
+        let serialized_json = json!(binary_bytes);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BYTES_FILTER).unwrap()
+        );
+
+        // Base58
+        let base58 = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Base58(BASE58_STR.to_string()),
+            encoding: None,
+        };
+        let serialized_json = json!(base58);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BASE58_FILTER).unwrap()
+        );
+
+        // Base64
+        let base64 = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Base64(BASE64_STR.to_string()),
+            encoding: None,
+        };
+        let serialized_json = json!(base64);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BASE64_FILTER).unwrap()
+        );
+
+        // Bytes
+        let bytes = Memcmp {
+            offset: OFFSET,
+            bytes: MemcmpEncodedBytes::Bytes(BYTES.to_vec()),
+            encoding: None,
+        };
+        let serialized_json = json!(bytes);
+        assert_eq!(
+            serialized_json,
+            serde_json::from_str::<Value>(BYTES_FILTER).unwrap()
         );
     }
 }
