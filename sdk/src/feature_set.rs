@@ -841,6 +841,10 @@ pub mod ed25519_precompile_verify_strict {
     solana_sdk::declare_id!("ed9tNscbWLYBooxWA7FE2B5KHWs8A6sxfY8EzezEcoo");
 }
 
+pub mod infer_account_is_executable_flag {
+    solana_sdk::declare_id!("FfgtauHUWKeXTzjXkua9Px4tNGBFHKZ9WaigM5VbbzFx");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1046,6 +1050,7 @@ lazy_static! {
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
         (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
+        (infer_account_is_executable_flag::id(), "Infer accounts is_executable flag from their owner #2034"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
