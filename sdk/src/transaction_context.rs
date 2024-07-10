@@ -143,6 +143,8 @@ pub struct TransactionContext {
     return_data: TransactionReturnData,
     accounts_resize_delta: RefCell<i64>,
     #[cfg(not(target_os = "solana"))]
+    infer_account_is_executable_flag: bool,
+    #[cfg(not(target_os = "solana"))]
     rent: Rent,
     /// Useful for debugging to filter by or to look it up on the explorer
     #[cfg(all(not(target_os = "solana"), feature = "full", debug_assertions))]
@@ -171,10 +173,16 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             return_data: TransactionReturnData::default(),
             accounts_resize_delta: RefCell::new(0),
+            infer_account_is_executable_flag: true,
             rent,
             #[cfg(all(not(target_os = "solana"), feature = "full", debug_assertions))]
             signature: Signature::default(),
         }
+    }
+
+    #[cfg(not(target_os = "solana"))]
+    pub fn set_infer_account_is_executable_flag(&mut self, enabled: bool) {
+        self.infer_account_is_executable_flag = enabled;
     }
 
     /// Used in mock_process_instruction
@@ -996,7 +1004,14 @@ impl<'a> BorrowedAccount<'a> {
     /// Returns whether this account is executable (transaction wide)
     #[inline]
     pub fn is_executable(&self) -> bool {
-        self.account.executable()
+        #[cfg(target_os = "solana")]
+        {
+            self.account.executable()
+        }
+        #[cfg(not(target_os = "solana"))]
+        {
+            !self.transaction_context.infer_account_is_executable_flag && self.account.executable()
+        }
     }
 
     /// Configures whether this account is executable (transaction wide)

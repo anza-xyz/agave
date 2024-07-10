@@ -3,7 +3,9 @@ use {
     crate::serialization::account_data_region_memory_state,
     scopeguard::defer,
     solana_measure::measure::Measure,
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_program_runtime::{
+        invoke_context::SerializedAccountMetadata, loaded_programs::ProgramCacheEntryType,
+    },
     solana_rbpf::{
         ebpf,
         memory_region::{MemoryRegion, MemoryState},
@@ -866,6 +868,9 @@ where
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+    let infer_account_is_executable_flag = invoke_context
+        .get_feature_set()
+        .is_active(&feature_set::infer_account_is_executable_flag::id());
 
     for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
     {
@@ -881,7 +886,16 @@ where
             .transaction_context
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
 
-        if callee_account.is_executable() {
+        let is_executable = if infer_account_is_executable_flag {
+            invoke_context
+                .program_cache_for_tx_batch
+                .find(callee_account.get_key())
+                .map(|entry| !matches!(entry.program, ProgramCacheEntryType::Closed))
+                .unwrap_or(false)
+        } else {
+            callee_account.is_executable()
+        };
+        if is_executable {
             // Use the known account
             consume_compute_meter(
                 invoke_context,

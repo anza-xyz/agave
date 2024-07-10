@@ -36,6 +36,7 @@ use {
         entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
         feature_set::{
             bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
+            infer_account_is_executable_flag,
         },
         instruction::{AccountMeta, InstructionError},
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
@@ -430,7 +431,11 @@ pub fn process_instruction_inner(
     }
 
     // Program Invocation
-    if !program_account.is_executable() {
+    if !invoke_context
+        .get_feature_set()
+        .is_active(&infer_account_is_executable_flag::id())
+        && !program_account.is_executable()
+    {
         ic_logger_msg!(log_collector, "Program is not executable");
         return Err(Box::new(InstructionError::IncorrectProgramId));
     }
@@ -718,7 +723,11 @@ fn process_loader_upgradeable_instruction(
 
             let program =
                 instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
-            if !program.is_executable() {
+            if !invoke_context
+                .get_feature_set()
+                .is_active(&infer_account_is_executable_flag::id())
+                && !program.is_executable()
+            {
                 ic_logger_msg!(log_collector, "Program account not executable");
                 return Err(InstructionError::AccountNotExecutable);
             }
@@ -1367,7 +1376,10 @@ fn execute<'a, 'b: 'a>(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
-        Some(invoke_context.program_cache_for_tx_batch),
+        invoke_context
+            .get_feature_set()
+            .is_active(&infer_account_is_executable_flag::id())
+            .then_some(invoke_context.program_cache_for_tx_batch),
     )?;
     serialize_time.stop();
 
@@ -1458,13 +1470,19 @@ fn execute<'a, 'b: 'a>(
                                 instruction_account_index as IndexOfAccount,
                             )?;
 
-                            error = EbpfError::SyscallError(Box::new(if account.is_executable() {
-                                InstructionError::ExecutableDataModified
-                            } else if account.is_writable() {
-                                InstructionError::ExternalAccountDataModified
-                            } else {
-                                InstructionError::ReadonlyDataModified
-                            }));
+                            error = EbpfError::SyscallError(Box::new(
+                                if !invoke_context
+                                    .get_feature_set()
+                                    .is_active(&infer_account_is_executable_flag::id())
+                                    && account.is_executable()
+                                {
+                                    InstructionError::ExecutableDataModified
+                                } else if account.is_writable() {
+                                    InstructionError::ExternalAccountDataModified
+                                } else {
+                                    InstructionError::ReadonlyDataModified
+                                },
+                            ));
                         }
                     }
                 }

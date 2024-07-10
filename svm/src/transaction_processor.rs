@@ -37,7 +37,7 @@ use {
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
         feature_set::{
-            include_loaded_accounts_data_size_in_fee_calculation,
+            include_loaded_accounts_data_size_in_fee_calculation, infer_account_is_executable_flag,
             remove_rounding_in_fee_calculation, FeatureSet,
         },
         fee::{FeeBudgetLimits, FeeStructure},
@@ -743,6 +743,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+        );
+        transaction_context.set_infer_account_is_executable_flag(
+            environment
+                .feature_set
+                .is_active(&infer_account_is_executable_flag::id()),
         );
         #[cfg(debug_assertions)]
         transaction_context.set_signature(tx.signature());
