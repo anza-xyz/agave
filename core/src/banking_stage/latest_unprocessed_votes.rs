@@ -274,11 +274,11 @@ impl LatestUnprocessedVotes {
         bank: Arc<Bank>,
         forward_packet_batches_by_accounts: &mut ForwardPacketBatchesByAccounts,
     ) -> usize {
+        let binding = self.latest_votes_per_pubkey.read().unwrap();
         let pubkeys_by_stake = weighted_random_order_by_stake(
             &bank,
-            self.latest_votes_per_pubkey.read().unwrap().keys(),
-        )
-        .collect_vec();
+            binding.keys(),
+        );
         let mut count: usize = 0;
         for pubkey in pubkeys_by_stake {
             if let Some(lock) = self.get_entry(pubkey) {
