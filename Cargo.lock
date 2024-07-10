@@ -7512,7 +7512,6 @@ dependencies = [
 name = "solana-svm-transaction"
 version = "2.1.0"
 dependencies = [
- "solana-program",
  "solana-sdk",
 ]
 
