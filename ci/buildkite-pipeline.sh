@@ -14,12 +14,34 @@ if [[ -n $CI_PULL_REQUEST ]]; then
   pr_number=${BASH_REMATCH[1]}
   echo "get affected files from PR: $pr_number"
 
-  # Fetch the number of commits in the PR
-  commits_no=$(gh pr view "$pr_number" --json commits --jq '.commits | length')
-  echo "number of commits in this PR: $commits_no"
+  # shellcheck disable=SC2016
+  # shellcheck disable=SC2046
+  # ref: https://github.com/cli/cli/issues/5368#issuecomment-1087515074
+  query='
+  query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        files(first: 100, after: $endCursor) {
+          pageInfo{ hasNextPage, endCursor }
+          nodes {
+            path
+          }
+        }
+      }
+    }
+  }'
 
   # get affected files
-  readarray -t affected_files < <(git diff HEAD~"$commits_no"..HEAD --name-status | cut -f2)
+  readarray -t affected_files < <(
+    gh api graphql \
+      -f query="$query" \
+      -F pr="$pr_number" \
+      -F owner='anza-xyz' \
+      -F repo='agave' \
+      --paginate \
+      --jq '.data.repository.pullRequest.files.nodes.[].path'
+  )
+
   if [[ ${#affected_files[*]} -eq 0 ]]; then
     echo "Unable to determine the files affected by this PR"
     exit 1
