@@ -886,7 +886,15 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&feature_set::remove_accounts_executable_flag_checks::id());
+        let load_results = load_accounts_with_features_and_rent(
+            tx,
+            &accounts,
+            &RentCollector::default(),
+            &mut error_metrics,
+            &mut feature_set,
+        );
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
         assert_eq!(load_results.len(), 1);
