@@ -18,8 +18,6 @@ transaction for each block the validator agrees with, which can cost up to
 
 The hardware recommendations below are provided as a guide.  Operators are encouraged to do their own performance testing.
 
-### Hardware Recommendations
-
 | Component | Validator Requirements | Additional RPC Node Requirements |
 |-----------|------------------------|----------------------------------|
 | **CPU**   | - 2.8GHz base clock speed, or faster<br>- SHA extensions instruction support<br>- AMD Gen 3 or newer<br>- Intel Ice Lake or newer<br>- Higher clock speed is preferable over more cores<br>- AVX2 instruction support (to use official release binaries, self-compile otherwise)<br>- Support for AVX512f is helpful<br>||
