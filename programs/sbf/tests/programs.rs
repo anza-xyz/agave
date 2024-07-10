@@ -927,15 +927,15 @@ fn test_program_sbf_invoke_sanity() {
 
         do_invoke_failure_test_local(
             TEST_PPROGRAM_NOT_OWNED_BY_LOADER,
-            TransactionError::InstructionError(0, InstructionError::AccountNotExecutable),
-            &[],
+            TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId),
+            &[argument_keypair.pubkey()],
             None,
         );
 
         do_invoke_failure_test_local(
             TEST_PPROGRAM_NOT_EXECUTABLE,
-            TransactionError::InstructionError(0, InstructionError::AccountNotExecutable),
-            &[],
+            TransactionError::InstructionError(0, InstructionError::InvalidAccountData),
+            &[unexecutable_program_keypair.pubkey()],
             None,
         );
 
@@ -4653,7 +4653,7 @@ fn test_deny_executable_write() {
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            TransactionError::InstructionError(0, InstructionError::ExecutableDataModified)
+            TransactionError::InstructionError(0, InstructionError::ReadonlyDataModified)
         );
     }
 }

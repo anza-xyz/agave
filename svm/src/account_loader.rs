@@ -701,7 +701,15 @@ mod tests {
             instructions,
         );
 
-        let loaded_accounts = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&feature_set::infer_account_is_executable_flag::id());
+        let loaded_accounts = load_accounts_with_features_and_rent(
+            tx,
+            &accounts,
+            &RentCollector::default(),
+            &mut error_metrics,
+            &mut feature_set,
+        );
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
         assert_eq!(loaded_accounts.len(), 1);

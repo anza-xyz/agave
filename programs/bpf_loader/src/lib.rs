@@ -1723,13 +1723,21 @@ mod tests {
 
         // Case: Account not a program
         program_account.set_executable(false);
-        process_instruction(
+        mock_process_instruction(
             &loader_id,
-            &[0],
+            vec![0],
             &[],
             vec![(program_id, program_account)],
             Vec::new(),
             Err(InstructionError::IncorrectProgramId),
+            Entrypoint::vm,
+            |invoke_context| {
+                let mut feature_set = invoke_context.get_feature_set().clone();
+                feature_set.deactivate(&infer_account_is_executable_flag::id());
+                invoke_context.mock_set_feature_set(Arc::new(feature_set));
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
+            |_invoke_context| {},
         );
     }
 
@@ -2404,10 +2412,22 @@ mod tests {
             .unwrap()
             .1
             .set_executable(false);
-        process_instruction(
+        let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+        mock_process_instruction(
+            &bpf_loader_upgradeable::id(),
+            Vec::new(),
+            &instruction_data,
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::AccountNotExecutable),
+            Entrypoint::vm,
+            |invoke_context| {
+                let mut feature_set = invoke_context.get_feature_set().clone();
+                feature_set.deactivate(&infer_account_is_executable_flag::id());
+                invoke_context.mock_set_feature_set(Arc::new(feature_set));
+                test_utils::load_all_invoked_programs(invoke_context);
+            },
+            |_invoke_context| {},
         );
 
         // Case: Program account now owned by loader
