@@ -4,7 +4,7 @@ use {
         immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     },
     itertools::Itertools,
-    rand::{thread_rng, Rng},
+    rand::thread_rng,
     solana_perf::packet::Packet,
     solana_runtime::bank::Bank,
     solana_sdk::{
@@ -115,27 +115,34 @@ impl LatestValidatorVotePacket {
     }
 }
 
-// TODO: replace this with rand::seq::index::sample_weighted once we can update rand to 0.8+
-// This requires updating dependencies of ed25519-dalek as rand_core is not compatible cross
-// version https://github.com/dalek-cryptography/ed25519-dalek/pull/214
 pub(crate) fn weighted_random_order_by_stake<'a>(
     bank: &Bank,
     pubkeys: impl Iterator<Item = &'a Pubkey>,
 ) -> impl Iterator<Item = Pubkey> {
     // Efraimidis and Spirakis algo for weighted random sample without replacement
     let staked_nodes = bank.staked_nodes();
-    let mut pubkey_with_weight: Vec<(f64, Pubkey)> = pubkeys
-        .filter_map(|&pubkey| {
-            let stake = staked_nodes.get(&pubkey).copied().unwrap_or(0);
-            if stake == 0 {
-                None // Ignore votes from unstaked validators
-            } else {
-                Some((thread_rng().gen::<f64>().powf(1.0 / (stake as f64)), pubkey))
-            }
-        })
+    // Ignoring votes from unstaked validators
+    let pubkeys: Vec<&Pubkey> = pubkeys
+        .filter(|&p| staked_nodes.get(p).is_some())
         .collect::<Vec<_>>();
-    pubkey_with_weight.sort_by(|(w1, _), (w2, _)| w1.partial_cmp(w2).unwrap());
-    pubkey_with_weight.into_iter().map(|(_, pubkey)| pubkey)
+    let mut rng = thread_rng();
+    let pubkey_with_weight = rand::seq::index::sample_weighted(
+        &mut rng,
+        pubkeys.len(),
+        |l| {
+            let stake = staked_nodes.get(pubkeys[l]).copied().unwrap_or(0);
+            stake as f64
+        },
+        // The reservoir size is the same as the population size to just get the random shuffle.
+        pubkeys.len(),
+    )
+    .expect("non empty sequence");
+
+    pubkey_with_weight
+        .into_iter()
+        .map(|a| *pubkeys[a])
+        .collect::<Vec<_>>()
+        .into_iter()
 }
 
 #[derive(Default, Debug)]
