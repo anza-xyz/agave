@@ -757,6 +757,7 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ModifiedProgramId);
         }
         // and only if the account is not executable
+        #[allow(deprecated)]
         if self.is_executable() {
             return Err(InstructionError::ModifiedProgramId);
         }
@@ -791,6 +792,7 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ReadonlyLamportChange);
         }
         // The balance of executable accounts may not change
+        #[allow(deprecated)]
         if self.is_executable() {
             return Err(InstructionError::ExecutableLamportChange);
         }
@@ -1003,6 +1005,7 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Returns whether this account is executable (transaction wide)
     #[inline]
+    #[deprecated(since = "2.1.0", note = "Use `get_owner` instead")]
     pub fn is_executable(&self) -> bool {
         #[cfg(target_os = "solana")]
         {
@@ -1034,10 +1037,12 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ExecutableModified);
         }
         // one can not clear the executable flag
+        #[allow(deprecated)]
         if self.is_executable() && !is_executable {
             return Err(InstructionError::ExecutableModified);
         }
         // don't touch the account if the executable flag does not change
+        #[allow(deprecated)]
         if self.is_executable() == is_executable {
             return Ok(());
         }
@@ -1091,6 +1096,7 @@ impl<'a> BorrowedAccount<'a> {
     #[cfg(not(target_os = "solana"))]
     pub fn can_data_be_changed(&self) -> Result<(), InstructionError> {
         // Only non-executable accounts data can be changed
+        #[allow(deprecated)]
         if self.is_executable() {
             return Err(InstructionError::ExecutableDataModified);
         }

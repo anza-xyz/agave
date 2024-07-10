@@ -893,6 +893,7 @@ where
                 .map(|entry| !matches!(entry.program, ProgramCacheEntryType::Closed))
                 .unwrap_or(false)
         } else {
+            #[allow(deprecated)]
             callee_account.is_executable()
         };
         if is_executable {

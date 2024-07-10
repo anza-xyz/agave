@@ -193,6 +193,7 @@ impl<'a> Serializer<'a> {
                 .map(|entry| !matches!(entry.program, ProgramCacheEntryType::Closed))
                 .unwrap_or(false)
         } else {
+            #[allow(deprecated)]
             account.is_executable()
         }
     }
