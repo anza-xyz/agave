@@ -1,6 +1,6 @@
 use {
     crate::{
-        instruction::Instruction, message_address_table_lookup::MessageAddressTableLookup,
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage,
     },
     solana_sdk::{
@@ -25,11 +25,11 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::num_instructions(SanitizedTransaction::message(self))
     }
 
-    fn instructions_iter(&self) -> impl Iterator<Item = Instruction> {
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
         SVMMessage::instructions_iter(SanitizedTransaction::message(self))
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, Instruction)> {
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
         SVMMessage::program_instructions_iter(SanitizedTransaction::message(self))
     }
 
@@ -57,7 +57,7 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::num_lookup_tables(SanitizedTransaction::message(self))
     }
 
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = MessageAddressTableLookup> {
+    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
         SVMMessage::message_address_table_lookups(SanitizedTransaction::message(self))
     }
 }

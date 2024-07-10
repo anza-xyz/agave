@@ -1,5 +1,7 @@
 use {
-    crate::{instruction::Instruction, message_address_table_lookup::MessageAddressTableLookup},
+    crate::{
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+    },
     core::fmt::Debug,
     solana_sdk::{hash::Hash, message::AccountKeys, pubkey::Pubkey},
 };
@@ -23,11 +25,11 @@ pub trait SVMMessage: Debug {
     fn num_instructions(&self) -> usize;
 
     /// Return an iterator over the instructions in the message.
-    fn instructions_iter(&self) -> impl Iterator<Item = Instruction>;
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction>;
 
     /// Return an iterator over the instructions in the message, paired with
     /// the pubkey of the program.
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, Instruction)>;
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)>;
 
     /// Return the account keys.
     fn account_keys(&self) -> AccountKeys;
@@ -60,5 +62,5 @@ pub trait SVMMessage: Debug {
     fn num_lookup_tables(&self) -> usize;
 
     /// Get message address table lookups used in the message
-    fn message_address_table_lookups(&self) -> impl Iterator<Item = MessageAddressTableLookup>;
+    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup>;
 }
