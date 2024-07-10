@@ -1035,7 +1035,7 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(SCAN_BUFFER_SIZE, self.len());
+                let buffer_size = std::cmp::min(PAGE_SIZE, self.len());
                 let mut reader =
                     BufferedReader::new(buffer_size, self.len(), file, STORE_META_OVERHEAD);
                 while reader.read().ok() == Some(BufferedReaderStatus::Success) {
