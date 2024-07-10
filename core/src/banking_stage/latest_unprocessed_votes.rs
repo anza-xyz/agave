@@ -274,49 +274,42 @@ impl LatestUnprocessedVotes {
         bank: Arc<Bank>,
         forward_packet_batches_by_accounts: &mut ForwardPacketBatchesByAccounts,
     ) -> usize {
-        let mut continue_forwarding = true;
         let pubkeys_by_stake = weighted_random_order_by_stake(
             &bank,
             self.latest_votes_per_pubkey.read().unwrap().keys(),
         )
         .collect_vec();
-        pubkeys_by_stake
-            .into_iter()
-            .filter(|&pubkey| {
-                if !continue_forwarding {
-                    return false;
-                }
-                if let Some(lock) = self.get_entry(pubkey) {
-                    let mut vote = lock.write().unwrap();
-                    if !vote.is_vote_taken() && !vote.is_forwarded() {
-                        let deserialized_vote_packet = vote.vote.as_ref().unwrap().clone();
-                        if let Some(sanitized_vote_transaction) = deserialized_vote_packet
-                            .build_sanitized_transaction(
-                                bank.vote_only_bank(),
-                                bank.as_ref(),
-                                bank.get_reserved_account_keys(),
-                            )
-                        {
-                            if forward_packet_batches_by_accounts.try_add_packet(
-                                &sanitized_vote_transaction,
-                                deserialized_vote_packet,
-                                &bank.feature_set,
-                            ) {
-                                vote.forwarded = true;
-                            } else {
-                                // To match behavior of regular transactions we stop
-                                // forwarding votes as soon as one fails
-                                continue_forwarding = false;
-                            }
-                            return true;
+        let mut count: usize = 0;
+        for pubkey in pubkeys_by_stake {
+            if let Some(lock) = self.get_entry(pubkey) {
+                let mut vote = lock.write().unwrap();
+                if !vote.is_vote_taken() && !vote.is_forwarded() {
+                    let deserialized_vote_packet = vote.vote.as_ref().unwrap().clone();
+                    if let Some(sanitized_vote_transaction) = deserialized_vote_packet
+                        .build_sanitized_transaction(
+                            bank.vote_only_bank(),
+                            bank.as_ref(),
+                            bank.get_reserved_account_keys(),
+                        )
+                    {
+                        if forward_packet_batches_by_accounts.try_add_packet(
+                            &sanitized_vote_transaction,
+                            deserialized_vote_packet,
+                            &bank.feature_set,
+                        ) {
+                            vote.forwarded = true;
                         } else {
-                            return false;
+                            // To match behavior of regular transactions we stop
+                            // forwarding votes as soon as one fails. We are
+                            // assuming that failure (try_add_packet) means no more space available.
+                            break;
                         }
+                        count += 1;
                     }
                 }
-                false
-            })
-            .count()
+            }
+        }
+        count
     }
 
     /// Drains all votes yet to be processed sorted by a weighted random ordering by stake
