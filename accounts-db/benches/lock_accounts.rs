@@ -6,12 +6,8 @@ use {
         iter::IndexedParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
-    solana_ledger::{
-        genesis_utils::{create_genesis_config, GenesisConfigInfo},
-    },
-    solana_runtime::{
-        bank::Bank
-    },
+    solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+    solana_runtime::bank::Bank,
     solana_sdk::{
         account::{Account, ReadableAccount},
         signature::Keypair,
@@ -20,7 +16,7 @@ use {
         system_program, system_transaction,
         transaction::SanitizedTransaction,
     },
-    std::{sync::Arc},
+    std::sync::Arc,
     test::Bencher,
 };
 
@@ -68,7 +64,6 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<SanitizedTransaction> {
         .collect()
 }
 
-
 fn bank_setup() -> Arc<Bank> {
     let mint_total = u64::MAX;
     let GenesisConfigInfo {
@@ -81,7 +76,6 @@ fn bank_setup() -> Arc<Bank> {
 
     let mut bank = Bank::new_for_benches(&genesis_config);
 
-
     // Allow arbitrary transaction processing time for the purposes of this bench
     bank.ns_per_slot = u128::MAX;
 
@@ -89,9 +83,7 @@ fn bank_setup() -> Arc<Bank> {
     bank.write_cost_tracker()
         .unwrap()
         .set_limits(u64::MAX, u64::MAX, u64::MAX);
-    let bank = bank.wrap_with_bank_forks_for_tests().0;
-   
-    bank
+    bank.wrap_with_bank_forks_for_tests().0
 }
 
 fn bench_lock_accounts(
@@ -110,36 +102,30 @@ fn bench_lock_accounts(
 
     let bank = bank_setup();
     let transactions = create_transactions(&bank, 2_usize.pow(20));
-    let batches: Vec<_> = transactions
-        .chunks(batch_size)
-        .map(|txs| {
-            txs
-        })
-        .collect();
+    let batches: Vec<_> = transactions.chunks(batch_size).collect();
 
     let mut results = Vec::new();
     bencher.iter(|| {
         for i in 0..batches_per_iteration {
             if let Some(first_batch) = batches.get(i) {
-                let (result,_) = bank.rc.accounts.lock_accounts(
+                let (result, _) = bank.rc.accounts.lock_accounts(
                     (*first_batch).iter(),
                     128,
-                    allow_self_conflicting_entries
+                    allow_self_conflicting_entries,
                 );
                 results.push(result);
             }
         }
     });
     // unlock accounts
-    for i in 0..batches_per_iteration {
-        if let Some(first_batch) = batches.get(i) {
-            let _ = bank.rc.accounts.unlock_accounts((*first_batch).iter().zip(&results[i]));
-        }
+    for (i, first_batch) in batches.iter().enumerate().take(batches_per_iteration) {
+        bank.rc
+            .accounts
+            .unlock_accounts((*first_batch).iter().zip(&results[i]));
     }
-    
+
     // drop batches here so dropping is not included in the benchmark
     drop(batches);
-    
 }
 
 #[bench]
@@ -171,4 +157,3 @@ fn bench_lock_accounts_half_batch(bencher: &mut Bencher) {
 fn bench_lock_accounts_full_batch(bencher: &mut Bencher) {
     bench_lock_accounts(bencher, 64, false);
 }
-

@@ -1075,7 +1075,7 @@ lazy_static! {
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
-        (allow_self_conflicting_entries::id(), "Allow entries with conflicting transactions"),
+        (allow_self_conflicting_entries::id(), "Allow entries with conflicting transactions #1025"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
