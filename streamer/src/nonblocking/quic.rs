@@ -994,13 +994,11 @@ async fn handle_connection(
                             match params.peer_type {
                                 ConnectionPeerType::Unstaked => {
                                     stats
-                                        .throttled_unstaked_streams
+                                        .throttle_events_unstaked
                                         .fetch_add(1, Ordering::Relaxed);
                                 }
                                 ConnectionPeerType::Staked(_) => {
-                                    stats
-                                        .throttled_staked_streams
-                                        .fetch_add(1, Ordering::Relaxed);
+                                    stats.throttle_events_staked.fetch_add(1, Ordering::Relaxed);
                                 }
                             }
                             sleep(throttle_duration).await;
