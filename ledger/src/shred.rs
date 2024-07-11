@@ -786,6 +786,22 @@ pub mod layout {
             .ok_or(Error::InvalidPayloadSize(shred.len()))
     }
 
+    pub fn is_retransmitter_signed(shred: &[u8]) -> Result<bool, Error> {
+        match get_shred_variant(shred)? {
+            ShredVariant::LegacyCode | ShredVariant::LegacyData => Err(Error::InvalidShredVariant),
+            ShredVariant::MerkleCode {
+                proof_size: _,
+                chained: _,
+                resigned,
+            } => Ok(resigned),
+            ShredVariant::MerkleData {
+                proof_size: _,
+                chained: _,
+                resigned,
+            } => Ok(resigned),
+        }
+    }
+
     pub(crate) fn set_retransmitter_signature(
         shred: &mut [u8],
         signature: &Signature,
