@@ -14,9 +14,11 @@ if [[ -n $CI_PULL_REQUEST ]]; then
   pr_number=${BASH_REMATCH[1]}
   echo "get affected files from PR: $pr_number"
 
-  # shellcheck disable=SC2016
-  # shellcheck disable=SC2046
   # ref: https://github.com/cli/cli/issues/5368#issuecomment-1087515074
+  #
+  # Variable value contains dollar prefixed words that look like bash variable
+  # references.  This is intentional.
+  # shellcheck disable=SC2016
   query='
   query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
     repository(owner: $owner, name: $repo) {
