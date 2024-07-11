@@ -346,6 +346,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .arg(
+            Arg::with_name("skip_genesis_accounts")
+                .long("skip-genesis-accounts")
+                .help("When enabled genesis accounts for clusters will not be added"),
+        )
+        .arg(
             Arg::with_name("primordial_accounts_file")
                 .long("primordial-accounts-file")
                 .value_name("FILENAME")
@@ -597,7 +602,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    if !matches.is_present("skip_genesis_accounts") {
+        add_genesis_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    }
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {
