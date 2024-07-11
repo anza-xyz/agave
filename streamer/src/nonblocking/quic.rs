@@ -990,7 +990,6 @@ async fn handle_connection(
                                     max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
                                     throttle_duration: {throttle_duration:?}",
                                     params.peer_type, params.total_stake);
-                            stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
                             match params.peer_type {
                                 ConnectionPeerType::Unstaked => {
                                     stats

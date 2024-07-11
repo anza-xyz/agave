@@ -184,7 +184,6 @@ pub struct StreamerStats {
     // Per IP rate-limiting is triggered each time when there are too many connections
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
-    pub(crate) throttled_streams: AtomicUsize,
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
@@ -458,11 +457,6 @@ impl StreamerStats {
             (
                 "stream_read_timeouts",
                 self.total_stream_read_timeouts.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "throttled_streams",
-                self.throttled_streams.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
