@@ -16,6 +16,7 @@ use {
     solana_sdk::{
         clock::{Epoch, Slot},
         hash::Hash,
+        scheduling::SchedulingMode,
         timing,
     },
     std::{
@@ -223,18 +224,43 @@ impl BankForks {
         );
     }
 
-    pub fn insert(&mut self, mut bank: Bank) -> BankWithScheduler {
+    pub fn reinstall_schedulers(&mut self, mode: SchedulingMode) {
+        for (slot, bank) in self.banks.iter_mut() {
+            if !bank.is_frozen() {
+                trace!("Installed scheduler into existing unfrozen slot: {slot}");
+                *bank = Self::install_scheduler_into_bank(
+                    &self.scheduler_pool.as_ref().unwrap(),
+                    mode,
+                    bank.clone_without_scheduler(),
+                );
+            }
+        }
+    }
+
+    fn install_scheduler_into_bank(
+        scheduler_pool: &InstalledSchedulerPoolArc,
+        mode: SchedulingMode,
+        bank: Arc<Bank>,
+    ) -> BankWithScheduler {
+        trace!(
+            "Inserting bank (slot: {}) with scheduler into bank_forks...",
+            bank.slot()
+        );
+        let context = SchedulingContext::new(mode, bank.clone());
+        let scheduler = scheduler_pool.take_scheduler(context);
+        let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
+        scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+        bank_with_scheduler
+    }
+
+    pub fn insert(&mut self, mode: SchedulingMode, mut bank: Bank) -> BankWithScheduler {
         if self.root.load(Ordering::Relaxed) < self.highest_slot_at_startup {
             bank.set_check_program_modification_slot(true);
         }
 
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
-            let context = SchedulingContext::new(bank.clone());
-            let scheduler = scheduler_pool.take_scheduler(context);
-            let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
-            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
-            bank_with_scheduler
+            Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
         } else {
             BankWithScheduler::new_without_scheduler(bank)
         };
@@ -248,9 +274,9 @@ impl BankForks {
         bank
     }
 
-    pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
+    pub fn insert_from_ledger(&mut self, mode: SchedulingMode, bank: Bank) -> BankWithScheduler {
         self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
-        self.insert(bank)
+        self.insert(mode, bank)
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {

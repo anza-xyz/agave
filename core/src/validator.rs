@@ -150,8 +150,8 @@ const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
-    #[default]
     BlockstoreProcessor,
+    #[default]
     UnifiedScheduler,
 }
 
@@ -176,8 +176,9 @@ impl BlockVerificationMethod {
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
     ThreadLocalMultiIterator,
-    #[default]
     CentralScheduler,
+    #[default]
+    UnifiedScheduler,
 }
 
 impl BlockProductionMethod {
@@ -831,8 +832,49 @@ impl Validator {
         // (by both replay stage and banking stage)
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
 
-        match &config.block_verification_method {
-            BlockVerificationMethod::BlockstoreProcessor => {
+        let leader_schedule_cache = Arc::new(leader_schedule_cache);
+        let startup_verification_complete;
+        let (poh_recorder, entry_receiver, record_receiver) = {
+            let bank = &bank_forks.read().unwrap().working_bank();
+            startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
+            PohRecorder::new_with_clear_signal(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                None,
+                bank.ticks_per_slot(),
+                config.delay_leader_block_for_pending_fork,
+                blockstore.clone(),
+                blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &genesis_config.poh_config,
+                Some(poh_timing_point_sender),
+                exit.clone(),
+            )
+        };
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+
+        match (
+            &config.block_verification_method,
+            &config.block_production_method,
+        ) {
+            (BlockVerificationMethod::UnifiedScheduler, _)
+            | (_, BlockProductionMethod::UnifiedScheduler) => {
+                let scheduler_pool = DefaultSchedulerPool::new_dyn(
+                    config.unified_scheduler_handler_threads,
+                    config.runtime_config.log_messages_bytes_limit,
+                    transaction_status_sender.clone(),
+                    Some(replay_vote_sender.clone()),
+                    prioritization_fee_cache.clone(),
+                    Some(poh_recorder.read().unwrap().new_recorder()),
+                    None,
+                );
+                bank_forks
+                    .write()
+                    .unwrap()
+                    .install_scheduler_pool(scheduler_pool);
+            }
+            _ => {
                 info!("no scheduler pool is installed for block verification...");
                 if let Some(count) = config.unified_scheduler_handler_threads {
                     warn!(
@@ -841,22 +883,8 @@ impl Validator {
                     );
                 }
             }
-            BlockVerificationMethod::UnifiedScheduler => {
-                let scheduler_pool = DefaultSchedulerPool::new_dyn(
-                    config.unified_scheduler_handler_threads,
-                    config.runtime_config.log_messages_bytes_limit,
-                    transaction_status_sender.clone(),
-                    Some(replay_vote_sender.clone()),
-                    prioritization_fee_cache.clone(),
-                );
-                bank_forks
-                    .write()
-                    .unwrap()
-                    .install_scheduler_pool(scheduler_pool);
-            }
         }
 
-        let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let entry_notification_sender = entry_notifier_service
             .as_ref()
             .map(|service| service.sender());
@@ -927,27 +955,6 @@ impl Validator {
         ));
 
         let max_slots = Arc::new(MaxSlots::default());
-
-        let startup_verification_complete;
-        let (poh_recorder, entry_receiver, record_receiver) = {
-            let bank = &bank_forks.read().unwrap().working_bank();
-            startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
-            PohRecorder::new_with_clear_signal(
-                bank.tick_height(),
-                bank.last_blockhash(),
-                bank.clone(),
-                None,
-                bank.ticks_per_slot(),
-                config.delay_leader_block_for_pending_fork,
-                blockstore.clone(),
-                blockstore.get_new_shred_signal(0),
-                &leader_schedule_cache,
-                &genesis_config.poh_config,
-                Some(poh_timing_point_sender),
-                exit.clone(),
-            )
-        };
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
@@ -2132,12 +2139,15 @@ fn maybe_warp_slot(
         root_bank.squash();
         root_bank.force_flush_accounts_cache();
 
-        bank_forks.insert(Bank::warp_from_parent(
-            root_bank,
-            &Pubkey::default(),
-            warp_slot,
-            solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
-        ));
+        bank_forks.insert(
+            panic!(),
+            Bank::warp_from_parent(
+                root_bank,
+                &Pubkey::default(),
+                warp_slot,
+                solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
+            ),
+        );
         bank_forks
             .set_root(
                 warp_slot,

@@ -27,6 +27,7 @@ use {
     solana_sdk::{
         clock::Slot,
         hash::Hash,
+        scheduling::SchedulingMode,
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     std::{
@@ -37,12 +38,17 @@ use {
         thread,
     },
 };
+use std::sync::Mutex;
+use std::time::Instant;
+use std::time::Duration;
 #[cfg(feature = "dev-context-only-utils")]
 use {mockall::automock, qualifier_attr::qualifiers};
 
 pub fn initialized_result_with_timings() -> ResultWithTimings {
     (Ok(()), ExecuteTimings::default())
 }
+
+type Index = u128;
 
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
     fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
@@ -59,8 +65,11 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
 }
 
 #[derive(Debug)]
-pub struct SchedulerAborted;
-pub type ScheduleResult = std::result::Result<(), SchedulerAborted>;
+pub enum SchedulerError {
+    Aborted,
+    Terminated,
+}
+pub type ScheduleResult = std::result::Result<(), SchedulerError>;
 
 pub struct TimeoutListener {
     callback: Box<dyn FnOnce(InstalledSchedulerPoolArc) + Sync + Send>,
@@ -167,13 +176,13 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution<'a>(
         &'a self,
-        transaction_with_index: &'a (&'a SanitizedTransaction, usize),
+        transaction_with_index: &'a (&'a SanitizedTransaction, Index),
     ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
     ///
     /// Note that this must not be called until it's observed that `schedule_execution()` has
-    /// returned `Err(SchedulerAborted)`. Violating this should `panic!()`.
+    /// returned `Err(SchedulerError)`. Violating this should `panic!()`.
     ///
     /// That said, calling this multiple times is completely acceptable after the error observation
     /// from `schedule_execution()`. While it's not guaranteed, the same `.clone()`-ed errors of
@@ -229,17 +238,32 @@ pub type SchedulerId = u64;
 /// `SchedulingContext`s.
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
-    // mode: SchedulingMode, // this will be added later.
+    mode: SchedulingMode,
     bank: Arc<Bank>,
+    started_at: Arc<Mutex<(Instant, bool)>>,
 }
 
 impl SchedulingContext {
-    pub fn new(bank: Arc<Bank>) -> Self {
-        Self { bank }
+    pub(crate) fn new(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+        Self { mode, bank, started_at: Arc::new(Mutex::new((Instant::now(), false))) }
+    }
+
+    pub fn mode(&self) -> SchedulingMode {
+        self.mode
     }
 
     pub fn bank(&self) -> &Arc<Bank> {
         &self.bank
+    }
+
+    pub fn can_commit(&self) -> bool {
+        let (started_at, reached_max_height) = &mut *self.started_at.lock().unwrap();
+        if !*reached_max_height && started_at.elapsed().as_millis() < 350 {
+            return true;
+        } else {
+            *reached_max_height = true;
+            return false;
+        }
     }
 
     pub fn slot(&self) -> Slot {
@@ -303,7 +327,7 @@ pub enum SchedulerStatus {
     /// Scheduler is idling for long time, returning scheduler back to the pool.
     /// This will be immediately (i.e. transaparently) transitioned to Active as soon as there's
     /// new transaction to be executed.
-    Stale(InstalledSchedulerPoolArc, ResultWithTimings),
+    Stale(InstalledSchedulerPoolArc, SchedulingMode, ResultWithTimings),
 }
 
 impl SchedulerStatus {
@@ -318,7 +342,8 @@ impl SchedulerStatus {
         &mut self,
         f: impl FnOnce(InstalledSchedulerPoolArc, ResultWithTimings) -> InstalledSchedulerBox,
     ) {
-        let Self::Stale(pool, result_with_timings) = mem::replace(self, Self::Unavailable) else {
+        let Self::Stale(pool, _mode, result_with_timings) = mem::replace(self, Self::Unavailable)
+        else {
             panic!("transition to Active failed: {self:?}");
         };
         *self = Self::Active(f(pool, result_with_timings));
@@ -334,8 +359,9 @@ impl SchedulerStatus {
         let Self::Active(scheduler) = mem::replace(self, Self::Unavailable) else {
             unreachable!("not active: {self:?}");
         };
+        let mode = scheduler.context().mode;
         let (pool, result_with_timings) = f(scheduler);
-        *self = Self::Stale(pool, result_with_timings);
+        *self = Self::Stale(pool, mode, result_with_timings);
     }
 
     fn transition_from_active_to_unavailable(&mut self) -> InstalledSchedulerBox {
@@ -346,7 +372,8 @@ impl SchedulerStatus {
     }
 
     fn transition_from_stale_to_unavailable(&mut self) -> ResultWithTimings {
-        let Self::Stale(_pool, result_with_timings) = mem::replace(self, Self::Unavailable) else {
+        let Self::Stale(_pool, _mode, result_with_timings) = mem::replace(self, Self::Unavailable)
+        else {
             panic!("transition to Unavailable failed: {self:?}");
         };
         result_with_timings
@@ -447,11 +474,12 @@ impl BankWithScheduler {
     // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
     pub fn schedule_transaction_executions<'a>(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a usize)>,
+        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a Index)>,
     ) -> Result<()> {
         trace!(
-            "schedule_transaction_executions(): {} txs",
-            transactions_with_indexes.len()
+            "schedule_transaction_executions(): {} txs slot: {}",
+            transactions_with_indexes.len(),
+            self.inner.bank.slot(),
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
@@ -461,7 +489,7 @@ impl BankWithScheduler {
             Ok(())
         });
 
-        if schedule_result.is_err() {
+        if let Err(SchedulerError::Aborted) = schedule_result {
             // This write lock isn't atomic with the above the read lock. So, another thread
             // could have called .recover_error_after_abort() while we're literally stuck at
             // the gaps of these locks (i.e. this comment in source code wise) under extreme
@@ -470,6 +498,9 @@ impl BankWithScheduler {
             //
             // Lastly, this non-atomic nature is intentional for optimizing the fast code-path
             return Err(self.inner.retrieve_error_after_schedule_failure());
+        }
+        if let Err(SchedulerError::Terminated) = schedule_result {
+            return Err(TransactionError::CommitFailed);
         }
 
         Ok(())
@@ -521,21 +552,23 @@ impl BankWithSchedulerInner {
         let scheduler = self.scheduler.read().unwrap();
         match &*scheduler {
             SchedulerStatus::Active(scheduler) => {
+                trace!("entering the fast path slot: {}", self.bank.slot());
                 // This is the fast path, needing single read-lock most of time.
                 f(scheduler)
             }
-            SchedulerStatus::Stale(_pool, (result, _timings)) if result.is_err() => {
+            SchedulerStatus::Stale(_pool, _mode, (result, _timings)) if result.is_err() => {
                 trace!(
                     "with_active_scheduler: bank (slot: {}) has a stale aborted scheduler...",
                     self.bank.slot(),
                 );
-                Err(SchedulerAborted)
+                Err(SchedulerError::Aborted)
             }
-            SchedulerStatus::Stale(pool, _result_with_timings) => {
+            SchedulerStatus::Stale(pool, mode, _result_with_timings) => {
+                let mode = *mode;
                 let pool = pool.clone();
                 drop(scheduler);
 
-                let context = SchedulingContext::new(self.bank.clone());
+                let context = SchedulingContext::new(mode, self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
@@ -557,7 +590,10 @@ impl BankWithSchedulerInner {
                 pool.register_timeout_listener(self.do_create_timeout_listener());
                 f(scheduler.active_scheduler())
             }
-            SchedulerStatus::Unavailable => unreachable!("no installed scheduler"),
+            SchedulerStatus::Unavailable => {
+                trace!("no installed scheduler: slot: {}", self.bank.slot());
+                Err(SchedulerError::Terminated)
+            }
         }
     }
 
@@ -592,16 +628,20 @@ impl BankWithSchedulerInner {
         })
     }
 
-    /// This must not be called until `Err(SchedulerAborted)` is observed. Violating this should
+    /// This must not be called until `Err(SchedulerError)` is observed. Violating this should
     /// `panic!()`.
     fn retrieve_error_after_schedule_failure(&self) -> TransactionError {
         let mut scheduler = self.scheduler.write().unwrap();
         match &mut *scheduler {
             SchedulerStatus::Active(scheduler) => scheduler.recover_error_after_abort(),
-            SchedulerStatus::Stale(_pool, (result, _timings)) if result.is_err() => {
+            SchedulerStatus::Stale(_pool, _mode, (result, _timings)) if result.is_err() => {
                 result.clone().unwrap_err()
             }
-            _ => unreachable!("no error in {:?}", self.scheduler),
+            SchedulerStatus::Unavailable => {
+                trace!("no error in {:?}", scheduler);
+                TransactionError::CommitFailed
+            }
+            _ => unreachable!("no error in {:?}", scheduler),
         }
     }
 
@@ -640,12 +680,12 @@ impl BankWithSchedulerInner {
                 uninstalled_scheduler.return_to_pool();
                 (false, Some(result_with_timings))
             }
-            SchedulerStatus::Stale(_pool, _result_with_timings) if reason.is_paused() => {
+            SchedulerStatus::Stale(_pool, _mode, _result_with_timings) if reason.is_paused() => {
                 // Do nothing for pauses because the scheduler termination is guaranteed to be
                 // called later.
                 (true, None)
             }
-            SchedulerStatus::Stale(_pool, _result_with_timings) => {
+            SchedulerStatus::Stale(_pool, _mode, _result_with_timings) => {
                 let result_with_timings = scheduler.transition_from_stale_to_unavailable();
                 (true, Some(result_with_timings))
             }

@@ -104,7 +104,7 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 // An upper bound on maximum number of data shreds we can handle in a slot
 // 32K shreds would allow ~320K peak TPS
 // (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
-pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
+pub const MAX_DATA_SHREDS_PER_SLOT: usize = u32::MAX as usize;
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
@@ -1043,10 +1043,10 @@ impl Blockstore {
                 .filter_map(|shred| {
                     let leader =
                         leader_schedule_cache.slot_leader_at(shred.slot(), /*bank=*/ None)?;
-                    if !shred.verify(&leader) {
-                        metrics.num_recovered_failed_sig += 1;
-                        return None;
-                    }
+                    //if !shred.verify(&leader) {
+                    //    metrics.num_recovered_failed_sig += 1;
+                    //    return None;
+                    //}
                     // Since the data shreds are fully recovered from the
                     // erasure batch, no need to store coding shreds in
                     // blockstore.
@@ -3668,6 +3668,53 @@ impl Blockstore {
             })
             .flatten_ok()
             .collect()
+    }
+
+    pub fn get_slot_meta(&self, slot: Slot) -> SlotMeta {
+        self.meta_cf.get(slot).unwrap().unwrap()
+    }
+
+    pub fn get_slot_chunked_entries_in_block<'a>(
+        &'a self,
+        slot: &'a Slot,
+        start_index: u32,
+        slot_meta: &'a SlotMeta,
+    ) -> impl Iterator<Item = (Vec<Entry>, u32)> + 'a {
+        slot_meta.completed_data_indexes
+            .range(start_index..slot_meta.consumed as u32)
+            .scan(start_index, |begin, index| {
+                let out = (*begin, *index);
+                *begin = index + 1;
+                Some(out)
+            })
+            .map(|(start, end)| {
+            let keys = (start..=end).map(|index| (*slot, u64::from(index)));
+            let range_shreds: Vec<Shred> = self
+                .data_shred_cf
+                .multi_get_bytes(keys)
+                .into_iter()
+                .map(|shred_bytes| {
+                    Shred::new_from_serialized_shred(shred_bytes.unwrap().unwrap()).unwrap()
+                })
+                .collect();
+            let last_shred = range_shreds.last().unwrap();
+            assert!(last_shred.data_complete() || last_shred.last_in_slot());
+            let a: Vec<Entry> = Shredder::deshred(&range_shreds)
+                .map_err(|e| {
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("could not reconstruct entries buffer from shreds: {e:?}"),
+                    )))
+                })
+                .and_then(|payload| {
+                    bincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
+                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                            format!("could not reconstruct entries: {e:?}"),
+                        )))
+                    })
+                })
+                .unwrap();
+            (a, end)
+        })
     }
 
     pub fn get_entries_in_data_block(

@@ -52,6 +52,7 @@ use {
         pubkey::Pubkey,
         rent_debits::RentDebits,
         saturating_add_assign,
+        scheduling::SchedulingMode,
         signature::{Keypair, Signature},
         timing,
         transaction::{
@@ -107,6 +108,7 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 fn get_first_error(
     batch: &TransactionBatch,
     fee_collection_results: Vec<Result<()>>,
+    is_unified_scheduler_for_block_production: bool,
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
     for (result, transaction) in fee_collection_results
@@ -117,18 +119,20 @@ fn get_first_error(
             if first_err.is_none() {
                 first_err = Some((result.clone(), *transaction.signature()));
             }
-            warn!(
-                "Unexpected validator error: {:?}, transaction: {:?}",
-                err, transaction
-            );
-            datapoint_error!(
-                "validator_process_entry_error",
-                (
-                    "error",
-                    format!("error: {err:?}, transaction: {transaction:?}"),
-                    String
-                )
-            );
+            if !is_unified_scheduler_for_block_production {
+                warn!(
+                    "Unexpected validator error: {:?}, transaction: {:?}",
+                    err, transaction
+                );
+                datapoint_error!(
+                    "validator_process_entry_error",
+                    (
+                        "error",
+                        format!("error: {err:?}, transaction: {transaction:?}"),
+                        String
+                    )
+                );
+            }
         }
     }
     first_err
@@ -150,6 +154,7 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    pre_commit_callback: Option<impl FnOnce() -> bool>,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -165,14 +170,18 @@ pub fn execute_batch(
         vec![]
     };
 
-    let (tx_results, balances) = batch.bank().load_execute_and_commit_transactions(
+    let is_unified_scheduler_for_block_production = pre_commit_callback.is_some();
+    let Some((tx_results, balances)) = batch.bank().load_execute_and_commit_transactions(
         batch,
         MAX_PROCESSING_AGE,
         transaction_status_sender.is_some(),
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
-    );
+        pre_commit_callback,
+    ) else {
+        return Err(TransactionError::CommitFailed);
+    };
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -239,7 +248,11 @@ pub fn execute_batch(
 
     prioritization_fee_cache.update(bank, executed_transactions.into_iter());
 
-    let first_err = get_first_error(batch, fee_collection_results);
+    let first_err = get_first_error(
+        batch,
+        fee_collection_results,
+        is_unified_scheduler_for_block_production,
+    );
     first_err.map(|(result, _)| result).unwrap_or(Ok(()))
 }
 
@@ -339,6 +352,7 @@ fn execute_batches_internal(
                             &mut timings,
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
+                            None::<fn() -> bool>,
                         )
                     },
                     "execute_batch",
@@ -456,11 +470,15 @@ fn schedule_batches_for_execution(
         transaction_indexes,
     } in batches
     {
+        let transaction_indexes2 = transaction_indexes
+            .iter()
+            .map(|&i| i as u128)
+            .collect::<Vec<u128>>();
         bank.schedule_transaction_executions(
             batch
                 .sanitized_transactions()
                 .iter()
-                .zip(transaction_indexes.iter()),
+                .zip(transaction_indexes2.iter()),
         )?;
     }
     Ok(())
@@ -1448,42 +1466,48 @@ pub fn confirm_slot(
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
+    let slot_meta = blockstore.get_slot_meta(slot);
+    let mut chunked_entries = blockstore.get_slot_chunked_entries_in_block(&slot, progress.num_shreds as u32, &slot_meta);
+    if blockstore.is_dead(slot) {
+        Err(BlockstoreError::DeadSlot)?;
+    }
 
-    let slot_entries_load_result = {
-        let mut load_elapsed = Measure::start("load_elapsed");
-        let load_result = blockstore
-            .get_slot_entries_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
-            .map_err(BlockstoreProcessorError::FailedToLoadEntries);
-        load_elapsed.stop();
-        if load_result.is_err() {
-            timing.fetch_fail_elapsed += load_elapsed.as_us();
-        } else {
-            timing.fetch_elapsed += load_elapsed.as_us();
-        }
-        load_result
-    }?;
+    let mut current_entry = chunked_entries.next();
+    let mut last_end_index: u32 = u32::MAX;
+    loop {
+        let Some((entry, last_end_index)) = current_entry else {
+            break;
+        };
+        let next_entry = chunked_entries.next();
+        let is_full = next_entry.is_none() && slot_meta.is_full();
 
-    confirm_slot_entries(
-        bank,
-        replay_tx_thread_pool,
-        slot_entries_load_result,
-        timing,
-        progress,
-        skip_verification,
-        transaction_status_sender,
-        entry_notification_sender,
-        replay_vote_sender,
-        recyclers,
-        log_messages_bytes_limit,
-        prioritization_fee_cache,
-    )
+        confirm_slot_entries(
+            bank,
+            replay_tx_thread_pool,
+            (entry, is_full),
+            timing,
+            progress,
+            skip_verification,
+            transaction_status_sender,
+            entry_notification_sender,
+            replay_vote_sender,
+            recyclers,
+            log_messages_bytes_limit,
+            prioritization_fee_cache,
+        )?;
+        current_entry = next_entry;
+    }
+    if last_end_index != u32::MAX {
+        progress.num_shreds = last_end_index as u64 + 1;
+    }
+    return Ok(());
 }
 
 #[allow(clippy::too_many_arguments)]
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    slot_entries_load_result: (Vec<Entry>, u64, bool),
+    slot_entries_load_result: (Vec<Entry>, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1509,7 +1533,7 @@ fn confirm_slot_entries(
     };
 
     let slot = bank.slot();
-    let (entries, num_shreds, slot_full) = slot_entries_load_result;
+    let (entries, slot_full) = slot_entries_load_result;
     let num_entries = entries.len();
     let mut entry_tx_starting_indexes = Vec::with_capacity(num_entries);
     let mut entry_tx_starting_index = progress.num_txs;
@@ -1539,27 +1563,26 @@ fn confirm_slot_entries(
         })
         .sum::<usize>();
     trace!(
-        "Fetched entries for slot {}, num_entries: {}, num_shreds: {}, num_txs: {}, slot_full: {}",
+        "Fetched entries for slot {}, num_entries: {}, num_txs: {}, slot_full: {}",
         slot,
         num_entries,
-        num_shreds,
         num_txs,
         slot_full,
     );
 
-    if !skip_verification {
+    // seems needed to avoid consensus stall....
+    if true || !skip_verification {
         let tick_hash_count = &mut progress.tick_hash_count;
         verify_ticks(bank, &entries, slot_full, tick_hash_count).map_err(|err| {
             warn!(
                 "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, last_blockhash: \
-                 {}, shred_index: {}, slot_full: {}",
+                 {}, slot_full: {}",
                 err,
                 slot,
                 num_entries,
                 bank.tick_height(),
                 progress.last_entry,
                 bank.last_blockhash(),
-                num_shreds,
                 slot_full,
             );
             err
@@ -1673,7 +1696,6 @@ fn confirm_slot_entries(
 
     process_result?;
 
-    progress.num_shreds += num_shreds;
     progress.num_entries += num_entries;
     progress.num_txs += num_txs;
     if let Some(last_entry_hash) = last_entry_hash {
@@ -1862,7 +1884,10 @@ fn load_frozen_forks(
 
             let mut progress = ConfirmationProgress::new(last_entry_hash);
             let mut m = Measure::start("process_single_slot");
-            let bank = bank_forks.write().unwrap().insert_from_ledger(bank);
+            let bank = bank_forks
+                .write()
+                .unwrap()
+                .insert_from_ledger(SchedulingMode::BlockVerification, bank);
             if process_single_slot(
                 blockstore,
                 &bank,

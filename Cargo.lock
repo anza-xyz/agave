@@ -239,6 +239,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
+ "mimalloc",
  "num_cpus",
  "predicates",
  "rand 0.8.5",
@@ -3205,6 +3206,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7d73b3f436185384286bd8098d17ec07c9a7d2388a6599f824d8502b529702a"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23aa6811d3bd4deb8a84dde645f943476d13b248d818edcf8ce0b2f37f036b44"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "librocksdb-sys"
 version = "0.16.0+8.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3417,6 +3428,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimalloc"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68914350ae34959d83f732418d51e2427a794055d0b9529f48259ac07af65633"
+dependencies = [
+ "libmimalloc-sys",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3511,6 +3531,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "more-asserts"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fafa6961cabd9c63bcd77a45d7e3b7f3b552b70417831fb0f56db717e72407e"
 
 [[package]]
 name = "multimap"
@@ -5551,6 +5577,7 @@ dependencies = [
  "clap 3.2.23",
  "crossbeam-channel",
  "log",
+ "mimalloc",
  "rand 0.8.5",
  "rayon",
  "solana-client",
@@ -5565,6 +5592,7 @@ dependencies = [
  "solana-sdk",
  "solana-streamer",
  "solana-tpu-client",
+ "solana-unified-scheduler-pool",
  "solana-version",
 ]
 
@@ -5633,6 +5661,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "log",
+ "mimalloc",
  "rand 0.8.5",
  "rayon",
  "serde",
@@ -7777,6 +7806,7 @@ name = "solana-unified-scheduler-logic"
 version = "2.1.0"
 dependencies = [
  "assert_matches",
+ "more-asserts",
  "solana-sdk",
  "static_assertions",
 ]
@@ -7785,6 +7815,7 @@ dependencies = [
 name = "solana-unified-scheduler-pool"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "assert_matches",
  "crossbeam-channel",
  "dashmap",
@@ -7795,6 +7826,7 @@ dependencies = [
  "scopeguard",
  "solana-ledger",
  "solana-logger",
+ "solana-poh",
  "solana-program-runtime",
  "solana-runtime",
  "solana-sdk",

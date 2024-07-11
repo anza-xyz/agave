@@ -605,7 +605,7 @@ impl SchedulerController {
     /// from user input. They should never be zero.
     /// Any difference in the prioritization is negligible for
     /// the current transaction costs.
-    fn calculate_priority_and_cost(
+    pub(crate) fn calculate_priority_and_cost(
         transaction: &SanitizedTransaction,
         fee_budget_limits: &FeeBudgetLimits,
         bank: &Bank,

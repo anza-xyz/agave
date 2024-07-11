@@ -31,6 +31,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
+    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::{measure, measure_us},
@@ -40,7 +41,10 @@ use {
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::timing::AtomicInterval,
+    solana_sdk::{
+        timing::AtomicInterval,
+        transaction::{SanitizedTransaction, TransactionError},
+    },
     std::{
         cmp, env,
         sync::{
@@ -373,24 +377,10 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
+        use BlockProductionMethod::*;
+
         match block_production_method {
-            BlockProductionMethod::ThreadLocalMultiIterator => {
-                Self::new_thread_local_multi_iterator(
-                    cluster_info,
-                    poh_recorder,
-                    non_vote_receiver,
-                    tpu_vote_receiver,
-                    gossip_vote_receiver,
-                    num_threads,
-                    transaction_status_sender,
-                    replay_vote_sender,
-                    log_messages_bytes_limit,
-                    connection_cache,
-                    bank_forks,
-                    prioritization_fee_cache,
-                )
-            }
-            BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
+            ThreadLocalMultiIterator => Self::new_thread_local_multi_iterator(
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -403,6 +393,28 @@ impl BankingStage {
                 connection_cache,
                 bank_forks,
                 prioritization_fee_cache,
+            ),
+            CentralScheduler => Self::new_central_scheduler(
+                cluster_info,
+                poh_recorder,
+                non_vote_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                num_threads,
+                transaction_status_sender,
+                replay_vote_sender,
+                log_messages_bytes_limit,
+                connection_cache,
+                bank_forks,
+                prioritization_fee_cache,
+            ),
+            UnifiedScheduler => Self::new_unified_scheduler(
+                cluster_info,
+                poh_recorder,
+                non_vote_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                bank_forks,
             ),
         }
     }
@@ -618,6 +630,147 @@ impl BankingStage {
                 })
                 .unwrap()
         });
+
+        Self { bank_thread_hdls }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_unified_scheduler(
+        cluster_info: &Arc<ClusterInfo>,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        non_vote_receiver: BankingPacketReceiver,
+        tpu_vote_receiver: BankingPacketReceiver,
+        gossip_vote_receiver: BankingPacketReceiver,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> Self {
+        // todo: qos, forwarding, proper handling of buffered packets, vote storage, vote only
+        // blocks...
+        struct MonotonicIdGenerator {
+            next_task_id: AtomicUsize,
+        }
+
+        impl MonotonicIdGenerator {
+            fn new() -> Arc<Self> {
+                Arc::new(Self {
+                    next_task_id: Default::default(),
+                })
+            }
+
+            fn bulk_assign_task_ids(&self, count: usize) -> usize {
+                self.next_task_id.fetch_add(count, Ordering::AcqRel)
+            }
+        }
+        let id_generator = MonotonicIdGenerator::new();
+
+        let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+
+        let bank_thread_hdls = [
+            (gossip_vote_receiver, 0),
+            (tpu_vote_receiver, 1),
+            (non_vote_receiver.clone(), 2),
+            (non_vote_receiver, 3),
+        ]
+        .into_iter()
+        .map(|(receiver, thx)| {
+            let decision_maker = decision_maker.clone();
+            let id_generator = id_generator.clone();
+            let packet_deserializer = PacketDeserializer::new(receiver, bank_forks.clone());
+
+            std::thread::Builder::new()
+                .name(format!("solScSubmit{:02}", thx))
+                .spawn(move || 'outer: loop {
+                    let decision = decision_maker.make_consume_or_forward_decision();
+                    match decision {
+                        BufferedPacketsDecision::Consume(bank_start) => {
+                            let bank = bank_start.working_bank;
+                            let transaction_account_lock_limit =
+                                bank.get_transaction_account_lock_limit();
+                            let recv_timeout = Duration::from_millis(10);
+
+                            let start = Instant::now();
+
+                            loop {
+                                match packet_deserializer
+                                    .packet_batch_receiver
+                                    .recv_timeout(recv_timeout)
+                                {
+                                    Ok(aaa) => {
+                                        for pp in &aaa.0 {
+                                            // over-provision
+                                            let task_id =
+                                                id_generator.bulk_assign_task_ids(pp.len());
+                                            let task_ids =
+                                                (task_id..(task_id + pp.len())).collect::<Vec<_>>();
+
+                                            let indexes =
+                                                PacketDeserializer::generate_packet_indexes(&pp);
+                                            let ppp = PacketDeserializer::deserialize_packets2(
+                                                &pp, &indexes,
+                                            )
+                                            .filter_map(|(i, p)| {
+                                                let Some(tx) = p.build_sanitized_transaction(
+                                                    bank.vote_only_bank(),
+                                                    &**bank,
+                                                    bank.get_reserved_account_keys(),
+                                                ) else {
+                                                    return None;
+                                                };
+
+                                                if let Err(_) =
+                                                    SanitizedTransaction::validate_account_locks(
+                                                        tx.message(),
+                                                        transaction_account_lock_limit,
+                                                    )
+                                                {
+                                                    return None;
+                                                }
+
+                                                let Ok(fb) = process_compute_budget_instructions(
+                                                    tx.message().program_instructions_iter(),
+                                                ) else {
+                                                    return None;
+                                                };
+
+                                                let (priority, _cost) =
+                                                SchedulerController::calculate_priority_and_cost(
+                                                    &tx,
+                                                    &fb.into(),
+                                                    &bank,
+                                                );
+                                                // wire cost tracker....
+                                                let i = ((u64::MAX - priority) as u128) << 64
+                                                    | task_ids[*i] as u128;
+
+                                                Some((tx, i))
+                                            })
+                                            .collect::<Vec<_>>();
+
+                                            match bank.schedule_transaction_executions(
+                                                ppp.iter().map(|(a, b)| (a, b)),
+                                            ) {
+                                                Ok(()) => (),
+                                                Err(TransactionError::CommitFailed) => break,
+                                                _ => unreachable!(),
+                                            }
+                                        }
+
+                                        if start.elapsed() >= recv_timeout {
+                                            break;
+                                        }
+                                    }
+                                    Err(RecvTimeoutError::Timeout) => continue 'outer,
+                                    Err(RecvTimeoutError::Disconnected) => break 'outer,
+                                }
+                            }
+                        }
+                        _ => {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                })
+                .unwrap()
+        })
+        .collect();
 
         Self { bank_thread_hdls }
     }

@@ -4789,7 +4789,8 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (TransactionResults, TransactionBalancesSet) {
+        pre_commit_callback: Option<impl FnOnce() -> bool>,
+    ) -> Option<(TransactionResults, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4819,6 +4820,15 @@ impl Bank {
             },
         );
 
+        if let Some(pre_commit_callback) = pre_commit_callback {
+            if let Some(e) = execution_results.first() {
+                assert_eq!(execution_results.len(), 1);
+                if e.was_executed() && !pre_commit_callback() {
+                    return None;
+                }
+            }
+        }
+
         let (last_blockhash, lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
         let results = self.commit_transactions(
@@ -4842,10 +4852,10 @@ impl Bank {
         } else {
             vec![]
         };
-        (
+        Some((
             results,
             TransactionBalancesSet::new(pre_balances, post_balances),
-        )
+        ))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
@@ -4870,13 +4880,13 @@ impl Bank {
             Err(err) => return TransactionExecutionResult::NotExecuted(err),
         };
 
-        let (
+        let Some((
             TransactionResults {
                 mut execution_results,
                 ..
             },
             ..,
-        ) = self.load_execute_and_commit_transactions(
+        )) = self.load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             false, // collect_balances
@@ -4887,7 +4897,11 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
-        );
+            None::<fn() -> bool>,
+        )
+        else {
+            panic!()
+        };
 
         execution_results.remove(0)
     }
@@ -4923,7 +4937,9 @@ impl Bank {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None::<fn() -> bool>,
         )
+        .unwrap()
         .0
         .fee_collection_results
     }

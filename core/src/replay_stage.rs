@@ -72,6 +72,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         saturating_add_assign,
+        scheduling::SchedulingMode,
         signature::{Keypair, Signature, Signer},
         timing::timestamp,
         transaction::Transaction,
@@ -1174,7 +1175,7 @@ impl ReplayStage {
                 if !did_complete_bank {
                     // only wait for the signal if we did not just process a bank; maybe there are more slots available
 
-                    let timer = Duration::from_millis(100);
+                    let timer = Duration::from_millis(5);
                     let result = ledger_signal_receiver.recv_timeout(timer);
                     match result {
                         Err(RecvTimeoutError::Timeout) => (),
@@ -2153,7 +2154,10 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
+            let tpu_bank = bank_forks
+                .write()
+                .unwrap()
+                .insert(SchedulingMode::BlockProduction, tpu_bank);
             poh_recorder
                 .write()
                 .unwrap()
@@ -2189,7 +2193,7 @@ impl ReplayStage {
             replay_tx_thread_pool,
             &mut w_replay_stats,
             &mut w_replay_progress,
-            false,
+            true /* skip verification */,
             transaction_status_sender,
             entry_notification_sender,
             Some(replay_vote_sender),
@@ -4385,7 +4389,7 @@ impl ReplayStage {
             Measure::start("generate_new_bank_forks_write_lock");
         let mut forks = bank_forks.write().unwrap();
         for (_, bank) in new_banks {
-            forks.insert(bank);
+            forks.insert(SchedulingMode::BlockVerification, bank);
         }
         generate_new_bank_forks_write_lock.stop();
         saturating_add_assign!(

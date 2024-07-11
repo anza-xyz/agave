@@ -11,5 +11,6 @@ edition = { workspace = true }
 
 [dependencies]
 assert_matches = { workspace = true }
+more-asserts = { workspace = true }
 solana-sdk = { workspace = true }
 static_assertions = { workspace = true }

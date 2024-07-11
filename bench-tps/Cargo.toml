@@ -14,6 +14,7 @@ clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 csv = { workspace = true }
 log = { workspace = true }
+mimalloc = "0.1.42"
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }

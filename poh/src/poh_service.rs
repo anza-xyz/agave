@@ -266,6 +266,9 @@ impl PohService {
                     timing.total_send_record_result_us += send_record_result_time.as_us();
                     timing.num_hashes += 1; // note: may have also ticked inside record
 
+                    if record_time.elapsed().as_millis() > 10 {
+                        break;
+                    }
                     let new_record_result = record_receiver.try_recv();
                     match new_record_result {
                         Ok(new_record) => {

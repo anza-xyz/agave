@@ -331,6 +331,8 @@ pub fn load_and_process_ledger(
                     no_transaction_status_sender,
                     no_replay_vote_sender,
                     ignored_prioritization_fee_cache,
+                    None,
+                    None,
                 ));
         }
     }

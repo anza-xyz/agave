@@ -26,6 +26,10 @@ impl Measure {
         self.duration = duration_as_ns(&self.start.elapsed());
     }
 
+    pub fn elapsed(&self) -> Duration {
+        self.start.elapsed()
+    }
+
     pub fn as_ns(&self) -> u64 {
         self.duration
     }
