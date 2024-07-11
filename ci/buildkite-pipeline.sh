@@ -14,6 +14,18 @@ if [[ -n $CI_PULL_REQUEST ]]; then
   pr_number=${BASH_REMATCH[1]}
   echo "get affected files from PR: $pr_number"
 
+  if [[ $BUILDKITE_REPO =~ ^https:\/\/github\.com\/([^\/]+)\/([^\/\.]+) ]]; then
+    owner="${BASH_REMATCH[1]}"
+    repo="${BASH_REMATCH[2]}"
+  elif [[ $BUILDKITE_REPO =~ ^git@github\.com:([^\/]+)\/([^\/\.]+) ]]; then
+    owner="${BASH_REMATCH[1]}"
+    repo="${BASH_REMATCH[2]}"
+  else
+    echo "couldn't parse owner and repo. use defaults"
+    owner="anza-xyz"
+    repo="agave"
+  fi
+
   # ref: https://github.com/cli/cli/issues/5368#issuecomment-1087515074
   #
   # Variable value contains dollar prefixed words that look like bash variable
@@ -38,8 +50,8 @@ if [[ -n $CI_PULL_REQUEST ]]; then
     gh api graphql \
       -f query="$query" \
       -F pr="$pr_number" \
-      -F owner='anza-xyz' \
-      -F repo='agave' \
+      -F owner="$owner" \
+      -F repo="$repo" \
       --paginate \
       --jq '.data.repository.pullRequest.files.nodes.[].path'
   )
