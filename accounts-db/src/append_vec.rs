@@ -1013,6 +1013,12 @@ impl AppendVec {
                     let Some((stored_meta, _next)) = Self::get_type::<StoredMeta>(bytes, 0) else {
                         break;
                     };
+                    // Since we're only reading the StoredMeta and not the whole account, do a
+                    // quick sanity check that there is likely a valid account at this offset.
+                    debug_assert!(
+                        *offset + STORE_META_OVERHEAD + stored_meta.data_len as usize
+                            <= valid_file_len
+                    );
                     let stored_size = aligned_stored_size(stored_meta.data_len as usize);
                     account_sizes.push(stored_size);
                 }
