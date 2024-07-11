@@ -14,7 +14,7 @@ use {
         signer::Signer,
         stake_history::Epoch,
         system_program, system_transaction,
-        transaction::SanitizedTransaction,
+        transaction::{SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
     },
     std::sync::Arc,
     test::Bencher,
@@ -104,25 +104,17 @@ fn bench_lock_accounts(
     let transactions = create_transactions(&bank, 2_usize.pow(20));
     let batches: Vec<_> = transactions.chunks(batch_size).collect();
 
-    let mut results = Vec::new();
     bencher.iter(|| {
         for i in 0..batches_per_iteration {
-            if let Some(first_batch) = batches.get(i) {
-                let (result, _) = bank.rc.accounts.lock_accounts(
-                    (*first_batch).iter(),
-                    128,
+            if let Some(batch) = batches.get(i) {
+                let _ = bank.rc.accounts.lock_accounts(
+                    (*batch).iter(),
+                    MAX_TX_ACCOUNT_LOCKS,
                     allow_self_conflicting_entries,
                 );
-                results.push(result);
             }
         }
     });
-    // unlock accounts
-    for (i, first_batch) in batches.iter().enumerate().take(batches_per_iteration) {
-        bank.rc
-            .accounts
-            .unlock_accounts((*first_batch).iter().zip(&results[i]));
-    }
 
     // drop batches here so dropping is not included in the benchmark
     drop(batches);

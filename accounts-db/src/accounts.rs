@@ -36,8 +36,8 @@ use {
     },
 };
 
-// avg number of accts in an entry, estimate from dune: 64 * 20
-const ENTRY_ACCTS_LOOKUP_TABLE_SIZE: usize = 1280;
+// max number of accts in a default size entry 64 * 256
+const BATCH_ACCOUNTS_LOOKUP_TABLE_SIZE: usize = 16384;
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
@@ -49,7 +49,7 @@ struct BatchAccountLocks {
 }
 
 thread_local! {
-    static BATCH_ACCT_LOCKS: RefCell<BatchAccountLocks> = RefCell::new(BatchAccountLocks::with_capacity(ENTRY_ACCTS_LOOKUP_TABLE_SIZE));
+    static BATCH_ACCOUNT_LOCKS: RefCell<BatchAccountLocks> = RefCell::new(BatchAccountLocks::with_capacity(BATCH_ACCOUNTS_LOOKUP_TABLE_SIZE));
 }
 
 impl BatchAccountLocks {
@@ -618,7 +618,7 @@ impl Accounts {
         for k in writable_keys.iter() {
             if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
                 if allow_self_conflicting_entries {
-                    if !(BATCH_ACCT_LOCKS.with(|batch_account_locks| {
+                    if !(BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
                         batch_account_locks.borrow().writables.contains(k)
                             || batch_account_locks.borrow().readables.contains(k)
                     })) {
@@ -634,7 +634,7 @@ impl Accounts {
         for k in readonly_keys.iter() {
             if account_locks.is_locked_write(k) {
                 if allow_self_conflicting_entries {
-                    if !BATCH_ACCT_LOCKS.with(|batch_account_locks| {
+                    if !BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
                         batch_account_locks.borrow().writables.contains(k)
                     }) {
                         debug!("Read-only account in use: {:?}", k);
@@ -649,7 +649,7 @@ impl Accounts {
 
         for k in writable_keys {
             if allow_self_conflicting_entries {
-                BATCH_ACCT_LOCKS.with(|batch_account_locks| {
+                BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
                     let mut batch_account_locks = batch_account_locks.borrow_mut();
                     batch_account_locks.insert_write_lock(k);
                 });
@@ -661,7 +661,7 @@ impl Accounts {
 
         for k in readonly_keys {
             if allow_self_conflicting_entries {
-                BATCH_ACCT_LOCKS.with(|batch_account_locks| {
+                BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
                     let mut batch_account_locks = batch_account_locks.borrow_mut();
                     batch_account_locks.insert_read_lock(k);
                 });
