@@ -282,6 +282,23 @@ const fn page_align(size: u64) -> u64 {
     (size + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1)
 }
 
+/// Buffer size to use when scanning *without* needing account data
+///
+/// When scanning without needing account data, it is desirable to only read the account metadata
+/// and skip over the account data.  In theory, we could read a single account's metadata at a time,
+/// then skip ahead to the next account, entirely bypassing the account's data.  However this comes
+/// at the cost of requiring one syscall per scanning each account, which is expensive.  Ideally
+/// we'd like to use the fewest syscalls and also read the least amount of extraneous account data.
+/// As a compromise, we use a much smaller buffer, yet still large enough to amortize syscall cost.
+///
+/// On mnb, the overwhelming majority of accounts are token accounts, which use 165 bytes of data.
+/// Including storage overhead and alignment, that's 304 bytes per account.
+/// Per slot, *with* rent rewrites, we store 1,200 to 1,500 accounts.  With a 256 KiB buffer, we'd
+/// be able to hold about half of the accounts, so there would not be many syscalls needed to scan
+/// the file.  Since we also expect some larger accounts, this will also avoid reading/copying
+/// large account data.  This should be a decent starting value, and can be modified over time.
+const SCAN_BUFFER_SIZE_WITHOUT_DATA: usize = 1 << 18;
+
 lazy_static! {
     pub static ref APPEND_VEC_MMAPPED_FILES_OPEN: AtomicU64 = AtomicU64::default();
     pub static ref APPEND_VEC_MMAPPED_FILES_DIRTY: AtomicU64 = AtomicU64::default();
@@ -1035,7 +1052,7 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
-                let buffer_size = std::cmp::min(PAGE_SIZE, self.len());
+                let buffer_size = std::cmp::min(SCAN_BUFFER_SIZE_WITHOUT_DATA, self.len());
                 let mut reader =
                     BufferedReader::new(buffer_size, self.len(), file, STORE_META_OVERHEAD);
                 while reader.read().ok() == Some(BufferedReaderStatus::Success) {
