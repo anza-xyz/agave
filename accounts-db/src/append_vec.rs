@@ -1967,9 +1967,15 @@ pub mod tests {
         assert_eq!(account_sizes, stored_sizes);
     }
 
-    #[test_case(StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_scan_pubkeys(storage_access: StorageAccess) {
+    /// A helper function for testing different scenario for scan_*.
+    ///
+    /// `callback` is used to append invalid account's data for testing.
+    /// `check_fn` performs the check for the scan.
+    fn test_scan_helper(
+        storage_access: StorageAccess,
+        callback: impl Fn(&PathBuf, usize) -> usize,
+        check_fn: impl Fn(&AppendVec, &[Pubkey]),
+    ) {
         const NUM_ACCOUNTS: usize = 37;
         let pubkeys: Vec<_> = std::iter::repeat_with(solana_sdk::pubkey::new_rand)
             .take(NUM_ACCOUNTS)
@@ -1988,7 +1994,7 @@ pub mod tests {
         let accounts = accounts;
         let total_stored_size = total_stored_size;
 
-        let temp_file = get_append_vec_path("test_scan_pubkeys");
+        let temp_file = get_append_vec_path("test_scan");
         {
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let append_vec =
@@ -2001,16 +2007,171 @@ pub mod tests {
             append_vec.flush().unwrap();
         }
 
-        // now open the append vec with the given storage access method
-        // then scan the pubkeys to ensure they are correct
-        let (append_vec, _) =
-            AppendVec::new_from_file(&temp_file.path, total_stored_size, storage_access).unwrap();
+        let assert_scan = |stored_size| {
+            // now open the append vec with the given storage access method
+            // then scan the pubkeys to ensure they are correct
+            let append_vec = ManuallyDrop::new(
+                AppendVec::new_from_file_unchecked(&temp_file.path, stored_size, storage_access)
+                    .unwrap(),
+            );
 
-        let mut i = 0;
-        append_vec.scan_pubkeys(|pubkey| {
-            assert_eq!(pubkey, pubkeys.get(i).unwrap());
-            i += 1;
+            check_fn(&append_vec, &pubkeys);
+        };
+
+        let total_stored_size = callback(&temp_file.path, total_stored_size);
+        assert_scan(total_stored_size);
+    }
+
+    /// A helper fn to test `scan_pubkeys`.
+    fn test_scan_pubkeys_helper(
+        storage_access: StorageAccess,
+        callback: impl Fn(&PathBuf, usize) -> usize,
+    ) {
+        test_scan_helper(storage_access, callback, |append_vec, pubkeys| {
+            let mut i = 0;
+            append_vec.scan_pubkeys(|pubkey| {
+                assert_eq!(pubkey, pubkeys.get(i).unwrap());
+                i += 1;
+            });
+            assert_eq!(i, pubkeys.len());
+        })
+    }
+
+    /// Test `scan_pubkey` for a valid account storage.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_pubkeys(storage_access: StorageAccess) {
+        test_scan_pubkeys_helper(storage_access, |_, size| size);
+    }
+
+    /// Test `scan_pubkey` for storage with incomplete account meta data.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_pubkeys_incomplete_data(storage_access: StorageAccess) {
+        test_scan_pubkeys_helper(storage_access, |path, size| {
+            // Append 1 byte of data at the end of the storage file to simulate
+            // incomplete account's meta data.
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            f.write_all(&[0xFF]).unwrap();
+            size + 1
         });
-        assert_eq!(i, pubkeys.len());
+    }
+
+    /// Test `scan_pubkey` for storage with garbage data that cause overflow in next element offset calculation.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    #[should_panic(expected = "stored size cannot overflow")]
+    fn test_scan_pubkeys_overflow(storage_access: StorageAccess) {
+        test_scan_pubkeys_helper(storage_access, |path, size| {
+            // Append a garbage AccountMeta to simulate next_offset overflow.
+            {
+                let mut f = OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap();
+                f.write_all(&[0xFF; STORE_META_OVERHEAD]).unwrap();
+            }
+            size + STORE_META_OVERHEAD
+        });
+    }
+
+    /// A helper fn to test scan_index
+    fn test_scan_index_helper(
+        storage_access: StorageAccess,
+        callback: impl Fn(&PathBuf, usize) -> usize,
+    ) {
+        test_scan_helper(storage_access, callback, |append_vec, pubkeys| {
+            let mut i = 0;
+            append_vec.scan_index(|info| {
+                let pubkey = info.index_info.pubkey;
+                assert_eq!(&pubkey, pubkeys.get(i).unwrap());
+                i += 1;
+            });
+            assert_eq!(i, pubkeys.len());
+        })
+    }
+
+    /// Test `scan_index` for storage with incomplete account meta data.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_index_incomplete_data(storage_access: StorageAccess) {
+        test_scan_index_helper(storage_access, |path, size| {
+            // Append 1 byte of data at the end of the storage file to simulate
+            // incomplete account's meta data.
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            f.write_all(&[0xFF]).unwrap();
+            size + 1
+        });
+    }
+
+    /// Test `scan_index` for storage which is missing the last account data
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_scan_index_missing_account_data(storage_access: StorageAccess) {
+        test_scan_index_helper(storage_access, |path, size| {
+            let fake_stored_meta = StoredMeta {
+                write_version_obsolete: 0,
+                data_len: 100,
+                pubkey: solana_sdk::pubkey::new_rand(),
+            };
+            let fake_account_meta = AccountMeta {
+                lamports: 100,
+                rent_epoch: 10,
+                owner: solana_sdk::pubkey::new_rand(),
+                executable: false,
+            };
+
+            let stored_meta_slice: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    (&fake_stored_meta as *const StoredMeta) as *const u8,
+                    mem::size_of::<StoredMeta>(),
+                )
+            };
+            let account_meta_slice: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    (&fake_account_meta as *const AccountMeta) as *const u8,
+                    mem::size_of::<AccountMeta>(),
+                )
+            };
+
+            let mut f = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+
+            f.write_all(stored_meta_slice).unwrap();
+            f.write_all(account_meta_slice).unwrap();
+
+            size + mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>()
+        });
+    }
+
+    /// Test `scan_index` for storage with garbage data that cause overflow in next element offset calculation.
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    #[should_panic(expected = "stored size cannot overflow")]
+    fn test_scan_index_overflow(storage_access: StorageAccess) {
+        test_scan_index_helper(storage_access, |path, size| {
+            // Append a garbage AccountMeta to simulate next_offset overflow.
+            {
+                let mut f = OpenOptions::new()
+                    .read(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap();
+                f.write_all(&[0xFF; STORE_META_OVERHEAD]).unwrap();
+            }
+            size + STORE_META_OVERHEAD
+        });
     }
 }
