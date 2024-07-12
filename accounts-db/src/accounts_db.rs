@@ -8863,8 +8863,9 @@ impl AccountsDb {
                         DuplicatePubkeysVisitedInfo::default,
                         |accum, pubkeys_by_bin| {
                             let intermediate = pubkeys_by_bin
-                                .par_chunks(4096)
-                                .fold(DuplicatePubkeysVisitedInfo::default, |accum, pubkeys| {
+                                //.par_chunks(4096)
+                                .chunks(4096)
+                                .fold(DuplicatePubkeysVisitedInfo::default(), |accum, pubkeys| {
                                     let (accounts_data_len_from_duplicates, uncleaned_roots) = self
                                         .visit_duplicate_pubkeys_during_startup(
                                             pubkeys,
@@ -8876,11 +8877,11 @@ impl AccountsDb {
                                         uncleaned_roots,
                                     };
                                     DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
-                                })
-                                .reduce(
-                                    DuplicatePubkeysVisitedInfo::default,
-                                    DuplicatePubkeysVisitedInfo::reduce,
-                                );
+                                });
+                            // .reduce(
+                            //     DuplicatePubkeysVisitedInfo::default,
+                            //     DuplicatePubkeysVisitedInfo::reduce,
+                            // );
                             DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
                         },
                     )
