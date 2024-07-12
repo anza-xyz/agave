@@ -932,10 +932,7 @@ impl AppendVec {
                         Self::get_type(bytes_subset, next).unwrap();
                     let (_hash, next): (&AccountHash, _) =
                         Self::get_type(bytes_subset, next).unwrap();
-                    let stored_size_aligned = next
-                        .checked_add(meta.data_len as usize)
-                        .expect("stored size cannot overflow");
-                    let stored_size_aligned = u64_align!(stored_size_aligned);
+                    let stored_size_aligned = u64_align!(next + (meta.data_len as usize));
                     callback(IndexInfo {
                         index_info: {
                             IndexInfoInner {
