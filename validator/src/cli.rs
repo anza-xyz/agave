@@ -1532,6 +1532,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .arg(
             Arg::with_name("disable_block_production_forwarding")
             .long("disable-block-production-forwarding")
+            .requires("staked_nodes_overrides")
             .takes_value(false)
             .help("Disable forwarding of non-vote transactions in block production. \
                    By default, forwarding is already disabled, it is enabled by setting \
