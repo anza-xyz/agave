@@ -101,23 +101,17 @@ fn bench_lock_accounts(
     let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
 
     let bank = bank_setup();
-    let transactions = create_transactions(&bank, 2_usize.pow(20));
-    let batches: Vec<_> = transactions.chunks(batch_size).collect();
-
+    let transactions = create_transactions(&bank, 2_usize.pow(16));
+    let mut batches = transactions.chunks(batch_size).cycle();
     bencher.iter(|| {
-        for i in 0..batches_per_iteration {
-            if let Some(batch) = batches.get(i) {
-                let _ = bank.rc.accounts.lock_accounts(
-                    (*batch).iter(),
-                    MAX_TX_ACCOUNT_LOCKS,
-                    allow_self_conflicting_entries,
-                );
-            }
+        for batch in (0..batches_per_iteration).filter_map(|_| batches.next()) {
+            let (results,_) = bank
+                .rc
+                .accounts
+                .lock_accounts(test::black_box(batch.iter()), MAX_TX_ACCOUNT_LOCKS,allow_self_conflicting_entries,);
+            bank.rc.accounts.unlock_accounts(batch.iter().zip(&results));
         }
     });
-
-    // drop batches here so dropping is not included in the benchmark
-    drop(batches);
 }
 
 #[bench]
