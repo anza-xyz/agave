@@ -400,8 +400,7 @@ fn process_batches(
         // a push based one from the unified scheduler to the replay stage to eliminate the current
         // overhead: 1 read lock per batch in
         // `BankWithScheduler::schedule_transaction_executions()`.
-        schedule_batches_for_execution(bank, &batches);
-        Ok(())
+        schedule_batches_for_execution(bank, &batches)
     } else {
         debug!(
             "process_batches()/rebatch_and_execute_batches({} batches)",
