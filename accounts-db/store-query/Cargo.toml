@@ -1,0 +1,20 @@
+[package]
+name = "agave-store-query"
+description = "Tool to query account storage files by pubkey"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+clap = { workspace = true }
+solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sdk = { workspace = true }
+solana-version = { workspace = true }
+rayon = { workspace = true }
+
+[features]
+dev-context-only-utils = []
