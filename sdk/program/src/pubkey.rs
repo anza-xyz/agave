@@ -654,13 +654,13 @@ impl AsMut<[u8]> for Pubkey {
 
 impl fmt::Debug for Pubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", bs58::encode(self.0).into_string())
+        bs58::encode(self.0).into_string().fmt(f)
     }
 }
 
 impl fmt::Display for Pubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", bs58::encode(self.0).into_string())
+        bs58::encode(self.0).into_string().fmt(f)
     }
 }
 
@@ -978,5 +978,18 @@ mod tests {
             Err(PubkeyError::IllegalOwner)
         );
         assert!(pubkey_from_seed_by_marker(&PDA_MARKER[1..]).is_ok());
+    }
+
+    /// 1111111QLbz7JHiBTspS962RLKV8GndWFwiEaqKM (before)
+    /// 1111111QLbz7JHiBTspS962RLKV8GndWFwiEaqKMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (this pr)
+    #[test]
+    fn test_pubkey_fmt() {
+        let key = Pubkey::new_unique();
+        let s = format!("{:x<80}", key);
+        assert_eq!(s.len(), 80);
+        assert_eq!(
+            s,
+            "1111111QLbz7JHiBTspS962RLKV8GndWFwiEaqKMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        );
     }
 }
