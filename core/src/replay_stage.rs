@@ -9015,16 +9015,10 @@ pub(crate) mod tests {
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
         let recyclers = VerifyRecyclers::default();
-        let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .thread_name(|i| format!("solReplayTx{i:02}"))
-            .build()
-            .expect("new rayon threadpool");
 
         process_bank_0(
             &bank0,
             &blockstore,
-            &replay_tx_thread_pool,
             &ProcessOptions::default(),
             &recyclers,
             None,
@@ -9045,7 +9039,6 @@ pub(crate) mod tests {
         confirm_full_slot(
             &blockstore,
             &bank1,
-            &replay_tx_thread_pool,
             &ProcessOptions::default(),
             &recyclers,
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
@@ -9056,15 +9049,11 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        bank_forks
-            .write()
-            .unwrap()
-            .set_root(
-                1,
-                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
-                None,
-            )
-            .unwrap();
+        bank_forks.write().unwrap().set_root(
+            1,
+            &solana_runtime::accounts_background_service::AbsRequestSender::default(),
+            None,
+        );
 
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
 
