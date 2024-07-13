@@ -6059,6 +6059,7 @@ dependencies = [
 name = "solana-core"
 version = "2.1.0"
 dependencies = [
+ "agave-transaction-ffi",
  "ahash 0.8.10",
  "arrayvec",
  "assert_matches",
@@ -6125,6 +6126,7 @@ dependencies = [
  "solana-stake-program",
  "solana-streamer",
  "solana-svm",
+ "solana-svm-transaction",
  "solana-timings",
  "solana-tpu-client",
  "solana-transaction-status",
