@@ -68,3 +68,4 @@ jobs:
           output-file-path: output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
+          max-items-in-chart: 100
