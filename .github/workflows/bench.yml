@@ -10,34 +10,60 @@ permissions:
 
 jobs:
   benchmark:
-    name: rust benchmark
-    runs-on: ubuntu-latest
+    name: benchmark
+    runs-on: benchmark
     strategy:
       fail-fast: false
       matrix:
-        pkg:
-          - solana-runtime
-          - solana-gossip
-          - solana-poh
-          - solana-sdk
-    steps:
-      - uses: actions/checkout@v4
+        test:
+          - {
+              name: "solana-sdk",
+              command: "cargo +$rust_nightly bench -p solana-sdk",
+            }
+          - {
+              name: "solana-runtime",
+              command: "cargo +$rust_nightly bench -p solana-runtime",
+            }
+          - {
+              name: "solana-gossip",
+              command: "cargo +$rust_nightly bench -p solana-gossip",
+            }
+          - {
+              name: "solana-poh",
+              command: "cargo +$rust_nightly bench -p solana-poh",
+            }
+          - {
+              name: "solana-core",
+              command: "cargo +$rust_nightly bench -p solana-core",
+            }
+          - {
+              name: "solana-accounts-db",
+              command: "cargo +$rust_nightly bench -p solana-accounts-db",
+            }
+          - {
+              name: "sbf",
+              before_command: "make -C programs/sbf all",
+              command: "cargo +$rust_nightly bench --manifest-path programs/sbf/Cargo.toml --features=sbf_c",
+            }
 
-      - name: Setup
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Before Command
+        if: ${{ matrix.test.before_command != '' }}
+        run: |
+          ${{ matrix.test.before_command }}
+
+      - name: Command
         run: |
           source ci/rust-version.sh nightly
-          sudo apt update
-          sudo apt install protobuf-compiler -y
+          ${{ matrix.test.command }} | tee output.txt
 
-      - name: Run benchmark
-        run: |
-          source ci/rust-version.sh all
-          cargo +$rust_nightly bench -p ${{matrix.pkg}} | tee output.txt
-
-      - name: Store benchmark result
+      - name: Result
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          name: ${{matrix.pkg}}
+          name: ${{ matrix.test.name }}
           tool: "cargo"
           output-file-path: output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
