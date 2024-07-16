@@ -4526,6 +4526,7 @@ pub(crate) mod tests {
             },
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
+            voting_service::VoteTxLeaderSelectionMethod,
         },
         blockstore_processor::{
             confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0, ProcessOptions,
@@ -7810,6 +7811,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &tower_storage,
             vote_info,
+            VoteTxLeaderSelectionMethod::VoteSlot,
         );
 
         let mut cursor = Cursor::default();
@@ -7885,6 +7887,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &tower_storage,
             vote_info,
+            VoteTxLeaderSelectionMethod::VoteSlot,
         );
         let votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
@@ -7968,6 +7971,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &tower_storage,
             vote_info,
+            VoteTxLeaderSelectionMethod::VoteSlot,
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
@@ -8086,6 +8090,7 @@ pub(crate) mod tests {
             poh_recorder,
             tower_storage,
             vote_info,
+            VoteTxLeaderSelectionMethod::VoteSlot,
         );
 
         let votes = cluster_info.get_votes(cursor);
