@@ -3076,54 +3076,38 @@ impl ReplayStage {
                     }
                 }
 
-                if bank.collector_id() != my_pubkey {
+                let _block_id = if bank.collector_id() != my_pubkey {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
                     // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
-                    let check_result = match blockstore.check_last_fec_set(bank.slot()) {
-                        Ok(last_fec_set_check_results) => {
-                            // Update metrics regardless of feature flag
-                            last_fec_set_check_results.report_metrics(bank_slot, bank.hash());
-                            // Get a final result based on the feature flags
-                            last_fec_set_check_results.get_result(&bank.feature_set)
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Unable to check the last fec set for slot {} {},
-                                marking as dead: {e:?}",
-                                bank.slot(),
-                                bank.hash()
+                    match blockstore.check_last_fec_set_and_get_block_id(
+                        bank.slot(),
+                        bank.hash(),
+                        &bank.feature_set,
+                    ) {
+                        Ok(block_id) => block_id,
+                        Err(result_err) => {
+                            let root = bank_forks.read().unwrap().root();
+                            Self::mark_dead_slot(
+                                blockstore,
+                                bank,
+                                root,
+                                &result_err,
+                                rpc_subscriptions,
+                                duplicate_slots_tracker,
+                                duplicate_confirmed_slots,
+                                epoch_slots_frozen_slots,
+                                progress,
+                                heaviest_subtree_fork_choice,
+                                duplicate_slots_to_repair,
+                                ancestor_hashes_replay_update_sender,
+                                purge_repair_slot_counter,
                             );
-                            if bank
-                                .feature_set
-                                .is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
-                            {
-                                Err(BlockstoreProcessorError::IncompleteFinalFecSet)
-                            } else {
-                                Ok(())
-                            }
+                            continue;
                         }
-                    };
-
-                    if let Err(result_err) = check_result {
-                        let root = bank_forks.read().unwrap().root();
-                        Self::mark_dead_slot(
-                            blockstore,
-                            bank,
-                            root,
-                            &result_err,
-                            rpc_subscriptions,
-                            duplicate_slots_tracker,
-                            duplicate_confirmed_slots,
-                            epoch_slots_frozen_slots,
-                            progress,
-                            heaviest_subtree_fork_choice,
-                            duplicate_slots_to_repair,
-                            ancestor_hashes_replay_update_sender,
-                            purge_repair_slot_counter,
-                        );
-                        continue;
                     }
-                }
+                } else {
+                    None
+                };
 
                 let r_replay_stats = replay_stats.read().unwrap();
                 let replay_progress = bank_progress.replay_progress.clone();
