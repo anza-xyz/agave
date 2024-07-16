@@ -836,6 +836,7 @@ pub fn should_discard_shred(
     root: Slot,
     max_slot: Slot,
     shred_version: u16,
+    drop_unchained_merkle_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
 ) -> bool {
     debug_assert!(root < max_slot);
@@ -914,6 +915,9 @@ pub fn should_discard_shred(
             return true;
         }
         ShredVariant::MerkleCode { chained: false, .. } => {
+            if drop_unchained_merkle_shreds(slot) {
+                return true;
+            }
             stats.num_shreds_merkle_code = stats.num_shreds_merkle_code.saturating_add(1);
         }
         ShredVariant::MerkleCode { chained: true, .. } => {
@@ -921,6 +925,9 @@ pub fn should_discard_shred(
                 stats.num_shreds_merkle_code_chained.saturating_add(1);
         }
         ShredVariant::MerkleData { chained: false, .. } => {
+            if drop_unchained_merkle_shreds(slot) {
+                return true;
+            }
             stats.num_shreds_merkle_data = stats.num_shreds_merkle_data.saturating_add(1);
         }
         ShredVariant::MerkleData { chained: true, .. } => {
@@ -1194,6 +1201,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
         }
@@ -1206,6 +1214,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 1);
@@ -1216,6 +1225,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 2);
@@ -1226,6 +1236,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 3);
@@ -1236,6 +1247,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_overrun, 4);
@@ -1246,6 +1258,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.bad_parent_offset, 1);
@@ -1257,6 +1270,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1268,6 +1282,7 @@ mod tests {
                 parent_slot + 1, // root
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1289,6 +1304,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1310,6 +1326,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.bad_parent_offset, 1);
@@ -1330,6 +1347,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
@@ -1346,6 +1364,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
         }
@@ -1356,6 +1375,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version.wrapping_add(1),
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.shred_version_mismatch, 1);
@@ -1367,6 +1387,7 @@ mod tests {
                 slot, // root
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.slot_out_of_range, 1);
@@ -1387,6 +1408,7 @@ mod tests {
                 root,
                 max_slot,
                 shred_version,
+                |_| false, // drop_unchained_merkle_shreds
                 &mut stats
             ));
             assert_eq!(stats.index_out_of_bounds, 1);
