@@ -205,7 +205,7 @@ impl LastFECSetCheckResults {
         {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
-            .is_active(&solana_sdk::feature_set::verify_retransmitter_signature::id())
+            .is_active(&solana_sdk::feature_set::vote_only_retransmitter_signed_fec_sets::id())
             && !self.is_retransmitter_signed
         {
             return Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet);
@@ -5302,7 +5302,7 @@ pub mod tests {
         solana_runtime::bank::{Bank, RewardType},
         solana_sdk::{
             clock::{DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
-            feature_set::{verify_retransmitter_signature, vote_only_full_fec_sets},
+            feature_set::{vote_only_full_fec_sets, vote_only_retransmitter_signed_fec_sets},
             hash::{self, hash, Hash},
             instruction::CompiledInstruction,
             message::v0::LoadedAddresses,
@@ -12154,7 +12154,7 @@ pub mod tests {
         let mut full_only = FeatureSet::default();
         full_only.activate(&vote_only_full_fec_sets::id(), 0);
         let mut retransmitter_only = FeatureSet::default();
-        retransmitter_only.activate(&verify_retransmitter_signature::id(), 0);
+        retransmitter_only.activate(&vote_only_retransmitter_signed_fec_sets::id(), 0);
 
         let results = LastFECSetCheckResults {
             is_full: false,
