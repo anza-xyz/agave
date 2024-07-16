@@ -3771,8 +3771,8 @@ impl Blockstore {
                     warn!("Missing shred for {slot} index {shred_index}");
                     BlockstoreError::MissingShred(slot, shred_index)
                 })?;
-                let is_retransmitter_signed = shred::layout::is_retransmitter_signed(&shred_bytes)
-                    .map_err(|_| {
+                let is_retransmitter_signed =
+                    shred::layout::is_retransmitter_signed_variant(&shred_bytes).map_err(|_| {
                         let shred_index = start_index + u64::try_from(offset).unwrap();
                         warn!("Found legacy shred for {slot}, index {shred_index}");
                         BlockstoreError::LegacyShred(slot, shred_index)
