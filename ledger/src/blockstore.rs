@@ -3733,7 +3733,7 @@ impl Blockstore {
     ///   invalid signatures on ingestion, this indicates that the last FEC set is properly
     ///   signed by retransmitters.
     ///
-    /// Will fail if:
+    /// Will error if:
     ///     - Slot meta is missing
     ///     - LAST_SHRED_IN_SLOT flag has not been received
     ///     - There are missing shreds in the last fec set
