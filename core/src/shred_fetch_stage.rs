@@ -118,6 +118,14 @@ impl ShredFetchStage {
                         &epoch_schedule,
                     )
             };
+            let drop_unchained_merkle_shreds = |shred_slot| {
+                check_feature_activation(
+                    &feature_set::drop_unchained_merkle_shreds::id(),
+                    shred_slot,
+                    &feature_set,
+                    &epoch_schedule,
+                )
+            };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
             for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
@@ -127,6 +135,7 @@ impl ShredFetchStage {
                         max_slot,
                         shred_version,
                         enable_chained_merkle_shreds,
+                        drop_unchained_merkle_shreds,
                         &mut stats,
                     )
                 {

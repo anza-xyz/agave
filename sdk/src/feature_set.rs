@@ -841,6 +841,10 @@ pub mod ed25519_precompile_verify_strict {
     solana_sdk::declare_id!("ed9tNscbWLYBooxWA7FE2B5KHWs8A6sxfY8EzezEcoo");
 }
 
+pub mod drop_unchained_merkle_shreds {
+    solana_sdk::declare_id!("3A9WtMU4aHuryD3VN7SFKdfXto8HStLb1Jj6HjkgfnGL");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1046,6 +1050,7 @@ lazy_static! {
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
         (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
+        (drop_unchained_merkle_shreds::id(), "drops unchained Merkle shreds #"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
