@@ -1523,6 +1523,8 @@ pub fn main() {
         replay_transactions_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
+        skip_notify_account_restore_from_snapshot: matches
+            .is_present("skip_notify_account_restore_from_snapshot"),
         ..ValidatorConfig::default()
     };
 
