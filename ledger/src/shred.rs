@@ -341,7 +341,7 @@ macro_rules! dispatch {
     }
 }
 
-use dispatch;
+use {dispatch, solana_sdk::genesis_config::ClusterType};
 
 impl Shred {
     dispatch!(fn common_header(&self) -> &ShredCommonHeader);
@@ -1281,6 +1281,10 @@ pub fn verify_test_data_shred(
     } else {
         assert!(!shred.data_complete());
     }
+}
+
+pub fn should_chain_merkle_shreds(_slot: Slot, cluster_type: ClusterType) -> bool {
+    cluster_type == ClusterType::Development
 }
 
 #[cfg(test)]
