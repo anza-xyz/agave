@@ -179,19 +179,19 @@ pub struct LastFECSetCheckResults {
 }
 
 impl LastFECSetCheckResults {
-    pub fn report_metrics(&self, slot: Slot, hash: Hash) {
+    pub fn report_metrics(&self, slot: Slot, bank_hash: Hash) {
         if !self.is_full {
             datapoint_warn!(
                 "incomplete_final_fec_set",
                 ("slot", slot, i64),
-                ("hash", hash.to_string(), String)
+                ("bank_hash", bank_hash.to_string(), String)
             );
         }
         if !self.is_retransmitter_signed {
             datapoint_warn!(
                 "invalid_retransmitter_signature_final_fec_set",
                 ("slot", slot, i64),
-                ("hash", hash.to_string(), String)
+                ("bank_hash", bank_hash.to_string(), String)
             );
         }
     }
