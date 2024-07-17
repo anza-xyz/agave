@@ -30,9 +30,7 @@ solana-logger = { workspace = true }
 
 [features]
 default = []
-clap = ["dep:clap"]
-solana-logger = ["dep:solana-logger"]
-solana-version = ["dep:solana-version"]
+clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
 
 [lib]
 name = "solana_net_utils"
@@ -40,12 +38,12 @@ name = "solana_net_utils"
 [[bin]]
 name = "solana-ip-address"
 path = "src/bin/ip_address.rs"
-required-features = ["clap", "solana-logger", "solana-version"]
+required-features = ["clap"]
 
 [[bin]]
 name = "solana-ip-address-server"
 path = "src/bin/ip_address_server.rs"
-required-features = ["clap", "solana-logger", "solana-version"]
+required-features = ["clap"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
