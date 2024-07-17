@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
+clap = { version = "3.1.5", features = ["cargo"], optional = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["socket"] }
@@ -23,9 +24,25 @@ tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
 [dev-dependencies]
-clap = { version = "3.1.5", features = ["cargo"] }
 solana-logger = { workspace = true }
 solana-version = { workspace = true }
+
+[features]
+default = []
+clap = ["dep:clap"]
+
+[lib]
+name = "solana_net_utils"
+
+[[bin]]
+name = "solana-ip-address"
+path = "src/bin/ip_address.rs"
+required-features = ["clap"]
+
+[[bin]]
+name = "solana-ip-address-server"
+path = "src/bin/ip_address_server.rs"
+required-features = ["clap"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
