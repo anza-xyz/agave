@@ -58,8 +58,7 @@ impl SysvarCache {
     /// Overwrite a sysvar. For testing purposes only.
     #[allow(deprecated)]
     pub fn set_sysvar_for_tests<T: Sysvar + SysvarId>(&mut self, sysvar: &T) {
-        let data =
-            bincode::serialize(sysvar).expect("Failed to serialize sysvar. This shouldn't happen.");
+        let data = bincode::serialize(sysvar).expect("Failed to serialize sysvar.");
         let sysvar_id = T::id();
         match sysvar_id {
             sysvar::clock::ID => {
@@ -72,31 +71,30 @@ impl SysvarCache {
                 self.epoch_schedule = Some(data);
             }
             FEES_ID => {
-                let fees: Fees = bincode::deserialize(&data)
-                    .expect("Failed to deserialize Fees sysvar. This shouldn't happen.");
+                let fees: Fees =
+                    bincode::deserialize(&data).expect("Failed to deserialize Fees sysvar.");
                 self.fees = Some(fees);
             }
             sysvar::last_restart_slot::ID => {
                 self.last_restart_slot = Some(data);
             }
             RECENT_BLOCKHASHES_ID => {
-                let recent_blockhashes: RecentBlockhashes = bincode::deserialize(&data).expect(
-                    "Failed to deserialize RecentBlockhashes sysvar. This shouldn't happen.",
-                );
+                let recent_blockhashes: RecentBlockhashes = bincode::deserialize(&data)
+                    .expect("Failed to deserialize RecentBlockhashes sysvar.");
                 self.recent_blockhashes = Some(recent_blockhashes);
             }
             sysvar::rent::ID => {
                 self.rent = Some(data);
             }
             sysvar::slot_hashes::ID => {
-                let slot_hashes: SlotHashes = bincode::deserialize(&data)
-                    .expect("Failed to deserialize SlotHashes sysvar. This shouldn't happen.");
+                let slot_hashes: SlotHashes =
+                    bincode::deserialize(&data).expect("Failed to deserialize SlotHashes sysvar.");
                 self.slot_hashes = Some(data);
                 self.slot_hashes_obj = Some(Arc::new(slot_hashes));
             }
             sysvar::stake_history::ID => {
                 let stake_history: StakeHistory = bincode::deserialize(&data)
-                    .expect("Failed to deserialize StakeHistory sysvar. This shouldn't happen.");
+                    .expect("Failed to deserialize StakeHistory sysvar.");
                 self.stake_history = Some(data);
                 self.stake_history_obj = Some(Arc::new(stake_history));
             }
