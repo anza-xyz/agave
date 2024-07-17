@@ -117,8 +117,6 @@ pub use solana_decode_error as decode_error;
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
-#[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
-pub use solana_serde_varint as serde_varint;
 /// Same as `declare_id` except report that this id has been deprecated.
 pub use solana_sdk_macro::declare_deprecated_id;
 /// Convenience macro to declare a static public key and functions to interact with it.
@@ -163,6 +161,8 @@ pub use solana_sdk_macro::pubkey;
 pub use solana_sdk_macro::pubkeys;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
+#[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
+pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
 
