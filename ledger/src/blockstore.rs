@@ -181,26 +181,7 @@ pub struct LastFECSetCheckResults {
 }
 
 impl LastFECSetCheckResults {
-    pub fn report_metrics(&self, slot: Slot, bank_hash: Hash, cluster_type: ClusterType) {
-        if self.block_id.is_none() {
-            datapoint_warn!(
-                "incomplete_final_fec_set",
-                ("slot", slot, i64),
-                ("bank_hash", bank_hash.to_string(), String)
-            );
-        }
-        // These metrics are expensive to send because hash does not compress well.
-        // Only send these metrics when we are sure the appropriate shred format is being sent
-        if !self.is_retransmitter_signed && shred::should_chain_merkle_shreds(slot, cluster_type) {
-            datapoint_warn!(
-                "invalid_retransmitter_signature_final_fec_set",
-                ("slot", slot, i64),
-                ("bank_hash", bank_hash.to_string(), String)
-            );
-        }
-    }
-
-    pub fn get_block_id(
+    fn get_block_id(
         &self,
         feature_set: &FeatureSet,
     ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
@@ -3754,7 +3735,18 @@ impl Blockstore {
             return Ok(None);
         };
         // Update metrics
-        results.report_metrics(slot, bank_hash, cluster_type);
+        if results.block_id.is_none() {
+            datapoint_warn!("incomplete_final_fec_set", ("slot", slot, i64),);
+        }
+        // These metrics are expensive to send because hash does not compress well.
+        // Only send these metrics when we are sure the appropriate shred format is being sent
+        if !results.is_retransmitter_signed && shred::should_chain_merkle_shreds(slot, cluster_type)
+        {
+            datapoint_warn!(
+                "invalid_retransmitter_signature_final_fec_set",
+                ("slot", slot, i64),
+            );
+        }
         // Return block id / error based on feature flags
         results.get_block_id(feature_set)
     }
