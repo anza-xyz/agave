@@ -3795,7 +3795,7 @@ impl Blockstore {
         };
         let keys = (start_index..=last_shred_index).map(|index| (slot, index));
 
-        let (merkle_root, is_retransmitter_signed) = self
+        let deduped_shred_checks: Vec<(Hash, bool)> = self
             .data_shred_cf
             .multi_get_bytes(keys)
             .into_iter()
@@ -3820,26 +3820,18 @@ impl Blockstore {
                     })?;
                 Ok((merkle_root, is_retransmitter_signed))
             })
-            .process_results::<_, _, BlockstoreError, _>(|mut iter| {
-                // lift and dedup merkle root and retransmitter individually to avoid allocation
-                // and still be able to report metrics accurately for each check.
-                let Some((merkle_root, retransmitter_signed)) = iter.next() else {
-                    return (None, false);
-                };
-                iter.fold(
-                    (Some(merkle_root), retransmitter_signed),
-                    |(mr_acc, rs_acc), (mr, rs)| {
-                        (
-                            mr_acc.and_then(|mr_acc| (mr_acc == mr).then_some(mr)),
-                            rs_acc && rs,
-                        )
-                    },
-                )
-            })?;
+            .dedup_by(|res1, res2| res1.as_ref().ok() == res2.as_ref().ok())
+            .collect::<Result<Vec<(Hash, bool)>>>()?;
 
         // After the dedup there should be exactly one Hash left and one true value
+        let &[(block_id, is_retransmitter_signed)] = deduped_shred_checks.as_slice() else {
+            return Ok(LastFECSetCheckResults {
+                block_id: None,
+                is_retransmitter_signed: false,
+            });
+        };
         Ok(LastFECSetCheckResults {
-            block_id: merkle_root,
+            block_id: Some(block_id),
             is_retransmitter_signed,
         })
     }
@@ -12120,46 +12112,6 @@ pub mod tests {
         let results = blockstore.check_last_fec_set(slot).unwrap();
         assert!(results.block_id.is_none());
         assert!(!results.is_retransmitter_signed);
-        blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
-
-        // Slot contains retransmitter signed shreds, but they are part of 2 different FEC sets
-        let mut fec_set_index = 0;
-        let (first_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                100,
-                fec_set_index,
-                // Set merkle root here to make sure it is a resigned shred
-                Some(Hash::new_from_array(rand::thread_rng().gen())),
-                true,
-            );
-        let merkle_root = first_data_shreds[0].merkle_root().unwrap();
-        fec_set_index += first_data_shreds.len() as u32;
-        let (last_data_shreds, _, _) =
-            setup_erasure_shreds_with_index_and_chained_merkle_and_last_in_slot(
-                slot,
-                parent_slot,
-                100,
-                fec_set_index,
-                Some(merkle_root),
-                true,
-            );
-        let last_index = last_data_shreds.last().unwrap().index();
-        blockstore
-            .insert_shreds(first_data_shreds, None, false)
-            .unwrap();
-        // This should fail for the double last_shred_in_slot flag, so we need to pass `is_trusted : true`
-        blockstore
-            .insert_shreds(last_data_shreds, None, true)
-            .unwrap();
-        // Manually update last index flag such that the check uses shreds from both fec sets
-        let mut slot_meta = blockstore.meta(slot).unwrap().unwrap();
-        slot_meta.last_index = Some((last_index - 3) as u64);
-        blockstore.put_meta(slot, &slot_meta).unwrap();
-        let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert!(results.block_id.is_none());
-        assert!(results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
         // Slot is full, but does not contain retransmitter shreds
