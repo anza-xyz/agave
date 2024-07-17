@@ -251,7 +251,7 @@ pub struct ReplicaBlockInfoV3<'a> {
     pub entry_count: u64,
 }
 
-/// Extending ReplicaBlockInfo by sending the entries_count.
+/// Extending ReplicaBlockInfo by sending RewardsAndNumPartitions.
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct ReplicaBlockInfoV4<'a> {
