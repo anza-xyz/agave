@@ -69,7 +69,7 @@ jobs:
     needs:
       - check
     if: >
-      github.repository == 'solana-labs/solana' &&
+      github.repository == 'anza-xyz/agave' &&
       needs.check.outputs.continue == 1
     # the name is used by .mergify.yml as well
     name: build & deploy docs
