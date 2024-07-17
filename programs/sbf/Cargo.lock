@@ -6357,14 +6357,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-short-vec"
+name = "solana-serde-varint"
 version = "2.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "solana-serde-varint"
+name = "solana-short-vec"
 version = "2.1.0"
 dependencies = [
  "rustc_version",
