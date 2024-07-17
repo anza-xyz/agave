@@ -10,7 +10,6 @@
 set -e
 cd "$(dirname "$0")"/..
 source ci/_
-sudo chmod 0777 ci/buildkite-solana-private.sh
 
 _ ci/buildkite-solana-private.sh pipeline.yml
 echo +++ pipeline
