@@ -47,6 +47,15 @@ impl TransactionProcessingCallback for MockBankCallback {
         }
     }
 
+    fn load_account_with(
+        &self,
+        pubkey: &Pubkey,
+        _callback: impl for<'a> Fn(&'a AccountSharedData) -> bool,
+    ) -> Option<(AccountSharedData, Slot)> {
+        let account = self.account_shared_data.borrow().get(pubkey).cloned()?;
+        Some((account, 100))
+    }
+
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.account_shared_data.borrow().get(pubkey).cloned()
     }
