@@ -82,6 +82,7 @@ use {
 pub struct TransactionBatchWithIndexes<'a, 'b> {
     pub batch: TransactionBatch<'a, 'b>,
     pub transaction_indexes: Vec<usize>,
+    pub self_conflicting_batch: bool,
 }
 
 struct ReplayEntry {
@@ -146,6 +147,7 @@ pub fn execute_batch(
     let TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
+        ..
     } = batch;
     let record_token_balances = transaction_status_sender.is_some();
 
@@ -362,8 +364,7 @@ fn execute_batches_internal(
 fn process_batches(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    non_conflicting_batches: &[TransactionBatchWithIndexes],
-    self_conflicting_batches: &[TransactionBatchWithIndexes],
+    batches: &[TransactionBatchWithIndexes],
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_execution_timing: &mut BatchExecutionTiming,
@@ -373,11 +374,8 @@ fn process_batches(
     if bank.has_installed_scheduler() {
         debug!(
             "process_batches()/schedule_batches_for_execution({} batches)",
-            non_conflicting_batches.len() + self_conflicting_batches.len()
+            batches.len()
         );
-        let mut batches: Vec<TransactionBatchWithIndexes> = Vec::new();
-        batches.extend(non_conflicting_batches.iter().cloned());
-        batches.extend(self_conflicting_batches.iter().cloned());
         // Scheduling usually succeeds (immediately returns `Ok(())`) here without being blocked on
         // the actual transaction executions.
         //
@@ -400,17 +398,16 @@ fn process_batches(
         // a push based one from the unified scheduler to the replay stage to eliminate the current
         // overhead: 1 read lock per batch in
         // `BankWithScheduler::schedule_transaction_executions()`.
-        schedule_batches_for_execution(bank, &batches)
+        schedule_batches_for_execution(bank, batches)
     } else {
         debug!(
             "process_batches()/rebatch_and_execute_batches({} batches)",
-            non_conflicting_batches.len() + self_conflicting_batches.len()
+            batches.len()
         );
         rebatch_and_execute_batches(
             bank,
             replay_tx_thread_pool,
-            non_conflicting_batches,
-            self_conflicting_batches,
+            batches,
             transaction_status_sender,
             replay_vote_sender,
             batch_execution_timing,
@@ -427,6 +424,7 @@ fn schedule_batches_for_execution(
     for TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
+        ..
     } in batches
     {
         bank.schedule_transaction_executions(
@@ -456,27 +454,28 @@ fn rebatch_transactions<'a>(
     TransactionBatchWithIndexes {
         batch: tx_batch,
         transaction_indexes,
+        self_conflicting_batch: false,
     }
 }
 
 fn rebatch_and_execute_batches(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
-    non_conflicting_batches: &[TransactionBatchWithIndexes],
-    self_conflicting_batches: &[TransactionBatchWithIndexes],
+    batches: &[TransactionBatchWithIndexes],
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
-    if non_conflicting_batches.is_empty() && self_conflicting_batches.is_empty() {
+    if batches.is_empty() {
         return Ok(());
     }
 
     let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) =
-        non_conflicting_batches
+        batches
             .iter()
+            .filter(|batch| !batch.self_conflicting_batch)
             .flat_map(|batch| {
                 batch
                     .batch
@@ -504,7 +503,6 @@ fn rebatch_and_execute_batches(
     let target_batch_count = get_thread_count() as u64;
 
     let mut tx_batches: Vec<TransactionBatchWithIndexes> = vec![];
-    let mut concatenated_vec = Vec::new();
     let rebatched_txs = if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
         let target_batch_cost = total_cost / target_batch_count;
         let mut batch_cost: u64 = 0;
@@ -526,13 +524,17 @@ fn rebatch_and_execute_batches(
                 batch_cost = 0;
             }
         });
-        concatenated_vec.extend(tx_batches);
-        concatenated_vec.extend(self_conflicting_batches.iter().cloned());
-        &concatenated_vec
+        let _ = batches
+        .iter()
+        .filter(|batch| batch.self_conflicting_batch)
+        .map(|batch| {
+            let mut non_conflicting_batch = batch.clone();
+            non_conflicting_batch.batch.set_needs_unlock(false);
+            tx_batches.push(non_conflicting_batch);
+        });
+        &tx_batches[..]
     } else {
-        concatenated_vec.extend(non_conflicting_batches.iter().cloned());
-        concatenated_vec.extend(self_conflicting_batches.iter().cloned());
-        &concatenated_vec
+        batches
     };
 
     let execute_batches_internal_metrics = execute_batches_internal(
@@ -619,9 +621,10 @@ fn process_entries(
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
     // accumulator for entries that can be processed in parallel
-    let mut non_conflicting_batches = vec![];
+    // let mut non_conflicting_batches = vec![];
     // accumulator for entries that can not be processed in parallel
-    let mut self_conflicting_batches = vec![];
+    // let mut self_conflicting_batches = vec![];
+    let mut batches = vec![]; 
     let mut tick_hashes = vec![];
 
     for ReplayEntry {
@@ -639,16 +642,14 @@ fn process_entries(
                     process_batches(
                         bank,
                         replay_tx_thread_pool,
-                        &non_conflicting_batches,
-                        &self_conflicting_batches,
+                        &batches,
                         transaction_status_sender,
                         replay_vote_sender,
                         batch_timing,
                         log_messages_bytes_limit,
                         prioritization_fee_cache,
                     )?;
-                    non_conflicting_batches.clear();
-                    self_conflicting_batches.clear();
+                    batches.clear();
                     for hash in &tick_hashes {
                         bank.register_tick(hash);
                     }
@@ -667,23 +668,17 @@ fn process_entries(
 
                     // if locking worked
                     if first_lock_err.is_ok() {
-                        if self_conflicting_batch {
-                            self_conflicting_batches.push(TransactionBatchWithIndexes {
-                                batch,
-                                transaction_indexes,
-                            });
-                        } else {
-                            non_conflicting_batches.push(TransactionBatchWithIndexes {
-                                batch,
-                                transaction_indexes,
-                            });
-                        }
+                        batches.push(TransactionBatchWithIndexes {
+                            batch,
+                            transaction_indexes,
+                            self_conflicting_batch
+                        });
                         // done with this entry
                         break;
                     }
                     // else we failed due to account lock limit which should not happen
                     // if generated by a properly functioning leader
-                    if self_conflicting_batches.is_empty() && non_conflicting_batches.is_empty() {
+                    if batches.is_empty() {
                         datapoint_error!(
                             "validator_process_entry_error",
                             (
@@ -703,16 +698,14 @@ fn process_entries(
                         process_batches(
                             bank,
                             replay_tx_thread_pool,
-                            &non_conflicting_batches,
-                            &self_conflicting_batches,
+                            &batches,
                             transaction_status_sender,
                             replay_vote_sender,
                             batch_timing,
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
                         )?;
-                        non_conflicting_batches.clear();
-                        self_conflicting_batches.clear();
+                        batches.clear();
                     }
                 }
             }
@@ -721,8 +714,7 @@ fn process_entries(
     process_batches(
         bank,
         replay_tx_thread_pool,
-        &non_conflicting_batches,
-        &self_conflicting_batches,
+        &batches,
         transaction_status_sender,
         replay_vote_sender,
         batch_timing,
@@ -4916,9 +4908,8 @@ pub mod tests {
         let batch_with_indexes = TransactionBatchWithIndexes {
             batch,
             transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: false,
         };
-
-        let self_conflicting_batches = vec![];
 
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut batch_execution_timing = BatchExecutionTiming::default();
@@ -4927,7 +4918,6 @@ pub mod tests {
             &bank,
             &replay_tx_thread_pool,
             &[batch_with_indexes],
-            &self_conflicting_batches,
             None,
             None,
             &mut batch_execution_timing,
