@@ -841,6 +841,10 @@ pub mod verify_retransmitter_signature {
     solana_sdk::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
 }
 
+pub mod vote_only_retransmitter_signed_fec_sets {
+    solana_sdk::declare_id!("RfEcA95xnhuwooVAhUUksEJLZBF7xKCLuqrJoqk4Zph");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1046,6 +1050,7 @@ lazy_static! {
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
         (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
+        (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
