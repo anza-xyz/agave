@@ -781,11 +781,11 @@ pub struct Bank {
     inflation: Arc<RwLock<Inflation>>,
 
     /// cache of vote_account and stake_account state for this fork
-    stakes_cache: StakesCache,
+    pub stakes_cache: StakesCache,
 
     /// staked nodes on epoch boundaries, saved off when a bank.slot() is at
     ///   a leader schedule calculation boundary
-    epoch_stakes: HashMap<Epoch, EpochStakes>,
+    pub epoch_stakes: HashMap<Epoch, EpochStakes>,
 
     /// A boolean reflecting whether any entries were recorded into the PoH
     /// stream for the slot == self.slot
@@ -1967,7 +1967,7 @@ impl Bank {
         from_account(&self.get_account(&sysvar::slot_history::id()).unwrap()).unwrap()
     }
 
-    fn update_epoch_stakes(&mut self, leader_schedule_epoch: Epoch) {
+    pub fn update_epoch_stakes(&mut self, leader_schedule_epoch: Epoch) {
         // update epoch_stakes cache
         //  if my parent didn't populate for this staker's epoch, we've
         //  crossed a boundary

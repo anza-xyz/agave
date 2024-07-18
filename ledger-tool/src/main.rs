@@ -1886,6 +1886,21 @@ fn main() {
                             exit(1);
                         });
 
+                    if !vote_accounts_to_destake.is_empty() {
+                        // Remove the vote accounts from the stakes cache
+                        let vote_accounts_to_destake_dashmap = vote_accounts_to_destake
+                            .iter()
+                            .map(|pubkey| {
+                                (
+                                    *pubkey,
+                                    solana_runtime::stakes::InvalidCacheEntryReason::Missing,
+                                )
+                            })
+                            .collect::<DashMap<_, _>>();
+                        bank.stakes_cache
+                            .handle_invalid_keys(vote_accounts_to_destake_dashmap, bank.slot());
+                    }
+
                     let child_bank_required = rent_burn_percentage.is_ok()
                         || hashes_per_tick.is_some()
                         || remove_stake_accounts
@@ -1913,6 +1928,23 @@ fn main() {
                                 _ => Some(value_t_or_exit!(arg_matches, "hashes_per_tick", u64)),
                             });
                         }
+
+                        if !vote_accounts_to_destake.is_empty() {
+                            // Reset epoch stakes based on latest stakes cache
+                            for epoch in [child_bank.epoch(), child_bank.epoch() + 1].iter() {
+                                match child_bank.epoch_stakes.remove(epoch) {
+                                    Some(_) => {
+                                        warn!("Epoch stakes found for epoch {}", *epoch);
+                                        child_bank.update_epoch_stakes(*epoch);
+                                    }
+                                    None => {
+                                        warn!("Epoch stakes not found for epoch {}", *epoch);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         bank = Arc::new(child_bank);
                     }
 
@@ -1974,6 +2006,7 @@ fn main() {
                     }
 
                     if !vote_accounts_to_destake.is_empty() {
+                        // Remove stake accounts
                         for (address, mut account) in bank
                             .get_program_accounts(&stake::program::id(), &ScanConfig::new(false))
                             .unwrap()

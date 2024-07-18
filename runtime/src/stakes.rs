@@ -53,7 +53,7 @@ type StakeAccount = stake_account::StakeAccount<Delegation>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Debug)]
-pub(crate) struct StakesCache(RwLock<Stakes<StakeAccount>>);
+pub struct StakesCache(RwLock<Stakes<StakeAccount>>);
 
 impl StakesCache {
     pub(crate) fn new(stakes: Stakes<StakeAccount>) -> Self {
@@ -149,7 +149,7 @@ impl StakesCache {
         )
     }
 
-    pub(crate) fn handle_invalid_keys(
+    pub fn handle_invalid_keys(
         &self,
         invalid_vote_keys: DashMap<Pubkey, InvalidCacheEntryReason>,
         current_slot: Slot,
