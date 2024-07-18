@@ -1,0 +1,70 @@
+# Why should I care about or use the pre-commit tool?
+#    Automate away your pre-commit and pre-push checks and steps.
+#    The longer and more nuanced answer is in the links below.
+#
+# Pre-commit Documentation: https://pre-commit.com/
+# Pre-commit hooks documentation: https://pre-commit.com/hooks.html
+#
+# Tool installation:
+#   $pip install pre-commit
+#
+# All pre-commit commands are to be run from the root dir of the repo,
+# or wherever the '.pre-commit-config.yaml' file is located.
+#
+# Default hooks installation:
+#   $pre-commit install
+#
+# Remove all hooks:
+#   $pre-commit uninstall
+#
+# Install only a subset of the hooks:
+#   $pre-commit install --hook-type pre-commit
+#
+# Run default hooks manually:
+# This default only works on staged un-committed files.
+# Unstaged files are stashed, the checks performed, then the stash is restored.
+#   $pre-commit run
+#
+# Run default hooks on modified files
+# between two commits:
+#   $pre-commit run --from-ref HEAD~1 --to-ref HEAD
+# or across branches:
+#   $pre-commit run --from-ref origin/HEAD --to-ref HEAD
+#
+# Run default hooks on all files in repo:
+# Primarily for CI. Devs can optionally use it.
+#   $pre-commit run --all-files
+#
+# [For CI/DevOps use only]
+# Hook repos version update (run in the root dir):
+#   $pre-commit autoupdate
+#
+# I don't want to manually install pre-commit every time I clone this repo or any other
+# repo that supports the precommit tool.
+# Run this config once on your dev machine:
+#   $git config --global init.templateDir ~/.git-template
+#   $pre-commit init-templatedir ~/.git-template
+
+default_install_hook_types: [pre-commit]
+
+default_stages: [pre-commit]
+
+repos:
+    # Language-agnostic hooks.
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v4.6.0
+      hooks:
+        - id: check-merge-conflict # merge conflict string(s) found.
+        - id: check-yaml
+        - id: check-toml
+        - id: end-of-file-fixer
+        - id: trailing-whitespace
+        - id: detect-private-key
+        - id: check-added-large-files # Set up and use git lfs if this fails.
+
+    # Gitleaks is a SAST tool for detecting and preventing hardcoded secrets
+    # like passwords, api keys, and tokens in git repos.
+    - repo: https://github.com/gitleaks/gitleaks
+      rev: v8.16.1
+      hooks:
+        - id: gitleaks
