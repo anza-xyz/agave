@@ -38,6 +38,7 @@ pub struct VoteState0_23_5 {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub struct CircBuf<I> {
     pub buf: [I; MAX_ITEMS],
     /// next pointer
@@ -60,23 +61,6 @@ impl<I> CircBuf<I> {
         self.idx %= MAX_ITEMS;
 
         self.buf[self.idx] = item;
-    }
-}
-
-#[cfg(test)]
-impl<'a, I: Default + Copy> Arbitrary<'a> for CircBuf<I>
-where
-    I: Arbitrary<'a>,
-{
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut circbuf = Self::default();
-
-        let len = u.arbitrary_len::<I>()?;
-        for _ in 0..len {
-            circbuf.append(I::arbitrary(u)?);
-        }
-
-        Ok(circbuf)
     }
 }
 
