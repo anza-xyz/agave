@@ -27,3 +27,7 @@ fi
 
 # anza migration stopgap. can be removed when agave is fully recommended for public usage.
 sed -i 's/solana-geyser-plugin-interface/agave-geyser-plugin-interface/g' ./Cargo.toml
+
+# fix curve25519-dalek
+
+sed -i '/\[patch.crates-io\]/a curve25519-dalek = { git = "https://github.com/anza-xyz/curve25519-dalek.git", rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464" }' ./Cargo.toml
