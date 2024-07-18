@@ -49,9 +49,7 @@ use {
         address_lookup_table::state::AddressLookupTable,
         clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
         feature_set::FeatureSet,
-        genesis_config::{
-            GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE,
-        },
+        genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
         hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
@@ -176,17 +174,17 @@ impl<T> AsRef<T> for WorkingEntry<T> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct LastFECSetCheckResults {
-    block_id: Option<Hash>,
+    last_fec_set_merkle_root: Option<Hash>,
     is_retransmitter_signed: bool,
 }
 
 impl LastFECSetCheckResults {
-    fn get_block_id(
+    fn get_last_fec_set_merkle_root(
         &self,
         feature_set: &FeatureSet,
     ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
         if feature_set.is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
-            && self.block_id.is_none()
+            && self.last_fec_set_merkle_root.is_none()
         {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
@@ -195,7 +193,7 @@ impl LastFECSetCheckResults {
         {
             return Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet);
         }
-        Ok(self.block_id)
+        Ok(self.last_fec_set_merkle_root)
     }
 }
 
@@ -3734,11 +3732,11 @@ impl Blockstore {
             return Ok(None);
         };
         // Update metrics
-        if results.block_id.is_none() {
+        if results.last_fec_set_merkle_root.is_none() {
             datapoint_warn!("incomplete_final_fec_set", ("slot", slot, i64),);
         }
         // Return block id / error based on feature flags
-        results.get_block_id(feature_set)
+        results.get_last_fec_set_merkle_root(feature_set)
     }
 
     /// Performs checks on the last FEC set for this slot.
@@ -3771,7 +3769,7 @@ impl Blockstore {
         let Some(start_index) = last_shred_index.checked_sub(MINIMUM_INDEX) else {
             warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
             return Ok(LastFECSetCheckResults {
-                block_id: None,
+                last_fec_set_merkle_root: None,
                 is_retransmitter_signed: false,
             });
         };
@@ -3808,12 +3806,12 @@ impl Blockstore {
         // After the dedup there should be exactly one Hash left and one true value
         let &[(block_id, is_retransmitter_signed)] = deduped_shred_checks.as_slice() else {
             return Ok(LastFECSetCheckResults {
-                block_id: None,
+                last_fec_set_merkle_root: None,
                 is_retransmitter_signed: false,
             });
         };
         Ok(LastFECSetCheckResults {
-            block_id: Some(block_id),
+            last_fec_set_merkle_root: Some(block_id),
             is_retransmitter_signed,
         })
     }
@@ -12011,7 +12009,7 @@ pub mod tests {
         let block_id = data_shreds[0].merkle_root().unwrap();
         blockstore.insert_shreds(data_shreds, None, false).unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert_eq!(results.block_id, Some(block_id));
+        assert_eq!(results.last_fec_set_merkle_root, Some(block_id));
         assert!(results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -12051,7 +12049,7 @@ pub mod tests {
         slot_meta.last_index = Some(last_index as u64);
         blockstore.put_meta(slot, &slot_meta).unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert!(results.block_id.is_none());
+        assert!(results.last_fec_set_merkle_root.is_none());
         assert!(!results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -12092,7 +12090,7 @@ pub mod tests {
         slot_meta.last_index = Some(last_index as u64);
         blockstore.put_meta(slot, &slot_meta).unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert!(results.block_id.is_none());
+        assert!(results.last_fec_set_merkle_root.is_none());
         assert!(!results.is_retransmitter_signed);
         blockstore.run_purge(slot, slot, PurgeType::Exact).unwrap();
 
@@ -12114,7 +12112,7 @@ pub mod tests {
             .insert_shreds(first_data_shreds, None, false)
             .unwrap();
         let results = blockstore.check_last_fec_set(slot).unwrap();
-        assert_eq!(results.block_id, Some(block_id));
+        assert_eq!(results.last_fec_set_merkle_root, Some(block_id));
         assert!(!results.is_retransmitter_signed);
     }
 
@@ -12128,66 +12126,74 @@ pub mod tests {
         retransmitter_only.activate(&vote_only_retransmitter_signed_fec_sets::id(), 0);
 
         let results = LastFECSetCheckResults {
-            block_id: None,
+            last_fec_set_merkle_root: None,
             is_retransmitter_signed: false,
         };
         assert_matches!(
-            results.get_block_id(&enabled_feature_set),
+            results.get_last_fec_set_merkle_root(&enabled_feature_set),
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
         assert_matches!(
-            results.get_block_id(&full_only),
+            results.get_last_fec_set_merkle_root(&full_only),
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
         assert_matches!(
-            results.get_block_id(&retransmitter_only),
+            results.get_last_fec_set_merkle_root(&retransmitter_only),
             Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
         );
         assert!(results
-            .get_block_id(&disabled_feature_set)
+            .get_last_fec_set_merkle_root(&disabled_feature_set)
             .unwrap()
             .is_none());
 
         let block_id = Hash::new_unique();
         let results = LastFECSetCheckResults {
-            block_id: Some(block_id),
+            last_fec_set_merkle_root: Some(block_id),
             is_retransmitter_signed: false,
         };
         assert_matches!(
-            results.get_block_id(&enabled_feature_set),
-            Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
-        );
-        assert_eq!(results.get_block_id(&full_only).unwrap(), Some(block_id));
-        assert_matches!(
-            results.get_block_id(&retransmitter_only),
+            results.get_last_fec_set_merkle_root(&enabled_feature_set),
             Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
         );
         assert_eq!(
-            results.get_block_id(&disabled_feature_set).unwrap(),
+            results.get_last_fec_set_merkle_root(&full_only).unwrap(),
+            Some(block_id)
+        );
+        assert_matches!(
+            results.get_last_fec_set_merkle_root(&retransmitter_only),
+            Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
+        );
+        assert_eq!(
+            results
+                .get_last_fec_set_merkle_root(&disabled_feature_set)
+                .unwrap(),
             Some(block_id)
         );
 
         let results = LastFECSetCheckResults {
-            block_id: None,
+            last_fec_set_merkle_root: None,
             is_retransmitter_signed: true,
         };
         assert_matches!(
-            results.get_block_id(&enabled_feature_set),
+            results.get_last_fec_set_merkle_root(&enabled_feature_set),
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
         assert_matches!(
-            results.get_block_id(&full_only),
+            results.get_last_fec_set_merkle_root(&full_only),
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
-        assert!(results.get_block_id(&retransmitter_only).unwrap().is_none());
         assert!(results
-            .get_block_id(&disabled_feature_set)
+            .get_last_fec_set_merkle_root(&retransmitter_only)
+            .unwrap()
+            .is_none());
+        assert!(results
+            .get_last_fec_set_merkle_root(&disabled_feature_set)
             .unwrap()
             .is_none());
 
         let block_id = Hash::new_unique();
         let results = LastFECSetCheckResults {
-            block_id: Some(block_id),
+            last_fec_set_merkle_root: Some(block_id),
             is_retransmitter_signed: true,
         };
         for feature_set in [
@@ -12196,7 +12202,10 @@ pub mod tests {
             full_only,
             retransmitter_only,
         ] {
-            assert_eq!(results.get_block_id(&feature_set).unwrap(), Some(block_id));
+            assert_eq!(
+                results.get_last_fec_set_merkle_root(&feature_set).unwrap(),
+                Some(block_id)
+            );
         }
     }
 }
