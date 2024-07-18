@@ -5769,6 +5769,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-builtins-default-costs"
+version = "2.1.0"
+dependencies = [
+ "lazy_static",
+ "log",
+ "rustc_version 0.4.0",
+ "solana-address-lookup-table-program",
+ "solana-bpf-loader-program",
+ "solana-compute-budget-program",
+ "solana-config-program",
+ "solana-frozen-abi",
+ "solana-loader-v4-program",
+ "solana-sdk",
+ "solana-stake-program",
+ "solana-system-program",
+ "solana-vote-program",
+]
+
+[[package]]
 name = "solana-cargo-build-sbf"
 version = "2.1.0"
 dependencies = [
@@ -6096,6 +6115,7 @@ dependencies = [
  "serial_test",
  "solana-accounts-db",
  "solana-bloom",
+ "solana-builtins-default-costs",
  "solana-client",
  "solana-compute-budget",
  "solana-connection-cache",
@@ -6158,18 +6178,13 @@ dependencies = [
  "lazy_static",
  "log",
  "rustc_version 0.4.0",
- "solana-address-lookup-table-program",
- "solana-bpf-loader-program",
+ "solana-builtins-default-costs",
  "solana-compute-budget",
- "solana-compute-budget-program",
- "solana-config-program",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
- "solana-loader-v4-program",
  "solana-logger",
  "solana-metrics",
  "solana-sdk",
- "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
  "static_assertions",
