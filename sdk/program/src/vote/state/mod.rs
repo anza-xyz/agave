@@ -323,6 +323,7 @@ const MAX_ITEMS: usize = 32;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub struct CircBuf<I> {
     buf: [I; MAX_ITEMS],
     /// next pointer
@@ -365,23 +366,6 @@ impl<I> CircBuf<I> {
         } else {
             None
         }
-    }
-}
-
-#[cfg(test)]
-impl<'a, I: Default + Copy> Arbitrary<'a> for CircBuf<I>
-where
-    I: Arbitrary<'a>,
-{
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut circbuf = Self::default();
-
-        let len = u.arbitrary_len::<I>()?;
-        for _ in 0..len {
-            circbuf.append(I::arbitrary(u)?);
-        }
-
-        Ok(circbuf)
     }
 }
 
@@ -527,12 +511,6 @@ impl VoteState {
             2 => deserialize_vote_state_into(&mut cursor, vote_state, true),
             _ => Err(InstructionError::InvalidAccountData),
         }?;
-
-        // if cursor overruns the input, it produces null bytes and continues to advance `position`
-        // this check ensures we do not accept such a malformed input erroneously
-        if cursor.position() > input.len() as u64 {
-            return Err(InstructionError::InvalidAccountData);
-        }
 
         Ok(())
     }
@@ -1179,7 +1157,14 @@ mod tests {
             let test_res = VoteState::deserialize_into(&raw_data, &mut test_vote_state);
             let bincode_res = bincode::deserialize::<VoteStateVersions>(&raw_data);
 
-            assert_eq!(test_res.is_ok(), bincode_res.is_ok());
+            if test_res.is_err() {
+                assert!(bincode_res.is_err());
+            } else {
+                assert_eq!(
+                    VoteStateVersions::new_current(test_vote_state),
+                    bincode_res.unwrap()
+                );
+            }
         }
     }
 

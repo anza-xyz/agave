@@ -7,10 +7,6 @@ use {
     std::io::Cursor,
 };
 
-// hardcode this number to avoid calculating onchain; this is a fixed-size ringbuffer
-// `serialized_size()` must be used over `mem::size_of()` because of alignment
-const PRIOR_VOTERS_SERIALIZED_SIZE: u64 = 1545;
-
 pub(super) fn deserialize_vote_state_into(
     cursor: &mut Cursor<&[u8]>,
     vote_state: &mut VoteState,
@@ -69,34 +65,16 @@ fn read_prior_voters_into<T: AsRef<[u8]>>(
     cursor: &mut Cursor<T>,
     vote_state: &mut VoteState,
 ) -> Result<(), InstructionError> {
-    // record our position at the start of the struct
-    let prior_voters_position = cursor.position();
+    for i in 0..MAX_ITEMS {
+        let prior_voter = read_pubkey(cursor)?;
+        let from_epoch = read_u64(cursor)?;
+        let until_epoch = read_u64(cursor)?;
 
-    let is_empty_position = PRIOR_VOTERS_SERIALIZED_SIZE
-        .checked_add(prior_voters_position)
-        .and_then(|v| v.checked_sub(1))
-        .ok_or(InstructionError::InvalidAccountData)?;
-
-    // move to the end, to check if we need to parse the data
-    cursor.set_position(is_empty_position);
-
-    // if empty, we already read past the end of this struct and need to do no further work
-    // otherwise we go back to the start and proceed to decode the data
-    let is_empty = read_bool(cursor)?;
-    if !is_empty {
-        cursor.set_position(prior_voters_position);
-
-        for i in 0..MAX_ITEMS {
-            let prior_voter = read_pubkey(cursor)?;
-            let from_epoch = read_u64(cursor)?;
-            let until_epoch = read_u64(cursor)?;
-
-            vote_state.prior_voters.buf[i] = (prior_voter, from_epoch, until_epoch);
-        }
-
-        vote_state.prior_voters.idx = read_u64(cursor)? as usize;
-        vote_state.prior_voters.is_empty = read_bool(cursor)?;
+        vote_state.prior_voters.buf[i] = (prior_voter, from_epoch, until_epoch);
     }
+
+    vote_state.prior_voters.idx = read_u64(cursor)? as usize;
+    vote_state.prior_voters.is_empty = read_bool(cursor)?;
 
     Ok(())
 }
@@ -130,18 +108,4 @@ fn read_last_timestamp_into<T: AsRef<[u8]>>(
     vote_state.last_timestamp = BlockTimestamp { slot, timestamp };
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, bincode::serialized_size};
-
-    #[test]
-    fn test_prior_voters_serialized_size() {
-        let vote_state = VoteState::default();
-        assert_eq!(
-            serialized_size(&vote_state.prior_voters).unwrap(),
-            PRIOR_VOTERS_SERIALIZED_SIZE
-        );
-    }
 }
