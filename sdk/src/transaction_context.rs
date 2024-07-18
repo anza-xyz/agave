@@ -1000,6 +1000,7 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Returns whether this account is executable (transaction wide)
     #[inline]
+    #[deprecated(since = "2.1.0", note = "Use `get_owner` instead")]
     pub fn is_executable(&self) -> bool {
         self.account.executable()
     }
@@ -1038,6 +1039,7 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ExecutableModified);
         }
         // don't touch the account if the executable flag does not change
+        #[allow(deprecated)]
         if self.is_executable() == is_executable {
             return Ok(());
         }

@@ -440,6 +440,7 @@ pub fn process_instruction_inner(
     }
 
     // Program Invocation
+    #[allow(deprecated)]
     if !invoke_context
         .get_feature_set()
         .is_active(&remove_accounts_executable_flag_checks::id())
@@ -757,6 +758,7 @@ fn process_loader_upgradeable_instruction(
 
             let program =
                 instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+            #[allow(deprecated)]
             if !invoke_context
                 .get_feature_set()
                 .is_active(&remove_accounts_executable_flag_checks::id())
@@ -1501,6 +1503,7 @@ pub fn execute<'a, 'b: 'a>(
                             )?;
 
                             error = EbpfError::SyscallError(Box::new(
+                                #[allow(deprecated)]
                                 if !invoke_context
                                     .get_feature_set()
                                     .is_active(&remove_accounts_executable_flag_checks::id())

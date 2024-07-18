@@ -437,6 +437,7 @@ impl<'a> InvokeContext<'a> {
             })?;
         let borrowed_program_account = instruction_context
             .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
+        #[allow(deprecated)]
         if !self
             .get_feature_set()
             .is_active(&remove_accounts_executable_flag_checks::id())
