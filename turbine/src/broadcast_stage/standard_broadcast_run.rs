@@ -9,10 +9,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::{
         blockstore,
-        shred::{
-            should_chain_merkle_shreds, shred_code, ProcessShredsStats, ReedSolomonCache, Shred,
-            ShredFlags, Shredder,
-        },
+        shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder},
     },
     solana_sdk::{
         genesis_config::ClusterType,
@@ -507,6 +504,10 @@ impl BroadcastRun for StandardBroadcastRun {
         self.insert(blockstore, shreds, slot_start_ts);
         Ok(())
     }
+}
+
+fn should_chain_merkle_shreds(_slot: Slot, cluster_type: ClusterType) -> bool {
+    cluster_type == ClusterType::Development
 }
 
 #[cfg(test)]

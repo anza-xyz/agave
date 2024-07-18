@@ -50,7 +50,7 @@ use {
         clock::{Slot, UnixTimestamp, DEFAULT_TICKS_PER_SECOND},
         feature_set::FeatureSet,
         genesis_config::{
-            ClusterType, GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE,
+            GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE,
         },
         hash::Hash,
         pubkey::Pubkey,
@@ -3719,7 +3719,6 @@ impl Blockstore {
         &self,
         slot: Slot,
         bank_hash: Hash,
-        cluster_type: ClusterType,
         feature_set: &FeatureSet,
     ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
         let results = self.check_last_fec_set(slot);
@@ -3737,15 +3736,6 @@ impl Blockstore {
         // Update metrics
         if results.block_id.is_none() {
             datapoint_warn!("incomplete_final_fec_set", ("slot", slot, i64),);
-        }
-        // These metrics are expensive to send because hash does not compress well.
-        // Only send these metrics when we are sure the appropriate shred format is being sent
-        if !results.is_retransmitter_signed && shred::should_chain_merkle_shreds(slot, cluster_type)
-        {
-            datapoint_warn!(
-                "invalid_retransmitter_signature_final_fec_set",
-                ("slot", slot, i64),
-            );
         }
         // Return block id / error based on feature flags
         results.get_block_id(feature_set)

@@ -3082,7 +3082,6 @@ impl ReplayStage {
                     match blockstore.check_last_fec_set_and_get_block_id(
                         bank.slot(),
                         bank.hash(),
-                        bank.cluster_type(),
                         &bank.feature_set,
                     ) {
                         Ok(block_id) => block_id,
