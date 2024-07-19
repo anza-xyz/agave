@@ -11,7 +11,7 @@ use {
         nonce::check_nonce_account,
         spend_utils::{resolve_spend_tx_and_check_account_balances, SpendAmount},
     },
-    clap::{value_t, App, Arg, ArgGroup, ArgMatches, SubCommand},
+    clap::{value_t, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand},
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
         fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
@@ -325,6 +325,14 @@ impl StakeSubCommands for App<'_, '_> {
                 .arg(fee_payer_arg())
                 .arg(memo_arg())
                 .arg(compute_unit_price_arg()),
+        )
+        .subcommand(
+            SubCommand::with_name("redelegate-stake")
+                .setting(AppSettings::Hidden)
+                .arg(
+                    // Consume all positional arguments
+                    Arg::with_name("arg").multiple(true).hidden(true),
+                ),
         )
         .subcommand(
             SubCommand::with_name("stake-authorize")
