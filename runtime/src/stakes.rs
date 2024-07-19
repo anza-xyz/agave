@@ -79,8 +79,10 @@ impl StakesCache {
         // and so should be removed from cache as well.
         if account.lamports() == 0 {
             if solana_vote_program::check_id(owner) {
-                let mut stakes = self.0.write().unwrap();
-                stakes.remove_vote_account(pubkey);
+                let _old_vote_account = {
+                    let mut stakes = self.0.write().unwrap();
+                    stakes.remove_vote_account(pubkey)
+                };
             } else if solana_stake_program::check_id(owner) {
                 let mut stakes = self.0.write().unwrap();
                 stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
@@ -96,17 +98,31 @@ impl StakesCache {
                             // Called to eagerly deserialize vote state
                             let _res = vote_account.vote_state();
                         }
-                        let mut stakes = self.0.write().unwrap();
-                        stakes.upsert_vote_account(pubkey, vote_account, new_rate_activation_epoch);
+
+                        // drop the old account after releasing the lock
+                        let _old_vote_account = {
+                            let mut stakes = self.0.write().unwrap();
+                            stakes.upsert_vote_account(
+                                pubkey,
+                                vote_account,
+                                new_rate_activation_epoch,
+                            )
+                        };
                     }
                     Err(_) => {
-                        let mut stakes = self.0.write().unwrap();
-                        stakes.remove_vote_account(pubkey);
+                        // drop the old account after releasing the lock
+                        let _old_vote_account = {
+                            let mut stakes = self.0.write().unwrap();
+                            stakes.remove_vote_account(pubkey)
+                        };
                     }
                 }
             } else {
-                let mut stakes = self.0.write().unwrap();
-                stakes.remove_vote_account(pubkey);
+                // drop the old account after releasing the lock
+                let _old_vote_account = {
+                    let mut stakes = self.0.write().unwrap();
+                    stakes.remove_vote_account(pubkey)
+                };
             };
         } else if solana_stake_program::check_id(owner) {
             match StakeAccount::try_from(account.to_account_shared_data()) {
