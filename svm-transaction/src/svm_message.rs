@@ -12,7 +12,7 @@ mod sanitized_transaction;
 // - Debug to support legacy logging
 pub trait SVMMessage: Debug {
     /// Return the number of signatures in the message.
-    fn num_signatures(&self) -> u64;
+    fn num_total_signatures(&self) -> u64;
 
     /// Returns the number of requested write-locks in this message.
     /// This does not consider if write-locks are demoted.
