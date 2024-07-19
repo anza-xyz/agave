@@ -331,7 +331,9 @@ impl StakeSubCommands for App<'_, '_> {
                 .setting(AppSettings::Hidden)
                 .arg(
                     // Consume all positional arguments
-                    Arg::with_name("arg").multiple(true).hidden(true),
+                    Arg::with_name("arg")
+                        .multiple(true)
+                        .hidden(hidden_unless_forced()),
                 ),
         )
         .subcommand(
