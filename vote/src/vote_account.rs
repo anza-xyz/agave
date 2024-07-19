@@ -81,8 +81,8 @@ impl VoteAccount {
     }
 
     /// VoteState.node_pubkey of this vote-account.
-    pub fn node_pubkey(&self) -> Option<Pubkey> {
-        Some(self.vote_state().ok()?.node_pubkey)
+    pub fn node_pubkey(&self) -> Option<&Pubkey> {
+        self.vote_state().ok().map(|s| &s.node_pubkey)
     }
 }
 
@@ -103,7 +103,7 @@ impl VoteAccounts {
                         .values()
                         .filter(|(stake, _)| *stake != 0u64)
                         .filter_map(|(stake, vote_account)| {
-                            Some((vote_account.node_pubkey()?, stake))
+                            Some((*vote_account.node_pubkey()?, stake))
                         })
                         .into_grouping_map()
                         .aggregate(|acc, _node_pubkey, stake| {
@@ -188,7 +188,7 @@ impl VoteAccounts {
         let Some(staked_nodes) = self.staked_nodes.get_mut() else {
             return;
         };
-        if let Some(node_pubkey) = vote_account.node_pubkey() {
+        if let Some(node_pubkey) = vote_account.node_pubkey().copied() {
             Arc::make_mut(staked_nodes)
                 .entry(node_pubkey)
                 .and_modify(|s| *s += stake)
@@ -203,7 +203,7 @@ impl VoteAccounts {
         let Some(staked_nodes) = self.staked_nodes.get_mut() else {
             return;
         };
-        if let Some(node_pubkey) = vote_account.node_pubkey() {
+        if let Some(node_pubkey) = vote_account.node_pubkey().copied() {
             let Entry::Occupied(mut entry) = Arc::make_mut(staked_nodes).entry(node_pubkey) else {
                 panic!("this should not happen!");
             };
@@ -388,7 +388,7 @@ mod tests {
         {
             if let Some(node_pubkey) = vote_account.node_pubkey() {
                 staked_nodes
-                    .entry(node_pubkey)
+                    .entry(*node_pubkey)
                     .and_modify(|s| *s += *stake)
                     .or_insert(*stake);
             }
@@ -545,7 +545,7 @@ mod tests {
         let staked_nodes = vote_accounts.staked_nodes();
         let (pubkey, (more_stake, vote_account)) =
             accounts.find(|(_, (stake, _))| *stake != 0).unwrap();
-        let node_pubkey = vote_account.node_pubkey().unwrap();
+        let node_pubkey = *vote_account.node_pubkey().unwrap();
         vote_accounts.insert(pubkey, (more_stake, vote_account));
         assert_ne!(staked_nodes, vote_accounts.staked_nodes());
         assert_eq!(
@@ -553,7 +553,7 @@ mod tests {
             more_stake + staked_nodes.get(&node_pubkey).copied().unwrap_or_default()
         );
         for (pubkey, stake) in vote_accounts.staked_nodes().iter() {
-            if *pubkey != node_pubkey {
+            if pubkey != &node_pubkey {
                 assert_eq!(*stake, staked_nodes[pubkey]);
             } else {
                 assert_eq!(

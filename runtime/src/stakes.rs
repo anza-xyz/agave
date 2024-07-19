@@ -477,7 +477,7 @@ impl Stakes<StakeAccount> {
 
     pub(crate) fn highest_staked_node(&self) -> Option<Pubkey> {
         let vote_account = self.vote_accounts.find_max_by_delegated_stake()?;
-        vote_account.node_pubkey()
+        vote_account.node_pubkey().copied()
     }
 }
 
