@@ -378,6 +378,9 @@ impl SanitizedMessage {
         self.num_total_signatures()
     }
 
+    /// Returns the total number of signatures in the message.
+    /// This includes required transaction signatures as well as any
+    /// pre-compile signatures that are attached in instructions.
     pub fn num_total_signatures(&self) -> u64 {
         self.get_signature_details().total_signatures()
     }
