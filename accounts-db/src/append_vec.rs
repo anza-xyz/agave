@@ -1948,7 +1948,7 @@ pub mod tests {
 
         let total_stored_size = modify_fn(&temp_file.path, total_stored_size);
         // now open the append vec with the given storage access method
-        // then scan the pubkeys to ensure they are correct
+        // then perform the scan and check it is correct
         let append_vec = ManuallyDrop::new(
             AppendVec::new_from_file_unchecked(&temp_file.path, total_stored_size, storage_access)
                 .unwrap(),
