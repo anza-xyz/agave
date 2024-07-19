@@ -1,3 +1,8 @@
+// Remove the following `allow` when the `Redelegate` variant is renamed to
+// `Unused` starting from v3.
+// Required to avoid warnings from uses of deprecated types during trait derivations.
+#![allow(deprecated)]
+
 #[allow(deprecated)]
 use crate::stake::config;
 use {
@@ -306,6 +311,7 @@ pub enum StakeInstruction {
     ///   3. `[]` Unused account, formerly the stake config
     ///   4. `[SIGNER]` Stake authority
     ///
+    #[deprecated(since = "2.1.0", note = "Redelegate will not be enabled")]
     Redelegate,
 
     /// Move stake between accounts with the same authorities and lockups, using Staker authority.
@@ -822,6 +828,7 @@ pub fn deactivate_delinquent_stake(
     Instruction::new_with_bincode(id(), &StakeInstruction::DeactivateDelinquent, account_metas)
 }
 
+#[allow(deprecated)]
 fn _redelegate(
     stake_pubkey: &Pubkey,
     authorized_pubkey: &Pubkey,
@@ -840,6 +847,7 @@ fn _redelegate(
     Instruction::new_with_bincode(id(), &StakeInstruction::Redelegate, account_metas)
 }
 
+#[deprecated(since = "2.1.0", note = "Redelegate will not be enabled")]
 pub fn redelegate(
     stake_pubkey: &Pubkey,
     authorized_pubkey: &Pubkey,
@@ -858,6 +866,7 @@ pub fn redelegate(
     ]
 }
 
+#[deprecated(since = "2.1.0", note = "Redelegate will not be enabled")]
 pub fn redelegate_with_seed(
     stake_pubkey: &Pubkey,
     authorized_pubkey: &Pubkey,
