@@ -1907,7 +1907,7 @@ pub mod tests {
 
     /// A helper function for testing different scenario for scan_*.
     ///
-    /// `callback` is used to append invalid account's data for testing.
+    /// `modify_fn` is used to (optionally) modify the append vec before checks are performed.
     /// `check_fn` performs the check for the scan.
     fn test_scan_helper(
         storage_access: StorageAccess,
