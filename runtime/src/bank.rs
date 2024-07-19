@@ -198,7 +198,7 @@ use {
                 AtomicBool, AtomicI64, AtomicU64, AtomicUsize,
                 Ordering::{self, AcqRel, Acquire, Relaxed},
             },
-            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
+            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
         },
         thread::Builder,
         time::{Duration, Instant},
@@ -1473,6 +1473,33 @@ impl Bank {
         new
     }
 
+<<<<<<< HEAD
+=======
+    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Weak<RwLock<BankForks>>) {
+        self.transaction_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .set_fork_graph(fork_graph);
+    }
+
+    pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
+        self.transaction_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .prune(new_root_slot, new_root_epoch);
+    }
+
+    pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {
+        self.transaction_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .prune_by_deployment_slot(deployment_slot);
+    }
+
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
     /// Epoch in which the new cooldown warmup rate for stake was activated
     pub fn new_warmup_cooldown_rate_epoch(&self) -> Option<Epoch> {
         self.feature_set

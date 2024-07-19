@@ -328,7 +328,10 @@ mod tests {
             system_transaction,
             transaction::{SanitizedTransaction, TransactionError},
         },
-        std::{sync::Arc, thread::JoinHandle},
+        std::{
+            sync::{Arc, RwLock},
+            thread::JoinHandle,
+        },
     };
 
     #[test]
@@ -361,6 +364,563 @@ mod tests {
         assert!(!debug.is_empty());
     }
 
+<<<<<<< HEAD
+=======
+    const SHORTENED_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(1);
+    const SHORTENED_MAX_POOLING_DURATION: Duration = Duration::from_millis(10);
+
+    #[test]
+    fn test_scheduler_drop_idle() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeIdleSchedulerCleaned,
+            &CheckPoint::IdleSchedulerCleaned(0),
+            &CheckPoint::IdleSchedulerCleaned(1),
+            &TestCheckPoint::AfterIdleSchedulerCleaned,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool_raw = DefaultSchedulerPool::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            SHORTENED_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let bank = Arc::new(Bank::default_for_tests());
+        let context1 = SchedulingContext::new(bank);
+        let context2 = context1.clone();
+
+        let old_scheduler = pool.do_take_scheduler(context1);
+        let new_scheduler = pool.do_take_scheduler(context2);
+        let new_scheduler_id = new_scheduler.id();
+        Box::new(old_scheduler.into_inner().1).return_to_pool();
+
+        // sleepless_testing can't be used; wait a bit here to see real progress of wall time...
+        sleep(SHORTENED_MAX_POOLING_DURATION * 10);
+        Box::new(new_scheduler.into_inner().1).return_to_pool();
+
+        // Block solScCleaner until we see returned schedlers...
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 2);
+        sleepless_testing::at(TestCheckPoint::BeforeIdleSchedulerCleaned);
+
+        // See the old (= idle) scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterIdleSchedulerCleaned);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(
+            pool_raw
+                .scheduler_inners
+                .lock()
+                .unwrap()
+                .first()
+                .as_ref()
+                .map(|(inner, _pooled_at)| inner.id())
+                .unwrap(),
+            new_scheduler_id
+        );
+    }
+
+    #[test]
+    fn test_scheduler_drop_overgrown() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTrashedSchedulerCleaned,
+            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 1;
+        let pool_raw = DefaultSchedulerPool::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            REDUCED_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let bank = Arc::new(Bank::default_for_tests());
+        let context1 = SchedulingContext::new(bank);
+        let context2 = context1.clone();
+
+        let small_scheduler = pool.do_take_scheduler(context1);
+        let small_scheduler_id = small_scheduler.id();
+        for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT {
+            small_scheduler
+                .inner
+                .usage_queue_loader
+                .load(Pubkey::new_unique());
+        }
+        let big_scheduler = pool.do_take_scheduler(context2);
+        for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
+            big_scheduler
+                .inner
+                .usage_queue_loader
+                .load(Pubkey::new_unique());
+        }
+
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        Box::new(small_scheduler.into_inner().1).return_to_pool();
+        Box::new(big_scheduler.into_inner().1).return_to_pool();
+
+        // Block solScCleaner until we see trashed schedler...
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 1);
+        sleepless_testing::at(TestCheckPoint::BeforeTrashedSchedulerCleaned);
+
+        // See the trashed scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(
+            pool_raw
+                .scheduler_inners
+                .lock()
+                .unwrap()
+                .first()
+                .as_ref()
+                .map(|(inner, _pooled_at)| inner.id())
+                .unwrap(),
+            small_scheduler_id
+        );
+    }
+
+    const SHORTENED_TIMEOUT_DURATION: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn test_scheduler_drop_stale() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+            &CheckPoint::IdleSchedulerCleaned(1),
+            &TestCheckPoint::AfterIdleSchedulerCleaned,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool_raw = DefaultSchedulerPool::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            SHORTENED_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+        let bank = Arc::new(Bank::default_for_tests());
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.take_scheduler(context);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 1);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        // See the stale scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterIdleSchedulerCleaned);
+        assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_scheduler_active_after_stale() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool_raw = SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+
+        #[derive(Debug)]
+        struct ExecuteTimingCounter;
+        impl TaskHandler for ExecuteTimingCounter {
+            fn handle(
+                _result: &mut Result<()>,
+                timings: &mut ExecuteTimings,
+                _bank: &Arc<Bank>,
+                _transaction: &SanitizedTransaction,
+                _index: usize,
+                _handler_context: &HandlerContext,
+            ) {
+                timings.metrics[ExecuteTimingType::CheckUs] += 123;
+            }
+        }
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        let tx_before_stale =
+            &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_sdk::pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        bank.schedule_transaction_executions([(tx_before_stale, &0)].into_iter())
+            .unwrap();
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+        let tx_after_stale =
+            &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_sdk::pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        bank.schedule_transaction_executions([(tx_after_stale, &1)].into_iter())
+            .unwrap();
+
+        // Observe second occurrence of TimeoutListenerTriggered(1), which indicates a new timeout
+        // lister is registered correctly again for reactivated scheduler.
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+
+        let (result, timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Ok(()));
+        // ResultWithTimings should be carried over across active=>stale=>active transitions.
+        assert_eq!(timings.metrics[ExecuteTimingType::CheckUs], 246);
+    }
+
+    #[test]
+    fn test_scheduler_pause_after_stale() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool_raw = DefaultSchedulerPool::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+
+        // This calls register_recent_blockhash() internally, which in turn calls
+        // BankWithScheduler::wait_for_paused_scheduler().
+        bank.fill_bank_with_ticks_for_tests();
+        let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_scheduler_remain_stale_after_error() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeTimeoutListenerTriggered,
+            &CheckPoint::TimeoutListenerTriggered(0),
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+            &CheckPoint::TimeoutListenerTriggered(1),
+            &TestCheckPoint::AfterTimeoutListenerTriggered,
+        ]);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            SHORTENED_TIMEOUT_DURATION,
+        );
+
+        let pool = pool_raw.clone();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        pool.register_timeout_listener(bank.create_timeout_listener());
+
+        let tx_before_stale =
+            &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_sdk::pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        bank.schedule_transaction_executions([(tx_before_stale, &0)].into_iter())
+            .unwrap();
+        sleepless_testing::at(TestCheckPoint::BeforeTimeoutListenerTriggered);
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+
+        sleepless_testing::at(TestCheckPoint::AfterTimeoutListenerTriggered);
+        let tx_after_stale =
+            &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_sdk::pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        let result = bank.schedule_transaction_executions([(tx_after_stale, &1)].into_iter());
+        assert_matches!(result, Err(TransactionError::AccountNotFound));
+
+        let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
+        assert_matches!(result, Err(TransactionError::AccountNotFound));
+    }
+
+    enum AbortCase {
+        Unhandled,
+        UnhandledWhilePanicking,
+        Handled,
+    }
+
+    #[derive(Debug)]
+    struct FaultyHandler;
+    impl TaskHandler for FaultyHandler {
+        fn handle(
+            result: &mut Result<()>,
+            _timings: &mut ExecuteTimings,
+            _bank: &Arc<Bank>,
+            _transaction: &SanitizedTransaction,
+            _index: usize,
+            _handler_context: &HandlerContext,
+        ) {
+            *result = Err(TransactionError::AccountNotFound);
+        }
+    }
+
+    fn do_test_scheduler_drop_abort(abort_case: AbortCase) {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(match abort_case {
+            AbortCase::Unhandled => &[
+                &CheckPoint::SchedulerThreadAborted,
+                &TestCheckPoint::AfterSchedulerThreadAborted,
+            ],
+            _ => &[],
+        });
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        let tx = &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_sdk::pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.do_take_scheduler(context);
+        scheduler.schedule_execution(&(tx, 0)).unwrap();
+
+        match abort_case {
+            AbortCase::Unhandled => {
+                sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+                // Directly dropping PooledScheduler is illegal unless panicking already, especially
+                // after being aborted. It must be converted to PooledSchedulerInner via
+                // ::into_inner();
+                drop::<PooledScheduler<_>>(scheduler);
+            }
+            AbortCase::UnhandledWhilePanicking => {
+                // no sleepless_testing::at(); panicking special-casing isn't racy
+                panic!("ThreadManager::drop() should be skipped...");
+            }
+            AbortCase::Handled => {
+                // no sleepless_testing::at(); ::into_inner() isn't racy
+                let ((result, _), mut scheduler_inner) = scheduler.into_inner();
+                assert_matches!(result, Err(TransactionError::AccountNotFound));
+
+                // Calling ensure_join_threads() repeatedly should be safe.
+                let dummy_flag = true; // doesn't matter because it's skipped anyway
+                scheduler_inner
+                    .thread_manager
+                    .ensure_join_threads(dummy_flag);
+
+                drop::<PooledSchedulerInner<_, _>>(scheduler_inner);
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "does not match `Some((Ok(_), _))")]
+    fn test_scheduler_drop_abort_unhandled() {
+        do_test_scheduler_drop_abort(AbortCase::Unhandled);
+    }
+
+    #[test]
+    #[should_panic(expected = "ThreadManager::drop() should be skipped...")]
+    fn test_scheduler_drop_abort_unhandled_while_panicking() {
+        do_test_scheduler_drop_abort(AbortCase::UnhandledWhilePanicking);
+    }
+
+    #[test]
+    fn test_scheduler_drop_abort_handled() {
+        do_test_scheduler_drop_abort(AbortCase::Handled);
+    }
+
+    #[test]
+    fn test_scheduler_drop_short_circuiting() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeThreadManagerDrop,
+            &CheckPoint::NewTask(0),
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+        ]);
+
+        static TASK_COUNT: Mutex<usize> = Mutex::new(0);
+
+        #[derive(Debug)]
+        struct CountingHandler;
+        impl TaskHandler for CountingHandler {
+            fn handle(
+                _result: &mut Result<()>,
+                _timings: &mut ExecuteTimings,
+                _bank: &Arc<Bank>,
+                _transaction: &SanitizedTransaction,
+                _index: usize,
+                _handler_context: &HandlerContext,
+            ) {
+                *TASK_COUNT.lock().unwrap() += 1;
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.do_take_scheduler(context);
+
+        for i in 0..10 {
+            let tx =
+                &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &solana_sdk::pubkey::new_rand(),
+                    2,
+                    genesis_config.hash(),
+                ));
+            scheduler.schedule_execution(&(tx, i)).unwrap();
+        }
+
+        // Make sure ThreadManager::drop() is properly short-circuiting for non-aborting scheduler.
+        sleepless_testing::at(TestCheckPoint::BeforeThreadManagerDrop);
+        drop::<PooledScheduler<_>>(scheduler);
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+        assert!(*TASK_COUNT.lock().unwrap() < 10);
+    }
+
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
     #[test]
     fn test_scheduler_pool_filo() {
         solana_logger::setup();
@@ -475,15 +1035,20 @@ mod tests {
         assert!(!child_bank.has_installed_scheduler());
     }
 
-    fn setup_dummy_fork_graph(bank: Bank) -> Arc<Bank> {
+    fn setup_dummy_fork_graph(bank: Bank) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
         let slot = bank.slot();
         let bank_fork = BankForks::new_rw_arc(bank);
         let bank = bank_fork.read().unwrap().get(slot).unwrap();
+<<<<<<< HEAD
         bank.loaded_programs_cache
             .write()
             .unwrap()
             .set_fork_graph(bank_fork);
         bank
+=======
+        bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_fork));
+        (bank, bank_fork)
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
     }
 
     #[test]
@@ -502,7 +1067,7 @@ mod tests {
             genesis_config.hash(),
         ));
         let bank = Bank::new_for_tests(&genesis_config);
-        let bank = setup_dummy_fork_graph(bank);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             DefaultSchedulerPool::new_dyn(None, None, None, ignored_prioritization_fee_cache);
@@ -526,7 +1091,7 @@ mod tests {
             ..
         } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
-        let bank = setup_dummy_fork_graph(bank);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
@@ -573,6 +1138,346 @@ mod tests {
                 _timings
             ))
         );
+<<<<<<< HEAD
+=======
+
+        // Block solScCleaner until we see trashed schedler...
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 1);
+        sleepless_testing::at(TestCheckPoint::BeforeTrashedSchedulerCleaned);
+
+        // See the trashed scheduler gone only after solScCleaner did its job...
+        sleepless_testing::at(TestCheckPoint::AfterTrashedSchedulerCleaned);
+        assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_failure_with_extra_tx() {
+        do_test_scheduler_schedule_execution_failure(true);
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_failure_without_extra_tx() {
+        do_test_scheduler_schedule_execution_failure(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "This panic should be propagated. (From: ")]
+    fn test_scheduler_schedule_execution_panic() {
+        solana_logger::setup();
+
+        #[derive(Debug)]
+        enum PanickingHanlderCheckPoint {
+            BeforeNotifiedPanic,
+            BeforeIgnoredPanic,
+        }
+
+        let progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeNewTask,
+            &CheckPoint::NewTask(0),
+            &PanickingHanlderCheckPoint::BeforeNotifiedPanic,
+            &CheckPoint::SchedulerThreadAborted,
+            &PanickingHanlderCheckPoint::BeforeIgnoredPanic,
+            &TestCheckPoint::BeforeEndSession,
+        ]);
+
+        #[derive(Debug)]
+        struct PanickingHandler;
+        impl TaskHandler for PanickingHandler {
+            fn handle(
+                _result: &mut Result<()>,
+                _timings: &mut ExecuteTimings,
+                _bank: &Arc<Bank>,
+                _transaction: &SanitizedTransaction,
+                index: usize,
+                _handler_context: &HandlerContext,
+            ) {
+                if index == 0 {
+                    sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
+                } else if index == 1 {
+                    sleepless_testing::at(PanickingHanlderCheckPoint::BeforeIgnoredPanic);
+                } else {
+                    unreachable!();
+                }
+                panic!("This panic should be propagated.");
+            }
+        }
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        // Use 2 transactions with different timings to deliberately cover the two code paths of
+        // notifying panics in the handler threads, taken conditionally depending on whether the
+        // scheduler thread has been aborted already or not.
+        const TX_COUNT: usize = 2;
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn(
+            Some(TX_COUNT), // fix to use exactly 2 handlers
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+        let context = SchedulingContext::new(bank.clone());
+
+        let scheduler = pool.take_scheduler(context);
+
+        for index in 0..TX_COUNT {
+            // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
+            let tx =
+                &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &Keypair::new(),
+                    &solana_sdk::pubkey::new_rand(),
+                    1,
+                    genesis_config.hash(),
+                ));
+            scheduler.schedule_execution(&(tx, index)).unwrap();
+        }
+        // finally unblock the scheduler thread; otherwise the above schedule_execution could
+        // return SchedulerAborted...
+        sleepless_testing::at(TestCheckPoint::BeforeNewTask);
+
+        sleepless_testing::at(TestCheckPoint::BeforeEndSession);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+
+        // the outer .unwrap() will panic. so, drop progress now.
+        drop(progress);
+        bank.wait_for_completed_scheduler().unwrap().0.unwrap();
+    }
+
+    #[test]
+    fn test_scheduler_execution_failure_short_circuiting() {
+        solana_logger::setup();
+
+        let _progress = sleepless_testing::setup(&[
+            &TestCheckPoint::BeforeNewTask,
+            &CheckPoint::NewTask(0),
+            &CheckPoint::TaskHandled(0),
+            &CheckPoint::SchedulerThreadAborted,
+            &TestCheckPoint::AfterSchedulerThreadAborted,
+        ]);
+
+        static TASK_COUNT: Mutex<usize> = Mutex::new(0);
+
+        #[derive(Debug)]
+        struct CountingFaultyHandler;
+        impl TaskHandler for CountingFaultyHandler {
+            fn handle(
+                result: &mut Result<()>,
+                _timings: &mut ExecuteTimings,
+                _bank: &Arc<Bank>,
+                _transaction: &SanitizedTransaction,
+                index: usize,
+                _handler_context: &HandlerContext,
+            ) {
+                *TASK_COUNT.lock().unwrap() += 1;
+                if index == 1 {
+                    *result = Err(TransactionError::AccountNotFound);
+                }
+                sleepless_testing::at(CheckPoint::TaskHandled(index));
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = SchedulerPool::<PooledScheduler<CountingFaultyHandler>, _>::new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+        let context = SchedulingContext::new(bank.clone());
+        let scheduler = pool.do_take_scheduler(context);
+
+        for i in 0..10 {
+            let tx =
+                &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &solana_sdk::pubkey::new_rand(),
+                    2,
+                    genesis_config.hash(),
+                ));
+            scheduler.schedule_execution(&(tx, i)).unwrap();
+        }
+        // finally unblock the scheduler thread; otherwise the above schedule_execution could
+        // return SchedulerAborted...
+        sleepless_testing::at(TestCheckPoint::BeforeNewTask);
+
+        // Make sure bank.wait_for_completed_scheduler() is properly short-circuiting for aborting scheduler.
+        let bank = BankWithScheduler::new(bank, Some(Box::new(scheduler)));
+        assert_matches!(
+            bank.wait_for_completed_scheduler(),
+            Some((Err(TransactionError::AccountNotFound), _timings))
+        );
+        sleepless_testing::at(TestCheckPoint::AfterSchedulerThreadAborted);
+        assert!(*TASK_COUNT.lock().unwrap() < 10);
+    }
+
+    #[test]
+    fn test_scheduler_schedule_execution_blocked() {
+        solana_logger::setup();
+
+        const STALLED_TRANSACTION_INDEX: usize = 0;
+        const BLOCKED_TRANSACTION_INDEX: usize = 1;
+        static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
+
+        #[derive(Debug)]
+        struct StallingHandler;
+        impl TaskHandler for StallingHandler {
+            fn handle(
+                result: &mut Result<()>,
+                timings: &mut ExecuteTimings,
+                bank: &Arc<Bank>,
+                transaction: &SanitizedTransaction,
+                index: usize,
+                handler_context: &HandlerContext,
+            ) {
+                match index {
+                    STALLED_TRANSACTION_INDEX => *LOCK_TO_STALL.lock().unwrap(),
+                    BLOCKED_TRANSACTION_INDEX => {}
+                    _ => unreachable!(),
+                };
+                DefaultTaskHandler::handle(
+                    result,
+                    timings,
+                    bank,
+                    transaction,
+                    index,
+                    handler_context,
+                );
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        // tx0 and tx1 is definitely conflicting to write-lock the mint address
+        let tx0 = &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_sdk::pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let tx1 = &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_sdk::pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_dyn(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+        let context = SchedulingContext::new(bank.clone());
+
+        assert_eq!(bank.transaction_count(), 0);
+        let scheduler = pool.take_scheduler(context);
+
+        // Stall handling tx0 and tx1
+        let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
+        scheduler
+            .schedule_execution(&(tx0, STALLED_TRANSACTION_INDEX))
+            .unwrap();
+        scheduler
+            .schedule_execution(&(tx1, BLOCKED_TRANSACTION_INDEX))
+            .unwrap();
+
+        // Wait a bit for the scheduler thread to decide to block tx1
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // Resume handling by unlocking LOCK_TO_STALL
+        drop(lock_to_stall);
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+        assert_eq!(bank.transaction_count(), 2);
+    }
+
+    #[test]
+    fn test_scheduler_mismatched_scheduling_context_race() {
+        solana_logger::setup();
+
+        #[derive(Debug)]
+        struct TaskAndContextChecker;
+        impl TaskHandler for TaskAndContextChecker {
+            fn handle(
+                _result: &mut Result<()>,
+                _timings: &mut ExecuteTimings,
+                bank: &Arc<Bank>,
+                _transaction: &SanitizedTransaction,
+                index: usize,
+                _handler_context: &HandlerContext,
+            ) {
+                // The task index must always be matched to the slot.
+                assert_eq!(index as Slot, bank.slot());
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+
+        // Create two banks for two contexts
+        let bank0 = Bank::new_for_tests(&genesis_config);
+        let bank0 = setup_dummy_fork_graph(bank0).0;
+        let bank1 = Arc::new(Bank::new_from_parent(
+            bank0.clone(),
+            &Pubkey::default(),
+            bank0.slot().checked_add(1).unwrap(),
+        ));
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = SchedulerPool::<PooledScheduler<TaskAndContextChecker>, _>::new(
+            Some(4), // spawn 4 threads
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+
+        // Create a dummy tx and two contexts
+        let dummy_tx =
+            &SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_sdk::pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
+        let context0 = &SchedulingContext::new(bank0.clone());
+        let context1 = &SchedulingContext::new(bank1.clone());
+
+        // Exercise the scheduler by busy-looping to expose the race condition
+        for (context, index) in [(context0, 0), (context1, 1)]
+            .into_iter()
+            .cycle()
+            .take(10000)
+        {
+            let scheduler = pool.take_scheduler(context.clone());
+            scheduler.schedule_execution(&(dummy_tx, index)).unwrap();
+            scheduler.wait_for_termination(false).1.return_to_pool();
+        }
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
     }
 
     #[derive(Debug)]
@@ -715,7 +1620,7 @@ mod tests {
                 slot.checked_add(1).unwrap(),
             );
         }
-        let bank = setup_dummy_fork_graph(bank);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let context = SchedulingContext::new(bank.clone());
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
@@ -758,4 +1663,59 @@ mod tests {
     fn test_scheduler_schedule_execution_recent_blockhash_edge_case_without_race() {
         do_test_scheduler_schedule_execution_recent_blockhash_edge_case::<false>();
     }
+<<<<<<< HEAD
+=======
+
+    #[test]
+    fn test_default_handler_count() {
+        for (detected, expected) in [(32, 8), (4, 1), (2, 1)] {
+            assert_eq!(
+                DefaultSchedulerPool::calculate_default_handler_count(Some(detected)),
+                expected
+            );
+        }
+        assert_eq!(
+            DefaultSchedulerPool::calculate_default_handler_count(None),
+            4
+        );
+    }
+
+    // See comment in SchedulingStateMachine::create_task() for the justification of this test
+    #[test]
+    fn test_enfoced_get_account_locks_validation() {
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            ref mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = &setup_dummy_fork_graph(bank);
+
+        let mut tx = system_transaction::transfer(
+            mint_keypair,
+            &solana_sdk::pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        );
+        // mangle the transfer tx to try to lock fee_payer (= mint_keypair) address twice!
+        tx.message.account_keys.push(tx.message.account_keys[0]);
+        let tx = &SanitizedTransaction::from_transaction_for_tests(tx);
+
+        // this internally should call SanitizedTransaction::get_account_locks().
+        let result = &mut Ok(());
+        let timings = &mut ExecuteTimings::default();
+        let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let handler_context = &HandlerContext {
+            log_messages_bytes_limit: None,
+            transaction_status_sender: None,
+            replay_vote_sender: None,
+            prioritization_fee_cache,
+        };
+
+        DefaultTaskHandler::handle(result, timings, bank, tx, 0, handler_context);
+        assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
+    }
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
 }

@@ -26,7 +26,17 @@ use {
     },
     solana_rbpf::vm::ContextObject,
     solana_runtime::{
+<<<<<<< HEAD
         bank::TransactionBalancesSet,
+=======
+        bank::{Bank, TransactionBalancesSet},
+        bank_client::BankClient,
+        bank_forks::BankForks,
+        genesis_utils::{
+            bootstrap_validator_stake_lamports, create_genesis_config,
+            create_genesis_config_with_leader_ex, GenesisConfigInfo,
+        },
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
         loader_utils::{
             create_program, load_program_from_file, load_upgradeable_buffer,
             load_upgradeable_program, load_upgradeable_program_and_advance_slot,
@@ -56,6 +66,7 @@ use {
         map_inner_instructions, ConfirmedTransactionWithStatusMeta, TransactionStatusMeta,
         TransactionWithStatusMeta, VersionedTransactionWithStatusMeta,
     },
+<<<<<<< HEAD
     std::collections::HashMap,
 };
 use {
@@ -67,6 +78,15 @@ use {
             bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader_ex, GenesisConfigInfo,
         },
+=======
+    std::{
+        assert_eq,
+        cell::RefCell,
+        collections::HashMap,
+        str::FromStr,
+        sync::{Arc, RwLock},
+        time::Duration,
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
     },
     solana_sdk::{
         account::AccountSharedData,
@@ -2551,7 +2571,7 @@ fn test_program_upgradeable_locks() {
         payer_keypair: &Keypair,
         buffer_keypair: &Keypair,
         program_keypair: &Keypair,
-    ) -> (Arc<Bank>, Transaction, Transaction) {
+    ) -> (Arc<Bank>, Arc<RwLock<BankForks>>, Transaction, Transaction) {
         solana_logger::setup();
 
         let GenesisConfigInfo {
@@ -2621,7 +2641,7 @@ fn test_program_upgradeable_locks() {
             bank.last_blockhash(),
         );
 
-        (bank, invoke_tx, upgrade_tx)
+        (bank, bank_forks, invoke_tx, upgrade_tx)
     }
 
     let payer_keypair = keypair_from_seed(&[56u8; 32]).unwrap();
@@ -2629,13 +2649,13 @@ fn test_program_upgradeable_locks() {
     let program_keypair = keypair_from_seed(&[77u8; 32]).unwrap();
 
     let results1 = {
-        let (bank, invoke_tx, upgrade_tx) =
+        let (bank, _bank_forks, invoke_tx, upgrade_tx) =
             setup_program_upgradeable_locks(&payer_keypair, &buffer_keypair, &program_keypair);
         execute_transactions(&bank, vec![upgrade_tx, invoke_tx])
     };
 
     let results2 = {
-        let (bank, invoke_tx, upgrade_tx) =
+        let (bank, _bank_forks, invoke_tx, upgrade_tx) =
             setup_program_upgradeable_locks(&payer_keypair, &buffer_keypair, &program_keypair);
         execute_transactions(&bank, vec![invoke_tx, upgrade_tx])
     };

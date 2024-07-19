@@ -126,12 +126,16 @@ impl BankForks {
             scheduler_pool: None,
         }));
 
+<<<<<<< HEAD
         root_bank
             .loaded_programs_cache
             .write()
             .unwrap()
             .set_fork_graph(bank_forks.clone());
 
+=======
+        root_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
         bank_forks
     }
 
@@ -733,6 +737,14 @@ mod tests {
         solana_vote_program::vote_state::BlockTimestamp,
         std::{sync::atomic::Ordering::Relaxed, time::Duration},
     };
+
+    #[test]
+    fn test_bank_forks_new_rw_arc_memory_leak() {
+        for _ in 0..1000 {
+            let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+            BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        }
+    }
 
     #[test]
     fn test_bank_forks_new() {

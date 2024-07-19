@@ -19,7 +19,7 @@ use {
         poh_recorder::{create_test_recorder, PohRecorder},
         poh_service::PohService,
     },
-    solana_runtime::bank::Bank,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         account::Account, feature_set::apply_cost_tracker_during_replay, signature::Keypair,
         signer::Signer, stake_history::Epoch, system_program, system_transaction,
@@ -85,6 +85,7 @@ fn create_consumer(poh_recorder: &RwLock<PohRecorder>) -> Consumer {
 
 struct BenchFrame {
     bank: Arc<Bank>,
+    _bank_forks: Arc<RwLock<BankForks>>,
     ledger_path: TempDir,
     exit: Arc<AtomicBool>,
     poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -114,8 +115,13 @@ fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
         .unwrap()
+<<<<<<< HEAD
         .set_limits(std::u64::MAX, std::u64::MAX, std::u64::MAX);
     let bank = bank.wrap_with_bank_forks_for_tests().0;
+=======
+        .set_limits(u64::MAX, u64::MAX, u64::MAX);
+    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+>>>>>>> d441c0f577 (Fix BankForks::new_rw_arc memory leak (#1893))
 
     let ledger_path = TempDir::new().unwrap();
     let blockstore = Arc::new(
@@ -126,6 +132,7 @@ fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
 
     BenchFrame {
         bank,
+        _bank_forks: bank_forks,
         ledger_path,
         exit,
         poh_recorder,
@@ -151,6 +158,7 @@ fn bench_process_and_record_transactions(
 
     let BenchFrame {
         bank,
+        _bank_forks,
         ledger_path: _ledger_path,
         exit,
         poh_recorder,
