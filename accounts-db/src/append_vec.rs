@@ -2000,7 +2000,7 @@ pub mod tests {
         });
     }
 
-    /// Test `scan_pubkey` for storage with garbage data that cause overflow in next element offset calculation.
+    /// Test `scan_pubkey` for storage which is missing the last account data
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_scan_pubkeys_missing_account_data(storage_access: StorageAccess) {
