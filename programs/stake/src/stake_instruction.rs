@@ -324,7 +324,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
             let clock = invoke_context.get_sysvar_cache().get_clock()?;
             deactivate_delinquent(
-                invoke_context,
                 transaction_context,
                 instruction_context,
                 &mut me,
