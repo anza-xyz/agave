@@ -70,16 +70,18 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     config
 }
 
+pub struct SpawnTestServerResult {
+    pub handle: JoinHandle<()>,
+    pub exit: Arc<AtomicBool>,
+    pub receiver: crossbeam_channel::Receiver<PacketBatch>,
+    pub server_address: SocketAddr,
+    pub stats: Arc<StreamerStats>,
+}
+
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
     max_connections_per_peer: usize,
-) -> (
-    JoinHandle<()>,
-    Arc<AtomicBool>,
-    crossbeam_channel::Receiver<PacketBatch>,
-    SocketAddr,
-    Arc<StreamerStats>,
-) {
+) -> SpawnTestServerResult {
     let sockets = {
         #[cfg(not(target_os = "windows"))]
         {
@@ -116,7 +118,7 @@ pub fn setup_quic_server(
     let SpawnNonBlockingServerResult {
         endpoints: _,
         stats,
-        thread: t,
+        thread: handle,
         max_concurrent_connections: _,
     } = spawn_server_multi(
         "quic_streamer_test",
@@ -134,7 +136,13 @@ pub fn setup_quic_server(
         DEFAULT_TPU_COALESCE,
     )
     .unwrap();
-    (t, exit, receiver, server_address, stats)
+    SpawnTestServerResult {
+        handle,
+        exit,
+        receiver,
+        server_address,
+        stats,
+    }
 }
 
 pub async fn make_client_endpoint(

@@ -1441,7 +1441,10 @@ pub mod test {
         crate::{
             nonblocking::{
                 quic::compute_max_allowed_uni_streams,
-                testing_utilities::{get_client_config, make_client_endpoint, setup_quic_server},
+                testing_utilities::{
+                    get_client_config, make_client_endpoint, setup_quic_server,
+                    SpawnTestServerResult,
+                },
             },
             quic::{MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         },
@@ -1600,18 +1603,31 @@ pub mod test {
 
     #[tokio::test]
     async fn test_quic_server_exit() {
-        let (t, exit, _receiver, _server_address, _stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver: _,
+            server_address: _,
+            stats: _,
+        } = setup_quic_server(None, 1);
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_quic_timeout() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address, _stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver,
+            server_address,
+            stats: _,
+        } = setup_quic_server(None, 1);
+
         check_timeout(receiver, server_address).await;
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1668,7 +1684,13 @@ pub mod test {
     #[tokio::test]
     async fn test_quic_stream_timeout() {
         solana_logger::setup();
-        let (t, exit, _receiver, server_address, stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver: _,
+            server_address,
+            stats,
+        } = setup_quic_server(None, 1);
 
         let conn1 = make_client_endpoint(&server_address, None).await;
         assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
@@ -1692,22 +1714,35 @@ pub mod test {
         assert!(s1.finish().await.is_err());
 
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
-        let (t, exit, _receiver, server_address, _stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver: _,
+            server_address,
+            stats: _,
+        } = setup_quic_server(None, 1);
         check_block_multiple_connections(server_address).await;
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_quic_server_multiple_connections_on_single_client_endpoint() {
         solana_logger::setup();
-        let (t, exit, _receiver, server_address, stats) = setup_quic_server(None, 2);
+
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver: _,
+            server_address,
+            stats,
+        } = setup_quic_server(None, 2);
 
         let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut endpoint = quinn::Endpoint::new(
@@ -1760,16 +1795,22 @@ pub mod test {
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 2);
 
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_quic_server_multiple_writes() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address, _stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver,
+            server_address,
+            stats: _,
+        } = setup_quic_server(None, 1);
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1782,10 +1823,16 @@ pub mod test {
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
         );
-        let (t, exit, receiver, server_address, stats) = setup_quic_server(Some(staked_nodes), 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver,
+            server_address,
+            stats,
+        } = setup_quic_server(Some(staked_nodes), 1);
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
             stats
@@ -1808,10 +1855,16 @@ pub mod test {
             Arc::new(stakes),
             HashMap::<Pubkey, u64>::default(), // overrides
         );
-        let (t, exit, receiver, server_address, stats) = setup_quic_server(Some(staked_nodes), 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver,
+            server_address,
+            stats,
+        } = setup_quic_server(Some(staked_nodes), 1);
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
             stats
@@ -1826,10 +1879,16 @@ pub mod test {
     #[tokio::test]
     async fn test_quic_server_unstaked_connection_removal() {
         solana_logger::setup();
-        let (t, exit, receiver, server_address, stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            handle,
+            exit,
+            receiver,
+            server_address,
+            stats,
+        } = setup_quic_server(None, 1);
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
-        t.await.unwrap();
+        handle.await.unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
             stats
