@@ -54,7 +54,7 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
         .with_safe_defaults()
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_client_auth_cert(vec![cert], key)
-        .expect("Failed to use client certificate");
+        .expect("Provided key should be correctly set.");
 
     crypto.enable_early_data = true;
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
@@ -155,7 +155,7 @@ pub async fn make_client_endpoint(
     ));
     endpoint
         .connect(*addr, "localhost")
-        .expect("Failed in connecting")
+        .expect("Connecting should be configured correctly.")
         .await
-        .expect("Failed in waiting")
+        .expect("Connection should be able to be established.")
 }
