@@ -1443,7 +1443,7 @@ pub mod test {
                 quic::compute_max_allowed_uni_streams,
                 testing_utilities::{
                     get_client_config, make_client_endpoint, setup_quic_server,
-                    SpawnTestServerResult,
+                    SpawnTestServerResult, TestServerConfig,
                 },
             },
             quic::{MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
@@ -1609,7 +1609,7 @@ pub mod test {
             receiver: _,
             server_address: _,
             stats: _,
-        } = setup_quic_server(None, 1);
+        } = setup_quic_server(None, TestServerConfig::default());
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
     }
@@ -1623,7 +1623,7 @@ pub mod test {
             receiver,
             server_address,
             stats: _,
-        } = setup_quic_server(None, 1);
+        } = setup_quic_server(None, TestServerConfig::default());
 
         check_timeout(receiver, server_address).await;
         exit.store(true, Ordering::Relaxed);
@@ -1690,7 +1690,7 @@ pub mod test {
             receiver: _,
             server_address,
             stats,
-        } = setup_quic_server(None, 1);
+        } = setup_quic_server(None, TestServerConfig::default());
 
         let conn1 = make_client_endpoint(&server_address, None).await;
         assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
@@ -1726,7 +1726,7 @@ pub mod test {
             receiver: _,
             server_address,
             stats: _,
-        } = setup_quic_server(None, 1);
+        } = setup_quic_server(None, TestServerConfig::default());
         check_block_multiple_connections(server_address).await;
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
@@ -1742,7 +1742,13 @@ pub mod test {
             receiver: _,
             server_address,
             stats,
-        } = setup_quic_server(None, 2);
+        } = setup_quic_server(
+            None,
+            TestServerConfig {
+                max_connections_per_peer: 2,
+                ..Default::default()
+            },
+        );
 
         let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut endpoint = quinn::Endpoint::new(
@@ -1807,7 +1813,7 @@ pub mod test {
             receiver,
             server_address,
             stats: _,
-        } = setup_quic_server(None, 1);
+        } = setup_quic_server(None, TestServerConfig::default());
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
@@ -1829,7 +1835,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(Some(staked_nodes), 1);
+        } = setup_quic_server(Some(staked_nodes), TestServerConfig::default());
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
@@ -1861,7 +1867,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(Some(staked_nodes), 1);
+        } = setup_quic_server(Some(staked_nodes), TestServerConfig::default());
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
@@ -1885,7 +1891,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(None, 1);
+        } = setup_quic_server(None, TestServerConfig::default());
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
         handle.await.unwrap();
