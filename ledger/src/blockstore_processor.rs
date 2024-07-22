@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         block_error::BlockError,
@@ -27,10 +29,6 @@ use {
     },
     solana_measure::{measure, measure::Measure},
     solana_metrics::datapoint_error,
-    solana_program_runtime::{
-        report_execute_timings,
-        timings::{ExecuteTimingType, ExecuteTimings},
-    },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -42,6 +40,7 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
         transaction_batch::TransactionBatch,
+        vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
@@ -61,11 +60,13 @@ use {
     solana_svm::{
         transaction_processor::ExecutionRecordingConfig,
         transaction_results::{
-            TransactionExecutionDetails, TransactionExecutionResult, TransactionResults,
+            TransactionExecutionDetails, TransactionExecutionResult,
+            TransactionLoadedAccountsStats, TransactionResults,
         },
     },
+    solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
-    solana_vote::{vote_account::VoteAccountsHashMap, vote_sender_types::ReplayVoteSender},
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
@@ -79,6 +80,7 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+    ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
 
 pub struct TransactionBatchWithIndexes<'a, 'b> {
@@ -179,10 +181,32 @@ pub fn execute_batch(
 
     let TransactionResults {
         fee_collection_results,
+        loaded_accounts_stats,
         execution_results,
         rent_debits,
         ..
     } = tx_results;
+
+    let (check_block_cost_limits_result, check_block_cost_limits_time): (Result<()>, Measure) =
+        measure!(if bank
+            .feature_set
+            .is_active(&feature_set::apply_cost_tracker_during_replay::id())
+        {
+            check_block_cost_limits(
+                bank,
+                &loaded_accounts_stats,
+                &execution_results,
+                batch.sanitized_transactions(),
+            )
+        } else {
+            Ok(())
+        });
+
+    timings.saturating_add_in_place(
+        ExecuteTimingType::CheckBlockLimitsUs,
+        check_block_cost_limits_time.as_us(),
+    );
+    check_block_cost_limits_result?;
 
     let executed_transactions = execution_results
         .iter()
@@ -216,6 +240,49 @@ pub fn execute_batch(
 
     let first_err = get_first_error(batch, fee_collection_results);
     first_err.map(|(result, _)| result).unwrap_or(Ok(()))
+}
+
+// collect transactions actual execution costs, subject to block limits;
+// block will be marked as dead if exceeds cost limits, details will be
+// reported to metric `replay-stage-mark_dead_slot`
+fn check_block_cost_limits(
+    bank: &Bank,
+    loaded_accounts_stats: &[Result<TransactionLoadedAccountsStats>],
+    execution_results: &[TransactionExecutionResult],
+    sanitized_transactions: &[SanitizedTransaction],
+) -> Result<()> {
+    assert_eq!(loaded_accounts_stats.len(), execution_results.len());
+
+    let tx_costs_with_actual_execution_units: Vec<_> = execution_results
+        .iter()
+        .zip(loaded_accounts_stats)
+        .zip(sanitized_transactions)
+        .filter_map(|((execution_result, loaded_accounts_stats), tx)| {
+            if let Some(details) = execution_result.details() {
+                let tx_cost = CostModel::calculate_cost_for_executed_transaction(
+                    tx,
+                    details.executed_units,
+                    loaded_accounts_stats
+                        .as_ref()
+                        .map_or(0, |stats| stats.loaded_accounts_data_size),
+                    &bank.feature_set,
+                );
+                Some(tx_cost)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    {
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        for tx_cost in &tx_costs_with_actual_execution_units {
+            cost_tracker
+                .try_add(tx_cost)
+                .map_err(TransactionError::from)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -454,21 +521,9 @@ fn rebatch_and_execute_batches(
             let cost = tx_cost.sum();
             minimal_tx_cost = std::cmp::min(minimal_tx_cost, cost);
             total_cost = total_cost.saturating_add(cost);
-            tx_cost
+            cost
         })
         .collect::<Vec<_>>();
-
-    if bank
-        .feature_set
-        .is_active(&feature_set::apply_cost_tracker_during_replay::id())
-    {
-        let mut cost_tracker = bank.write_cost_tracker().unwrap();
-        for tx_cost in &tx_costs {
-            cost_tracker
-                .try_add(tx_cost)
-                .map_err(TransactionError::from)?;
-        }
-    }
 
     let target_batch_count = get_thread_count() as u64;
 
@@ -477,26 +532,23 @@ fn rebatch_and_execute_batches(
         let target_batch_cost = total_cost / target_batch_count;
         let mut batch_cost: u64 = 0;
         let mut slice_start = 0;
-        tx_costs
-            .into_iter()
-            .enumerate()
-            .for_each(|(index, tx_cost)| {
-                let next_index = index + 1;
-                batch_cost = batch_cost.saturating_add(tx_cost.sum());
-                if batch_cost >= target_batch_cost || next_index == sanitized_txs.len() {
-                    let tx_batch = rebatch_transactions(
-                        &lock_results,
-                        bank,
-                        &sanitized_txs,
-                        slice_start,
-                        index,
-                        &transaction_indexes,
-                    );
-                    slice_start = next_index;
-                    tx_batches.push(tx_batch);
-                    batch_cost = 0;
-                }
-            });
+        tx_costs.into_iter().enumerate().for_each(|(index, cost)| {
+            let next_index = index + 1;
+            batch_cost = batch_cost.saturating_add(cost);
+            if batch_cost >= target_batch_cost || next_index == sanitized_txs.len() {
+                let tx_batch = rebatch_transactions(
+                    &lock_results,
+                    bank,
+                    &sanitized_txs,
+                    slice_start,
+                    index,
+                    &transaction_indexes,
+                );
+                slice_start = next_index;
+                tx_batches.push(tx_batch);
+                batch_cost = 0;
+            }
+        });
         &tx_batches[..]
     } else {
         batches
@@ -512,7 +564,8 @@ fn rebatch_and_execute_batches(
         prioritization_fee_cache,
     )?;
 
-    timing.accumulate(execute_batches_internal_metrics);
+    // Pass false because this code-path is never touched by unified scheduler.
+    timing.accumulate(execute_batches_internal_metrics, false);
     Ok(())
 }
 
@@ -715,6 +768,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("incomplete final fec set")]
     IncompleteFinalFecSet,
+
+    #[error("invalid retransmitter signature final fec set")]
+    InvalidRetransmitterSignatureFinalFecSet,
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -840,6 +896,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         accounts_update_notifier,
         None,
         exit,
+        None,
     );
     let bank0_slot = bank0.slot();
     let bank_forks = BankForks::new_rw_arc(bank0);
@@ -1023,6 +1080,7 @@ fn verify_ticks(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
@@ -1078,11 +1136,15 @@ pub struct ConfirmationTiming {
     /// and replay.  As replay can run in parallel with the verification, this value can not be
     /// recovered from the `replay_elapsed` and or `{poh,transaction}_verify_elapsed`.  This
     /// includes failed cases, when `confirm_slot_entries` exist with an error.  In microseconds.
+    /// When unified scheduler is enabled, replay excludes the transaction execution, only
+    /// accounting for task creation and submission to the scheduler.
     pub confirmation_elapsed: u64,
 
     /// Wall clock time used by the entry replay code.  Does not include the PoH or the transaction
     /// signature/precompiles verification, but can overlap with the PoH and signature verification.
     /// In microseconds.
+    /// When unified scheduler is enabled, replay excludes the transaction execution, only
+    /// accounting for task creation and submission to the scheduler.
     pub replay_elapsed: u64,
 
     /// Wall clock times, used for the PoH verification of entries.  In microseconds.
@@ -1128,42 +1190,59 @@ pub struct BatchExecutionTiming {
 
     /// Wall clock time used by the transaction execution part of pipeline.
     /// [`ConfirmationTiming::replay_elapsed`] includes this time.  In microseconds.
-    pub wall_clock_us: u64,
+    wall_clock_us: u64,
 
     /// Time used to execute transactions, via `execute_batch()`, in the thread that consumed the
-    /// most time.
-    pub slowest_thread: ThreadExecuteTimings,
+    /// most time (in terms of total_thread_us) among rayon threads. Note that the slowest thread
+    /// is determined each time a given group of batches is newly processed. So, this is a coarse
+    /// approximation of wall-time single-threaded linearized metrics, discarding all metrics other
+    /// than the arbitrary set of batches mixed with various transactions, which replayed slowest
+    /// as a whole for each rayon processing session, also after blockstore_processor's rebatching.
+    ///
+    /// When unified scheduler is enabled, this field isn't maintained, because it's not batched at
+    /// all.
+    slowest_thread: ThreadExecuteTimings,
 }
 
 impl BatchExecutionTiming {
-    pub fn accumulate(&mut self, new_batch: ExecuteBatchesInternalMetrics) {
+    pub fn accumulate(
+        &mut self,
+        new_batch: ExecuteBatchesInternalMetrics,
+        is_unified_scheduler_enabled: bool,
+    ) {
         let Self {
             totals,
             wall_clock_us,
             slowest_thread,
         } = self;
 
-        saturating_add_assign!(*wall_clock_us, new_batch.execute_batches_us);
+        // These metric fields aren't applicable for the unified scheduler
+        if !is_unified_scheduler_enabled {
+            saturating_add_assign!(*wall_clock_us, new_batch.execute_batches_us);
 
-        use ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen};
-        totals.saturating_add_in_place(TotalBatchesLen, new_batch.total_batches_len);
-        totals.saturating_add_in_place(NumExecuteBatches, 1);
+            totals.saturating_add_in_place(TotalBatchesLen, new_batch.total_batches_len);
+            totals.saturating_add_in_place(NumExecuteBatches, 1);
+        }
 
         for thread_times in new_batch.execution_timings_per_thread.values() {
             totals.accumulate(&thread_times.execute_timings);
         }
 
-        let slowest = new_batch
-            .execution_timings_per_thread
-            .values()
-            .max_by_key(|thread_times| thread_times.total_thread_us);
+        // This whole metric (replay-slot-end-to-end-stats) isn't applicable for the unified
+        // scheduler.
+        if !is_unified_scheduler_enabled {
+            let slowest = new_batch
+                .execution_timings_per_thread
+                .values()
+                .max_by_key(|thread_times| thread_times.total_thread_us);
 
-        if let Some(slowest) = slowest {
-            slowest_thread.accumulate(slowest);
-            slowest_thread
-                .execute_timings
-                .saturating_add_in_place(NumExecuteBatches, 1);
-        };
+            if let Some(slowest) = slowest {
+                slowest_thread.accumulate(slowest);
+                slowest_thread
+                    .execute_timings
+                    .saturating_add_in_place(NumExecuteBatches, 1);
+            };
+        }
     }
 }
 
@@ -1184,7 +1263,8 @@ impl ThreadExecuteTimings {
                 ("total_transactions_executed", self.total_transactions_executed as i64, i64),
                 // Everything inside the `eager!` block will be eagerly expanded before
                 // evaluation of the rest of the surrounding macro.
-                eager!{report_execute_timings!(self.execute_timings)}
+                // Pass false because this code-path is never touched by unified scheduler.
+                eager!{report_execute_timings!(self.execute_timings, false)}
             );
         };
     }
@@ -1221,7 +1301,24 @@ impl ReplaySlotStats {
         num_entries: usize,
         num_shreds: u64,
         bank_complete_time_us: u64,
+        is_unified_scheduler_enabled: bool,
     ) {
+        let confirmation_elapsed = if is_unified_scheduler_enabled {
+            "confirmation_without_replay_us"
+        } else {
+            "confirmation_time_us"
+        };
+        let replay_elapsed = if is_unified_scheduler_enabled {
+            "task_submission_us"
+        } else {
+            "replay_time"
+        };
+        let execute_batches_us = if is_unified_scheduler_enabled {
+            None
+        } else {
+            Some(self.batch_execute.wall_clock_us as i64)
+        };
+
         lazy! {
             datapoint_info!(
                 "replay-slot-stats",
@@ -1242,9 +1339,9 @@ impl ReplaySlotStats {
                     self.transaction_verify_elapsed as i64,
                     i64
                 ),
-                ("confirmation_time_us", self.confirmation_elapsed as i64, i64),
-                ("replay_time", self.replay_elapsed as i64, i64),
-                ("execute_batches_us", self.batch_execute.wall_clock_us as i64, i64),
+                (confirmation_elapsed, self.confirmation_elapsed as i64, i64),
+                (replay_elapsed, self.replay_elapsed as i64, i64),
+                ("execute_batches_us", execute_batches_us, Option<i64>),
                 (
                     "replay_total_elapsed",
                     self.started.elapsed().as_micros() as i64,
@@ -1256,11 +1353,17 @@ impl ReplaySlotStats {
                 ("total_shreds", num_shreds as i64, i64),
                 // Everything inside the `eager!` block will be eagerly expanded before
                 // evaluation of the rest of the surrounding macro.
-                eager!{report_execute_timings!(self.batch_execute.totals)}
+                eager!{report_execute_timings!(self.batch_execute.totals, is_unified_scheduler_enabled)}
             );
         };
 
-        self.batch_execute.slowest_thread.report_stats(slot);
+        // Skip reporting replay-slot-end-to-end-stats entirely if unified scheduler is enabled,
+        // because the whole metrics itself is only meaningful for rayon-based worker threads.
+        //
+        // See slowest_thread doc comment for details.
+        if !is_unified_scheduler_enabled {
+            self.batch_execute.slowest_thread.report_stats(slot);
+        }
 
         let mut per_pubkey_timings: Vec<_> = self
             .batch_execute
@@ -1584,6 +1687,7 @@ fn confirm_slot_entries(
 }
 
 // Special handling required for processing the entries in slot 0
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn process_bank_0(
     bank0: &BankWithScheduler,
     blockstore: &Blockstore,
@@ -2150,6 +2254,7 @@ pub mod tests {
         },
         assert_matches::assert_matches,
         rand::{thread_rng, Rng},
+        solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_program_runtime::declare_process_instruction,
         solana_runtime::{
@@ -2906,7 +3011,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(2);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair = Keypair::new();
         let slot_entries = create_ticks(genesis_config.ticks_per_slot, 1, genesis_config.hash());
         let tx = system_transaction::transfer(
@@ -3071,7 +3176,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
 
@@ -3108,7 +3213,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3168,7 +3273,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3318,12 +3423,11 @@ pub mod tests {
 
         let mock_program_id = solana_sdk::pubkey::new_rand();
 
-        let bank = Bank::new_with_mockup_builtin_for_tests(
+        let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
             &genesis_config,
             mock_program_id,
             MockBuiltinOk::vm,
-        )
-        .0;
+        );
 
         let tx = Transaction::new_signed_with_payer(
             &[Instruction::new_with_bincode(
@@ -3362,12 +3466,11 @@ pub mod tests {
         let mut bankhash_err = None;
 
         (0..get_instruction_errors().len()).for_each(|err| {
-            let bank = Bank::new_with_mockup_builtin_for_tests(
+            let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
                 &genesis_config,
                 mock_program_id,
                 MockBuiltinErr::vm,
-            )
-            .0;
+            );
 
             let tx = Transaction::new_signed_with_payer(
                 &[Instruction::new_with_bincode(
@@ -3403,7 +3506,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3497,7 +3600,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3543,7 +3646,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1_000_000_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         const NUM_TRANSFERS_PER_ENTRY: usize = 8;
         const NUM_TRANSFERS: usize = NUM_TRANSFERS_PER_ENTRY * 32;
@@ -3610,7 +3713,7 @@ pub mod tests {
             ..
         } = create_genesis_config((num_accounts + 1) as u64 * initial_lamports);
 
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let mut keypairs: Vec<Keypair> = vec![];
 
@@ -3677,7 +3780,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3739,7 +3842,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let pubkey = solana_sdk::pubkey::new_rand();
         bank.transfer(1_000, &mint_keypair, &pubkey).unwrap();
         assert_eq!(bank.transaction_count(), 1);
@@ -3780,7 +3883,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let success_tx = system_transaction::transfer(
@@ -4080,7 +4183,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(100);
-        let bank0 = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let genesis_hash = genesis_config.hash();
         let keypair = Keypair::new();
 
@@ -4144,7 +4247,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1_000_000_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let present_account_key = Keypair::new();
         let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
@@ -4613,9 +4716,8 @@ pub mod tests {
             ..
         } = create_genesis_config(100 * LAMPORTS_PER_SOL);
         let genesis_hash = genesis_config.hash();
-        let bank = BankWithScheduler::new_without_scheduler(
-            Bank::new_with_bank_forks_for_tests(&genesis_config).0,
-        );
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = BankWithScheduler::new_without_scheduler(bank);
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut timing = ConfirmationTiming::default();
         let mut progress = ConfirmationProgress::new(genesis_hash);
@@ -4973,5 +5075,70 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_check_block_cost_limit() {
+        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            genesis_config.hash(),
+        ));
+        let mut tx_cost = CostModel::calculate_cost(&tx, &bank.feature_set);
+        let actual_execution_cu = 1;
+        let actual_loaded_accounts_data_size = 64 * 1024;
+        let TransactionCost::Transaction(ref mut usage_cost_details) = tx_cost else {
+            unreachable!("test tx is non-vote tx");
+        };
+        usage_cost_details.programs_execution_cost = actual_execution_cu;
+        usage_cost_details.loaded_accounts_data_size_cost =
+            CostModel::calculate_loaded_accounts_data_size_cost(
+                actual_loaded_accounts_data_size,
+                &bank.feature_set,
+            );
+        // set block-limit to be able to just have one transaction
+        let block_limit = tx_cost.sum();
+
+        bank.write_cost_tracker()
+            .unwrap()
+            .set_limits(u64::MAX, block_limit, u64::MAX);
+        let txs = vec![tx.clone(), tx];
+        let results = vec![
+            TransactionExecutionResult::Executed {
+                details: TransactionExecutionDetails {
+                    status: Ok(()),
+                    log_messages: None,
+                    inner_instructions: None,
+                    fee_details: solana_sdk::fee::FeeDetails::default(),
+                    return_data: None,
+                    executed_units: actual_execution_cu,
+                    accounts_data_len_delta: 0,
+                },
+                programs_modified_by_tx: HashMap::new(),
+            },
+            TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
+        ];
+        let loaded_accounts_stats = vec![
+            Ok(TransactionLoadedAccountsStats {
+                loaded_accounts_data_size: actual_loaded_accounts_data_size,
+                loaded_accounts_count: 2
+            });
+            2
+        ];
+
+        assert!(check_block_cost_limits(&bank, &loaded_accounts_stats, &results, &txs).is_ok());
+        assert_eq!(
+            Err(TransactionError::WouldExceedMaxBlockCostLimit),
+            check_block_cost_limits(&bank, &loaded_accounts_stats, &results, &txs)
+        );
     }
 }

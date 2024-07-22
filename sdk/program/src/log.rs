@@ -36,24 +36,6 @@
 use crate::account_info::AccountInfo;
 
 /// Print a message to the log.
-#[macro_export]
-#[deprecated(since = "1.4.14", note = "Please use `msg` macro instead")]
-macro_rules! info {
-    ($msg:expr) => {
-        $crate::log::sol_log($msg)
-    };
-    ($arg1:expr, $arg2:expr, $arg3:expr, $arg4:expr, $arg5:expr) => {
-        $crate::log::sol_log_64(
-            $arg1 as u64,
-            $arg2 as u64,
-            $arg3 as u64,
-            $arg4 as u64,
-            $arg5 as u64,
-        )
-    };
-}
-
-/// Print a message to the log.
 ///
 /// Supports simple strings as well as Rust [format strings][fs]. When passed a
 /// single expression it will be passed directly to [`sol_log`]. The expression
@@ -124,7 +106,6 @@ pub fn sol_log_data(data: &[&[u8]]) {
 }
 
 /// Print the hexadecimal representation of a slice.
-#[allow(dead_code)]
 pub fn sol_log_slice(slice: &[u8]) {
     for (i, s) in slice.iter().enumerate() {
         sol_log_64(0, 0, 0, i as u64, *s as u64);
@@ -135,7 +116,6 @@ pub fn sol_log_slice(slice: &[u8]) {
 ///
 /// - `accounts` - A slice of [`AccountInfo`].
 /// - `data` - The instruction data.
-#[allow(dead_code)]
 pub fn sol_log_params(accounts: &[AccountInfo], data: &[u8]) {
     for (i, account) in accounts.iter().enumerate() {
         msg!("AccountInfo");

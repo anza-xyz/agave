@@ -1,27 +1,24 @@
 use {
     crate::{
         mock_bank::{MockBankCallback, MockForkGraph},
-        proto::{InstrEffects, InstrFixture},
         transaction_builder::SanitizedTransactionBuilder,
     },
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        log_collector::LogCollector,
         solana_rbpf::{
             program::{BuiltinProgram, FunctionRegistry},
             vm::Config,
         },
-        timings::ExecuteTimings,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable,
-        epoch_schedule::EpochSchedule,
         feature_set::{FeatureSet, FEATURE_NAMES},
         hash::Hash,
         instruction::AccountMeta,
@@ -38,12 +35,14 @@ use {
     solana_svm::{
         account_loader::CheckedTransactionDetails,
         program_loader,
-        runtime_config::RuntimeConfig,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            TransactionProcessingEnvironment,
         },
     },
+    solana_svm_conformance::proto::{InstrEffects, InstrFixture},
+    solana_timings::ExecuteTimings,
     std::{
         collections::{HashMap, HashSet},
         env,
@@ -56,9 +55,6 @@ use {
     },
 };
 
-mod proto {
-    include!(concat!(env!("OUT_DIR"), "/org.solana.sealevel.v1.rs"));
-}
 mod mock_bank;
 mod transaction_builder;
 
@@ -152,7 +148,7 @@ fn run_from_folder(base_dir: &PathBuf, run_as_instr: &HashSet<OsString>) {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).expect("Failed to read file");
 
-        let fixture = proto::InstrFixture::decode(buffer.as_slice()).unwrap();
+        let fixture = InstrFixture::decode(buffer.as_slice()).unwrap();
         let execute_as_instr = run_as_instr.contains(&filename);
         run_fixture(fixture, filename, execute_as_instr);
     }
@@ -233,7 +229,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
 
     let transactions = vec![transaction];
-    let mut transaction_check = vec![Ok(CheckedTransactionDetails {
+    let transaction_check = vec![Ok(CheckedTransactionDetails {
         nonce: None,
         lamports_per_signature: 30,
     })];
@@ -247,14 +243,9 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
 
     mock_bank.override_feature_set(feature_set);
-    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
-        42,
-        2,
-        EpochSchedule::default(),
-        Arc::new(RuntimeConfig::default()),
-        HashSet::new(),
-    );
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
 
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     {
         let mut program_cache = batch_processor.program_cache.write().unwrap();
         program_cache.environments = ProgramRuntimeEnvironments {
@@ -264,7 +255,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
                 FunctionRegistry::default(),
             )),
         };
-        program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph.clone()));
     }
 
     batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
@@ -272,17 +263,12 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
 
     #[allow(deprecated)]
     let (blockhash, lamports_per_signature) = batch_processor
-        .sysvar_cache
-        .read()
-        .unwrap()
+        .sysvar_cache()
         .get_recent_blockhashes()
         .ok()
         .and_then(|x| (*x).last().cloned())
         .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
         .unwrap_or_default();
-
-    mock_bank.lamports_per_sginature = lamports_per_signature;
-    mock_bank.blockhash = blockhash;
 
     let recording_config = ExecutionRecordingConfig {
         enable_log_recording: true,
@@ -291,11 +277,13 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
     let processor_config = TransactionProcessingConfig {
         account_overrides: None,
+        check_program_modification_slot: false,
+        compute_budget: None,
         log_messages_bytes_limit: None,
         limit_to_load_programs: true,
         recording_config,
+        transaction_account_lock_limit: None,
     };
-    let mut timings = ExecuteTimings::default();
 
     if execute_as_instr {
         execute_fixture_as_instr(
@@ -313,8 +301,12 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        transaction_check.as_mut_slice(),
-        &mut timings,
+        transaction_check,
+        &TransactionProcessingEnvironment {
+            blockhash,
+            lamports_per_signature,
+            ..Default::default()
+        },
         &processor_config,
     );
 
@@ -405,7 +397,7 @@ fn execute_fixture_as_instr(
     filename: OsString,
     cu_avail: u64,
 ) {
-    let rent = if let Ok(rent) = batch_processor.sysvar_cache.read().unwrap().get_rent() {
+    let rent = if let Ok(rent) = batch_processor.sysvar_cache().get_rent() {
         (*rent).clone()
     } else {
         Rent::default()
@@ -420,7 +412,7 @@ fn execute_fixture_as_instr(
     let mut transaction_context = TransactionContext::new(
         transaction_accounts,
         rent,
-        compute_budget.max_invoke_stack_height,
+        compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
     );
 
@@ -441,10 +433,9 @@ fn execute_fixture_as_instr(
 
     let loaded_program = program_loader::load_program_with_pubkey(
         mock_bank,
-        &batch_processor.get_environments_for_epoch(2),
+        &batch_processor.get_environments_for_epoch(2).unwrap(),
         &program_id,
         42,
-        &batch_processor.epoch_schedule,
         false,
     )
     .unwrap();
@@ -459,24 +450,24 @@ fn execute_fixture_as_instr(
         )),
     );
 
-    let mut programs_modified_by_tx = ProgramCacheForTxBatch::default();
     let log_collector = LogCollector::new_ref();
 
-    let sysvar_cache = &batch_processor.sysvar_cache.read().unwrap();
+    let sysvar_cache = &batch_processor.sysvar_cache();
     let env_config = EnvironmentConfig::new(
-        mock_bank.blockhash,
+        Hash::default(),
+        None,
+        None,
         mock_bank.feature_set.clone(),
-        mock_bank.lamports_per_sginature,
+        0,
         sysvar_cache,
     );
 
     let mut invoke_context = InvokeContext::new(
         &mut transaction_context,
-        &loaded_programs,
+        &mut loaded_programs,
         env_config,
         Some(log_collector.clone()),
         compute_budget,
-        &mut programs_modified_by_tx,
     );
 
     let mut instruction_accounts: Vec<InstructionAccount> =

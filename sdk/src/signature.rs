@@ -25,17 +25,9 @@ const MAX_BASE58_SIGNATURE_LEN: usize = 88;
 #[derive(Serialize, Deserialize, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Signature(GenericArray<u8, U64>);
 
-impl crate::sanitize::Sanitize for Signature {}
+impl solana_sanitize::Sanitize for Signature {}
 
 impl Signature {
-    #[deprecated(
-        since = "1.16.4",
-        note = "Please use 'Signature::from' or 'Signature::try_from' instead"
-    )]
-    pub fn new(signature_slice: &[u8]) -> Self {
-        Self(GenericArray::clone_from_slice(signature_slice))
-    }
-
     pub fn new_unique() -> Self {
         Self::from(std::array::from_fn(|_| rand::random()))
     }

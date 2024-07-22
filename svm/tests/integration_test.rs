@@ -16,13 +16,11 @@ use {
             program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
             vm::Config,
         },
-        timings::ExecuteTimings,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, Epoch, Slot, UnixTimestamp},
-        epoch_schedule::EpochSchedule,
         hash::Hash,
         instruction::AccountMeta,
         pubkey::Pubkey,
@@ -32,10 +30,10 @@ use {
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
-        runtime_config::RuntimeConfig,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
+            TransactionProcessingEnvironment,
         },
         transaction_results::TransactionExecutionResult,
     },
@@ -96,7 +94,6 @@ fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         enable_sbpf_v1: true,
         enable_sbpf_v2: false,
         optimize_rodata: false,
-        new_elf_parser: false,
         aligned_memory_mapping: true,
     };
 
@@ -132,6 +129,7 @@ fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
 }
 
 fn create_executable_environment(
+    fork_graph: Arc<RwLock<MockForkGraph>>,
     mock_bank: &mut MockBankCallback,
     program_cache: &mut ProgramCache<MockForkGraph>,
 ) {
@@ -144,7 +142,7 @@ fn create_executable_environment(
         )),
     };
 
-    program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+    program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
 
     // We must fill in the sysvar cache entries
     let time_now = SystemTime::now()
@@ -442,16 +440,17 @@ fn prepare_transactions(
 #[test]
 fn svm_integration() {
     let mut mock_bank = MockBankCallback::default();
-    let (transactions, mut check_results) = prepare_transactions(&mut mock_bank);
+    let (transactions, check_results) = prepare_transactions(&mut mock_bank);
     let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
         EXECUTION_SLOT,
         EXECUTION_EPOCH,
-        EpochSchedule::default(),
-        Arc::new(RuntimeConfig::default()),
         HashSet::new(),
     );
 
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+
     create_executable_environment(
+        fork_graph.clone(),
         &mut mock_bank,
         &mut batch_processor.program_cache.write().unwrap(),
     );
@@ -468,13 +467,12 @@ fn svm_integration() {
         },
         ..Default::default()
     };
-    let mut timings = ExecuteTimings::default();
 
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        check_results.as_mut_slice(),
-        &mut timings,
+        check_results,
+        &TransactionProcessingEnvironment::default(),
         &processing_config,
     );
 

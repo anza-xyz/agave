@@ -134,7 +134,7 @@ impl BankForks {
             scheduler_pool: None,
         }));
 
-        root_bank.set_fork_graph_in_program_cache(bank_forks.clone());
+        root_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
         bank_forks
     }
 
@@ -225,14 +225,16 @@ impl BankForks {
 
     pub fn insert(&mut self, mut bank: Bank) -> BankWithScheduler {
         if self.root.load(Ordering::Relaxed) < self.highest_slot_at_startup {
-            bank.check_program_modification_slot();
+            bank.set_check_program_modification_slot(true);
         }
 
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             let context = SchedulingContext::new(bank.clone());
             let scheduler = scheduler_pool.take_scheduler(context);
-            BankWithScheduler::new(bank, Some(scheduler))
+            let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
+            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+            bank_with_scheduler
         } else {
             BankWithScheduler::new_without_scheduler(bank)
         };
@@ -748,6 +750,14 @@ mod tests {
         solana_vote_program::vote_state::BlockTimestamp,
         std::{sync::atomic::Ordering::Relaxed, time::Duration},
     };
+
+    #[test]
+    fn test_bank_forks_new_rw_arc_memory_leak() {
+        for _ in 0..1000 {
+            let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+            BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        }
+    }
 
     #[test]
     fn test_bank_forks_new() {

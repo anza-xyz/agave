@@ -318,6 +318,7 @@ impl ConsumeWorkerMetrics {
             invalid_account_for_fee,
             invalid_account_index,
             invalid_program_for_execution,
+            invalid_compute_budget,
             not_allowed_during_cluster_maintenance,
             invalid_writable_account,
             invalid_rent_paying_account,
@@ -371,6 +372,9 @@ impl ConsumeWorkerMetrics {
         self.error_metrics
             .invalid_program_for_execution
             .fetch_add(*invalid_program_for_execution, Ordering::Relaxed);
+        self.error_metrics
+            .invalid_compute_budget
+            .fetch_add(*invalid_compute_budget, Ordering::Relaxed);
         self.error_metrics
             .not_allowed_during_cluster_maintenance
             .fetch_add(*not_allowed_during_cluster_maintenance, Ordering::Relaxed);
@@ -561,6 +565,7 @@ struct ConsumeWorkerTransactionErrorMetrics {
     invalid_account_for_fee: AtomicUsize,
     invalid_account_index: AtomicUsize,
     invalid_program_for_execution: AtomicUsize,
+    invalid_compute_budget: AtomicUsize,
     not_allowed_during_cluster_maintenance: AtomicUsize,
     invalid_writable_account: AtomicUsize,
     invalid_rent_paying_account: AtomicUsize,
@@ -645,6 +650,12 @@ impl ConsumeWorkerTransactionErrorMetrics {
                 i64
             ),
             (
+                "invalid_compute_budget",
+                self.invalid_compute_budget
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "not_allowed_during_cluster_maintenance",
                 self.not_allowed_during_cluster_maintenance
                     .swap(0, Ordering::Relaxed),
@@ -698,12 +709,14 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
-        solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
+        solana_runtime::{
+            bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+            vote_sender_types::ReplayVoteReceiver,
+        },
         solana_sdk::{
             genesis_config::GenesisConfig, poh_config::PohConfig, pubkey::Pubkey,
             signature::Keypair, system_transaction,
         },
-        solana_vote::vote_sender_types::ReplayVoteReceiver,
         std::{
             sync::{atomic::AtomicBool, RwLock},
             thread::JoinHandle,
@@ -717,6 +730,7 @@ mod tests {
         mint_keypair: Keypair,
         genesis_config: GenesisConfig,
         bank: Arc<Bank>,
+        _bank_forks: Arc<RwLock<BankForks>>,
         _ledger_path: TempDir,
         _entry_receiver: Receiver<WorkingBankEntry>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -733,7 +747,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -776,6 +790,7 @@ mod tests {
                 mint_keypair,
                 genesis_config,
                 bank,
+                _bank_forks: bank_forks,
                 _ledger_path: ledger_path,
                 _entry_receiver: entry_receiver,
                 poh_recorder,

@@ -198,7 +198,9 @@ pub(crate) mod tests {
         crate::transaction_notifier_interface::TransactionNotifier,
         crossbeam_channel::unbounded,
         dashmap::DashMap,
-        solana_account_decoder::parse_token::token_amount_to_ui_amount,
+        solana_account_decoder::{
+            parse_account_data::SplTokenAdditionalData, parse_token::token_amount_to_ui_amount_v2,
+        },
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::{Bank, TransactionBalancesSet},
         solana_sdk::{
@@ -289,7 +291,7 @@ pub(crate) mod tests {
     #[test]
     fn test_notify_transaction() {
         let genesis_config = create_genesis_config(2).genesis_config;
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
         let (transaction_status_sender, transaction_status_receiver) = unbounded();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -328,7 +330,6 @@ pub(crate) mod tests {
             log_messages: None,
             inner_instructions: None,
             fee_details: FeeDetails::default(),
-            is_nonce: true,
             return_data: None,
             executed_units: 0,
             accounts_data_len_delta: 0,
@@ -344,7 +345,10 @@ pub(crate) mod tests {
         let pre_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: token_amount_to_ui_amount(42, 2),
+            ui_token_amount: token_amount_to_ui_amount_v2(
+                42,
+                &SplTokenAdditionalData::with_decimals(2),
+            ),
             owner: owner.clone(),
             program_id: token_program_id.clone(),
         };
@@ -352,7 +356,10 @@ pub(crate) mod tests {
         let post_token_balance = TransactionTokenBalance {
             account_index: 0,
             mint: Pubkey::new_unique().to_string(),
-            ui_token_amount: token_amount_to_ui_amount(58, 2),
+            ui_token_amount: token_amount_to_ui_amount_v2(
+                58,
+                &SplTokenAdditionalData::with_decimals(2),
+            ),
             owner,
             program_id: token_program_id,
         };

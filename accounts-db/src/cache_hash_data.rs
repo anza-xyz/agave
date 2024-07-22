@@ -3,7 +3,7 @@
 use crate::pubkey_bins::PubkeyBinCalculator24;
 use {
     crate::{accounts_hash::CalculateHashIntermediate, cache_hash_data_stats::CacheHashDataStats},
-    bytemuck::{Pod, Zeroable},
+    bytemuck_derive::{Pod, Zeroable},
     memmap2::MmapMut,
     solana_measure::measure::Measure,
     solana_sdk::clock::Slot,
@@ -25,15 +25,17 @@ pub type SavedType = Vec<Vec<EntryType>>;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct Header {
-    count: usize,
+    pub count: usize,
 }
 
 // In order to safely guarantee Header is Pod, it cannot have any padding
 // This is obvious by inspection, but this will also catch any inadvertent
 // changes in the future (i.e. it is a test).
+// Additionally, we compare the header size with `u64` instead of `usize`
+// to ensure binary compatibility doesn't break.
 const _: () = assert!(
-    std::mem::size_of::<Header>() == std::mem::size_of::<usize>(),
-    "Header cannot have any padding"
+    std::mem::size_of::<Header>() == std::mem::size_of::<u64>(),
+    "Header cannot have any padding and must be the same size as u64",
 );
 
 /// cache hash data file to be mmapped later
@@ -332,11 +334,7 @@ impl CacheHashData {
         let _ignored = remove_file(&cache_path);
         let cell_size = std::mem::size_of::<EntryType>() as u64;
         let mut m1 = Measure::start("create save");
-        let entries = data
-            .iter()
-            .map(|x: &Vec<EntryType>| x.len())
-            .collect::<Vec<_>>();
-        let entries = entries.iter().sum::<usize>();
+        let entries = data.iter().map(Vec::len).sum::<usize>();
         let capacity = cell_size * (entries as u64) + std::mem::size_of::<Header>() as u64;
 
         let mmap = CacheHashDataFile::new_map(&cache_path, capacity)?;
@@ -385,16 +383,16 @@ impl CacheHashData {
 #[derive(Debug)]
 pub struct ParsedFilename {
     pub slot_range_start: Slot,
-    pub _slot_range_end: Slot,
-    pub _bin_range_start: u64,
-    pub _bin_range_end: u64,
-    pub _hash: u64,
+    pub slot_range_end: Slot,
+    pub bin_range_start: u64,
+    pub bin_range_end: u64,
+    pub hash: u64,
 }
 
 /// Parses a cache hash data filename into its parts
 ///
 /// Returns None if the filename is invalid
-fn parse_filename(cache_filename: impl AsRef<Path>) -> Option<ParsedFilename> {
+pub fn parse_filename(cache_filename: impl AsRef<Path>) -> Option<ParsedFilename> {
     let filename = cache_filename.as_ref().to_string_lossy().to_string();
     let parts: Vec<_> = filename.split('.').collect(); // The parts are separated by a `.`
     if parts.len() != 5 {
@@ -407,10 +405,10 @@ fn parse_filename(cache_filename: impl AsRef<Path>) -> Option<ParsedFilename> {
     let hash = u64::from_str_radix(parts.get(4)?, 16).ok()?; // the hash is in hex
     Some(ParsedFilename {
         slot_range_start,
-        _slot_range_end: slot_range_end,
-        _bin_range_start: bin_range_start,
-        _bin_range_end: bin_range_end,
-        _hash: hash,
+        slot_range_end,
+        bin_range_start,
+        bin_range_end,
+        hash,
     })
 }
 
@@ -592,10 +590,10 @@ mod tests {
         let good_filename = "123.456.0.65536.537d65697d9b2baa";
         let parsed_filename = parse_filename(good_filename).unwrap();
         assert_eq!(parsed_filename.slot_range_start, 123);
-        assert_eq!(parsed_filename._slot_range_end, 456);
-        assert_eq!(parsed_filename._bin_range_start, 0);
-        assert_eq!(parsed_filename._bin_range_end, 65536);
-        assert_eq!(parsed_filename._hash, 0x537d65697d9b2baa);
+        assert_eq!(parsed_filename.slot_range_end, 456);
+        assert_eq!(parsed_filename.bin_range_start, 0);
+        assert_eq!(parsed_filename.bin_range_end, 65536);
+        assert_eq!(parsed_filename.hash, 0x537d65697d9b2baa);
 
         let bad_filenames = [
             // bad separator

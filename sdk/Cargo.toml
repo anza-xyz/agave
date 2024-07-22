@@ -17,8 +17,8 @@ edition = { workspace = true }
 program = []
 
 default = [
-  "borsh",
-  "full" # functionality that is not compatible or needed for on-chain programs
+    "borsh",
+    "full",  # functionality that is not compatible or needed for on-chain programs
 ]
 full = [
     "byteorder",
@@ -34,14 +34,13 @@ full = [
     "sha3",
     "digest",
 ]
-borsh = ["dep:borsh", "solana-program/borsh"]
-dev-context-only-utils = [
-  "qualifier_attr"
-]
+borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
+dev-context-only-utils = ["qualifier_attr"]
 frozen-abi = [
-  "dep:solana-frozen-abi",
-  "dep:solana-frozen-abi-macro",
-  "solana-program/frozen-abi",
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-program/frozen-abi",
+    "solana-short-vec/frozen-abi",
 ]
 
 [dependencies]
@@ -49,7 +48,8 @@ bincode = { workspace = true }
 bitflags = { workspace = true, features = ["serde"] }
 borsh = { workspace = true, optional = true }
 bs58 = { workspace = true }
-bytemuck = { workspace = true, features = ["derive"] }
+bytemuck = { workspace = true }
+bytemuck_derive = { workspace = true }
 byteorder = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
@@ -57,9 +57,12 @@ derivation-path = { workspace = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
 ed25519-dalek-bip32 = { workspace = true, optional = true }
-generic-array = { workspace = true, features = ["serde", "more_lengths"], optional = true }
+generic-array = { workspace = true, features = [
+    "serde",
+    "more_lengths",
+], optional = true }
 hmac = { workspace = true }
-itertools =  { workspace = true }
+itertools = { workspace = true }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
 log = { workspace = true }
@@ -70,7 +73,6 @@ qstring = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 rand0-7 = { package = "rand", version = "0.7", optional = true }
-rustversion = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
@@ -79,17 +81,22 @@ serde_with = { workspace = true, features = ["macros"] }
 sha2 = { workspace = true }
 sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
+solana-bn254 = { workspace = true }
+solana-decode-error = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-program = { workspace = true }
+solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
+solana-secp256k1-recover = { workspace = true }
+solana-short-vec = { workspace = true }
 thiserror = { workspace = true }
 uriparse = { workspace = true }
-wasm-bindgen = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.1", features = ["wasm-bindgen"] }
 js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -97,6 +104,7 @@ assert_matches = { workspace = true }
 curve25519-dalek = { workspace = true }
 hex = { workspace = true }
 solana-logger = { workspace = true }
+solana-program = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }

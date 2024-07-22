@@ -90,7 +90,7 @@ pub enum UpsertReclaim {
     IgnoreReclaims,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ScanConfig {
     /// checked by the scan. When true, abort scan.
     pub abort: Option<Arc<AtomicBool>>,
@@ -100,11 +100,20 @@ pub struct ScanConfig {
     pub collect_all_unsorted: bool,
 }
 
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            abort: None,
+            collect_all_unsorted: true,
+        }
+    }
+}
+
 impl ScanConfig {
     pub fn new(collect_all_unsorted: bool) -> Self {
         Self {
             collect_all_unsorted,
-            ..ScanConfig::default()
+            ..Default::default()
         }
     }
 
@@ -1911,7 +1920,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.roots_added.fetch_add(1, Ordering::Relaxed);
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
         // `AccountsDb::flush_accounts_cache()` relies on roots being added in order
-        assert!(slot >= w_roots_tracker.alive_roots.max_inclusive());
+        assert!(
+            slot >= w_roots_tracker.alive_roots.max_inclusive(),
+            "Roots must be added in order: {} < {}",
+            slot,
+            w_roots_tracker.alive_roots.max_inclusive()
+        );
         // 'slot' is a root, so it is both 'root' and 'original'
         w_roots_tracker.alive_roots.insert(slot);
     }
@@ -4209,8 +4223,12 @@ pub mod tests {
             assert!(!config.is_aborted());
         }
 
-        let config = ScanConfig::default();
+        let config = ScanConfig::new(false);
         assert!(!config.collect_all_unsorted);
+        assert!(config.abort.is_none());
+
+        let config = ScanConfig::default();
+        assert!(config.collect_all_unsorted);
         assert!(config.abort.is_none());
 
         let config = config.recreate_with_abort();

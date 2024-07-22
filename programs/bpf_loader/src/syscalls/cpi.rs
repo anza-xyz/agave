@@ -428,18 +428,37 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             addr,
             invoke_context.get_check_aligned(),
         )?;
-
-        check_instruction_size(ix.accounts.len(), ix.data.len(), invoke_context)?;
-
         let account_metas = translate_slice::<AccountMeta>(
             memory_mapping,
             ix.accounts.as_ptr() as u64,
             ix.accounts.len() as u64,
             invoke_context.get_check_aligned(),
         )?;
-        let mut accounts = Vec::with_capacity(ix.accounts.len());
+        let data = translate_slice::<u8>(
+            memory_mapping,
+            ix.data.as_ptr() as u64,
+            ix.data.len() as u64,
+            invoke_context.get_check_aligned(),
+        )?
+        .to_vec();
+
+        check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
+
+        if invoke_context
+            .get_feature_set()
+            .is_active(&feature_set::loosen_cpi_size_restriction::id())
+        {
+            consume_compute_meter(
+                invoke_context,
+                (data.len() as u64)
+                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
+                    .unwrap_or(u64::MAX),
+            )?;
+        }
+
+        let mut accounts = Vec::with_capacity(account_metas.len());
         #[allow(clippy::needless_range_loop)]
-        for account_index in 0..ix.accounts.len() {
+        for account_index in 0..account_metas.len() {
             #[allow(clippy::indexing_slicing)]
             let account_meta = &account_metas[account_index];
             if unsafe {
@@ -451,27 +470,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             }
             accounts.push(account_meta.clone());
         }
-
-        let ix_data_len = ix.data.len() as u64;
-        if invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::loosen_cpi_size_restriction::id())
-        {
-            consume_compute_meter(
-                invoke_context,
-                (ix_data_len)
-                    .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
-                    .unwrap_or(u64::MAX),
-            )?;
-        }
-
-        let data = translate_slice::<u8>(
-            memory_mapping,
-            ix.data.as_ptr() as u64,
-            ix_data_len,
-            invoke_context.get_check_aligned(),
-        )?
-        .to_vec();
 
         Ok(StableInstruction {
             accounts: accounts.into(),
@@ -590,9 +588,7 @@ struct SolAccountInfo {
     data_addr: u64,
     owner_addr: u64,
     rent_epoch: u64,
-    #[allow(dead_code)]
     is_signer: bool,
-    #[allow(dead_code)]
     is_writable: bool,
     executable: bool,
 }
@@ -929,7 +925,7 @@ where
             // account (caller_account). We need to update the corresponding
             // BorrowedAccount (callee_account) so the callee can see the
             // changes.
-            update_callee_account(
+            let update_caller = update_callee_account(
                 invoke_context,
                 memory_mapping,
                 is_loader_deprecated,
@@ -938,7 +934,7 @@ where
                 direct_mapping,
             )?;
 
-            let caller_account = if instruction_account.is_writable {
+            let caller_account = if instruction_account.is_writable || update_caller {
                 Some(caller_account)
             } else {
                 None
@@ -1177,6 +1173,9 @@ fn cpi_common<S: SyscallInvokeSigned>(
 //
 // This method updates callee_account so the CPI callee can see the caller's
 // changes.
+//
+// When true is returned, the caller account must be updated after CPI. This
+// is only set for direct mapping when the pointer may have changed.
 fn update_callee_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping,
@@ -1184,7 +1183,9 @@ fn update_callee_account(
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
     direct_mapping: bool,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
+    let mut must_update_caller = false;
+
     if callee_account.get_lamports() != *caller_account.lamports {
         callee_account.set_lamports(*caller_account.lamports)?;
     }
@@ -1202,7 +1203,11 @@ fn update_callee_account(
                 if is_loader_deprecated && realloc_bytes_used > 0 {
                     return Err(InstructionError::InvalidRealloc.into());
                 }
-                callee_account.set_data_length(post_len)?;
+                if prev_len != post_len {
+                    callee_account.set_data_length(post_len)?;
+                    // pointer to data may have changed, so caller must be updated
+                    must_update_caller = true;
+                }
                 if realloc_bytes_used > 0 {
                     let serialized_data = translate_slice::<u8>(
                         memory_mapping,
@@ -1243,7 +1248,7 @@ fn update_callee_account(
         callee_account.set_owner(caller_account.owner.as_ref())?;
     }
 
-    Ok(())
+    Ok(must_update_caller)
 }
 
 fn update_caller_account_perms(

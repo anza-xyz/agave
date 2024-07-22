@@ -1,11 +1,7 @@
 use {
-    crate::{
-        invoke_context::{BuiltinFunctionWithContext, InvokeContext},
-        timings::ExecuteDetailsTimings,
-    },
+    crate::invoke_context::{BuiltinFunctionWithContext, InvokeContext},
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
-    rand::{thread_rng, Rng},
     solana_measure::measure::Measure,
     solana_rbpf::{
         elf::Executable,
@@ -20,13 +16,19 @@ use {
         pubkey::Pubkey,
         saturating_add_assign,
     },
-    std::{
-        collections::{hash_map::Entry, HashMap},
-        fmt::{Debug, Formatter},
+    solana_timings::ExecuteDetailsTimings,
+    solana_type_overrides::{
+        rand::{thread_rng, Rng},
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
+        thread,
+    },
+    std::{
+        collections::{hash_map::Entry, HashMap},
+        fmt::{Debug, Formatter},
+        sync::Weak,
     },
 };
 
@@ -598,7 +600,7 @@ enum IndexImplementation {
         /// It is possible that multiple TX batches from different slots need different versions of a
         /// program. The deployment slot of a program is only known after load tho,
         /// so all loads for a given program key are serialized.
-        loading_entries: Mutex<HashMap<Pubkey, (Slot, std::thread::ThreadId)>>,
+        loading_entries: Mutex<HashMap<Pubkey, (Slot, thread::ThreadId)>>,
     },
 }
 
@@ -637,7 +639,7 @@ pub struct ProgramCache<FG: ForkGraph> {
     /// Statistics counters
     pub stats: ProgramCacheStats,
     /// Reference to the block store
-    pub fork_graph: Option<Arc<RwLock<FG>>>,
+    pub fork_graph: Option<Weak<RwLock<FG>>>,
     /// Coordinates TX batches waiting for others to complete their task during cooperative loading
     pub loading_task_waiter: Arc<LoadingTaskWaiter>,
 }
@@ -663,6 +665,8 @@ pub struct ProgramCacheForTxBatch {
     /// Pubkey is the address of a program.
     /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a transaction is being executed.
     entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    /// Program entries modified during the transaction batch.
+    modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     slot: Slot,
     pub environments: ProgramRuntimeEnvironments,
     /// Anticipated replacement for `environments` at the next epoch.
@@ -689,6 +693,7 @@ impl ProgramCacheForTxBatch {
     ) -> Self {
         Self {
             entries: HashMap::new(),
+            modified_entries: HashMap::new(),
             slot,
             environments,
             upcoming_environments,
@@ -706,6 +711,7 @@ impl ProgramCacheForTxBatch {
     ) -> Self {
         Self {
             entries: HashMap::new(),
+            modified_entries: HashMap::new(),
             slot,
             environments: cache.get_environments_for_epoch(epoch),
             upcoming_environments: cache.get_upcoming_environments_for_epoch(epoch),
@@ -739,21 +745,39 @@ impl ProgramCacheForTxBatch {
         (self.entries.insert(key, entry.clone()).is_some(), entry)
     }
 
+    /// Store an entry in `modified_entries` for a program modified during the
+    /// transaction batch.
+    pub fn store_modified_entry(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
+        self.modified_entries.insert(key, entry);
+    }
+
+    /// Drain the program cache's modified entries, returning the owned
+    /// collection.
+    pub fn drain_modified_entries(&mut self) -> HashMap<Pubkey, Arc<ProgramCacheEntry>> {
+        std::mem::take(&mut self.modified_entries)
+    }
+
     pub fn find(&self, key: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
-        self.entries.get(key).map(|entry| {
-            if entry.is_implicit_delay_visibility_tombstone(self.slot) {
-                // Found a program entry on the current fork, but it's not effective
-                // yet. It indicates that the program has delayed visibility. Return
-                // the tombstone to reflect that.
-                Arc::new(ProgramCacheEntry::new_tombstone(
-                    entry.deployment_slot,
-                    entry.account_owner,
-                    ProgramCacheEntryType::DelayVisibility,
-                ))
-            } else {
-                entry.clone()
-            }
-        })
+        // First lookup the cache of the programs modified by the current
+        // transaction. If not found, lookup the cache of the cache of the
+        // programs that are loaded for the transaction batch.
+        self.modified_entries
+            .get(key)
+            .or(self.entries.get(key))
+            .map(|entry| {
+                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
+                    // Found a program entry on the current fork, but it's not effective
+                    // yet. It indicates that the program has delayed visibility. Return
+                    // the tombstone to reflect that.
+                    Arc::new(ProgramCacheEntry::new_tombstone(
+                        entry.deployment_slot,
+                        entry.account_owner,
+                        ProgramCacheEntryType::DelayVisibility,
+                    ))
+                } else {
+                    entry.clone()
+                }
+            })
     }
 
     pub fn slot(&self) -> Slot {
@@ -764,8 +788,8 @@ impl ProgramCacheForTxBatch {
         self.slot = slot;
     }
 
-    pub fn merge(&mut self, other: &Self) {
-        other.entries.iter().for_each(|(key, entry)| {
+    pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
+        modified_entries.iter().for_each(|(key, entry)| {
             self.merged_modified = true;
             self.replenish(*key, entry.clone());
         })
@@ -800,7 +824,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    pub fn set_fork_graph(&mut self, fork_graph: Arc<RwLock<FG>>) {
+    pub fn set_fork_graph(&mut self, fork_graph: Weak<RwLock<FG>>) {
         self.fork_graph = Some(fork_graph);
     }
 
@@ -923,6 +947,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             error!("Program cache doesn't have fork graph.");
             return;
         };
+        let fork_graph = fork_graph.upgrade().unwrap();
         let Ok(fork_graph) = fork_graph.read() else {
             error!("Failed to lock fork graph for reading.");
             return;
@@ -1034,7 +1059,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         is_first_round: bool,
     ) -> Option<(Pubkey, u64)> {
         debug_assert!(self.fork_graph.is_some());
-        let locked_fork_graph = self.fork_graph.as_ref().unwrap().read().unwrap();
+        let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
+        let locked_fork_graph = fork_graph.read().unwrap();
         let mut cooperative_loading_task = None;
         match &self.index {
             IndexImplementation::V1 {
@@ -1100,7 +1126,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                         if let Entry::Vacant(entry) = entry {
                             entry.insert((
                                 loaded_programs_for_tx_batch.slot,
-                                std::thread::current().id(),
+                                thread::current().id(),
                             ));
                             cooperative_loading_task = Some((*key, *usage_count));
                         }
@@ -1134,12 +1160,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 loading_entries, ..
             } => {
                 let loading_thread = loading_entries.get_mut().unwrap().remove(&key);
-                debug_assert_eq!(loading_thread, Some((slot, std::thread::current().id())));
+                debug_assert_eq!(loading_thread, Some((slot, thread::current().id())));
                 // Check that it will be visible to our own fork once inserted
                 if loaded_program.deployment_slot > self.latest_root_slot
                     && !matches!(
                         self.fork_graph
                             .as_ref()
+                            .unwrap()
+                            .upgrade()
                             .unwrap()
                             .read()
                             .unwrap()
@@ -1156,8 +1184,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    pub fn merge(&mut self, tx_batch_cache: &ProgramCacheForTxBatch) {
-        tx_batch_cache.entries.iter().for_each(|(key, entry)| {
+    pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
+        modified_entries.iter().for_each(|(key, entry)| {
             self.assign_program(*key, entry.clone());
         })
     }
@@ -2001,7 +2029,7 @@ mod tests {
             relation: BlockRelation::Unrelated,
         }));
 
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         cache.prune(0, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
@@ -2014,7 +2042,7 @@ mod tests {
             relation: BlockRelation::Ancestor,
         }));
 
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         cache.prune(0, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
@@ -2027,7 +2055,7 @@ mod tests {
             relation: BlockRelation::Descendant,
         }));
 
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         cache.prune(0, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
@@ -2039,7 +2067,7 @@ mod tests {
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {
             relation: BlockRelation::Unknown,
         }));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         cache.prune(0, 0);
         assert!(cache.get_flattened_entries_for_tests().is_empty());
@@ -2056,7 +2084,7 @@ mod tests {
             relation: BlockRelation::Ancestor,
         }));
 
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(program1, new_test_entry(10, 10));
@@ -2146,7 +2174,8 @@ mod tests {
         loading_slot: Slot,
         keys: &[Pubkey],
     ) -> Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> {
-        let locked_fork_graph = cache.fork_graph.as_ref().unwrap().read().unwrap();
+        let fork_graph = cache.fork_graph.as_ref().unwrap().upgrade().unwrap();
+        let locked_fork_graph = fork_graph.read().unwrap();
         let entries = cache.get_flattened_entries_for_tests();
         keys.iter()
             .filter_map(|key| {
@@ -2214,7 +2243,7 @@ mod tests {
         fork_graph.insert_fork(&[0, 5, 11, 25, 27]);
 
         let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(program1, new_test_entry(0, 1));
@@ -2409,7 +2438,7 @@ mod tests {
         fork_graph.insert_fork(&[0, 5, 11, 25, 27]);
 
         let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(program1, new_test_entry(0, 1));
@@ -2466,7 +2495,7 @@ mod tests {
         fork_graph.insert_fork(&[0, 5, 11, 25, 27]);
 
         let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(program1, new_test_entry(0, 1));
@@ -2522,7 +2551,7 @@ mod tests {
         let mut cache = new_mock_cache::<TestForkGraphSpecific>();
         let fork_graph = TestForkGraphSpecific::default();
         let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         let mut missing = vec![(program1, (ProgramCacheMatchCriteria::NoCriteria, 1))];
@@ -2594,7 +2623,7 @@ mod tests {
         fork_graph.insert_fork(&[0, 10, 20]);
         fork_graph.insert_fork(&[0, 5]);
         let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(program1, new_test_entry(0, 1));
@@ -2634,7 +2663,7 @@ mod tests {
         fork_graph.insert_fork(&[0, 10, 20]);
         fork_graph.insert_fork(&[0, 5, 6]);
         let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(fork_graph);
+        cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
         cache.assign_program(program1, new_test_entry(0, 1));

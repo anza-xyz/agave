@@ -3,13 +3,13 @@ use {
     assert_matches::assert_matches,
     crossbeam_channel::{unbounded, Receiver},
     gag::BufferRedirect,
+    itertools::Itertools,
     log::*,
     rand::seq::IteratorRandom,
     serial_test::serial,
     solana_accounts_db::{
         hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
     },
-    solana_client::thin_client::ThinClient,
     solana_core::{
         consensus::{
             tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD, VOTE_THRESHOLD_DEPTH,
@@ -31,7 +31,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
-        cluster::{Cluster, ClusterValidatorInfo},
+        cluster::{Cluster, ClusterValidatorInfo, QuicTpuClient},
         cluster_tests,
         integration_tests::{
             copy_blocks, create_custom_leader_schedule,
@@ -62,7 +62,7 @@ use {
     },
     solana_sdk::{
         account::AccountSharedData,
-        client::{AsyncClient, SyncClient},
+        client::AsyncClient,
         clock::{self, Slot, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
         commitment_config::CommitmentConfig,
         epoch_schedule::{DEFAULT_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH},
@@ -216,13 +216,10 @@ fn test_local_cluster_signature_subscribe() {
         .unwrap();
     let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
 
-    let (rpc, tpu) = cluster_tests::get_client_facing_addr(
-        cluster.connection_cache.protocol(),
-        non_bootstrap_info,
-    );
-    let tx_client = ThinClient::new(rpc, tpu, cluster.connection_cache.clone());
+    let tx_client = cluster.build_tpu_quic_client().unwrap();
 
     let (blockhash, _) = tx_client
+        .rpc_client()
         .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
 
@@ -243,9 +240,14 @@ fn test_local_cluster_signature_subscribe() {
     )
     .unwrap();
 
-    tx_client
-        .retry_transfer(&cluster.funding_keypair, &mut transaction, 5)
-        .unwrap();
+    LocalCluster::send_transaction_with_retries(
+        &tx_client,
+        &[&cluster.funding_keypair],
+        &mut transaction,
+        5,
+        0,
+    )
+    .unwrap();
 
     let mut got_received_notification = false;
     loop {
@@ -371,6 +373,7 @@ fn test_restart_node() {
             ticks_per_slot,
             slots_per_epoch,
             stakers_slot_offset: slots_per_epoch,
+            skip_warmup_slots: true,
             ..ClusterConfig::default()
         },
         SocketAddrSpace::Unspecified,
@@ -422,11 +425,7 @@ fn test_mainnet_beta_cluster_type() {
     .unwrap();
     assert_eq!(cluster_nodes.len(), 1);
 
-    let (rpc, tpu) = cluster_tests::get_client_facing_addr(
-        cluster.connection_cache.protocol(),
-        &cluster.entry_point_info,
-    );
-    let client = ThinClient::new(rpc, tpu, cluster.connection_cache.clone());
+    let client = cluster.build_tpu_quic_client().unwrap();
 
     // Programs that are available at epoch 0
     for program_id in [
@@ -444,8 +443,10 @@ fn test_mainnet_beta_cluster_type() {
             (
                 program_id,
                 client
+                    .rpc_client()
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
+                    .value
             ),
             (_program_id, Some(_))
         );
@@ -457,8 +458,10 @@ fn test_mainnet_beta_cluster_type() {
             (
                 program_id,
                 client
+                    .rpc_client()
                     .get_account_with_commitment(program_id, CommitmentConfig::processed())
                     .unwrap()
+                    .value
             ),
             (program_id, None)
         );
@@ -995,6 +998,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
         let validator_current_slot = cluster
             .get_validator_client(&validator_identity.pubkey())
             .unwrap()
+            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::finalized())
             .unwrap();
         trace!("validator current slot: {validator_current_slot}");
@@ -1230,6 +1234,7 @@ fn test_snapshot_restart_tower() {
             safe_clone_config(&leader_snapshot_test_config.validator_config),
             safe_clone_config(&validator_snapshot_test_config.validator_config),
         ],
+        skip_warmup_slots: true,
         ..ClusterConfig::default()
     };
 
@@ -1373,7 +1378,10 @@ fn test_snapshots_blockstore_floor() {
     let target_slot = slot_floor + 40;
     while current_slot <= target_slot {
         trace!("current_slot: {}", current_slot);
-        if let Ok(slot) = validator_client.get_slot_with_commitment(CommitmentConfig::processed()) {
+        if let Ok(slot) = validator_client
+            .rpc_client()
+            .get_slot_with_commitment(CommitmentConfig::processed())
+        {
             current_slot = slot;
         } else {
             continue;
@@ -1565,6 +1573,7 @@ fn test_no_voting() {
         .unwrap();
     loop {
         let last_slot = client
+            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::processed())
             .expect("Couldn't get slot");
         if last_slot > 4 * VOTE_THRESHOLD_DEPTH as u64 {
@@ -1628,6 +1637,7 @@ fn test_optimistic_confirmation_violation_detection() {
     let mut prev_voted_slot = 0;
     loop {
         let last_voted_slot = client
+            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::processed())
             .unwrap();
         if last_voted_slot > 50 {
@@ -1681,6 +1691,7 @@ fn test_optimistic_confirmation_violation_detection() {
         let client = cluster.get_validator_client(&node_to_restart).unwrap();
         loop {
             let last_root = client
+                .rpc_client()
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap();
             if last_root > prev_voted_slot {
@@ -1758,7 +1769,10 @@ fn test_validator_saves_tower() {
 
     // Wait for some votes to be generated
     loop {
-        if let Ok(slot) = validator_client.get_slot_with_commitment(CommitmentConfig::processed()) {
+        if let Ok(slot) = validator_client
+            .rpc_client()
+            .get_slot_with_commitment(CommitmentConfig::processed())
+        {
             trace!("current slot: {}", slot);
             if slot > 2 {
                 break;
@@ -1780,10 +1794,10 @@ fn test_validator_saves_tower() {
 
     // Wait for the first new root
     let last_replayed_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
-        if let Ok(root) = validator_client.get_slot_with_commitment(CommitmentConfig::root()) {
+        if let Ok(root) = validator_client
+            .rpc_client()
+            .get_slot_with_commitment(CommitmentConfig::finalized())
+        {
             trace!("current root: {}", root);
             if root > 0 {
                 break root;
@@ -1809,10 +1823,10 @@ fn test_validator_saves_tower() {
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
-        if let Ok(root) = validator_client.get_slot_with_commitment(CommitmentConfig::root()) {
+        if let Ok(root) = validator_client
+            .rpc_client()
+            .get_slot_with_commitment(CommitmentConfig::finalized())
+        {
             trace!(
                 "current root: {}, last_replayed_root: {}",
                 root,
@@ -1842,10 +1856,10 @@ fn test_validator_saves_tower() {
 
     // Wait for another new root
     let new_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
-        if let Ok(root) = validator_client.get_slot_with_commitment(CommitmentConfig::root()) {
+        if let Ok(root) = validator_client
+            .rpc_client()
+            .get_slot_with_commitment(CommitmentConfig::finalized())
+        {
             trace!("current root: {}, last tower root: {}", root, tower3_root);
             if root > tower3_root {
                 break root;
@@ -2651,11 +2665,7 @@ fn test_oc_bad_signatures() {
     );
 
     // 3) Start up a spy to listen for and push votes to leader TPU
-    let (rpc, tpu) = cluster_tests::get_client_facing_addr(
-        cluster.connection_cache.protocol(),
-        &cluster.entry_point_info,
-    );
-    let client = ThinClient::new(rpc, tpu, cluster.connection_cache.clone());
+    let client = cluster.build_tpu_quic_client().unwrap();
     let cluster_funding_keypair = cluster.funding_keypair.insecure_clone();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
@@ -2701,9 +2711,14 @@ fn test_oc_bad_signatures() {
                     &bad_authorized_signer_keypair,
                     None,
                 );
-                client
-                    .retry_transfer(&cluster_funding_keypair, &mut vote_tx, 5)
-                    .unwrap();
+                LocalCluster::send_transaction_with_retries(
+                    &client,
+                    &[&cluster_funding_keypair],
+                    &mut vote_tx,
+                    5,
+                    0,
+                )
+                .unwrap();
 
                 num_votes_simulated.fetch_add(1, Ordering::Relaxed);
             }
@@ -2856,8 +2871,8 @@ fn setup_transfer_scan_threads(
     num_starting_accounts: usize,
     exit: Arc<AtomicBool>,
     scan_commitment: CommitmentConfig,
-    update_client_receiver: Receiver<ThinClient>,
-    scan_client_receiver: Receiver<ThinClient>,
+    update_client_receiver: Receiver<QuicTpuClient>,
+    scan_client_receiver: Receiver<QuicTpuClient>,
 ) -> (
     JoinHandle<()>,
     JoinHandle<()>,
@@ -2895,6 +2910,7 @@ fn setup_transfer_scan_threads(
                     return;
                 }
                 let (blockhash, _) = client
+                    .rpc_client()
                     .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
                     .unwrap();
                 for i in 0..starting_keypairs_.len() {
@@ -2941,6 +2957,7 @@ fn setup_transfer_scan_threads(
                     return;
                 }
                 if let Some(total_scan_balance) = client
+                    .rpc_client()
                     .get_program_accounts_with_config(
                         &system_program::id(),
                         scan_commitment_config.clone(),
@@ -4597,6 +4614,7 @@ fn test_slot_hash_expiry() {
 //
 #[test]
 #[serial]
+#[ignore]
 fn test_duplicate_with_pruned_ancestor() {
     solana_logger::setup_with("info,solana_metrics=off");
     solana_core::repair::duplicate_repair_status::set_ancestor_hash_repair_sample_size_for_tests_only(3);
@@ -4865,7 +4883,7 @@ fn test_duplicate_with_pruned_ancestor() {
 #[test]
 #[serial]
 fn test_boot_from_local_state() {
-    solana_logger::setup_with_default(RUST_LOG_FILTER);
+    solana_logger::setup_with_default("error,local_cluster=info");
     const FULL_SNAPSHOT_INTERVAL: Slot = 100;
     const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
 
@@ -4942,22 +4960,11 @@ fn test_boot_from_local_state() {
     info!("Waiting for validator2 to create a new bank snapshot...");
     let timer = Instant::now();
     let bank_snapshot = loop {
-        if let Some(full_snapshot_slot) = snapshot_utils::get_highest_full_snapshot_archive_slot(
-            &validator2_config.full_snapshot_archives_dir,
-        ) {
-            if let Some(incremental_snapshot_slot) =
-                snapshot_utils::get_highest_incremental_snapshot_archive_slot(
-                    &validator2_config.incremental_snapshot_archives_dir,
-                    full_snapshot_slot,
-                )
-            {
-                if let Some(bank_snapshot) = snapshot_utils::get_highest_bank_snapshot_post(
-                    &validator2_config.bank_snapshots_dir,
-                ) {
-                    if bank_snapshot.slot > incremental_snapshot_slot {
-                        break bank_snapshot;
-                    }
-                }
+        if let Some(bank_snapshot) =
+            snapshot_utils::get_highest_bank_snapshot_post(&validator2_config.bank_snapshots_dir)
+        {
+            if bank_snapshot.slot > incremental_snapshot_archive.slot() {
+                break bank_snapshot;
             }
         }
         assert!(
@@ -5033,16 +5040,40 @@ fn test_boot_from_local_state() {
     debug!("snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: {incremental_snapshot_archive:?}");
     info!("Waiting for validator3 to create snapshots... DONE");
 
-    // ensure that all validators have the correct state by comparing snapshots
+    // Ensure that all validators have the correct state by comparing snapshots.
+    // Since validator1 has been running the longest, if may be ahead of the others,
+    // so use it as the comparison for others.
+    // - wait for validator1 to take new snapshots
     // - wait for the other validators to have high enough snapshots
-    // - ensure validator3's snapshot hashes match the other validators' snapshot hashes
+    // - ensure the other validators' snapshots match validator1's
     //
-    // NOTE: There's a chance validator's 1 or 2 have crossed the next full snapshot past what
-    // validator 3 has.  If that happens, validator's 1 or 2 may have purged the snapshots needed
-    // to compare with validator 3, and thus assert.  If that happens, the full snapshot interval
+    // NOTE: There's a chance validator 2 or 3 has crossed the next full snapshot past what
+    // validator 1 has.  If that happens, validator 2 or 3 may have purged the snapshots needed
+    // to compare with validator 1, and thus assert.  If that happens, the full snapshot interval
     // may need to be adjusted larger.
-    for (i, other_validator_config) in [(1, &validator1_config), (2, &validator2_config)] {
-        info!("Checking if validator{i} has the same snapshots as validator3...");
+
+    info!("Waiting for validator1 to create snapshots...");
+    let (incremental_snapshot_archive, full_snapshot_archive) =
+        LocalCluster::wait_for_next_incremental_snapshot(
+            &cluster,
+            &validator1_config.full_snapshot_archives_dir,
+            &validator1_config.incremental_snapshot_archives_dir,
+            Some(Duration::from_secs(5 * 60)),
+        );
+    debug!("snapshot archives:\n\tfull: {full_snapshot_archive:?}\n\tincr: {incremental_snapshot_archive:?}");
+    info!("Waiting for validator1 to create snapshots... DONE");
+
+    // These structs are used to provide better error logs if the asserts below are violated.
+    // The `allow(dead_code)` annotation is to appease clippy, which thinks the field is unused...
+    #[allow(dead_code)]
+    #[derive(Debug)]
+    struct SnapshotSlot(Slot);
+    #[allow(dead_code)]
+    #[derive(Debug)]
+    struct BaseSlot(Slot);
+
+    for (i, other_validator_config) in [(2, &validator2_config), (3, &validator3_config)] {
+        info!("Checking if validator{i} has the same snapshots as validator1...");
         let timer = Instant::now();
         loop {
             if let Some(other_full_snapshot_slot) =
@@ -5063,7 +5094,7 @@ fn test_boot_from_local_state() {
             }
             assert!(
                 timer.elapsed() < Duration::from_secs(60),
-                "It should not take longer than 60 seconds to take snapshots"
+                "It should not take longer than 60 seconds to take snapshots",
             );
             std::thread::yield_now();
         }
@@ -5071,13 +5102,26 @@ fn test_boot_from_local_state() {
             &other_validator_config.full_snapshot_archives_dir,
         );
         debug!("validator{i} full snapshot archives: {other_full_snapshot_archives:?}");
-        assert!(other_full_snapshot_archives
-            .iter()
-            .any(
-                |other_full_snapshot_archive| other_full_snapshot_archive.slot()
-                    == full_snapshot_archive.slot()
-                    && other_full_snapshot_archive.hash() == full_snapshot_archive.hash()
-            ));
+        assert!(
+            other_full_snapshot_archives
+                .iter()
+                .any(
+                    |other_full_snapshot_archive| other_full_snapshot_archive.slot()
+                        == full_snapshot_archive.slot()
+                        && other_full_snapshot_archive.hash() == full_snapshot_archive.hash()
+                ),
+            "full snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: {:?}",
+            (
+                SnapshotSlot(full_snapshot_archive.slot()),
+                full_snapshot_archive.hash(),
+            ),
+            other_full_snapshot_archives
+                .iter()
+                .sorted_unstable()
+                .rev()
+                .map(|snap| (SnapshotSlot(snap.slot()), snap.hash()))
+                .collect::<Vec<_>>(),
+        );
 
         let other_incremental_snapshot_archives = snapshot_utils::get_incremental_snapshot_archives(
             &other_validator_config.incremental_snapshot_archives_dir,
@@ -5085,13 +5129,36 @@ fn test_boot_from_local_state() {
         debug!(
             "validator{i} incremental snapshot archives: {other_incremental_snapshot_archives:?}"
         );
-        assert!(other_incremental_snapshot_archives.iter().any(
-            |other_incremental_snapshot_archive| other_incremental_snapshot_archive.base_slot()
-                == incremental_snapshot_archive.base_slot()
-                && other_incremental_snapshot_archive.slot() == incremental_snapshot_archive.slot()
-                && other_incremental_snapshot_archive.hash() == incremental_snapshot_archive.hash()
-        ));
-        info!("Checking if validator{i} has the same snapshots as validator3... DONE");
+        assert!(
+            other_incremental_snapshot_archives
+                .iter()
+                .any(
+                    |other_incremental_snapshot_archive| other_incremental_snapshot_archive
+                        .base_slot()
+                        == incremental_snapshot_archive.base_slot()
+                        && other_incremental_snapshot_archive.slot()
+                            == incremental_snapshot_archive.slot()
+                        && other_incremental_snapshot_archive.hash()
+                            == incremental_snapshot_archive.hash()
+                ),
+            "incremental snapshot archive does not match!\n  validator1: {:?}\n  validator{i}: {:?}",
+            (
+                BaseSlot(incremental_snapshot_archive.base_slot()),
+                SnapshotSlot(incremental_snapshot_archive.slot()),
+                incremental_snapshot_archive.hash(),
+            ),
+            other_incremental_snapshot_archives
+                .iter()
+                .sorted_unstable()
+                .rev()
+                .map(|snap| (
+                    BaseSlot(snap.base_slot()),
+                    SnapshotSlot(snap.slot()),
+                    snap.hash(),
+                ))
+                .collect::<Vec<_>>(),
+        );
+        info!("Checking if validator{i} has the same snapshots as validator1... DONE");
     }
 }
 

@@ -16,9 +16,9 @@ use {
     solana_banks_server::banks_server::start_local_server,
     solana_bpf_loader_program::serialization::serialize_parameters,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::ic_msg,
     solana_program_runtime::{
-        ic_msg, invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
-        stable_log, timings::ExecuteTimings,
+        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry, stable_log,
     },
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -34,7 +34,7 @@ use {
         clock::{Epoch, Slot},
         entrypoint::{deserialize, ProgramResult, SUCCESS},
         feature_set::FEATURE_NAMES,
-        fee_calculator::{FeeCalculator, FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
+        fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         instruction::{Instruction, InstructionError},
@@ -47,6 +47,7 @@ use {
         stable_layout::stable_instruction::StableInstruction,
         sysvar::{Sysvar, SysvarId},
     },
+    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::{
         cell::RefCell,
@@ -545,13 +546,6 @@ impl ProgramTest {
         self.transaction_account_lock_limit = Some(transaction_account_lock_limit);
     }
 
-    /// Override the SBF compute budget
-    #[allow(deprecated)]
-    #[deprecated(since = "1.8.0", note = "please use `set_compute_max_units` instead")]
-    pub fn set_bpf_compute_max_units(&mut self, bpf_compute_max_units: u64) {
-        self.set_compute_max_units(bpf_compute_max_units);
-    }
-
     /// Add an account to the test environment's genesis config.
     pub fn add_genesis_account(&mut self, address: Pubkey, account: Account) {
         self.genesis_accounts
@@ -612,6 +606,33 @@ impl ProgramTest {
     pub fn add_sysvar_account<S: Sysvar>(&mut self, address: Pubkey, sysvar: &S) {
         let account = create_account_shared_data_for_test(sysvar);
         self.add_account(address, account.into());
+    }
+
+    /// Add a BPF Upgradeable program to the test environment's genesis config.
+    ///
+    /// When testing BPF programs using the program ID of a runtime builtin
+    /// program - such as Core BPF programs - the program accounts must be
+    /// added to the genesis config in order to make them available to the new
+    /// Bank as it's being initialized.
+    ///
+    /// The presence of these program accounts will cause Bank to skip adding
+    /// the builtin version of the program, allowing the provided BPF program
+    /// to be used at the designated program ID instead.
+    ///
+    /// See https://github.com/anza-xyz/agave/blob/c038908600b8a1b0080229dea015d7fc9939c418/runtime/src/bank.rs#L5109-L5126.
+    pub fn add_upgradeable_program_to_genesis(
+        &mut self,
+        program_name: &'static str,
+        program_id: &Pubkey,
+    ) {
+        let program_file = find_file(&format!("{program_name}.so"))
+            .expect("Program file data not available for {program_name} ({program_id})");
+        let elf = read_file(program_file);
+        let program_accounts =
+            programs::bpf_loader_upgradeable_program_accounts(program_id, &elf, &Rent::default());
+        for (address, account) in program_accounts {
+            self.add_genesis_account(address, account);
+        }
     }
 
     /// Add a SBF program to the test environment.
@@ -836,6 +857,7 @@ impl ProgramTest {
             None,
             None,
             Arc::default(),
+            None,
         );
 
         // Add commonly-used SPL programs as a convenience to the user
@@ -945,47 +967,12 @@ impl ProgramTest {
 
 #[async_trait]
 pub trait ProgramTestBanksClientExt {
-    /// Get a new blockhash, similar in spirit to RpcClient::get_new_blockhash()
-    ///
-    /// This probably should eventually be moved into BanksClient proper in some form
-    #[deprecated(
-        since = "1.9.0",
-        note = "Please use `get_new_latest_blockhash `instead"
-    )]
-    async fn get_new_blockhash(&mut self, blockhash: &Hash) -> io::Result<(Hash, FeeCalculator)>;
     /// Get a new latest blockhash, similar in spirit to RpcClient::get_latest_blockhash()
     async fn get_new_latest_blockhash(&mut self, blockhash: &Hash) -> io::Result<Hash>;
 }
 
 #[async_trait]
 impl ProgramTestBanksClientExt for BanksClient {
-    async fn get_new_blockhash(&mut self, blockhash: &Hash) -> io::Result<(Hash, FeeCalculator)> {
-        let mut num_retries = 0;
-        let start = Instant::now();
-        while start.elapsed().as_secs() < 5 {
-            #[allow(deprecated)]
-            if let Ok((fee_calculator, new_blockhash, _slot)) = self.get_fees().await {
-                if new_blockhash != *blockhash {
-                    return Ok((new_blockhash, fee_calculator));
-                }
-            }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
-
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            num_retries += 1;
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "Unable to get new blockhash after {}ms (retried {} times), stuck at {}",
-                start.elapsed().as_millis(),
-                num_retries,
-                blockhash
-            ),
-        ))
-    }
-
     async fn get_new_latest_blockhash(&mut self, blockhash: &Hash) -> io::Result<Hash> {
         let mut num_retries = 0;
         let start = Instant::now();

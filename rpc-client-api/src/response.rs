@@ -5,7 +5,6 @@ use {
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
         fee_calculator::{FeeCalculator, FeeRateGovernor},
-        hash::Hash,
         inflation::Inflation,
         transaction::{Result, TransactionError},
     },
@@ -116,31 +115,6 @@ pub struct RpcBlockhashFeeCalculator {
 #[serde(rename_all = "camelCase")]
 pub struct RpcBlockhash {
     pub blockhash: String,
-    pub last_valid_block_height: u64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RpcFees {
-    pub blockhash: String,
-    pub fee_calculator: FeeCalculator,
-    pub last_valid_slot: Slot,
-    pub last_valid_block_height: u64,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DeprecatedRpcFees {
-    pub blockhash: String,
-    pub fee_calculator: FeeCalculator,
-    pub last_valid_slot: Slot,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Fees {
-    pub blockhash: Hash,
-    pub fee_calculator: FeeCalculator,
     pub last_valid_block_height: u64,
 }
 
@@ -294,10 +268,20 @@ pub struct RpcContactInfo {
     pub pubkey: String,
     /// Gossip port
     pub gossip: Option<SocketAddr>,
+    /// Tvu UDP port
+    pub tvu: Option<SocketAddr>,
     /// Tpu UDP port
     pub tpu: Option<SocketAddr>,
     /// Tpu QUIC port
     pub tpu_quic: Option<SocketAddr>,
+    /// Tpu UDP forwards port
+    pub tpu_forwards: Option<SocketAddr>,
+    /// Tpu QUIC forwards port
+    pub tpu_forwards_quic: Option<SocketAddr>,
+    /// Tpu UDP vote port
+    pub tpu_vote: Option<SocketAddr>,
+    /// Server repair UDP port
+    pub serve_repair: Option<SocketAddr>,
     /// JSON RPC port
     pub rpc: Option<SocketAddr>,
     /// WebSocket PubSub port
@@ -457,14 +441,6 @@ pub enum StakeActivationState {
     Active,
     Deactivating,
     Inactive,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RpcStakeActivation {
-    pub state: StakeActivationState,
-    pub active: u64,
-    pub inactive: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

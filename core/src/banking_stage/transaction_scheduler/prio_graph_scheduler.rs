@@ -358,12 +358,18 @@ impl PrioGraphScheduler {
     ) {
         let thread_id = self.in_flight_tracker.complete_batch(batch_id);
         for transaction in transactions {
-            let account_locks = transaction.get_account_locks_unchecked();
-            self.account_locks.unlock_accounts(
-                account_locks.writable.into_iter(),
-                account_locks.readonly.into_iter(),
-                thread_id,
-            );
+            let message = transaction.message();
+            let account_keys = message.account_keys();
+            let write_account_locks = account_keys
+                .iter()
+                .enumerate()
+                .filter_map(|(index, key)| message.is_writable(index).then_some(key));
+            let read_account_locks = account_keys
+                .iter()
+                .enumerate()
+                .filter_map(|(index, key)| (!message.is_writable(index)).then_some(key));
+            self.account_locks
+                .unlock_accounts(write_account_locks, read_account_locks, thread_id);
         }
     }
 
@@ -550,10 +556,20 @@ fn try_schedule_transaction(
     }
 
     // Schedule the transaction if it can be.
-    let transaction_locks = transaction.get_account_locks_unchecked();
+    let message = transaction.message();
+    let account_keys = message.account_keys();
+    let write_account_locks = account_keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| message.is_writable(index).then_some(key));
+    let read_account_locks = account_keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| (!message.is_writable(index)).then_some(key));
+
     let Some(thread_id) = account_locks.try_lock_accounts(
-        transaction_locks.writable.into_iter(),
-        transaction_locks.readonly.into_iter(),
+        write_account_locks,
+        read_account_locks,
         ThreadSet::any(num_threads),
         thread_selector,
     ) else {

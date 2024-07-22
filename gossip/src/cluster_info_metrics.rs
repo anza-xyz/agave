@@ -129,6 +129,7 @@ pub struct GossipStats {
     pub(crate) new_push_requests2: Counter,
     pub(crate) new_push_requests: Counter,
     pub(crate) new_push_requests_num: Counter,
+    pub(crate) num_unverifed_gossip_addrs: Counter,
     pub(crate) packets_received_count: Counter,
     pub(crate) packets_received_ping_messages_count: Counter,
     pub(crate) packets_received_pong_messages_count: Counter,
@@ -152,7 +153,6 @@ pub struct GossipStats {
     pub(crate) process_pull_response_fail_timeout: Counter,
     pub(crate) process_pull_response_len: Counter,
     pub(crate) process_pull_response_success: Counter,
-    pub(crate) process_pull_response_timeout: Counter,
     pub(crate) process_push_message: Counter,
     pub(crate) prune_message_count: Counter,
     pub(crate) prune_message_len: Counter,
@@ -308,11 +308,6 @@ pub(crate) fn submit_gossip_stats(
         (
             "pull_response_success",
             stats.process_pull_response_success.clear(),
-            i64
-        ),
-        (
-            "process_pull_resp_timeout",
-            stats.process_pull_response_timeout.clear(),
             i64
         ),
         (
@@ -492,6 +487,11 @@ pub(crate) fn submit_gossip_stats(
         (
             "pull_requests_count",
             stats.pull_requests_count.clear(),
+            i64
+        ),
+        (
+            "num_unverifed_gossip_addrs",
+            stats.num_unverifed_gossip_addrs.clear(),
             i64
         ),
         (

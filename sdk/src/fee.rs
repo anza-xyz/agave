@@ -31,7 +31,7 @@ pub struct FeeStructure {
     pub compute_fee_bins: Vec<FeeBin>,
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
 pub struct FeeDetails {
     transaction_fee: u64,
     prioritization_fee: u64,
@@ -161,7 +161,7 @@ impl FeeStructure {
         }
 
         let signature_fee = message
-            .num_signatures()
+            .num_total_signatures()
             .saturating_mul(self.lamports_per_signature);
         let write_lock_fee = message
             .num_write_locks()

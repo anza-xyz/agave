@@ -132,39 +132,28 @@ impl QosService {
         (select_results, num_included)
     }
 
-    /// Updates the transaction costs for committed transactions. Does not handle removing costs
-    /// for transactions that didn't get recorded or committed
-    pub fn update_costs<'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
-        transaction_committed_status: Option<&Vec<CommitTransactionDetails>>,
-        bank: &Bank,
-    ) {
-        if let Some(transaction_committed_status) = transaction_committed_status {
-            Self::update_committed_transaction_costs(
-                transaction_cost_results,
-                transaction_committed_status,
-                bank,
-            )
-        }
-    }
-
-    /// Removes transaction costs from the cost tracker if not committed or recorded
-    pub fn remove_costs<'a>(
+    /// Removes transaction costs from the cost tracker if not committed or recorded, or
+    /// updates the transaction costs for committed transactions.
+    pub fn remove_or_update_costs<'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         transaction_committed_status: Option<&Vec<CommitTransactionDetails>>,
         bank: &Bank,
     ) {
         match transaction_committed_status {
-            Some(transaction_committed_status) => Self::remove_uncommitted_transaction_costs(
-                transaction_cost_results,
-                transaction_committed_status,
-                bank,
-            ),
-            None => Self::remove_transaction_costs(transaction_cost_results, bank),
+            Some(transaction_committed_status) => {
+                Self::remove_or_update_recorded_transaction_costs(
+                    transaction_cost_results,
+                    transaction_committed_status,
+                    bank,
+                )
+            }
+            None => Self::remove_unrecorded_transaction_costs(transaction_cost_results, bank),
         }
     }
 
-    fn remove_uncommitted_transaction_costs<'a>(
+    /// For recorded transactions, remove units reserved by uncommitted transaction, or update
+    /// units for committed transactions.
+    fn remove_or_update_recorded_transaction_costs<'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         transaction_committed_status: &Vec<CommitTransactionDetails>,
         bank: &Bank,
@@ -178,36 +167,31 @@ impl QosService {
                 // checked for update
                 if let Ok(tx_cost) = tx_cost {
                     num_included += 1;
-                    if *transaction_committed_details == CommitTransactionDetails::NotCommitted {
-                        cost_tracker.remove(tx_cost)
+                    match transaction_committed_details {
+                        CommitTransactionDetails::Committed {
+                            compute_units,
+                            loaded_accounts_data_size,
+                        } => {
+                            cost_tracker.update_execution_cost(
+                                tx_cost,
+                                *compute_units,
+                                CostModel::calculate_loaded_accounts_data_size_cost(
+                                    *loaded_accounts_data_size,
+                                    &bank.feature_set,
+                                ),
+                            );
+                        }
+                        CommitTransactionDetails::NotCommitted => {
+                            cost_tracker.remove(tx_cost);
+                        }
                     }
                 }
             });
         cost_tracker.sub_transactions_in_flight(num_included);
     }
 
-    fn update_committed_transaction_costs<'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
-        transaction_committed_status: &Vec<CommitTransactionDetails>,
-        bank: &Bank,
-    ) {
-        let mut cost_tracker = bank.write_cost_tracker().unwrap();
-        transaction_cost_results
-            .zip(transaction_committed_status)
-            .for_each(|(tx_cost, transaction_committed_details)| {
-                // Only transactions that the qos service included have to be
-                // checked for update
-                if let Ok(tx_cost) = tx_cost {
-                    if let CommitTransactionDetails::Committed { compute_units } =
-                        transaction_committed_details
-                    {
-                        cost_tracker.update_execution_cost(tx_cost, *compute_units)
-                    }
-                }
-            });
-    }
-
-    fn remove_transaction_costs<'a>(
+    /// Remove reserved units for transaction batch that unsuccessfully recorded.
+    fn remove_unrecorded_transaction_costs<'a>(
         transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
         bank: &Bank,
     ) {
@@ -723,13 +707,25 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
-        );
+        let loaded_accounts_data_size: usize = 1_000_000;
+        let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
+            &[
+                solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size as u32),
+                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_sdk::pubkey::Pubkey::new_unique(), 1),
+            ],
+            Some(&keypair.pubkey()),
+        ));
+        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(transaction.clone());
         let txs: Vec<SanitizedTransaction> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();
-        let execute_units_adjustment = 10u64;
+        let execute_units_adjustment: u64 = 10;
+        let loaded_accounts_data_size_adjustment: usize = 32000;
+        let loaded_accounts_data_size_cost_adjustment =
+            CostModel::calculate_loaded_accounts_data_size_cost(
+                loaded_accounts_data_size_adjustment,
+                &bank.feature_set,
+            );
 
         // assert all tx_costs should be applied to cost_tracker if all execution_results are all committed
         {
@@ -755,22 +751,19 @@ mod tests {
                 .map(|tx_cost| CommitTransactionDetails::Committed {
                     compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                         + execute_units_adjustment,
+                    loaded_accounts_data_size: loaded_accounts_data_size
+                        + loaded_accounts_data_size_adjustment,
                 })
                 .collect();
-            let final_txs_cost = total_txs_cost + execute_units_adjustment * transaction_count;
+            let final_txs_cost = total_txs_cost
+                + (execute_units_adjustment + loaded_accounts_data_size_cost_adjustment)
+                    * transaction_count;
 
-            // All transactions are committed, no costs should be removed
-            QosService::remove_costs(qos_cost_results.iter(), Some(&committed_status), &bank);
-            assert_eq!(
-                total_txs_cost,
-                bank.read_cost_tracker().unwrap().block_cost()
+            QosService::remove_or_update_costs(
+                qos_cost_results.iter(),
+                Some(&committed_status),
+                &bank,
             );
-            assert_eq!(
-                transaction_count,
-                bank.read_cost_tracker().unwrap().transaction_count()
-            );
-
-            QosService::update_costs(qos_cost_results.iter(), Some(&committed_status), &bank);
             assert_eq!(
                 final_txs_cost,
                 bank.read_cost_tracker().unwrap().block_cost()
@@ -818,18 +811,7 @@ mod tests {
                 bank.read_cost_tracker().unwrap().block_cost()
             );
 
-            // update costs doesn't impact non-committed
-            QosService::update_costs(qos_cost_results.iter(), None, &bank);
-            assert_eq!(
-                total_txs_cost,
-                bank.read_cost_tracker().unwrap().block_cost()
-            );
-            assert_eq!(
-                transaction_count,
-                bank.read_cost_tracker().unwrap().transaction_count()
-            );
-
-            QosService::remove_costs(qos_cost_results.iter(), None, &bank);
+            QosService::remove_or_update_costs(qos_cost_results.iter(), None, &bank);
             assert_eq!(0, bank.read_cost_tracker().unwrap().block_cost());
             assert_eq!(0, bank.read_cost_tracker().unwrap().transaction_count());
         }
@@ -845,13 +827,25 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
-        );
+        let loaded_accounts_data_size: usize = 1_000_000;
+        let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
+            &[
+                solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size as u32),
+                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_sdk::pubkey::Pubkey::new_unique(), 1),
+            ],
+            Some(&keypair.pubkey()),
+        ));
+        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(transaction.clone());
         let txs: Vec<SanitizedTransaction> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();
-        let execute_units_adjustment = 10u64;
+        let execute_units_adjustment: u64 = 10;
+        let loaded_accounts_data_size_adjustment: usize = 32000;
+        let loaded_accounts_data_size_cost_adjustment =
+            CostModel::calculate_loaded_accounts_data_size_cost(
+                loaded_accounts_data_size_adjustment,
+                &bank.feature_set,
+            );
 
         // assert only committed tx_costs are applied cost_tracker
         {
@@ -882,13 +876,18 @@ mod tests {
                         CommitTransactionDetails::Committed {
                             compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
                                 + execute_units_adjustment,
+                            loaded_accounts_data_size: loaded_accounts_data_size
+                                + loaded_accounts_data_size_adjustment,
                         }
                     }
                 })
                 .collect();
 
-            QosService::remove_costs(qos_cost_results.iter(), Some(&committed_status), &bank);
-            QosService::update_costs(qos_cost_results.iter(), Some(&committed_status), &bank);
+            QosService::remove_or_update_costs(
+                qos_cost_results.iter(),
+                Some(&committed_status),
+                &bank,
+            );
 
             // assert the final block cost
             let mut expected_final_txs_count = 0u64;
@@ -896,8 +895,9 @@ mod tests {
             qos_cost_results.iter().enumerate().for_each(|(n, cost)| {
                 if n % 2 != 0 {
                     expected_final_txs_count += 1;
-                    expected_final_block_cost +=
-                        cost.as_ref().unwrap().sum() + execute_units_adjustment;
+                    expected_final_block_cost += cost.as_ref().unwrap().sum()
+                        + execute_units_adjustment
+                        + loaded_accounts_data_size_cost_adjustment;
                 }
             });
             assert_eq!(

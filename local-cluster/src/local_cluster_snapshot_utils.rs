@@ -7,7 +7,7 @@ use {
         },
         snapshot_utils,
     },
-    solana_sdk::{client::SyncClient, commitment_config::CommitmentConfig},
+    solana_sdk::commitment_config::CommitmentConfig,
     std::{
         path::Path,
         thread::sleep,
@@ -76,6 +76,7 @@ impl LocalCluster {
             .get_validator_client(self.entry_point_info.pubkey())
             .unwrap();
         let last_slot = client
+            .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::processed())
             .expect("Couldn't get slot");
 
@@ -121,7 +122,7 @@ impl LocalCluster {
                     "Waiting for next {next_snapshot_type:?} snapshot exceeded the {max_wait_duration:?} maximum wait duration!",
                 );
             }
-            sleep(Duration::from_secs(5));
+            sleep(Duration::from_secs(1));
         };
         trace!(
             "Waited {:?} for next snapshot archive: {:?}",

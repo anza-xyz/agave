@@ -817,6 +817,34 @@ pub mod migrate_config_program_to_core_bpf {
     solana_sdk::declare_id!("2Fr57nzzkLYXW695UdDxDeR5fhnZWSttZeZYemrnpGFV");
 }
 
+pub mod enable_get_epoch_stake_syscall {
+    solana_sdk::declare_id!("7mScTYkJXsbdrcwTQRs7oeCSXoJm4WjzBsRyf8bCU3Np");
+}
+
+pub mod migrate_address_lookup_table_program_to_core_bpf {
+    solana_sdk::declare_id!("C97eKZygrkU4JxJsZdjgbUY7iQR7rKTr4NyDWo2E5pRm");
+}
+
+pub mod zk_elgamal_proof_program_enabled {
+    solana_sdk::declare_id!("zkhiy5oLowR7HY4zogXjCjeMXyruLqBwSWH21qcFtnv");
+}
+
+pub mod verify_retransmitter_signature {
+    solana_sdk::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
+}
+
+pub mod move_stake_and_move_lamports_ixs {
+    solana_sdk::declare_id!("7bTK6Jis8Xpfrs8ZoUfiMDPazTcdPcTWheZFJTA5Z6X4");
+}
+
+pub mod ed25519_precompile_verify_strict {
+    solana_sdk::declare_id!("ed9tNscbWLYBooxWA7FE2B5KHWs8A6sxfY8EzezEcoo");
+}
+
+pub mod vote_only_retransmitter_signed_fec_sets {
+    solana_sdk::declare_id!("RfEcA95xnhuwooVAhUUksEJLZBF7xKCLuqrJoqk4Zph");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1016,6 +1044,13 @@ lazy_static! {
         (migrate_feature_gate_program_to_core_bpf::id(), "Migrate Feature Gate program to Core BPF (programify) #1003"),
         (vote_only_full_fec_sets::id(), "vote only full fec sets"),
         (migrate_config_program_to_core_bpf::id(), "Migrate Config program to Core BPF #1378"),
+        (enable_get_epoch_stake_syscall::id(), "Enable syscall: sol_get_epoch_stake #884"),
+        (migrate_address_lookup_table_program_to_core_bpf::id(), "Migrate Address Lookup Table program to Core BPF #1651"),
+        (zk_elgamal_proof_program_enabled::id(), "Enable ZkElGamalProof program SIMD-0153"),
+        (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
+        (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
+        (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
+        (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

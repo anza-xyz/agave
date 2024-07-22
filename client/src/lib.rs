@@ -2,13 +2,10 @@
 
 pub mod connection_cache;
 pub mod nonblocking;
-pub mod quic_client;
 pub mod send_and_confirm_transactions_in_parallel;
 pub mod thin_client;
 pub mod tpu_client;
-pub mod tpu_connection;
 pub mod transaction_executor;
-pub mod udp_client;
 
 extern crate solana_metrics;
 
@@ -46,9 +43,6 @@ pub mod rpc_config {
 /// Implementation defined RPC server errors
 pub mod rpc_custom_error {
     pub use solana_rpc_client_api::custom_error::*;
-}
-pub mod rpc_deprecated_config {
-    pub use solana_rpc_client_api::deprecated_config::*;
 }
 pub mod rpc_filter {
     pub use solana_rpc_client_api::filter::*;

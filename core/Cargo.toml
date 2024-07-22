@@ -16,6 +16,7 @@ codecov = { repository = "solana-labs/solana", branch = "master", service = "git
 [dependencies]
 ahash = { workspace = true }
 anyhow = { workspace = true }
+arrayvec = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -47,6 +48,7 @@ solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
 solana-client = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
@@ -59,16 +61,18 @@ solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
-solana-program-runtime = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
+solana-sanitize = { workspace = true }
 solana-sdk = { workspace = true }
 solana-send-transaction-service = { workspace = true }
+solana-short-vec = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
+solana-timings = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-turbine = { workspace = true }
@@ -92,6 +96,7 @@ serde_json = { workspace = true }
 serial_test = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-core = { path = ".", features = ["dev-context-only-utils"] }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true }
@@ -126,6 +131,7 @@ frozen-abi = [
     "solana-program-runtime/frozen-abi",
     "solana-runtime/frozen-abi",
     "solana-sdk/frozen-abi",
+    "solana-short-vec/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",

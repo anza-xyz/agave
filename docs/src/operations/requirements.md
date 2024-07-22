@@ -18,65 +18,22 @@ transaction for each block the validator agrees with, which can cost up to
 
 The hardware recommendations below are provided as a guide.  Operators are encouraged to do their own performance testing.
 
-- CPU
-  - 12 cores / 24 threads, or more
-  - 2.8GHz base clock speed, or faster
-  - SHA extensions instruction support
-    - AMD Gen 3 or newer
-    - Intel Ice Lake or newer
-  - AVX2 instruction support (to use official release binaries, self-compile
-    otherwise)
-  - Support for AVX512f is helpful
-- RAM
-  - 256GB or more
-  - Error Correction Code (ECC) memory is suggested
-  - Motherboard with 512GB capacity suggested
-- Disk
-  - PCIe Gen3 x4 NVME SSD, or better
-  - Accounts: 500GB, or larger. High TBW (Total Bytes Written)
-  - Ledger: 1TB or larger. High TBW suggested
-  - OS: (Optional) 500GB, or larger. SATA OK
-  - The OS may be installed on the ledger disk, though testing has shown better
-    performance with the ledger on its own disk
-  - Accounts and ledger _can_ be stored on the same disk, however due to high
-    IOPS, this is not recommended
-  - The Samsung 970 and 980 Pro series SSDs are popular with the validator community
-- GPUs
-  - Not necessary at this time
-  - Operators in the validator community do not use GPUs currently
+| Component | Validator Requirements | Additional RPC Node Requirements |
+|-----------|------------------------|----------------------------------|
+| **CPU**   | - 2.8GHz base clock speed, or faster<br />- SHA extensions instruction support<br />- AMD Gen 3 or newer<br />- Intel Ice Lake or newer<br />- Higher clock speed is preferable over more cores<br />- AVX2 instruction support (to use official release binaries, self-compile otherwise)<br />- Support for AVX512f is helpful<br />||
+| | 12 cores / 24 threads, or more  | 16 cores / 32 threads, or more |
+| **RAM**   | Error Correction Code (ECC) memory is suggested<br />Motherboard with 512GB capacity suggested ||
+| | 256GB or more| 512 GB or more for **all [account indexes](https://docs.solanalabs.com/operations/setup-an-rpc-node#account-indexing)** |
+| **Disk**  | PCIe Gen3 x4 NVME SSD, or better, on each of: <br />- **Accounts**: 500GB, or larger. High TBW (Total Bytes Written)<br />- **Ledger**: 1TB or larger. High TBW suggested<br />- **Snapshots**: 250GB or larger. High TBW suggested<br />- **OS**: (Optional) 500GB, or larger. SATA OK<br /><br />The OS may be installed on the ledger disk, though testing has shown better performance with the ledger on its own disk<br /><br />Accounts and ledger *can* be stored on the same disk, however due to high IOPS, this is not recommended<br /><br />The Samsung 970 and 980 Pro series SSDs are popular with the validator community | Consider a larger ledger disk if longer transaction history is required<br /><br />Accounts and ledger **should not** be stored on the same disk |
+| **GPUs**  | Not necessary at this time<br />Operators in the validator community do not use GPUs currently | |
 
-### RPC Node Recommendations
-
-The [hardware recommendations](#hardware-recommendations) above should be considered
-bare minimums if the validator is intended to be employed as an RPC node. To provide
-full functionality and improved reliability, the following adjustments should be
-made.
-
-- CPU
-  - 16 cores / 32 threads, or more
-- RAM
-  - 512 GB or more if `account-index` is used
-- Disk
-  - Consider a larger ledger disk if longer transaction history is required
-  - Accounts and ledger should not be stored on the same disk
 
 ## Virtual machines on Cloud Platforms
 
-While you can run a validator on a cloud computing platform, it may not
-be cost-efficient over the long term.
-
-However, it may be convenient to run non-voting api nodes on VM instances for
-your own internal usage. This use case includes exchanges and services built on
-Solana.
-
-In fact, the mainnet-beta validators operated by the team are currently
-(Mar. 2021) run on GCE `n2-standard-32` (32 vCPUs, 128 GB memory) instances with
-2048 GB SSD for operational convenience.
-
-For other cloud platforms, select instance types with similar specs.
-
-Also note that egress internet traffic usage may turn out to be high,
-especially for the case of running staked validators.
+Running a solana node in the cloud requires significantly greater
+operational expertise to achieve stability and performance. Do not
+expect to find sympathetic voices should you chose this route and
+find yourself in need of support.
 
 ## Docker
 
@@ -97,7 +54,7 @@ Prebuilt binaries are available for Linux x86_64 on CPUs supporting AVX2 \(Ubunt
 MacOS or WSL users may build from source.
 
 ## Networking
-Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred.
+Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred (especially for mainnet-beta).
 
 ### Port Forwarding
 The following ports need to be open to the internet for both inbound and outbound
