@@ -94,6 +94,7 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
         },
+        thread::JoinHandle,
     },
 };
 
@@ -538,7 +539,15 @@ fn assert_capitalization(bank: &Bank) {
     assert!(bank.calculate_and_verify_capitalization(debug_verify));
 }
 
-fn setup_slot_recording(arg_matches: &ArgMatches) -> TODO {
+fn setup_slot_recording(
+    arg_matches: &ArgMatches,
+) -> (
+    Option<TransactionStatusSender>,
+    Option<JoinHandle<()>>,
+    Option<ProcessSlotCallback>,
+    Option<File>,
+    Option<Arc<Mutex<Vec<SlotDetails>>>>,
+) {
     // .default_value() does not work with .conflicts_with() in clap 2.33
     // .conflicts_with("verify_slots")
     // https://github.com/clap-rs/clap/issues/1605#issuecomment-722326915
@@ -668,6 +677,14 @@ fn setup_slot_recording(arg_matches: &ArgMatches) -> TODO {
     } else {
         (None, None, None)
     };
+
+    (
+        transaction_status_sender,
+        tx_receiver,
+        slot_callback,
+        record_slots_file,
+        recorded_slots,
+    )
 }
 
 #[cfg(not(target_env = "msvc"))]
@@ -1600,7 +1617,13 @@ fn main() {
                     );
 
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
-
+                    let (
+                        transaction_status_sender,
+                        tx_receiver,
+                        slot_callback,
+                        record_slots_file,
+                        recorded_slots,
+                    ) = setup_slot_recording(arg_matches);
                     process_options.slot_callback = slot_callback;
 
                     let output_format =
