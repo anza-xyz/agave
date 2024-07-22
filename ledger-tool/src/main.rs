@@ -548,143 +548,133 @@ fn setup_slot_recording(
     Option<File>,
     Option<Arc<Mutex<Vec<SlotDetails>>>>,
 ) {
-    // .default_value() does not work with .conflicts_with() in clap 2.33
-    // .conflicts_with("verify_slots")
-    // https://github.com/clap-rs/clap/issues/1605#issuecomment-722326915
-    // So open-code the conflicts_with() here
-    if arg_matches.occurrences_of("record_slots") > 0
-        && arg_matches.occurrences_of("verify_slots") > 0
-    {
-        eprintln!(
-                            "error: The argument '--verify-slots <FILENAME>' cannot be used with '--record-slots <FILENAME>'"
-                        );
-        exit(1);
-    }
-
-    let mut transaction_status_sender = None;
-    let mut tx_receiver = None;
-
-    let (slot_callback, record_slots_file, recorded_slots) = if arg_matches
-        .occurrences_of("record_slots")
-        > 0
-    {
-        let filename = Path::new(arg_matches.value_of_os("record_slots").unwrap());
-
-        let file = File::create(filename).unwrap_or_else(|err| {
-            eprintln!("Unable to write to file: {}: {:#}", filename.display(), err);
-            exit(1);
-        });
-
-        let mut include_bank = false;
-        let mut include_tx = false;
-
-        if let Some(args) = arg_matches.values_of("record_slots_config") {
-            for arg in args {
-                match arg {
-                    "tx" => include_tx = true,
-                    "accounts" => include_bank = true,
-                    _ => unreachable!(),
-                }
-            }
-        }
-
-        let slot_hashes = Arc::new(Mutex::new(Vec::new()));
-
-        if include_tx {
-            let (sender, receiver) = crossbeam_channel::unbounded();
-
-            transaction_status_sender = Some(TransactionStatusSender { sender });
-
-            let slots = Arc::clone(&slot_hashes);
-
-            tx_receiver = Some(std::thread::spawn(move || {
-                record_transactions(receiver, slots);
-            }));
-        }
-
-        let slot_callback = Arc::new({
-            let slots = Arc::clone(&slot_hashes);
-            move |bank: &Bank| {
-                let mut details = if include_bank {
-                    bank_hash_details::SlotDetails::try_from(bank).unwrap()
-                } else {
-                    bank_hash_details::SlotDetails {
-                        slot: bank.slot(),
-                        bank_hash: bank.hash().to_string(),
-                        ..Default::default()
-                    }
-                };
-
-                let mut slots = slots.lock().unwrap();
-
-                if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == details.slot) {
-                    // copy all fields except transactions
-                    swap(&mut recorded_slot.transactions, &mut details.transactions);
-
-                    *recorded_slot = details;
-                } else {
-                    slots.push(details);
-                }
-            }
-        });
-
-        (
-            Some(slot_callback as ProcessSlotCallback),
-            Some(file),
-            Some(slot_hashes),
-        )
-    } else if arg_matches.occurrences_of("verify_slots") > 0 {
-        let filename = Path::new(arg_matches.value_of_os("verify_slots").unwrap());
-
-        let file = File::open(filename).unwrap_or_else(|err| {
-            eprintln!("Unable to read file: {}: {err:#}", filename.display());
-            exit(1);
-        });
-
-        let reader = std::io::BufReader::new(file);
-
-        let details: bank_hash_details::BankHashDetails = serde_json::from_reader(reader)
-            .unwrap_or_else(|err| {
-                eprintln!("Error loading slots file: {err:#}");
+    let record_slots = arg_matches.occurrences_of("record_slots") > 0;
+    let verify_slots = arg_matches.occurrences_of("verify_slots") > 0;
+    match (record_slots, verify_slots) {
+        (false, false) => (None, None, None, None, None),
+        (true, false) => {
+            let filename = Path::new(arg_matches.value_of_os("record_slots").unwrap());
+            let file = File::create(filename).unwrap_or_else(|err| {
+                eprintln!("Unable to write to file: {}: {:#}", filename.display(), err);
                 exit(1);
             });
 
-        let slots = Arc::new(Mutex::new(details.bank_hash_details));
-
-        let slot_callback = Arc::new(move |bank: &Bank| {
-            if slots.lock().unwrap().is_empty() {
-                error!(
-                    "Expected slot: not found got slot: {} hash: {}",
-                    bank.slot(),
-                    bank.hash()
-                );
-            } else {
-                let bank_hash_details::SlotDetails {
-                    slot: expected_slot,
-                    bank_hash: expected_hash,
-                    ..
-                } = slots.lock().unwrap().remove(0);
-                if bank.slot() != expected_slot || bank.hash().to_string() != expected_hash {
-                    error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} hash: {}",
-                                bank.slot(), bank.hash());
-                } else {
-                    info!("Expected slot: {expected_slot} hash: {expected_hash} correct");
+            let mut include_bank = false;
+            let mut include_tx = false;
+            if let Some(args) = arg_matches.values_of("record_slots_config") {
+                for arg in args {
+                    match arg {
+                        "tx" => include_tx = true,
+                        "accounts" => include_bank = true,
+                        _ => unreachable!(),
+                    }
                 }
             }
-        });
 
-        (Some(slot_callback as ProcessSlotCallback), None, None)
-    } else {
-        (None, None, None)
-    };
+            let slot_hashes = Arc::new(Mutex::new(Vec::new()));
+            let (transaction_status_sender, tx_receiver) = if include_tx {
+                let (sender, receiver) = crossbeam_channel::unbounded();
 
-    (
-        transaction_status_sender,
-        tx_receiver,
-        slot_callback,
-        record_slots_file,
-        recorded_slots,
-    )
+                let slots = Arc::clone(&slot_hashes);
+                let tx_receiver = Some(std::thread::spawn(move || {
+                    record_transactions(receiver, slots);
+                }));
+
+                (Some(TransactionStatusSender { sender }), tx_receiver)
+            } else {
+                (None, None)
+            };
+
+            let slot_callback = Arc::new({
+                let slots = Arc::clone(&slot_hashes);
+                move |bank: &Bank| {
+                    let mut details = if include_bank {
+                        bank_hash_details::SlotDetails::try_from(bank).unwrap()
+                    } else {
+                        bank_hash_details::SlotDetails {
+                            slot: bank.slot(),
+                            bank_hash: bank.hash().to_string(),
+                            ..Default::default()
+                        }
+                    };
+
+                    let mut slots = slots.lock().unwrap();
+
+                    if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == details.slot) {
+                        // copy all fields except transactions
+                        swap(&mut recorded_slot.transactions, &mut details.transactions);
+
+                        *recorded_slot = details;
+                    } else {
+                        slots.push(details);
+                    }
+                }
+            });
+
+            (
+                transaction_status_sender,
+                tx_receiver,
+                Some(slot_callback as ProcessSlotCallback),
+                Some(file),
+                Some(slot_hashes),
+            )
+        }
+        (false, true) => {
+            let filename = Path::new(arg_matches.value_of_os("verify_slots").unwrap());
+            let file = File::open(filename).unwrap_or_else(|err| {
+                eprintln!("Unable to read file: {}: {err:#}", filename.display());
+                exit(1);
+            });
+            let reader = std::io::BufReader::new(file);
+            let details: bank_hash_details::BankHashDetails = serde_json::from_reader(reader)
+                .unwrap_or_else(|err| {
+                    eprintln!("Error loading slots file: {err:#}");
+                    exit(1);
+                });
+
+            let slots = Arc::new(Mutex::new(details.bank_hash_details));
+            let slot_callback = Arc::new(move |bank: &Bank| {
+                if slots.lock().unwrap().is_empty() {
+                    error!(
+                        "Expected slot: not found got slot: {} hash: {}",
+                        bank.slot(),
+                        bank.hash()
+                    );
+                } else {
+                    let bank_hash_details::SlotDetails {
+                        slot: expected_slot,
+                        bank_hash: expected_hash,
+                        ..
+                    } = slots.lock().unwrap().remove(0);
+                    if bank.slot() != expected_slot || bank.hash().to_string() != expected_hash {
+                        error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} hash: {}",
+                                    bank.slot(), bank.hash());
+                    } else {
+                        info!("Expected slot: {expected_slot} hash: {expected_hash} correct");
+                    }
+                }
+            });
+
+            (
+                None,
+                None,
+                Some(slot_callback as ProcessSlotCallback),
+                None,
+                None,
+            )
+        }
+        (true, true) => {
+            // .default_value() does not work with .conflicts_with() in clap 2.33
+            // .conflicts_with("verify_slots")
+            // https://github.com/clap-rs/clap/issues/1605#issuecomment-722326915
+            // So open-code the conflicts_with() here
+            eprintln!(
+                "error: The argument '--verify-slots <FILENAME>' cannot be used with \
+                '--record-slots <FILENAME>'"
+            );
+            exit(1);
+        }
+    }
 }
 
 fn record_transactions(
