@@ -323,15 +323,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
             }
-            if let Some(owner_index) = accounts
+            if !accounts
                 .get(builtins_start_index..)
                 .ok_or(TransactionError::ProgramAccountNotFound)?
                 .iter()
-                .position(|(key, _)| key == owner_id)
+                .any(|(key, _)| key == owner_id)
             {
-                builtins_start_index.saturating_add(owner_index)
-            } else {
-                let owner_index = accounts.len();
                 if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
@@ -350,7 +347,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
                 }
-                owner_index
             }
             Ok(account_indices)
         })
