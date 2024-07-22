@@ -22,6 +22,16 @@ pub type TransactionNumSignaturesFn =
 pub type TransactionSignaturesFn =
     unsafe extern "C" fn(transaction_ptr: TransactionPtr) -> *const u8;
 
+/// Returns the total number of signatures in the transaction, including any
+/// pre-compile signatures.
+/// WARNING: This function should not be used to determine the number of
+/// signatures returned by `TransactionSignaturesFn`. Instead, use
+/// `TransactionNumSignaturesFn`.
+/// # Safety
+/// - The transaction pointer must be valid.
+pub type TransactionNumTotalSignatures =
+    unsafe extern "C" fn(transaction_ptr: TransactionPtr) -> u64;
+
 /// Returns the number of requested write-locks in this transaction.
 /// This does not consider if write-locks are demoted.
 /// # Safety
@@ -159,6 +169,10 @@ pub struct TransactionInterface {
     /// Returns pointer to the first signature in the transaction.
     /// See [`TransactionSignaturesFn`].
     pub signatures_fn: TransactionSignaturesFn,
+    /// Returns the total number of signatures in the transaction, including
+    /// any pre-compile signatures.
+    /// See [`TransactionNumTotalSignatures`].
+    pub num_total_signatures_fn: TransactionNumTotalSignatures,
     /// Returns the number of requested write-locks in this transaction.
     /// See [`TransactionNumWriteLocksFn`].
     pub num_write_locks_fn: TransactionNumWriteLocksFn,

@@ -27,6 +27,11 @@ pub unsafe fn create_transaction_interface<Tx: SVMTransaction>(
         transaction.signatures().as_ptr() as *const u8
     }
 
+    extern "C" fn num_total_signatures<Tx: SVMTransaction>(transaction_ptr: TransactionPtr) -> u64 {
+        let transaction = unsafe { &*(transaction_ptr as *const Tx) };
+        transaction.num_total_signatures()
+    }
+
     extern "C" fn num_write_locks<Tx: SVMTransaction>(transaction_ptr: TransactionPtr) -> u64 {
         let transaction = unsafe { &*(transaction_ptr as *const Tx) };
         transaction.num_write_locks()
@@ -121,6 +126,7 @@ pub unsafe fn create_transaction_interface<Tx: SVMTransaction>(
         transaction_ptr: transaction as *const Tx as *const core::ffi::c_void,
         num_signatures_fn: num_signatures::<Tx>,
         signatures_fn: signatures::<Tx>,
+        num_total_signatures_fn: num_total_signatures::<Tx>,
         num_write_locks_fn: num_write_locks::<Tx>,
         recent_blockhash_fn: recent_blockhash::<Tx>,
         num_instructions_fn: num_instructions::<Tx>,
