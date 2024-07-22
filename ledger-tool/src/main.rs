@@ -687,6 +687,69 @@ fn setup_slot_recording(
     )
 }
 
+fn record_transactions(
+    recv: crossbeam_channel::Receiver<TransactionStatusMessage>,
+    slots: Arc<Mutex<Vec<SlotDetails>>>,
+) {
+    for tsm in recv {
+        if let TransactionStatusMessage::Batch(batch) = tsm {
+            let slot = batch.bank.slot();
+
+            assert_eq!(batch.transactions.len(), batch.execution_results.len());
+
+            let transactions: Vec<_> = batch
+                .transactions
+                .iter()
+                .zip(batch.execution_results)
+                .zip(batch.transaction_indexes)
+                .map(|((tx, execution_results), index)| {
+                    let message = tx.message();
+
+                    let accounts: Vec<String> = message
+                        .account_keys()
+                        .iter()
+                        .map(|acc| acc.to_string())
+                        .collect();
+
+                    let instructions = message
+                        .instructions()
+                        .iter()
+                        .map(|ix| UiInstruction::parse(ix, &message.account_keys(), None))
+                        .collect();
+
+                    let is_simple_vote_tx = tx.is_simple_vote_transaction();
+                    let execution_results = execution_results.map(|(details, _)| details);
+
+                    TransactionDetails {
+                        signature: tx.signature().to_string(),
+                        accounts,
+                        instructions,
+                        is_simple_vote_tx,
+                        execution_results,
+                        index,
+                    }
+                })
+                .collect();
+
+            let mut slots = slots.lock().unwrap();
+
+            if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == slot) {
+                recorded_slot.transactions.extend(transactions);
+            } else {
+                slots.push(SlotDetails {
+                    slot,
+                    transactions,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    for slot in slots.lock().unwrap().iter_mut() {
+        slot.transactions.sort_by(|a, b| a.index.cmp(&b.index));
+    }
+}
+
 #[cfg(not(target_env = "msvc"))]
 use jemallocator::Jemalloc;
 
@@ -2888,67 +2951,4 @@ fn main() {
     };
     measure_total_execution_time.stop();
     info!("{}", measure_total_execution_time);
-}
-
-fn record_transactions(
-    recv: crossbeam_channel::Receiver<TransactionStatusMessage>,
-    slots: Arc<Mutex<Vec<SlotDetails>>>,
-) {
-    for tsm in recv {
-        if let TransactionStatusMessage::Batch(batch) = tsm {
-            let slot = batch.bank.slot();
-
-            assert_eq!(batch.transactions.len(), batch.execution_results.len());
-
-            let transactions: Vec<_> = batch
-                .transactions
-                .iter()
-                .zip(batch.execution_results)
-                .zip(batch.transaction_indexes)
-                .map(|((tx, execution_results), index)| {
-                    let message = tx.message();
-
-                    let accounts: Vec<String> = message
-                        .account_keys()
-                        .iter()
-                        .map(|acc| acc.to_string())
-                        .collect();
-
-                    let instructions = message
-                        .instructions()
-                        .iter()
-                        .map(|ix| UiInstruction::parse(ix, &message.account_keys(), None))
-                        .collect();
-
-                    let is_simple_vote_tx = tx.is_simple_vote_transaction();
-                    let execution_results = execution_results.map(|(details, _)| details);
-
-                    TransactionDetails {
-                        signature: tx.signature().to_string(),
-                        accounts,
-                        instructions,
-                        is_simple_vote_tx,
-                        execution_results,
-                        index,
-                    }
-                })
-                .collect();
-
-            let mut slots = slots.lock().unwrap();
-
-            if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == slot) {
-                recorded_slot.transactions.extend(transactions);
-            } else {
-                slots.push(SlotDetails {
-                    slot,
-                    transactions,
-                    ..Default::default()
-                });
-            }
-        }
-    }
-
-    for slot in slots.lock().unwrap().iter_mut() {
-        slot.transactions.sort_by(|a, b| a.index.cmp(&b.index));
-    }
 }
