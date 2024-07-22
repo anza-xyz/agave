@@ -475,6 +475,7 @@ impl<'a> InvokeContext<'a> {
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
+            debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(self.transaction_context, 0)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;

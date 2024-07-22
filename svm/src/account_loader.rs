@@ -299,7 +299,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         .iter()
         .map(|instruction| {
             let mut account_indices = Vec::with_capacity(2);
-            let mut program_index = instruction.program_id_index as usize;
+            let program_index = instruction.program_id_index as usize;
             // This command may never return error, because the transaction is sanitized
             let (program_id, program_account) = accounts
                 .get(program_index)
@@ -323,7 +323,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
             }
-            program_index = if let Some(owner_index) = accounts
+            if let Some(owner_index) = accounts
                 .get(builtins_start_index..)
                 .ok_or(TransactionError::ProgramAccountNotFound)?
                 .iter()
@@ -351,8 +351,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     return Err(TransactionError::ProgramAccountNotFound);
                 }
                 owner_index
-            };
-            account_indices.insert(0, program_index as IndexOfAccount);
+            }
             Ok(account_indices)
         })
         .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
