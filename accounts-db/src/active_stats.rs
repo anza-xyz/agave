@@ -5,6 +5,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(Debug, Default)]
 pub struct ActiveStats {
     clean: AtomicUsize,
+    clean_collect_candidates: AtomicUsize,
+    clean_sort_candidates: AtomicUsize,
+    clean_scan_candidates: AtomicUsize,
+    clean_old_accounts: AtomicUsize,
+    clean_collect_store_counts: AtomicUsize,
+    clean_calc_delete_deps: AtomicUsize,
+    clean_filter_zero_lamport: AtomicUsize,
+    clean_collect_reclaims: AtomicUsize,
+    clean_purge_reclaims: AtomicUsize,
+    clean_handle_reclaims: AtomicUsize,
     squash_ancient: AtomicUsize,
     shrink: AtomicUsize,
     hash: AtomicUsize,
@@ -17,6 +27,16 @@ pub struct ActiveStats {
 #[derive(Debug, Copy, Clone)]
 pub enum ActiveStatItem {
     Clean,
+    CleanCollectCandidates,
+    CleanSortCandidates,
+    CleanScanCandidates,
+    CleanOldAccounts,
+    CleanCollectStoreCounts,
+    CleanCalcDeleteDeps,
+    CleanFilterZeroLamport,
+    CleanCollectReclaims,
+    CleanPurgeReclaims,
+    CleanHandleReclaims,
     Shrink,
     SquashAncient,
     Hash,
@@ -56,6 +76,16 @@ impl ActiveStats {
     fn update_and_log(&self, item: ActiveStatItem, modify_stat: impl Fn(&AtomicUsize) -> usize) {
         let stat = match item {
             ActiveStatItem::Clean => &self.clean,
+            ActiveStatItem::CleanCollectCandidates => &self.clean_collect_candidates,
+            ActiveStatItem::CleanSortCandidates => &self.clean_sort_candidates,
+            ActiveStatItem::CleanScanCandidates => &self.clean_scan_candidates,
+            ActiveStatItem::CleanOldAccounts => &self.clean_old_accounts,
+            ActiveStatItem::CleanCollectStoreCounts => &self.clean_collect_store_counts,
+            ActiveStatItem::CleanCalcDeleteDeps => &self.clean_calc_delete_deps,
+            ActiveStatItem::CleanFilterZeroLamport => &self.clean_filter_zero_lamport,
+            ActiveStatItem::CleanCollectReclaims => &self.clean_collect_reclaims,
+            ActiveStatItem::CleanPurgeReclaims => &self.clean_purge_reclaims,
+            ActiveStatItem::CleanHandleReclaims => &self.clean_handle_reclaims,
             ActiveStatItem::Shrink => &self.shrink,
             ActiveStatItem::SquashAncient => &self.squash_ancient,
             ActiveStatItem::Hash => &self.hash,
@@ -67,6 +97,41 @@ impl ActiveStats {
         let value = modify_stat(stat);
         match item {
             ActiveStatItem::Clean => datapoint_info!("accounts_db_active", ("clean", value, i64)),
+            ActiveStatItem::CleanCollectCandidates => datapoint_info!(
+                "accounts_db_active",
+                ("clean_collect_candidates", value, i64),
+            ),
+            ActiveStatItem::CleanSortCandidates => {
+                datapoint_info!("accounts_db_active", ("clean_sort_candidates", value, i64))
+            }
+            ActiveStatItem::CleanScanCandidates => {
+                datapoint_info!("accounts_db_active", ("clean_scan_candidates", value, i64))
+            }
+            ActiveStatItem::CleanOldAccounts => {
+                datapoint_info!("accounts_db_active", ("clean_old_accounts", value, i64))
+            }
+            ActiveStatItem::CleanCollectStoreCounts => {
+                datapoint_info!(
+                    "accounts_db_active",
+                    ("clean_collect_store_counts", value, i64),
+                )
+            }
+            ActiveStatItem::CleanCalcDeleteDeps => {
+                datapoint_info!("accounts_db_active", ("clean_calc_delete_deps", value, i64))
+            }
+            ActiveStatItem::CleanFilterZeroLamport => datapoint_info!(
+                "accounts_db_active",
+                ("clean_filter_zero_lamport", value, i64),
+            ),
+            ActiveStatItem::CleanCollectReclaims => {
+                datapoint_info!("accounts_db_active", ("clean_collect_reclaims", value, i64))
+            }
+            ActiveStatItem::CleanPurgeReclaims => {
+                datapoint_info!("accounts_db_active", ("clean_purge_reclaims", value, i64))
+            }
+            ActiveStatItem::CleanHandleReclaims => {
+                datapoint_info!("accounts_db_active", ("clean_handle_reclaims", value, i64))
+            }
             ActiveStatItem::SquashAncient => {
                 datapoint_info!("accounts_db_active", ("squash_ancient", value, i64))
             }
