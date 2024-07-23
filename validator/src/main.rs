@@ -1928,6 +1928,7 @@ pub fn main() {
                 })
             });
 
+    let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,
@@ -1935,6 +1936,7 @@ pub fn main() {
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_sockets: tvu_receive_threads,
+        num_quic_endpoints,
     };
 
     let cluster_entrypoints = entrypoint_addrs

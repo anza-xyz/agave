@@ -28,6 +28,9 @@ use {
 pub const MAX_STAKED_CONNECTIONS: usize = 2000;
 pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
+// This will be adjusted and parameterized in follow-on PRs.
+pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
+
 pub struct SkipClientVerification;
 
 impl SkipClientVerification {
@@ -189,6 +192,12 @@ pub struct StreamStats {
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
     pub(crate) connection_rate_limiter_length: AtomicUsize,
+<<<<<<< HEAD
+=======
+    pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
+    pub(crate) total_incoming_connection_attempts: AtomicUsize,
+    pub(crate) quic_endpoints_count: AtomicUsize,
+>>>>>>> 5f4a08c6c1 (Make quic endpoints count configurable (#2035))
 }
 
 impl StreamStats {
@@ -517,6 +526,26 @@ impl StreamStats {
                 self.connection_rate_limiter_length.load(Ordering::Relaxed),
                 i64
             ),
+<<<<<<< HEAD
+=======
+            (
+                "outstanding_incoming_connection_attempts",
+                self.outstanding_incoming_connection_attempts
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "total_incoming_connection_attempts",
+                self.total_incoming_connection_attempts
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "quic_endpoints_count",
+                self.quic_endpoints_count.load(Ordering::Relaxed),
+                i64
+            ),
+>>>>>>> 5f4a08c6c1 (Make quic endpoints count configurable (#2035))
         );
     }
 }
