@@ -42,7 +42,7 @@
 ///
 /// ```
 /// // Measure expression blocks
-/// # use solana_measure::measure;
+/// # use solana_measure::measure_time;
 /// # fn complex_calculation() -> i32 { 42 }
 /// # fn complex_transform(x: i32) -> i32 { x + 3 }
 /// # fn record_result(y: i32) {}
