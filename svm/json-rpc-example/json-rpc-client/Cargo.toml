@@ -1,0 +1,26 @@
+[package]
+name = "solana-svm-example-json-rpc-client"
+description = "Solana SVM Example JSON RPC CLient"
+documentation = "https://docs.rs/solana-svm"
+version = "2.1.0"
+edition = "2021"
+
+[dependencies]
+borsh = { version = "1.5.1", features = ["derive"] }
+clap = "2.33.1"
+home = "0.5"
+solana-client = { path = "../../../client", version = "2.1.0" }
+solana-sdk = { path = "../../../sdk", version = "2.1.0" }
+thiserror = "1"
+yaml-rust = "0.4"
+
+[patch.crates-io]
+solana-program = { path = "../../../sdk/program", version = "2.1.0" }
+solana-zk-token-sdk = { path = "../../../zk-token-sdk", version = "2.1.0" }
+
+# These features are needed for CI
+[features]
+dummy-for-ci-check = []
+frozen-abi = []
+
+[workspace]
