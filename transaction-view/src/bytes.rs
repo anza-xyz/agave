@@ -146,7 +146,7 @@ mod tests {
         // Non-zero offset.
         assert!(check_remaining(&[1, 2, 3], 1, 0).is_ok());
         assert!(check_remaining(&[1, 2, 3], 1, 1).is_ok());
-        assert!(check_remaining(&[1, 2, 3], 1, 2).is_err());
+        assert!(check_remaining(&[1, 2, 3], 1, 2).is_ok());
         assert!(check_remaining(&[1, 2, 3], 1, usize::MAX).is_err());
     }
 
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(offset, 2);
         assert_eq!(read_byte(&bytes, &mut offset), Ok(7));
         assert_eq!(offset, 3);
-        assert!(read_byte(&bytes, &mut offset).is_ok());
+        assert!(read_byte(&bytes, &mut offset).is_err());
     }
 
     #[test]
