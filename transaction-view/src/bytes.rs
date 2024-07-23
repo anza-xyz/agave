@@ -34,26 +34,28 @@ pub fn read_byte(bytes: &[u8], offset: &mut usize) -> Result<u8> {
 #[inline(always)]
 pub fn read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result<u16> {
     let mut result = 0u16;
-    let mut shift = 0;
+    let mut shift = 0u16;
 
     for i in 0..3 {
         // Implicitly checks that the offset is within bounds, no need
         // to call check_remaining explicitly here.
-        let byte = *bytes.get(*offset + i).ok_or(TransactionParsingError)?;
+        let byte = *bytes
+            .get(offset.wrapping_add(i))
+            .ok_or(TransactionParsingError)?;
         // non-minimal encoding or overflow
         if (i > 0 && byte == 0) || (i == 2 && byte > 3) {
             return Err(TransactionParsingError);
         }
         result |= ((byte & 0x7F) as u16) << shift;
-        shift += 7;
+        shift = shift.wrapping_add(7);
         if byte & 0x80 == 0 {
-            *offset = offset.wrapping_add(i + 1);
+            *offset = offset.wrapping_add(i).wrapping_add(1);
             return Ok(result);
         }
     }
 
     // if we reach here, it means that all 3 bytes were used
-    *offset += 3;
+    *offset = offset.wrapping_add(3);
     Ok(result)
 }
 
@@ -80,7 +82,9 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
     }
 
     // Second byte
-    let byte2 = *bytes.get(*offset + 1).ok_or(TransactionParsingError)?;
+    let byte2 = *bytes
+        .get(offset.wrapping_add(1))
+        .ok_or(TransactionParsingError)?;
     if byte2 == 0 || byte2 & 0x80 != 0 {
         return Err(TransactionParsingError); // non-minimal encoding or overflow
     }
@@ -101,7 +105,7 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 pub fn offset_array_len<T: Sized>(bytes: &[u8], offset: &mut usize, len: u16) -> Result<()> {
     let array_len_bytes = usize::from(len).wrapping_mul(core::mem::size_of::<T>());
     check_remaining(bytes, *offset, array_len_bytes)?;
-    *offset += array_len_bytes;
+    *offset = offset.wrapping_add(array_len_bytes);
     Ok(())
 }
 
@@ -115,7 +119,7 @@ pub fn offset_array_len<T: Sized>(bytes: &[u8], offset: &mut usize, len: u16) ->
 pub fn offset_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Result<()> {
     let type_size = core::mem::size_of::<T>();
     check_remaining(bytes, *offset, type_size)?;
-    *offset += type_size;
+    *offset = offset.wrapping_add(type_size);
     Ok(())
 }
 
