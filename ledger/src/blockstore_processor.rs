@@ -472,20 +472,19 @@ fn rebatch_and_execute_batches(
         return Ok(());
     }
 
-    let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) =
-        batches
-            .iter()
-            .filter(|batch| !batch.self_conflicting_batch)
-            .flat_map(|batch| {
-                batch
-                    .batch
-                    .lock_results()
-                    .iter()
-                    .cloned()
-                    .zip(batch.batch.sanitized_transactions().to_vec())
-                    .zip(batch.transaction_indexes.to_vec())
-            })
-            .unzip();
+    let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) = batches
+        .iter()
+        .filter(|batch| !batch.self_conflicting_batch)
+        .flat_map(|batch| {
+            batch
+                .batch
+                .lock_results()
+                .iter()
+                .cloned()
+                .zip(batch.batch.sanitized_transactions().to_vec())
+                .zip(batch.transaction_indexes.to_vec())
+        })
+        .unzip();
 
     let mut minimal_tx_cost = u64::MAX;
     let mut total_cost: u64 = 0;
@@ -524,14 +523,17 @@ fn rebatch_and_execute_batches(
                 batch_cost = 0;
             }
         });
-        let _ = batches
-        .iter()
-        .filter(|batch| batch.self_conflicting_batch)
-        .map(|batch| {
-            let mut non_conflicting_batch = batch.clone();
-            non_conflicting_batch.batch.set_needs_unlock(false);
-            tx_batches.push(non_conflicting_batch);
-        });
+        let conflicting_batches: Vec<_> = batches
+            .iter()
+            .filter(|batch| batch.self_conflicting_batch)
+            .map(|batch| {
+                let mut non_conflicting_batch = batch.clone();
+                non_conflicting_batch.batch.set_needs_unlock(false);
+                non_conflicting_batch
+            })
+            .collect();
+        tx_batches.extend(conflicting_batches);
+
         &tx_batches[..]
     } else {
         batches
@@ -620,7 +622,7 @@ fn process_entries(
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
-    let mut batches = vec![]; 
+    let mut batches = vec![];
     let mut tick_hashes = vec![];
 
     for ReplayEntry {
@@ -669,7 +671,7 @@ fn process_entries(
                         batches.push(TransactionBatchWithIndexes {
                             batch,
                             transaction_indexes,
-                            self_conflicting_batch
+                            self_conflicting_batch,
                         });
                         // done with this entry
                         break;
