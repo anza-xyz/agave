@@ -208,30 +208,42 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         .unique()
         .collect::<Vec<&u8>>();
 
+    let mut fee_payer_account = Some((
+        tx_details.fee_payer_account.data().len(),
+        tx_details.fee_payer_account,
+        tx_details.fee_payer_rent_debit,
+    ));
+
     let mut accounts = account_keys
         .iter()
         .enumerate()
         .map(|(i, key)| {
             let mut account_found = true;
-            #[allow(clippy::collapsible_else_if)]
-            let account = if solana_sdk::sysvar::instructions::check_id(key) {
-                construct_instructions_account(message)
-            } else {
-                let is_fee_payer = i == 0;
-                let instruction_account = u8::try_from(i)
-                    .map(|i| instruction_accounts.contains(&&i))
-                    .unwrap_or(false);
-                let (account_size, account, rent) = if is_fee_payer {
+            let is_instruction_account = u8::try_from(i)
+                .map(|i| instruction_accounts.contains(&&i))
+                .unwrap_or(false);
+            let (account_size, account, rent) =
+                if let Some(fee_payer_account) = fee_payer_account.take() {
+                    // Since the fee payer is always the first account, load it
+                    // first. Note that account overrides are already applied
+                    // during fee payer validation so it's fine to use the fee
+                    // payer directly here rather than checking account
+                    // overrides again.
+                    fee_payer_account
+                } else if solana_sdk::sysvar::instructions::check_id(key) {
+                    // Since the instructions sysvar is constructed by the SVM
+                    // and modified for each transaction instruction, it cannot
+                    // be overridden.
                     (
-                        tx_details.fee_payer_account.data().len(),
-                        tx_details.fee_payer_account.clone(),
-                        tx_details.fee_payer_rent_debit,
+                        0, /* loaded size */
+                        construct_instructions_account(message),
+                        0, /* collected rent */
                     )
                 } else if let Some(account_override) =
                     account_overrides.and_then(|overrides| overrides.get(key))
                 {
                     (account_override.data().len(), account_override.clone(), 0)
-                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
+                } else if let Some(program) = (!is_instruction_account && !message.is_writable(i))
                     .then_some(())
                     .and_then(|_| loaded_programs.find(key))
                 {
@@ -270,18 +282,16 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                             (default_account.data().len(), default_account, 0)
                         })
                 };
-                accumulate_and_check_loaded_account_data_size(
-                    &mut accumulated_accounts_data_size,
-                    account_size,
-                    tx_details.compute_budget_limits.loaded_accounts_bytes,
-                    error_metrics,
-                )?;
 
-                tx_rent += rent;
-                rent_debits.insert(key, rent, account.lamports());
+            accumulate_and_check_loaded_account_data_size(
+                &mut accumulated_accounts_data_size,
+                account_size,
+                tx_details.compute_budget_limits.loaded_accounts_bytes,
+                error_metrics,
+            )?;
 
-                account
-            };
+            tx_rent += rent;
+            rent_debits.insert(key, rent, account.lamports());
 
             accounts_found.push(account_found);
             Ok((*key, account))
