@@ -2,6 +2,7 @@
 #![feature(test)]
 
 use {
+    criterion::{criterion_group, criterion_main, Criterion},
     rayon::{
         iter::IndexedParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -18,7 +19,6 @@ use {
         transaction::{SanitizedTransaction, Transaction, MAX_TX_ACCOUNT_LOCKS},
     },
     std::sync::Arc,
-    test::Bencher,
 };
 
 extern crate test;
@@ -51,30 +51,40 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
     accounts
 }
 
-fn create_transactions(
-    bank: &Bank,
-    num: usize,
-    num_writable_accounts: usize,
-    num_readable_accounts: usize,
-) -> Vec<SanitizedTransaction> {
-    let funded_accounts =
-        create_funded_accounts(bank, num * (num_writable_accounts + num_readable_accounts));
+fn create_transactions(bank: &Bank, num: usize, lock_count: usize) -> Vec<SanitizedTransaction> {
+    let total_account_locks = if lock_count == 1 {
+        // special case where writable_accounts=2 and readable_accounts=0
+        2
+    } else {
+        2 * lock_count
+    };
+    let funded_accounts = create_funded_accounts(bank, num * (total_account_locks));
     funded_accounts
         .into_par_iter()
-        .chunks(num_writable_accounts + num_readable_accounts)
+        .chunks(total_account_locks)
         .map(|chunk| {
-            let writable_accounts = &chunk[..num_writable_accounts];
-            let readable_accounts = &chunk[num_writable_accounts..];
-
-            let accounts = writable_accounts
-                .iter()
-                .map(|account| AccountMeta::new(account.pubkey(), true))
-                .chain(
-                    readable_accounts
-                        .iter()
-                        .map(|account| AccountMeta::new_readonly(account.pubkey(), false)),
-                )
-                .collect::<Vec<_>>();
+            let (writable_accounts, readable_accounts);
+            let accounts = if lock_count == 1 {
+                // special case where writable_accounts=2 and readable_accounts=0
+                let lock_count = lock_count * 2;
+                writable_accounts = &chunk[..lock_count];
+                writable_accounts
+                    .iter()
+                    .map(|account| AccountMeta::new(account.pubkey(), true))
+                    .collect()
+            } else {
+                writable_accounts = &chunk[..lock_count];
+                readable_accounts = &chunk[lock_count..];
+                writable_accounts
+                    .iter()
+                    .map(|account| AccountMeta::new(account.pubkey(), true))
+                    .chain(
+                        readable_accounts
+                            .iter()
+                            .map(|account| AccountMeta::new_readonly(account.pubkey(), false)),
+                    )
+                    .collect::<Vec<_>>()
+            };
 
             let instruction = Instruction::new_with_bincode(
                 system_program::id(),
@@ -119,218 +129,97 @@ fn bank_setup() -> Arc<Bank> {
     bank.wrap_with_bank_forks_for_tests().0
 }
 
-fn bench_lock_accounts(
-    bencher: &mut Bencher,
-    batch_size: usize,
-    num_writable_accounts: usize,
-    num_readable_accounts: usize,
-    allow_self_conflicting_entries: bool,
-) {
-    const TRANSACTIONS_PER_ITERATION: usize = 64;
-    assert_eq!(
-        TRANSACTIONS_PER_ITERATION % batch_size,
-        0,
-        "batch_size must be a factor of `TRANSACTIONS_PER_ITERATION` \
-         ({TRANSACTIONS_PER_ITERATION}) so that bench results are easily comparable"
-    );
-    let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
+// represents the no of txs in the entry
+const BATCH_SIZES: [usize; 3] = [1, 32, 64];
+// no of readable and writable accounts
+// 1 is a special case where writable_accounts=2 and readable_accounts=0
+// const LOCK_COUNTS: [usize; 5] = [1, 2, 4, 8, 16];
+const LOCK_COUNTS: [usize; 1] = [1];
 
-    let bank = bank_setup();
-    let transactions = create_transactions(
-        &bank,
-        2_usize.pow(16),
-        num_writable_accounts,
-        num_readable_accounts,
-    );
-    let mut batches = transactions.chunks(batch_size).cycle();
-    bencher.iter(|| {
-        for batch in (0..batches_per_iteration).filter_map(|_| batches.next()) {
-            let (results, _) = bank.rc.accounts.lock_accounts(
-                test::black_box(batch.iter()),
-                MAX_TX_ACCOUNT_LOCKS,
-                allow_self_conflicting_entries,
+const TRANSACTIONS_PER_ITERATION: usize = 64;
+
+fn bench_entry_lock_accounts(c: &mut Criterion) {
+    let allow_self_conflicting_entries = false;
+
+    let mut group = c.benchmark_group("bench_lock_accounts");
+    for batch_size in BATCH_SIZES {
+        for lock_count in LOCK_COUNTS {
+            assert_eq!(
+                TRANSACTIONS_PER_ITERATION % batch_size,
+                0,
+                "batch_size must be a factor of `TRANSACTIONS_PER_ITERATION` \
+                 ({TRANSACTIONS_PER_ITERATION}) so that bench results are easily comparable"
             );
-            bank.rc.accounts.unlock_accounts(batch.iter().zip(&results));
+            let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
+
+            let bank = bank_setup();
+            let transactions = create_transactions(&bank, 2_usize.pow(16), lock_count);
+            let mut batches = transactions.chunks(batch_size).cycle();
+
+            let name = if lock_count==1 {
+                format!("batch_size_{batch_size}_locks_count_{}_write_only", lock_count*2)
+            } else {
+                format!("batch_size_{batch_size}_locks_count_{lock_count}")
+            };
+            
+            group.bench_function(name.as_str(), move |b| {
+                b.iter(|| {
+                    for batch in (0..batches_per_iteration).filter_map(|_| batches.next()) {
+                        let (results, _) = bank.rc.accounts.lock_accounts(
+                            test::black_box(batch.iter()),
+                            MAX_TX_ACCOUNT_LOCKS,
+                            allow_self_conflicting_entries,
+                        );
+                        bank.rc.accounts.unlock_accounts(batch.iter().zip(&results));
+                    }
+                })
+            });
         }
-    });
+    }
 }
 
-#[bench]
-fn bench_lock_accounts_unbatched_2_writable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 1, 2, 0, true);
+fn bench_entry_lock_accounts_with_self_conflicting_txs(c: &mut Criterion) {
+    let allow_self_conflicting_entries = true;
+
+    let mut group = c.benchmark_group("bench_lock_accounts");
+    for batch_size in BATCH_SIZES {
+        for lock_count in LOCK_COUNTS {
+            assert_eq!(
+                TRANSACTIONS_PER_ITERATION % batch_size,
+                0,
+                "batch_size must be a factor of `TRANSACTIONS_PER_ITERATION` \
+                 ({TRANSACTIONS_PER_ITERATION}) so that bench results are easily comparable"
+            );
+            let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
+
+            let bank = bank_setup();
+            let transactions = create_transactions(&bank, 2_usize.pow(16), lock_count);
+            let mut batches = transactions.chunks(batch_size).cycle();
+
+            let name = if lock_count==1 {
+                format!("batch_size_{batch_size}_locks_count_{}_write_only_self_conflicting_entries_allowed", lock_count*2)
+            } else {
+                format!("batch_size_{batch_size}_locks_count_{lock_count}_self_conflicting_entries_allowed")
+            };
+            group.bench_function(name.as_str(), move |b| {
+                b.iter(|| {
+                    for batch in (0..batches_per_iteration).filter_map(|_| batches.next()) {
+                        let (results, _) = bank.rc.accounts.lock_accounts(
+                            test::black_box(batch.iter()),
+                            MAX_TX_ACCOUNT_LOCKS,
+                            allow_self_conflicting_entries,
+                        );
+                        bank.rc.accounts.unlock_accounts(batch.iter().zip(&results));
+                    }
+                })
+            });
+        }
+    }
 }
 
-#[bench]
-fn bench_lock_accounts_half_batch_2_writable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 32, 2, 0, true);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_2_writable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 64, 2, 0, true);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_2_writable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 1, 2, 0, false);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_2_writable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 32, 2, 0, false);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_2_writable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 64, 2, 0, false);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_2_writable_2_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 1, 2, 2, true);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_2_writable_2_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 32, 2, 2, true);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_2_writable_2_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 64, 2, 2, true);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_2_writable_2_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 1, 2, 2, false);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_2_writable_2_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 32, 2, 2, false);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_2_writable_2_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 64, 2, 2, false);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_4_writable_4_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 1, 4, 4, true);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_4_writable_4_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 32, 4, 4, true);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_4_writable_4_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 64, 4, 4, true);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_4_writable_4_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 1, 4, 4, false);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_4_writable_4_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 32, 4, 4, false);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_4_writable_4_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 64, 4, 4, false);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_8_writable_8_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 1, 8, 8, true);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_8_writable_8_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 32, 8, 8, true);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_8_writable_8_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 64, 8, 8, true);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_8_writable_8_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 1, 8, 8, false);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_8_writable_8_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 32, 8, 8, false);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_8_writable_8_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 64, 8, 8, false);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_16_writable_16_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 1, 16, 16, true);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_16_writable_16_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 32, 16, 16, true);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_16_writable_16_readable_accounts_self_conflicting_entries_allowed(
-    bencher: &mut Bencher,
-) {
-    bench_lock_accounts(bencher, 64, 16, 16, true);
-}
-
-#[bench]
-fn bench_lock_accounts_unbatched_16_writable_16_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 1, 16, 16, false);
-}
-
-#[bench]
-fn bench_lock_accounts_half_batch_16_writable_16_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 32, 16, 16, false);
-}
-
-#[bench]
-fn bench_lock_accounts_full_batch_16_writable_16_readable_accounts(bencher: &mut Bencher) {
-    bench_lock_accounts(bencher, 64, 16, 16, false);
-}
+criterion_group!(
+    benches,
+    bench_entry_lock_accounts,
+    bench_entry_lock_accounts_with_self_conflicting_txs,
+);
+criterion_main!(benches);

@@ -111,7 +111,7 @@ name = "bench_serde"
 harness = false
 
 [[bench]]
-name = "bench_lock_accounts"
+name = "lock_accounts"
 harness = false
 
 [lints]

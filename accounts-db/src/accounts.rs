@@ -19,13 +19,17 @@ use {
         pubkey::Pubkey,
         slot_hashes::SlotHashes,
         transaction::{Result, SanitizedTransaction},
+        transaction::{
+            Result, SanitizedTransaction, TransactionAccountLocks, TransactionError,
+            MAX_TX_ACCOUNT_LOCKS,
+        },
         transaction_context::TransactionAccount,
     },
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
     std::{
-        cell::RefCell,
+        cell::{RefCell, RefMut},
         cmp::Reverse,
         collections::{BinaryHeap, HashSet},
         ops::RangeBounds,
@@ -36,8 +40,8 @@ use {
     },
 };
 
-// max number of accts in a default size entry 64 * 256
-const BATCH_ACCOUNTS_LOOKUP_TABLE_SIZE: usize = 16384;
+// max number of accts in a default size entry 64 * 128
+const BATCH_ACCOUNTS_LOOKUP_TABLE_SIZE: usize = 64 * MAX_TX_ACCOUNT_LOCKS;
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
@@ -607,65 +611,78 @@ impl Accounts {
         self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
     }
 
+    // this function will be obsolete after self conflicting batches are allowed
     fn lock_account(
         &self,
         account_locks: &mut AccountLocks,
         writable_keys: Vec<&Pubkey>,
         readonly_keys: Vec<&Pubkey>,
-        allow_self_conflicting_entries: bool,
-    ) -> (Result<()>, bool) {
-        let mut self_conflicting_batch = false;
+    ) -> Result<()> {
         for k in writable_keys.iter() {
             if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
-                if allow_self_conflicting_entries {
-                    if !(BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
-                        batch_account_locks.borrow().writables.contains(k)
-                            || batch_account_locks.borrow().readables.contains(k)
-                    })) {
-                        debug!("Write-only account in use: {:?}", k);
-                        return (Err(TransactionError::AccountInUse), false);
-                    }
-                    self_conflicting_batch = true;
-                } else {
-                    return (Err(TransactionError::AccountInUse), false);
-                }
+                debug!("Write-only account in use: {:?}", k);
+                return Err(TransactionError::AccountInUse);
             }
         }
         for k in readonly_keys.iter() {
             if account_locks.is_locked_write(k) {
-                if allow_self_conflicting_entries {
-                    if !BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
-                        batch_account_locks.borrow().writables.contains(k)
-                    }) {
-                        debug!("Read-only account in use: {:?}", k);
-                        return (Err(TransactionError::AccountInUse), false);
-                    }
-                    self_conflicting_batch = true;
-                } else {
-                    return (Err(TransactionError::AccountInUse), false);
-                }
+                debug!("Read-only account in use: {:?}", k);
+                return Err(TransactionError::AccountInUse);
             }
         }
 
         for k in writable_keys {
-            if allow_self_conflicting_entries {
-                BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
-                    let mut batch_account_locks = batch_account_locks.borrow_mut();
-                    batch_account_locks.insert_write_lock(k);
-                });
+            account_locks.insert_new_write(k);
+        }
+
+        for k in readonly_keys {
+            if !account_locks.lock_readonly(k) {
+                account_locks.insert_new_readonly(k);
             }
+        }
+
+        Ok(())
+    }
+
+    fn lock_account_with_conflicting_batches(
+        &self,
+        account_locks: &mut AccountLocks,
+        writable_keys: Vec<&Pubkey>,
+        readonly_keys: Vec<&Pubkey>,
+        batch_account_locks: &mut RefMut<BatchAccountLocks>,
+    ) -> (Result<()>, bool) {
+        let mut self_conflicting_batch = false;
+
+        for k in writable_keys.iter() {
+            if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
+                if !(batch_account_locks.writables.contains(k)
+                    || batch_account_locks.readables.contains(k))
+                {
+                    debug!("Write-only account in use: {:?}", k);
+                    return (Err(TransactionError::AccountInUse), false);
+                }
+                self_conflicting_batch = true;
+            }
+        }
+        for k in readonly_keys.iter() {
+            if account_locks.is_locked_write(k) {
+                if !batch_account_locks.writables.contains(k) {
+                    debug!("Read-only account in use: {:?}", k);
+                    return (Err(TransactionError::AccountInUse), false);
+                }
+                self_conflicting_batch = true;
+            }
+        }
+
+        for k in writable_keys {
+            batch_account_locks.insert_write_lock(k);
             if !account_locks.lock_write(k) {
                 account_locks.insert_new_write(k);
             }
         }
 
         for k in readonly_keys {
-            if allow_self_conflicting_entries {
-                BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
-                    let mut batch_account_locks = batch_account_locks.borrow_mut();
-                    batch_account_locks.insert_read_lock(k);
-                });
-            }
+            batch_account_locks.insert_read_lock(k);
             if !account_locks.lock_readonly(k) {
                 account_locks.insert_new_readonly(k);
             }
