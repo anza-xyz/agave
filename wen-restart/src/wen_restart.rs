@@ -68,8 +68,8 @@ const REPAIR_THRESHOLD: f64 = 0.42;
 const HEAVIEST_FORK_THRESHOLD_DELTA: f64 = 0.38;
 // We allow at most 5% of the stake to disagree with us.
 const HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT: f64 = 5.0;
-// We update HeaviestFork every minute at least.
-const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 60;
+// We update HeaviestFork every 5 minutes at least.
+const HEAVIEST_REFRESH_INTERVAL_IN_SECONDS: u64 = 300;
 
 #[derive(Debug, PartialEq)]
 pub enum WenRestartError {
@@ -684,7 +684,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             );
             let can_exit = total_active_stake_seen_supermajority >= majority_stake_required;
             let saw_supermajority_first_time =
-                if current_total_active_stake > majority_stake_required {
+                if current_total_active_stake >= majority_stake_required {
                     if !total_active_stake_higher_than_supermajority {
                         total_active_stake_higher_than_supermajority = true;
                         true
@@ -694,7 +694,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 } else {
                     false
                 };
-            // Only send out updates every minute or when we can exit or active stake passes supermajority
+            // Only send out updates every 5 minutes or when we can exit or active stake passes supermajority
             // the first time.
             if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
                 || can_exit
@@ -2299,6 +2299,106 @@ mod tests {
                 Some("invalid block error: incomplete block".to_string())
             ),
         );
+    }
+
+    fn start_aggregate_heaviest_fork_thread(
+        test_state: &WenRestartTestInitResult,
+        heaviest_fork_slot: Slot,
+        heaviest_fork_bankhash: Hash,
+        exit: Arc<AtomicBool>,
+        expected_error: Option<WenRestartError>,
+    ) -> std::thread::JoinHandle<()> {
+        let progress = wen_restart_proto::WenRestartProgress {
+            state: RestartState::HeaviestFork.into(),
+            my_heaviest_fork: Some(HeaviestForkRecord {
+                slot: heaviest_fork_slot,
+                bankhash: heaviest_fork_bankhash.to_string(),
+                total_active_stake: 1500,
+                shred_version: SHRED_VERSION as u32,
+                wallclock: 0,
+            }),
+            ..Default::default()
+        };
+        let wen_restart_path = test_state.wen_restart_proto_path.clone();
+        let cluster_info = test_state.cluster_info.clone();
+        let bank_forks = test_state.bank_forks.clone();
+        Builder::new()
+            .name("solana-wen-restart-aggregate-heaviest-fork".to_string())
+            .spawn(move || {
+                let result = aggregate_restart_heaviest_fork(
+                    &wen_restart_path,
+                    80,
+                    cluster_info,
+                    bank_forks,
+                    exit,
+                    &mut progress.clone(),
+                );
+                if let Some(expected_error) = expected_error {
+                    assert_eq!(
+                        result.unwrap_err().downcast::<WenRestartError>().unwrap(),
+                        expected_error
+                    );
+                } else {
+                    assert!(result.is_ok());
+                }
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn test_aggregate_heaviest_fork_send_gossip_early() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let test_state = wen_restart_test_init(&ledger_path);
+        let heaviest_fork_slot = test_state.last_voted_fork_slots[0] + 3;
+        let heaviest_fork_bankhash = Hash::new_unique();
+
+        let mut cursor = solana_gossip::crds::Cursor::default();
+        // clear the heaviest fork queue so we make sure a new HeaviestFork is sent out later.
+        let _ = test_state
+            .cluster_info
+            .get_restart_heaviest_fork(&mut cursor);
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let thread = start_aggregate_heaviest_fork_thread(
+            &test_state,
+            heaviest_fork_slot,
+            heaviest_fork_bankhash,
+            exit.clone(),
+            Some(WenRestartError::Exiting),
+        );
+        // Even when everyone else is only seeing itself, we should send out heaviest fork indicating
+        // we have active stake exceeding supermajority.
+        for keypair in test_state.validator_voting_keypairs.iter().skip(6) {
+            let node_pubkey = keypair.node_keypair.pubkey();
+            let node = ContactInfo::new_rand(&mut rand::thread_rng(), Some(node_pubkey));
+            let now = timestamp();
+            push_restart_heaviest_fork(
+                test_state.cluster_info.clone(),
+                &node,
+                heaviest_fork_slot,
+                &heaviest_fork_bankhash,
+                100,
+                &keypair.node_keypair,
+                now,
+            );
+        }
+        let my_pubkey = test_state.cluster_info.id();
+        let mut found_myself = false;
+        while !found_myself {
+            sleep(Duration::from_millis(100));
+            test_state.cluster_info.flush_push_queue();
+            for gossip_record in test_state
+                .cluster_info
+                .get_restart_heaviest_fork(&mut cursor)
+            {
+                if gossip_record.from == my_pubkey && gossip_record.observed_stake == 1500 {
+                    found_myself = true;
+                    break;
+                }
+            }
+        }
+        exit.store(true, Ordering::Relaxed);
+        assert!(thread.join().is_ok());
     }
 
     #[test]
