@@ -8,9 +8,9 @@ use crate::wasm_bindgen;
 #[cfg(feature = "borsh")]
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use {
-    crate::sanitize::Sanitize,
     bytemuck_derive::{Pod, Zeroable},
     sha2::{Digest, Sha256},
+    solana_sanitize::Sanitize,
     std::{convert::TryFrom, fmt, mem, str::FromStr},
     thiserror::Error,
 };
@@ -136,7 +136,7 @@ impl Hash {
 
     /// unique Hash for tests and benchmarks.
     pub fn new_unique() -> Self {
-        use crate::atomic_u64::AtomicU64;
+        use solana_atomic_u64::AtomicU64;
         static I: AtomicU64 = AtomicU64::new(1);
 
         let mut b = [0u8; HASH_BYTES];

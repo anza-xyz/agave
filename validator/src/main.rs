@@ -957,10 +957,10 @@ pub fn main() {
         .value_of("staked_nodes_overrides")
         .map(str::to_string);
     let staked_nodes_overrides = Arc::new(RwLock::new(
-        match staked_nodes_overrides_path {
+        match &staked_nodes_overrides_path {
             None => StakedNodesOverrides::default(),
-            Some(p) => load_staked_nodes_overrides(&p).unwrap_or_else(|err| {
-                error!("Failed to load stake-nodes-overrides from {}: {}", &p, err);
+            Some(p) => load_staked_nodes_overrides(p).unwrap_or_else(|err| {
+                error!("Failed to load stake-nodes-overrides from {}: {}", p, err);
                 clap::Error::with_description(
                     "Failed to load configuration of stake-nodes-overrides argument",
                     clap::ErrorKind::InvalidValue,
@@ -1303,7 +1303,7 @@ pub fn main() {
                 .collect(),
         )
     } else {
-        None
+        value_t_or_exit!(matches, "geyser_plugin_always_enabled", bool).then(Vec::new)
     };
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some();
 
@@ -1402,7 +1402,6 @@ pub fn main() {
                 solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
             }),
             full_api,
-            obsolete_v1_7_api: matches.is_present("obsolete_v1_7_rpc_api"),
             max_multiple_accounts: Some(value_t_or_exit!(
                 matches,
                 "rpc_max_multiple_accounts",
@@ -1594,6 +1593,23 @@ pub fn main() {
     } else {
         &ledger_path
     };
+    let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
+        eprintln!(
+            "Failed to canonicalize snapshots path '{}': {err}",
+            snapshots_dir.display(),
+        );
+        exit(1);
+    });
+    if account_paths
+        .iter()
+        .any(|account_path| account_path == &snapshots_dir)
+    {
+        eprintln!(
+            "Failed: The --accounts and --snapshots paths must be unique since they \
+             both create 'snapshots' subdirectories, otherwise there may be collisions",
+        );
+        exit(1);
+    }
 
     let bank_snapshots_dir = snapshots_dir.join("snapshots");
     fs::create_dir_all(&bank_snapshots_dir).unwrap_or_else(|err| {
@@ -1604,13 +1620,12 @@ pub fn main() {
         exit(1);
     });
 
-    let full_snapshot_archives_dir = PathBuf::from(
+    let full_snapshot_archives_dir =
         if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
-            Path::new(full_snapshot_archive_path)
+            PathBuf::from(full_snapshot_archive_path)
         } else {
-            snapshots_dir
-        },
-    );
+            snapshots_dir.clone()
+        };
     fs::create_dir_all(&full_snapshot_archives_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create full snapshot archives directory '{}': {err}",
@@ -1619,15 +1634,13 @@ pub fn main() {
         exit(1);
     });
 
-    let incremental_snapshot_archives_dir = PathBuf::from(
-        if let Some(incremental_snapshot_archive_path) =
-            matches.value_of("incremental_snapshot_archive_path")
-        {
-            Path::new(incremental_snapshot_archive_path)
-        } else {
-            snapshots_dir
-        },
-    );
+    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
+        matches.value_of("incremental_snapshot_archive_path")
+    {
+        PathBuf::from(incremental_snapshot_archive_path)
+    } else {
+        snapshots_dir.clone()
+    };
     fs::create_dir_all(&incremental_snapshot_archives_dir).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create incremental snapshot archives directory '{}': {err}",
@@ -1652,27 +1665,42 @@ pub fn main() {
                 })
             });
 
-    let incremental_snapshot_interval_slots =
-        value_t_or_exit!(matches, "incremental_snapshot_interval_slots", u64);
-    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) =
-        if incremental_snapshot_interval_slots > 0 {
-            if !matches.is_present("no_incremental_snapshots") {
-                (
-                    value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
-                    incremental_snapshot_interval_slots,
-                )
-            } else {
-                (
-                    incremental_snapshot_interval_slots,
-                    DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                )
-            }
-        } else {
+    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) = match (
+        !matches.is_present("no_incremental_snapshots"),
+        value_t_or_exit!(matches, "snapshot_interval_slots", u64),
+    ) {
+        (_, 0) => {
+            // snapshots are disabled
             (
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
                 DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
             )
-        };
+        }
+        (true, incremental_snapshot_interval_slots) => {
+            // incremental snapshots are enabled
+            // use --snapshot-interval-slots for the incremental snapshot interval
+            (
+                value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
+                incremental_snapshot_interval_slots,
+            )
+        }
+        (false, full_snapshot_interval_slots) => {
+            // incremental snapshots are *disabled*
+            // use --snapshot-interval-slots for the *full* snapshot interval
+            // also warn if --full-snapshot-interval-slots was specified
+            if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
+                warn!(
+                    "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
+                     Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
+                     Use --snapshot-interval-slots instead.",
+                );
+            }
+            (
+                full_snapshot_interval_slots,
+                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+            )
+        }
+    };
 
     validator_config.snapshot_config = SnapshotConfig {
         usage: if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
@@ -1699,29 +1727,30 @@ pub fn main() {
         incremental_snapshot_archive_interval_slots,
     );
 
+    info!(
+        "Snapshot configuration: full snapshot interval: {} slots, incremental snapshot interval: {} slots",
+        if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
+            "disabled".to_string()
+        } else {
+            full_snapshot_archive_interval_slots.to_string()
+        },
+        if incremental_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
+            "disabled".to_string()
+        } else {
+            incremental_snapshot_archive_interval_slots.to_string()
+        },
+    );
+
     if !is_snapshot_config_valid(
         &validator_config.snapshot_config,
         validator_config.accounts_hash_interval_slots,
     ) {
         eprintln!(
             "Invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval (if \
-             enabled)\
-             \n\t- full snapshot interval MUST be larger than incremental snapshot \
-             interval (if enabled)\
-             \nSnapshot configuration values:\
-             \n\tfull snapshot interval: {}\
-             \n\tincremental snapshot interval: {}",
-            if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-                "disabled".to_string()
-            } else {
-                full_snapshot_archive_interval_slots.to_string()
-            },
-            if incremental_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-                "disabled".to_string()
-            } else {
-                incremental_snapshot_archive_interval_slots.to_string()
-            },
+             \n\t- full snapshot interval MUST be a multiple of incremental snapshot interval \
+             (if enabled) \
+             \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
+             (if enabled)",
         );
         exit(1);
     }
@@ -1754,6 +1783,10 @@ pub fn main() {
         BlockProductionMethod
     )
     .unwrap_or_default();
+    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path
+        .as_ref()
+        .map(|_| !matches.is_present("disable_block_production_forwarding"))
+        .unwrap_or_default();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
 
@@ -1772,16 +1805,26 @@ pub fn main() {
             None => ShredStorageType::default(),
             Some(shred_compaction_string) => match shred_compaction_string {
                 "level" => ShredStorageType::RocksLevel,
-                "fifo" => match matches.value_of("rocksdb_fifo_shred_storage_size") {
-                    None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
-                        &validator_config,
-                    )),
-                    Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
-                        matches,
-                        "rocksdb_fifo_shred_storage_size",
-                        u64
-                    ))),
-                },
+                "fifo" => {
+                    warn!(
+                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
+                         Use of \"fifo\" will still work for now, but is planned for full removal \
+                         in v2.1. To update, use \"level\" for --rocksdb-shred-compaction, or \
+                         remove the --rocksdb-shred-compaction argument altogether. Note that the \
+                         entire \"rocksdb_fifo\" subdirectory within the ledger directory will \
+                         need to be manually removed once the validator is running with \"level\"."
+                    );
+                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
+                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
+                            &validator_config,
+                        )),
+                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
+                            matches,
+                            "rocksdb_fifo_shred_storage_size",
+                            u64
+                        ))),
+                    }
+                }
                 _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
             },
         },
@@ -1903,6 +1946,7 @@ pub fn main() {
                 })
             });
 
+    let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,
@@ -1910,6 +1954,7 @@ pub fn main() {
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_sockets: tvu_receive_threads,
+        num_quic_endpoints,
     };
 
     let cluster_entrypoints = entrypoint_addrs

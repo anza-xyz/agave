@@ -28,6 +28,9 @@ use {
 pub const MAX_STAKED_CONNECTIONS: usize = 2000;
 pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
+// This will be adjusted and parameterized in follow-on PRs.
+pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
+
 pub struct SkipClientVerification;
 
 impl SkipClientVerification {
@@ -37,7 +40,7 @@ impl SkipClientVerification {
 }
 
 pub struct SpawnServerResult {
-    pub endpoint: Endpoint,
+    pub endpoints: Vec<Endpoint>,
     pub thread: thread::JoinHandle<()>,
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
@@ -121,20 +124,22 @@ pub enum QuicServerError {
 }
 
 pub struct EndpointKeyUpdater {
-    endpoint: Endpoint,
+    endpoints: Vec<Endpoint>,
     max_concurrent_connections: usize,
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let (config, _) = configure_server(key, self.max_concurrent_connections)?;
-        self.endpoint.set_server_config(Some(config));
+        for endpoint in &self.endpoints {
+            endpoint.set_server_config(Some(config.clone()));
+        }
         Ok(())
     }
 }
 
 #[derive(Default)]
-pub struct StreamStats {
+pub struct StreamerStats {
     pub(crate) total_connections: AtomicUsize,
     pub(crate) total_new_connections: AtomicUsize,
     pub(crate) total_streams: AtomicUsize,
@@ -176,8 +181,12 @@ pub struct StreamStats {
     pub(crate) connection_setup_error_locally_closed: AtomicUsize,
     pub(crate) connection_removed: AtomicUsize,
     pub(crate) connection_remove_failed: AtomicUsize,
-    pub(crate) connection_throttled_across_all: AtomicUsize,
-    pub(crate) connection_throttled_per_ipaddr: AtomicUsize,
+    // Number of connections to the endpoint exceeding the allowed limit
+    // regardless of the source IP address.
+    pub(crate) connection_rate_limited_across_all: AtomicUsize,
+    // Per IP rate-limiting is triggered each time when there are too many connections
+    // opened from a particular IP address.
+    pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
@@ -189,9 +198,12 @@ pub struct StreamStats {
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
     pub(crate) connection_rate_limiter_length: AtomicUsize,
+    pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
+    pub(crate) total_incoming_connection_attempts: AtomicUsize,
+    pub(crate) quic_endpoints_count: AtomicUsize,
 }
 
-impl StreamStats {
+impl StreamerStats {
     pub fn report(&self, name: &'static str) {
         let process_sampled_packets_us_hist = {
             let mut metrics = self.process_sampled_packets_us_hist.lock().unwrap();
@@ -324,14 +336,14 @@ impl StreamStats {
                 i64
             ),
             (
-                "connection_throttled_across_all",
-                self.connection_throttled_across_all
+                "connection_rate_limited_across_all",
+                self.connection_rate_limited_across_all
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "connection_throttled_per_ipaddr",
-                self.connection_throttled_per_ipaddr
+                "connection_rate_limited_per_ipaddr",
+                self.connection_rate_limited_per_ipaddr
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -517,6 +529,23 @@ impl StreamStats {
                 self.connection_rate_limiter_length.load(Ordering::Relaxed),
                 i64
             ),
+            (
+                "outstanding_incoming_connection_attempts",
+                self.outstanding_incoming_connection_attempts
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "total_incoming_connection_attempts",
+                self.total_incoming_connection_attempts
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "quic_endpoints_count",
+                self.quic_endpoints_count.load(Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -525,7 +554,42 @@ impl StreamStats {
 pub fn spawn_server(
     thread_name: &'static str,
     metrics_name: &'static str,
-    sock: UdpSocket,
+    socket: UdpSocket,
+    keypair: &Keypair,
+    packet_sender: Sender<PacketBatch>,
+    exit: Arc<AtomicBool>,
+    max_connections_per_peer: usize,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    max_staked_connections: usize,
+    max_unstaked_connections: usize,
+    max_streams_per_ms: u64,
+    max_connections_per_ipaddr_per_min: u64,
+    wait_for_chunk_timeout: Duration,
+    coalesce: Duration,
+) -> Result<SpawnServerResult, QuicServerError> {
+    spawn_server_multi(
+        thread_name,
+        metrics_name,
+        vec![socket],
+        keypair,
+        packet_sender,
+        exit,
+        max_connections_per_peer,
+        staked_nodes,
+        max_staked_connections,
+        max_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min,
+        wait_for_chunk_timeout,
+        coalesce,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_server_multi(
+    thread_name: &'static str,
+    metrics_name: &'static str,
+    sockets: Vec<UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
@@ -541,9 +605,9 @@ pub fn spawn_server(
     let runtime = rt(format!("{thread_name}Rt"));
     let result = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server(
+        crate::nonblocking::quic::spawn_server_multi(
             metrics_name,
-            sock,
+            sockets,
             keypair,
             packet_sender,
             exit,
@@ -566,11 +630,11 @@ pub fn spawn_server(
         })
         .unwrap();
     let updater = EndpointKeyUpdater {
-        endpoint: result.endpoint.clone(),
+        endpoints: result.endpoints.clone(),
         max_concurrent_connections: result.max_concurrent_connections,
     };
     Ok(SpawnServerResult {
-        endpoint: result.endpoint,
+        endpoints: result.endpoints,
         thread: handle,
         key_updater: Arc::new(updater),
     })
@@ -602,7 +666,7 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnServerResult {
-            endpoint: _,
+            endpoints: _,
             thread: t,
             key_updater: _,
         } = spawn_server(
@@ -663,7 +727,7 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnServerResult {
-            endpoint: _,
+            endpoints: _,
             thread: t,
             key_updater: _,
         } = spawn_server(
@@ -711,7 +775,7 @@ mod test {
         let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnServerResult {
-            endpoint: _,
+            endpoints: _,
             thread: t,
             key_updater: _,
         } = spawn_server(

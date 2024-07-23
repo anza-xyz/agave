@@ -12,11 +12,15 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_poseidon as poseidon,
-    solana_program_runtime::{
-        ic_logger_msg, ic_msg, invoke_context::InvokeContext, stable_log, timings::ExecuteTimings,
+    solana_bn254::prelude::{
+        alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
+        ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
+        ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
+    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::{ic_logger_msg, ic_msg},
+    solana_poseidon as poseidon,
+    solana_program_runtime::{invoke_context::InvokeContext, stable_log},
     solana_rbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
@@ -25,11 +29,6 @@ use {
     },
     solana_sdk::{
         account_info::AccountInfo,
-        alt_bn128::prelude::{
-            alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
-            ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
-            ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
-        },
         big_mod_exp::{big_mod_exp, BigModExpParams},
         blake3, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
         entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
@@ -43,7 +42,6 @@ use {
             enable_partitioned_epoch_reward, enable_poseidon_syscall,
             error_on_syscall_bpf_function_hash_collisions, get_sysvar_syscall_enabled,
             last_restart_slot_sysvar, reject_callx_r10, remaining_compute_units_syscall_enabled,
-            switch_to_new_elf_parser,
         },
         hash::{Hash, Hasher},
         instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
@@ -58,6 +56,7 @@ use {
         sysvar::{Sysvar, SysvarId},
         transaction_context::{IndexOfAccount, InstructionAccount},
     },
+    solana_timings::ExecuteTimings,
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -307,7 +306,6 @@ pub fn create_program_runtime_environment_v1<'a>(
         enable_sbpf_v1: true,
         enable_sbpf_v2: false,
         optimize_rodata: false,
-        new_elf_parser: feature_set.is_active(&switch_to_new_elf_parser::id()),
         aligned_memory_mapping: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
@@ -1574,7 +1572,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_sdk::alt_bn128::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
+        use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
         let budget = invoke_context.get_compute_budget();
         let (cost, output): (u64, usize) = match group_op {
             ALT_BN128_ADD => (
@@ -1841,7 +1839,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_sdk::alt_bn128::compression::prelude::{
+        use solana_bn254::compression::prelude::{
             alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
             alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,

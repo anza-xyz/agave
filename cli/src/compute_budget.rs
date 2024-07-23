@@ -1,7 +1,8 @@
 use {
-    solana_client::rpc_config::RpcSimulateTransactionConfig,
+    solana_clap_utils::compute_budget::ComputeUnitLimit,
     solana_compute_budget::compute_budget_processor::MAX_COMPUTE_UNIT_LIMIT,
     solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client_api::config::RpcSimulateTransactionConfig,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
         compute_budget::{self, ComputeBudgetInstruction},
@@ -76,23 +77,9 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
     ))
 }
 
-pub(crate) trait WithComputeUnitPrice {
-    fn with_compute_unit_price(self, compute_unit_price: Option<&u64>) -> Self;
-}
-
-impl WithComputeUnitPrice for Vec<Instruction> {
-    fn with_compute_unit_price(mut self, compute_unit_price: Option<&u64>) -> Self {
-        if let Some(compute_unit_price) = compute_unit_price {
-            self.push(ComputeBudgetInstruction::set_compute_unit_price(
-                *compute_unit_price,
-            ));
-        }
-        self
-    }
-}
-
 pub(crate) struct ComputeUnitConfig {
     pub(crate) compute_unit_price: Option<u64>,
+    pub(crate) compute_unit_limit: ComputeUnitLimit,
 }
 
 pub(crate) trait WithComputeUnitConfig {
@@ -105,12 +92,21 @@ impl WithComputeUnitConfig for Vec<Instruction> {
             self.push(ComputeBudgetInstruction::set_compute_unit_price(
                 compute_unit_price,
             ));
-
-            // Default to the max compute unit limit because later transactions will be
-            // simulated to get the exact compute units consumed.
-            self.push(ComputeBudgetInstruction::set_compute_unit_limit(
-                MAX_COMPUTE_UNIT_LIMIT,
-            ));
+            match config.compute_unit_limit {
+                ComputeUnitLimit::Default => {}
+                ComputeUnitLimit::Static(compute_unit_limit) => {
+                    self.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                        compute_unit_limit,
+                    ));
+                }
+                ComputeUnitLimit::Simulated => {
+                    // Default to the max compute unit limit because later transactions will be
+                    // simulated to get the exact compute units consumed.
+                    self.push(ComputeBudgetInstruction::set_compute_unit_limit(
+                        MAX_COMPUTE_UNIT_LIMIT,
+                    ));
+                }
+            }
         }
         self
     }

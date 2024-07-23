@@ -1,22 +1,20 @@
 use {
     crate::{
         mock_bank::{MockBankCallback, MockForkGraph},
-        proto::{InstrEffects, InstrFixture},
         transaction_builder::SanitizedTransactionBuilder,
     },
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        log_collector::LogCollector,
         solana_rbpf::{
             program::{BuiltinProgram, FunctionRegistry},
             vm::Config,
         },
-        timings::ExecuteTimings,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -43,6 +41,8 @@ use {
             TransactionProcessingEnvironment,
         },
     },
+    solana_svm_conformance::proto::{InstrEffects, InstrFixture},
+    solana_timings::ExecuteTimings,
     std::{
         collections::{HashMap, HashSet},
         env,
@@ -55,9 +55,6 @@ use {
     },
 };
 
-mod proto {
-    include!(concat!(env!("OUT_DIR"), "/org.solana.sealevel.v1.rs"));
-}
 mod mock_bank;
 mod transaction_builder;
 
@@ -151,7 +148,7 @@ fn run_from_folder(base_dir: &PathBuf, run_as_instr: &HashSet<OsString>) {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).expect("Failed to read file");
 
-        let fixture = proto::InstrFixture::decode(buffer.as_slice()).unwrap();
+        let fixture = InstrFixture::decode(buffer.as_slice()).unwrap();
         let execute_as_instr = run_as_instr.contains(&filename);
         run_fixture(fixture, filename, execute_as_instr);
     }
@@ -248,6 +245,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     mock_bank.override_feature_set(feature_set);
     let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
 
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     {
         let mut program_cache = batch_processor.program_cache.write().unwrap();
         program_cache.environments = ProgramRuntimeEnvironments {
@@ -257,7 +255,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
                 FunctionRegistry::default(),
             )),
         };
-        program_cache.fork_graph = Some(Arc::new(RwLock::new(MockForkGraph {})));
+        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph.clone()));
     }
 
     batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
@@ -279,6 +277,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
     let processor_config = TransactionProcessingConfig {
         account_overrides: None,
+        check_program_modification_slot: false,
         compute_budget: None,
         log_messages_bytes_limit: None,
         limit_to_load_programs: true,

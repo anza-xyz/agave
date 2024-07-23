@@ -522,25 +522,27 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
     ) -> Result<(), BucketMapError> {
         let num_slots = data_len as u64;
         let best_fit_bucket = MultipleSlots::data_bucket_from_num_slots(data_len as u64);
+        // num_slots > 1 becuase we can store num_slots = 0 or num_slots = 1 in the index entry
         let requires_data_bucket = num_slots > 1 || ref_count != 1;
         if requires_data_bucket && self.data.get(best_fit_bucket as usize).is_none() {
             // fail early if the data bucket we need doesn't exist - we don't want the index entry partially allocated
             return Err(BucketMapError::DataNoSpace((best_fit_bucket, 0)));
         }
+
         let max_search = self.index.max_search();
         let (elem, elem_ix) = Self::find_index_entry_mut(&self.index, key, self.random)?;
-        let elem = if let Some(elem) = elem {
-            elem
-        } else {
-            let is_resizing = false;
-            self.index.occupy(elem_ix, is_resizing).unwrap();
-            let elem_allocate = IndexEntryPlaceInBucket::new(elem_ix);
-            // These fields will be overwritten after allocation by callers.
-            // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
-            elem_allocate.init(&mut self.index, key);
-            elem_allocate
-        };
         if !requires_data_bucket {
+            let elem = if let Some(elem) = elem {
+                elem
+            } else {
+                let is_resizing = false;
+                self.index.occupy(elem_ix, is_resizing).unwrap();
+                let elem_allocate = IndexEntryPlaceInBucket::new(elem_ix);
+                // These fields will be overwritten after allocation by callers.
+                // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
+                elem_allocate.init(&mut self.index, key);
+                elem_allocate
+            };
             // new data stored should be stored in IndexEntry and NOT in data file
             // new data len is 0 or 1
             if let OccupiedEnum::MultipleSlots(multiple_slots) =
@@ -565,7 +567,10 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         // storing the slot list requires using the data file
         let mut old_data_entry_to_free = None;
         // see if old elements were in a data file
-        if let Some(multiple_slots) = elem.get_multiple_slots_mut(&mut self.index) {
+        if let Some(multiple_slots) = elem
+            .as_ref()
+            .and_then(|elem| elem.get_multiple_slots_mut(&mut self.index))
+        {
             let bucket_ix = multiple_slots.data_bucket_ix() as usize;
             let current_bucket = &mut self.data[bucket_ix];
             let elem_loc = multiple_slots.data_loc(current_bucket);
@@ -633,7 +638,16 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 }
 
                 // update index bucket after data bucket has been updated.
-                elem.set_slot_count_enum_value(
+                elem.unwrap_or_else(|| {
+                    let is_resizing = false;
+                    self.index.occupy(elem_ix, is_resizing).unwrap();
+                    let elem_allocate = IndexEntryPlaceInBucket::new(elem_ix);
+                    // These fields will be overwritten after allocation by callers.
+                    // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
+                    elem_allocate.init(&mut self.index, key);
+                    elem_allocate
+                })
+                .set_slot_count_enum_value(
                     &mut self.index,
                     OccupiedEnum::MultipleSlots(&multiple_slots),
                 );
@@ -895,7 +909,6 @@ mod tests {
             let random = 1;
             // with random=1, 6 entries is the most that don't collide on a single hash % cap value.
             for len in 0..7 {
-                log::error!("testing with {len}");
                 // cannot use pubkey [0,0,...] because that matches a zeroed out default file contents.
                 let raw = (0..len)
                     .map(|l| (Pubkey::from([(l + 1) as u8; 32]), v + (l as u64)))

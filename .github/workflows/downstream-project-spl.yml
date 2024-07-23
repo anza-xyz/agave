@@ -13,8 +13,6 @@ on:
       - "**.rs"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "cargo-build-bpf"
-      - "cargo-test-bpf"
       - "cargo-build-sbf"
       - "cargo-test-sbf"
       - "ci/downstream-projects/run-spl.sh"
@@ -55,6 +53,10 @@ jobs:
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
           source .github/scripts/downstream-project-spl-common.sh
+          if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
+            exit 0
+          fi
+
           cargo check
 
   test:
@@ -103,6 +105,9 @@ jobs:
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
           source .github/scripts/downstream-project-spl-common.sh
+          if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
+            exit 0
+          fi
 
           programStr="${{ tojson(matrix.arrays.required_programs) }}"
           IFS=', ' read -ra programs <<<"${programStr//[\[\]$'\n'$'\r' ]/}"
@@ -154,6 +159,9 @@ jobs:
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
           source .github/scripts/downstream-project-spl-common.sh
+          if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
+            exit 0
+          fi
 
           programStr="${{ tojson(matrix.programs) }}"
           IFS=', ' read -ra programs <<<"${programStr//[\[\]$'\n'$'\r' ]/}"

@@ -291,7 +291,7 @@ pub(crate) mod tests {
     #[test]
     fn test_notify_transaction() {
         let genesis_config = create_genesis_config(2).genesis_config;
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
         let (transaction_status_sender, transaction_status_receiver) = unbounded();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -330,7 +330,6 @@ pub(crate) mod tests {
             log_messages: None,
             inner_instructions: None,
             fee_details: FeeDetails::default(),
-            is_nonce: true,
             return_data: None,
             executed_units: 0,
             accounts_data_len_delta: 0,

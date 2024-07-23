@@ -16,7 +16,6 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::{
-        error::Error,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{Arc, RwLock},
     },
@@ -108,29 +107,6 @@ impl ConnectionCache {
             Self::Quic(_) => Protocol::QUIC,
             Self::Udp(_) => Protocol::UDP,
         }
-    }
-
-    #[deprecated(
-        since = "1.15.0",
-        note = "This method does not do anything. Please use `new_with_client_options` instead to set the client certificate."
-    )]
-    pub fn update_client_certificate(
-        &mut self,
-        _keypair: &Keypair,
-        _ipaddr: IpAddr,
-    ) -> Result<(), Box<dyn Error>> {
-        Ok(())
-    }
-
-    #[deprecated(
-        since = "1.15.0",
-        note = "This method does not do anything. Please use `new_with_client_options` instead to set staked nodes information."
-    )]
-    pub fn set_staked_nodes(
-        &mut self,
-        _staked_nodes: &Arc<RwLock<StakedNodes>>,
-        _client_pubkey: &Pubkey,
-    ) {
     }
 
     pub fn with_udp(name: &'static str, connection_pool_size: usize) -> Self {
@@ -260,7 +236,7 @@ mod tests {
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
         let SpawnServerResult {
-            endpoint: response_recv_endpoint,
+            endpoints: mut response_recv_endpoints,
             thread: response_recv_thread,
             key_updater: _,
         } = solana_streamer::quic::spawn_server(
@@ -281,6 +257,9 @@ mod tests {
         )
         .unwrap();
 
+        let response_recv_endpoint = response_recv_endpoints
+            .pop()
+            .expect("at least one endpoint");
         let connection_cache = ConnectionCache::new_with_client_options(
             "connection_cache_test",
             1,                            // connection_pool_size
