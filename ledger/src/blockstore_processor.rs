@@ -2165,7 +2165,9 @@ impl TransactionStatusSender {
                 execution_results: execution_results
                     .into_iter()
                     .map(|result| match result {
-                        TransactionExecutionResult::Executed { details, .. } => Some(details),
+                        TransactionExecutionResult::Executed(executed_tx) => {
+                            Some(executed_tx.execution_details)
+                        }
                         TransactionExecutionResult::NotExecuted(_) => None,
                     })
                     .collect(),
@@ -2263,6 +2265,7 @@ pub mod tests {
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             epoch_schedule::EpochSchedule,
+            fee::FeeDetails,
             hash::Hash,
             instruction::{Instruction, InstructionError},
             native_token::LAMPORTS_PER_SOL,
@@ -2272,7 +2275,10 @@ pub mod tests {
             system_transaction,
             transaction::{Transaction, TransactionError},
         },
-        solana_svm::transaction_processor::ExecutionRecordingConfig,
+        solana_svm::{
+            account_loader::LoadedTransaction, transaction_processor::ExecutionRecordingConfig,
+            transaction_results::ExecutedTransaction,
+        },
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
             self,
@@ -5107,18 +5113,19 @@ pub mod tests {
             .set_limits(u64::MAX, block_limit, u64::MAX);
         let txs = vec![tx.clone(), tx];
         let results = vec![
-            TransactionExecutionResult::Executed {
-                details: TransactionExecutionDetails {
+            TransactionExecutionResult::Executed(Box::new(ExecutedTransaction {
+                loaded_transaction: LoadedTransaction::default(),
+                execution_details: TransactionExecutionDetails {
                     status: Ok(()),
                     log_messages: None,
                     inner_instructions: None,
-                    fee_details: solana_sdk::fee::FeeDetails::default(),
+                    fee_details: FeeDetails::default(),
                     return_data: None,
                     executed_units: actual_execution_cu,
                     accounts_data_len_delta: 0,
                 },
                 programs_modified_by_tx: HashMap::new(),
-            },
+            })),
             TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
         ];
         let loaded_accounts_stats = vec![

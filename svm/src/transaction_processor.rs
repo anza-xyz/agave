@@ -5,7 +5,7 @@ use {
         account_loader::{
             collect_rent_from_account, load_accounts, validate_fee_payer,
             CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, TransactionValidationResult, ValidatedTransactionDetails,
+            TransactionValidationResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
@@ -14,7 +14,9 @@ use {
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
-        transaction_results::{TransactionExecutionDetails, TransactionExecutionResult},
+        transaction_results::{
+            ExecutedTransaction, TransactionExecutionDetails, TransactionExecutionResult,
+        },
     },
     log::debug,
     percentage::Percentage,
@@ -76,8 +78,6 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     // Vector of results indicating whether a transaction was executed or could not
     // be executed. Note executed transactions can still have failed!
     pub execution_results: Vec<TransactionExecutionResult>,
-    // Vector of loaded transactions from transactions that were processed.
-    pub loaded_transactions: Vec<TransactionLoadResult>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -274,21 +274,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             if program_cache_for_tx_batch.borrow().hit_max_limit {
                 const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
-                let loaded_transactions = vec![Err(ERROR); sanitized_txs.len()];
                 let execution_results =
                     vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
                 return LoadAndExecuteSanitizedTransactionsOutput {
                     error_metrics,
                     execute_timings,
                     execution_results,
-                    loaded_transactions,
                 };
             }
 
             program_cache_for_tx_batch
         });
 
-        let (mut loaded_transactions, load_accounts_us) = measure_us!(load_accounts(
+        let (loaded_transactions, load_accounts_us) = measure_us!(load_accounts(
             callbacks,
             sanitized_txs,
             validation_results,
@@ -303,7 +301,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let (execution_results, execution_us): (Vec<TransactionExecutionResult>, u64) =
             measure_us!(loaded_transactions
-                .iter_mut()
+                .into_iter()
                 .zip(sanitized_txs.iter())
                 .map(|(load_result, tx)| match load_result {
                     Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
@@ -318,17 +316,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             config,
                         );
 
-                        if let TransactionExecutionResult::Executed {
-                            details,
-                            programs_modified_by_tx,
-                        } = &result
-                        {
+                        if let Some(executed_tx) = result.executed_transaction() {
                             // Update batch specific cache of the loaded programs with the modifications
                             // made by the transaction, if it executed successfully.
-                            if details.status.is_ok() {
+                            if executed_tx.was_successful() {
                                 program_cache_for_tx_batch
                                     .borrow_mut()
-                                    .merge(programs_modified_by_tx);
+                                    .merge(&executed_tx.programs_modified_by_tx);
                             }
                         }
 
@@ -372,7 +366,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_metrics,
             execute_timings,
             execution_results,
-            loaded_transactions,
         }
     }
 
@@ -704,7 +697,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn execute_loaded_transaction(
         &self,
         tx: &SanitizedTransaction,
-        loaded_transaction: &mut LoadedTransaction,
+        mut loaded_transaction: LoadedTransaction,
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
@@ -874,8 +867,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             None
         };
 
-        TransactionExecutionResult::Executed {
-            details: TransactionExecutionDetails {
+        TransactionExecutionResult::Executed(Box::new(ExecutedTransaction {
+            execution_details: TransactionExecutionDetails {
                 status,
                 log_messages,
                 inner_instructions,
@@ -884,8 +877,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 executed_units,
                 accounts_data_len_delta,
             },
+            loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
-        }
+        }))
     }
 
     /// Extract the InnerInstructionsList from a TransactionContext
@@ -1137,7 +1131,7 @@ mod tests {
             false,
         );
 
-        let mut loaded_transaction = LoadedTransaction {
+        let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
             program_indices: vec![vec![0]],
             fee_details: FeeDetails::default(),
@@ -1155,7 +1149,7 @@ mod tests {
 
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1163,20 +1157,17 @@ mod tests {
             &processing_config,
         );
 
-        let TransactionExecutionResult::Executed {
-            details: TransactionExecutionDetails { log_messages, .. },
-            ..
-        } = result
-        else {
-            panic!("Unexpected result")
-        };
-        assert!(log_messages.is_some());
+        if let TransactionExecutionResult::Executed(executed_tx) = result {
+            assert!(executed_tx.execution_details.log_messages.is_some());
+        } else {
+            panic!("Unexpected result");
+        }
 
         processing_config.log_messages_bytes_limit = Some(2);
 
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1184,20 +1175,12 @@ mod tests {
             &processing_config,
         );
 
-        let TransactionExecutionResult::Executed {
-            details:
-                TransactionExecutionDetails {
-                    log_messages,
-                    inner_instructions,
-                    ..
-                },
-            ..
-        } = result
-        else {
-            panic!("Unexpected result")
-        };
-        assert!(log_messages.is_some());
-        assert!(inner_instructions.is_none());
+        if let TransactionExecutionResult::Executed(executed_tx) = result {
+            assert!(executed_tx.execution_details.log_messages.is_some());
+            assert!(executed_tx.execution_details.inner_instructions.is_none());
+        } else {
+            panic!("Unexpected result");
+        }
 
         processing_config.recording_config.enable_log_recording = false;
         processing_config.recording_config.enable_cpi_recording = true;
@@ -1205,7 +1188,7 @@ mod tests {
 
         let result = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction,
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1213,20 +1196,12 @@ mod tests {
             &processing_config,
         );
 
-        let TransactionExecutionResult::Executed {
-            details:
-                TransactionExecutionDetails {
-                    log_messages,
-                    inner_instructions,
-                    ..
-                },
-            ..
-        } = result
-        else {
-            panic!("Unexpected result")
-        };
-        assert!(log_messages.is_none());
-        assert!(inner_instructions.is_some());
+        if let TransactionExecutionResult::Executed(executed_tx) = result {
+            assert!(executed_tx.execution_details.log_messages.is_none());
+            assert!(executed_tx.execution_details.inner_instructions.is_some());
+        } else {
+            panic!("Unexpected result");
+        }
     }
 
     #[test]
@@ -1259,7 +1234,7 @@ mod tests {
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
-        let mut loaded_transaction = LoadedTransaction {
+        let loaded_transaction = LoadedTransaction {
             accounts: vec![
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
@@ -1281,7 +1256,7 @@ mod tests {
 
         let _ = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction,
             &mut ExecuteTimings::default(),
             &mut error_metrics,
             &mut program_cache_for_tx_batch,
