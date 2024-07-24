@@ -692,7 +692,6 @@ mod tests {
         },
         std::{
             borrow::Cow,
-            collections::HashMap,
             iter,
             sync::atomic::{AtomicBool, AtomicU64, Ordering},
             thread, time,
