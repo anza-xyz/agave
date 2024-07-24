@@ -4,11 +4,10 @@
 extern crate test;
 
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
-    rand::{seq::SliceRandom, thread_rng},
+    criterion::{criterion_group, criterion_main, Criterion, Throughput},
+    itertools::iproduct,
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
     solana_sdk::{
-        account::AccountSharedData,
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
         system_program,
@@ -23,32 +22,34 @@ const BATCH_SIZES: [usize; 3] = [1, 32, 64];
 // locks acquired per transaction
 const LOCK_COUNTS: [usize; 2] = [2, 64];
 
-// largest batch size * largest lock count * 2
-const ACCOUNTS_DB_SIZE: usize = 8192;
+// total transactions per run
+const TOTAL_TRANSACTIONS: usize = 1024;
 
-fn create_test_data(batch_size: usize, lock_count: usize) -> (Accounts, Vec<SanitizedTransaction>) {
-    let accounts_db = AccountsDb::new_single_for_tests();
-    let accounts = Accounts::new(Arc::new(accounts_db));
-
-    let mut all_account_pubkeys = vec![];
+fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<SanitizedTransaction> {
+    // keys available to be shared between transactions, depending on mode
+    // currently, we test batches with no conflicts and batches with reader/reader conflicts
+    // in the future with SIMD83, we will also test reader/writer and writer/writer conflicts
+    let shared_pubkeys: Vec<_> = (0..lock_count).map(|_| Pubkey::new_unique()).collect();
     let mut transactions = vec![];
 
-    for _ in 0..batch_size {
+    for _ in 0..TOTAL_TRANSACTIONS {
         let mut account_metas = vec![];
 
-        // `lock_accounts()` distinguishes writable from readonly, so give transactions an even split
-        // signer doesnt matter for locking but `sanitize()` expects to see at least one
+        #[allow(clippy::needless_range_loop)]
         for i in 0..lock_count {
-            let pubkey = Pubkey::new_unique();
-
-            let account_meta = if i % 2 == 0 {
-                AccountMeta::new(pubkey, true)
+            // `lock_accounts()` distinguishes writable from readonly, so give transactions an even split
+            // signer doesnt matter for locking but `sanitize()` expects to see at least one
+            let account_meta = if i == 0 {
+                AccountMeta::new(Pubkey::new_unique(), true)
+            } else if i % 2 == 0 {
+                AccountMeta::new(Pubkey::new_unique(), false)
+            } else if read_conflicts {
+                AccountMeta::new_readonly(shared_pubkeys[i], false)
             } else {
-                AccountMeta::new_readonly(pubkey, false)
+                AccountMeta::new_readonly(Pubkey::new_unique(), false)
             };
 
             account_metas.push(account_meta);
-            all_account_pubkeys.push(pubkey);
         }
 
         let instruction = Instruction::new_with_bincode(system_program::id(), &(), account_metas);
@@ -59,38 +60,40 @@ fn create_test_data(batch_size: usize, lock_count: usize) -> (Accounts, Vec<Sani
         ));
     }
 
-    // fill out the rest so all batches have the same size accounts-db
-    for _ in all_account_pubkeys.len()..ACCOUNTS_DB_SIZE {
-        all_account_pubkeys.push(Pubkey::new_unique());
-    }
-    assert_eq!(all_account_pubkeys.len(), ACCOUNTS_DB_SIZE);
-
-    // and shuffle before constructing accounts-db so lookup is random
-    all_account_pubkeys.shuffle(&mut thread_rng());
-
-    let account = AccountSharedData::new(1, 0, &Pubkey::default());
-    for pubkey in all_account_pubkeys {
-        accounts.store_slow_uncached(0, &pubkey, &account);
-    }
-
-    (accounts, transactions)
+    transactions
 }
 
 fn bench_entry_lock_accounts(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_lock_accounts");
 
-    for batch_size in BATCH_SIZES {
-        for lock_count in LOCK_COUNTS {
-            let name = format!("batch_size_{batch_size}_locks_count_{lock_count}");
-            let (accounts, transactions) = create_test_data(batch_size, lock_count);
+    for (batch_size, lock_count, read_conflicts) in
+        iproduct!(BATCH_SIZES, LOCK_COUNTS, [false, true])
+    {
+        let name = format!(
+            "batch_size_{batch_size}_locks_count_{lock_count}{}",
+            if read_conflicts {
+                "_read_conflicts"
+            } else {
+                ""
+            }
+        );
 
-            group.bench_function(name.as_str(), move |b| {
-                b.iter(|| {
-                    let results = accounts.lock_accounts(transactions.iter(), MAX_TX_ACCOUNT_LOCKS);
-                    accounts.unlock_accounts(transactions.iter().zip(&results));
-                })
-            });
-        }
+        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts = Accounts::new(Arc::new(accounts_db));
+
+        let transactions = create_test_transactions(lock_count, read_conflicts);
+        group.throughput(Throughput::Elements(transactions.len() as u64));
+        let transaction_batches: Vec<_> = transactions.chunks(batch_size).collect();
+
+        group.bench_function(name.as_str(), move |b| {
+            b.iter(|| {
+                for batch in &transaction_batches {
+                    let results =
+                        accounts.lock_accounts(test::black_box(batch.iter()), MAX_TX_ACCOUNT_LOCKS);
+                    accounts.unlock_accounts(batch.iter().zip(&results));
+                }
+            })
+        });
     }
 }
 
