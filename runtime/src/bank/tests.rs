@@ -3073,16 +3073,22 @@ fn test_check_transaction_age() {
         amount,
         genesis_config.hash(),
     );
-    let pay_alice = vec![tx1,tx2];
+    let pay_alice = vec![tx1, tx2];
 
     let batch = bank.prepare_batch_for_tests(pay_alice);
     let mut error_counters = TransactionErrorMetrics::default();
     let lock_result = vec![Ok(()), Ok(())];
-    let check_age_results = bank.check_age(batch.sanitized_transactions(), &lock_result, MAX_PROCESSING_AGE, &mut error_counters);
+    let check_age_results = bank.check_age(
+        batch.sanitized_transactions(),
+        &lock_result,
+        MAX_PROCESSING_AGE,
+        &mut error_counters,
+    );
 
-    assert_eq!(check_age_results[1], Err(TransactionError::AlreadyProcessed)); //Duplicate transactions in check_age should give AlreadyProcessed error
-
-   
+    assert_eq!(
+        check_age_results[1],
+        Err(TransactionError::AlreadyProcessed)
+    ); //Duplicate transactions in check_age should give AlreadyProcessed error
 }
 
 #[test]

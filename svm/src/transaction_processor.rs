@@ -7,6 +7,10 @@ use {
             CheckedTransactionDetails, LoadedTransaction, LoadedTransactionAccount,
             TransactionCheckResult, TransactionLoadResult, TransactionValidationResult,
             ValidatedTransactionDetails,
+            CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
+            TransactionValidationResult, ValidatedTransactionDetails,
+            TransactionLoadAccountResult, TransactionValidationResult, UniqueLoadedAccounts,
+            ValidatedTransactionDetails, calculate_program_indices
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
@@ -237,31 +241,31 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
 
-        let (validation_results, validate_fees_us) = measure_us!(self.validate_fees(
+        // let (validation_results, validate_fees_time) = measure!(self.validate_fees(
+        //     callbacks,
+        //     sanitized_txs,
+        //     check_results,
+        //     &environment.feature_set,
+        //     environment
+        //         .fee_structure
+        //         .unwrap_or(&FeeStructure::default()),
+        //     environment
+        //         .rent_collector
+        //         .unwrap_or(&RentCollector::default()),
+        //     &mut error_metrics
+        // ));
+
+        let mut program_cache_time = Measure::start("program_cache");
+        let mut program_accounts_map = Self::filter_executable_program_accounts(
             callbacks,
             config.account_overrides,
             sanitized_txs,
-            check_results,
-            &environment.feature_set,
-            environment
-                .fee_structure
-                .unwrap_or(&FeeStructure::default()),
-            environment
-                .rent_collector
-                .unwrap_or(&RentCollector::default()),
-            &mut error_metrics
-        ));
-
-        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
-            let mut program_accounts_map = Self::filter_executable_program_accounts(
-                callbacks,
-                sanitized_txs,
-                &validation_results,
-                PROGRAM_OWNERS,
-            );
-            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                program_accounts_map.insert(*builtin_program, 0);
-            }
+            &check_results,
+            PROGRAM_OWNERS,
+        );
+        for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
+            program_accounts_map.insert(*builtin_program, 0);
+        }
 
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
@@ -286,18 +290,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let (loaded_transactions, load_accounts_us) = measure_us!(load_accounts(
         let mut load_time = Measure::start("accounts_load");
         let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
-        let mut loaded_transactions = load_accounts(
+        let initial_load_results = load_accounts(
             callbacks,
             sanitized_txs,
-            validation_results,
-            &mut error_metrics,
+            check_results,
             config.account_overrides,
-            &environment.feature_set,
-            environment
-                .rent_collector
-                .unwrap_or(&RentCollector::default()),
             &program_cache_for_tx_batch.borrow(),
-            &mut unique_loaded_accounts
+            &mut unique_loaded_accounts,
         );
         load_time.stop();
 
@@ -509,7 +508,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_owners: &[Pubkey],
     ) -> HashMap<Pubkey, u64> {
         let mut result: HashMap<Pubkey, u64> = HashMap::new();
-        validation_results.iter().zip(txs).for_each(|etx| {
+        check_results.iter().zip(txs).for_each(|etx| {
             if let (Ok(_), tx) = etx {
                 tx.account_keys()
                     .iter()
@@ -809,7 +808,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         if let Some(_) = tx.get_durable_nonce() {
             let nonce_hash = tx.message().recent_blockhash();
             if dedup_nonce_lookup.contains(nonce_hash) {
-                return TransactionExecutionResult::NotExecuted(TransactionError::BlockhashNotFound);
+                return TransactionExecutionResult::NotExecuted(
+                    TransactionError::BlockhashNotFound,
+                );
             } else {
                 dedup_nonce_lookup.insert(*nonce_hash);
             }

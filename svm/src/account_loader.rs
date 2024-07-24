@@ -30,12 +30,13 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroU32,
+    std::{arch::x86_64, collections::HashMap, num::NonZeroU32},
 };
 
 // for the load instructions
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
+pub type TransactionLoadAccountResult = Result<Vec<LoadedAccountDetails>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 
@@ -53,6 +54,13 @@ pub enum TransactionLoadResult {
 }
 pub type TransactionLoadResult = Result<LoadedTransaction>;
 pub type UniqueLoadedAccounts = HashMap<Pubkey, AccountSharedData>;
+
+
+pub struct LoadedAccountDetails {
+    pub pubkey: Pubkey,
+    pub account: AccountSharedData,
+    pub account_found: bool,
+}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CheckedTransactionDetails {
@@ -183,22 +191,17 @@ pub fn validate_fee_payer(
     )
 }
 
-/// Collect information about accounts used in txs transactions and
-/// return vector of tuples, one for each transaction in the
-/// batch. Each tuple contains struct of information about accounts as
-/// its first element and an optional transaction nonce info as its
-/// second element.
-pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
+pub(crate) fn calculate_program_indices<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[impl SVMMessage],
-    validation_results: Vec<TransactionValidationResult>,
+    initial_load_results: &Vec<TransactionLoadAccountResult>,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
-    unique_loaded_accounts: &mut UniqueLoadedAccounts
-) -> Vec<TransactionLoadResult> {
+    unique_loaded_accounts: &mut UniqueLoadedAccounts,
+) -> Vec<Result<()>> {
     txs.iter()
         .zip(validation_results)
         .map(|(transaction, validation_result)| {
@@ -339,25 +342,28 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         collect_loaded_account(account_key, (loaded_account, account_found))?;
     }
 
-    let builtins_start_index = accounts.len();
-    let program_indices = message
-        .instructions_iter()
-        .map(|instruction| {
-            let mut account_indices = Vec::with_capacity(2);
-            let program_index = instruction.program_id_index as usize;
-            // This command may never return error, because the transaction is sanitized
-            let (program_id, program_account) = accounts
-                .get(program_index)
-                .ok_or(TransactionError::ProgramAccountNotFound)?;
-            if native_loader::check_id(program_id) {
-                return Ok(account_indices);
-            }
+    }
 
-            let account_found = accounts_found.get(program_index).unwrap_or(&true);
-            if !account_found {
-                error_metrics.account_not_found += 1;
-                return Err(TransactionError::ProgramAccountNotFound);
-            }
+// TODO: move where we want to make loaded transactions
+/// Collect information about accounts used in txs transactions and
+/// return vector of tuples, one for each transaction in the
+/// batch. Each tuple contains struct of information about accounts as
+/// its first element and an optional transaction nonce info as its
+/// second element.
+/// Load unique accounts in `unique_loaded_accounts` and returns only loading error
+pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    txs: &[SanitizedTransaction],
+    check_results: Vec<TransactionCheckResult>,
+    account_overrides: Option<&AccountOverrides>,
+    loaded_programs: &ProgramCacheForTxBatch,
+    unique_loaded_accounts: &mut UniqueLoadedAccounts,
+) -> Vec<TransactionLoadAccountResult> {
+    txs.iter()
+        .zip(check_results)
+        .map(|etx| match etx {
+            (tx, Ok(_)) => {
+                let message = tx.message();
 
             if !program_account.executable() {
                 error_metrics.invalid_program_for_execution += 1;
@@ -393,17 +399,95 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     return Err(TransactionError::ProgramAccountNotFound);
                 }
             }
-            Ok(account_indices)
+            (_, Err(e)) => Err(e),
         })
-        .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
+        .collect()
+}
 
-    Ok(LoadedTransactionAccounts {
-        accounts,
-        program_indices,
-        rent: tx_rent,
-        rent_debits,
-        loaded_accounts_data_size: accumulated_accounts_data_size,
-    })
+fn load_transaction_accounts<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    message: &SanitizedMessage,
+    account_overrides: Option<&AccountOverrides>,
+    loaded_programs: &ProgramCacheForTxBatch,
+    unique_loaded_accounts: &mut UniqueLoadedAccounts,
+) -> TransactionLoadAccountResult {
+    let account_keys = message.account_keys();
+
+    let instruction_accounts = message
+        .instructions()
+        .iter()
+        .flat_map(|instruction| &instruction.accounts)
+        .unique()
+        .collect::<Vec<&u8>>();
+
+    let accounts = account_keys
+        .iter()
+        .enumerate() // the key is duplicate dont load again
+        .map(|(i, key)| {
+            let mut account_found = true;
+            #[allow(clippy::collapsible_else_if)]
+            let account = if solana_sdk::sysvar::instructions::check_id(key) {
+                construct_instructions_account(message)
+            } else {
+                let instruction_account = u8::try_from(i)
+                    .map(|i| instruction_accounts.contains(&&i))
+                    .unwrap_or(false);
+                if let Some(account_override) =
+                    account_overrides.and_then(|overrides| overrides.get(key))
+                {
+                    account_override.clone()
+                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
+                    .then_some(())
+                    .and_then(|_| loaded_programs.find(key))
+                {
+                    callbacks
+                        .get_account_shared_data(key)
+                        .ok_or(TransactionError::AccountNotFound)?;
+                    // Optimization to skip loading of accounts which are only used as
+                    // programs in top-level instructions and not passed as instruction accounts.
+                    account_shared_data_from_program(&program)
+                } else {
+                    if !unique_loaded_accounts.contains_key(key) {
+                        callbacks
+                        .get_account_shared_data(key)
+                        .map(|account| account)
+                        .unwrap_or_else(|| {
+                            account_found = false;
+                            let mut default_account = AccountSharedData::default();
+                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                            // with this field already set would allow us to skip rent collection for these accounts.
+                            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                            default_account
+                        })
+                    } else {
+                        unique_loaded_accounts
+                        .get(key)
+                        .map(|account| account.clone())
+                        .unwrap_or_else(|| {
+                            // this should never happen
+                            account_found = false;
+                            let mut default_account = AccountSharedData::default();
+                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                            // with this field already set would allow us to skip rent collection for these accounts.
+                            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                            default_account
+                        }) 
+                    }
+                }
+            };
+            unique_loaded_accounts.insert(*key, account.clone());
+            Ok(
+                LoadedAccountDetails {
+                    pubkey: *key,
+                    account,
+                    account_found
+                }
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(accounts)
 }
 
 fn load_transaction_account<CB: TransactionProcessingCallback>(
@@ -655,7 +739,7 @@ mod tests {
         rent_collector: &RentCollector,
         error_metrics: &mut TransactionErrorMetrics,
         feature_set: &mut FeatureSet,
-    ) -> Vec<TransactionLoadResult> {
+    ) -> Vec<TransactionLoadAcResult> {
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let fee_payer_account = accounts[0].1.clone();
         let mut accounts_map = HashMap::new();

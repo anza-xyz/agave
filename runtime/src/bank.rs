@@ -3458,7 +3458,7 @@ impl Bank {
                     if !entry_level_dedup_map.insert(msg_hash) {
                         return Err(TransactionError::AlreadyProcessed);
                     }
-                    
+
                     self.check_transaction_age(
                         tx.borrow(),
                         max_age,
@@ -3466,7 +3466,7 @@ impl Bank {
                         &hash_queue,
                         error_counters,
                     )
-                },
+                }
                 Err(e) => Err(e.clone()),
             })
             .collect()
