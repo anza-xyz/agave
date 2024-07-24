@@ -30,7 +30,7 @@ use {
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
-    solana_measure::{measure::Measure, measure_time},
+    solana_measure::{measure::Measure, measure_time, measure_us},
     solana_sdk::{
         clock::{Epoch, Slot},
         hash::Hash,
@@ -855,7 +855,7 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let (_, measure_flush) = measure_time!({
+        let (_, flush_storages_us) = measure_us!({
             for storage in snapshot_storages {
                 storage.flush().map_err(|err| {
                     AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
@@ -867,7 +867,7 @@ fn serialize_snapshot(
         // constructing a bank from this directory.  It acts like an archive to include the full state.
         // The set of the account storages files is the necessary part of this snapshot state.  Hard-link them
         // from the operational accounts/ directory to here.
-        let (_, measure_hard_linking) = measure_time!(hard_link_storages_to_snapshot(
+        let (_, hard_link_storages_us) = measure_us!(hard_link_storages_to_snapshot(
             &bank_snapshot_dir,
             slot,
             snapshot_storages
@@ -895,13 +895,13 @@ fn serialize_snapshot(
         );
 
         let status_cache_path = bank_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-        let (status_cache_consumed_size, status_cache_serialize) = measure_time!(
+        let (status_cache_consumed_size, status_cache_serialize_us) = measure_us!(
             snapshot_bank_utils::serialize_status_cache(slot_deltas, &status_cache_path)
                 .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
         );
 
         let version_path = bank_snapshot_dir.join(SNAPSHOT_VERSION_FILENAME);
-        let (_, measure_write_version_file) = measure_time!(fs::write(
+        let (_, write_version_file_us) = measure_us!(fs::write(
             &version_path,
             snapshot_version.as_str().as_bytes(),
         )
@@ -909,8 +909,8 @@ fn serialize_snapshot(
 
         // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
         let state_complete_path = bank_snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-        let (_, measure_write_state_complete_file) =
-            measure_time!(fs::File::create(&state_complete_path).map_err(|err| {
+        let (_, write_state_complete_file_us) = measure_us!(fs::File::create(&state_complete_path)
+            .map_err(|err| {
                 AddBankSnapshotError::CreateStateCompleteFile(err, state_complete_path)
             })?);
 
@@ -922,22 +922,14 @@ fn serialize_snapshot(
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),
-            ("flush_storages_us", measure_flush.as_us(), i64),
-            ("hard_link_storages_us", measure_hard_linking.as_us(), i64),
+            ("flush_storages_us", flush_storages_us, i64),
+            ("hard_link_storages_us", hard_link_storages_us, i64),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
-            (
-                "status_cache_serialize_us",
-                status_cache_serialize.as_us(),
-                i64
-            ),
-            (
-                "write_version_file_us",
-                measure_write_version_file.as_us(),
-                i64
-            ),
+            ("status_cache_serialize_us", status_cache_serialize_us, i64),
+            ("write_version_file_us", write_version_file_us, i64),
             (
                 "write_state_complete_file_us",
-                measure_write_state_complete_file.as_us(),
+                write_state_complete_file_us,
                 i64
             ),
             ("total_us", measure_everything.as_us(), i64),
