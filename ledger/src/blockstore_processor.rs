@@ -4694,6 +4694,42 @@ pub mod tests {
         ]
     }
 
+    /// create variable number of conflicting/non-conflicting transactions
+    fn create_sanitized_transactions_for_tests(
+        mint_keypair: &Keypair,
+        genesis_hash: &Hash,
+        insert_conflicting_tx: bool,
+        num_of_txns: usize,
+    ) -> Vec<SanitizedTransaction> {
+        let mut txs = vec![];
+
+        if insert_conflicting_tx {
+            // 1 iteration inserts 2 transactions in vec therefore loop_iter/2
+            for _ in 0..num_of_txns / 2 {
+                let pubkey = solana_sdk::pubkey::new_rand();
+                let pubkey2 = solana_sdk::pubkey::new_rand();
+                let keypair = Keypair::new();
+
+                txs.push(SanitizedTransaction::from_transaction_for_tests(
+                    system_transaction::transfer(mint_keypair, &pubkey, 1, *genesis_hash),
+                ));
+                txs.push(SanitizedTransaction::from_transaction_for_tests(
+                    system_transaction::transfer(&keypair, &pubkey2, 1, *genesis_hash),
+                ));
+            }
+        } else {
+            for _ in 0..num_of_txns {
+                let keypair = Keypair::new();
+                let pubkey = solana_sdk::pubkey::new_rand();
+
+                txs.push(SanitizedTransaction::from_transaction_for_tests(
+                    system_transaction::transfer(&keypair, &pubkey, 1, *genesis_hash),
+                ));
+            }
+        }
+        txs
+    }
+
     #[test]
     fn test_confirm_slot_entries_progress_num_txs_indexes() {
         let GenesisConfigInfo {
@@ -4942,6 +4978,201 @@ pub mod tests {
         do_test_schedule_batches_for_execution(false);
     }
 
+    /// For normal flow self conflicting batches should not be rebatched.
+    /// Returns number of self conflicting batches after rebatching.
+    ///
+    /// This function partially test the rebatching functionality of [rebatch_and_execute_batches].
+    /// After SVM changes (to allow self conflicting batches) [rebatch_and_execute_batches] can directly be used in this test.
+    fn check_conflicting_batches_after_rebatching(
+        bank: &Arc<Bank>,
+        batches: &[TransactionBatchWithIndexes],
+    ) -> usize {
+        let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) =
+            batches
+                .iter()
+                .filter(|batch| !batch.self_conflicting_batch)
+                .flat_map(|batch| {
+                    batch
+                        .batch
+                        .lock_results()
+                        .iter()
+                        .cloned()
+                        .zip(batch.batch.sanitized_transactions().to_vec())
+                        .zip(batch.transaction_indexes.to_vec())
+                })
+                .unzip();
+
+        let mut minimal_tx_cost = u64::MAX;
+        let mut total_cost: u64 = 0;
+        let tx_costs = sanitized_txs
+            .iter()
+            .map(|tx| {
+                let tx_cost = CostModel::calculate_cost(tx, &bank.feature_set);
+                let cost = tx_cost.sum();
+                minimal_tx_cost = std::cmp::min(minimal_tx_cost, cost);
+                total_cost = total_cost.saturating_add(cost);
+                cost
+            })
+            .collect::<Vec<_>>();
+
+        let target_batch_count = get_thread_count() as u64;
+
+        let mut tx_batches: Vec<TransactionBatchWithIndexes> = vec![];
+        let rebatched_txs: &[TransactionBatchWithIndexes] =
+            if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
+                let target_batch_cost = total_cost / target_batch_count;
+                let mut batch_cost: u64 = 0;
+                let mut slice_start = 0;
+                tx_costs.into_iter().enumerate().for_each(|(index, cost)| {
+                    let next_index = index + 1;
+                    batch_cost = batch_cost.saturating_add(cost);
+                    if batch_cost >= target_batch_cost || next_index == sanitized_txs.len() {
+                        let tx_batch = rebatch_transactions(
+                            &lock_results,
+                            bank,
+                            &sanitized_txs,
+                            slice_start,
+                            index,
+                            &transaction_indexes,
+                        );
+                        slice_start = next_index;
+                        tx_batches.push(tx_batch);
+                        batch_cost = 0;
+                    }
+                });
+                let conflicting_batches: Vec<_> = batches
+                    .iter()
+                    .filter(|batch| batch.self_conflicting_batch)
+                    .map(|batch| {
+                        let mut non_conflicting_batch = batch.clone();
+                        non_conflicting_batch.batch.set_needs_unlock(false);
+                        non_conflicting_batch
+                    })
+                    .collect();
+                tx_batches.extend(conflicting_batches);
+
+                &tx_batches[..]
+            } else {
+                batches
+            };
+        let mut num_of_self_conflicting_batches = 0;
+        for each_batch in rebatched_txs.iter() {
+            if each_batch.self_conflicting_batch {
+                num_of_self_conflicting_batches += 1;
+            }
+        }
+        num_of_self_conflicting_batches
+    }
+
+    fn do_test_schedule_conflicting_batches_for_execution() {
+        solana_logger::setup();
+        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+        let context = SchedulingContext::new(bank.clone());
+
+        let conflicting_txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            true,
+            55,
+        );
+
+        let non_conflicting_txs1 = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            false,
+            32,
+        );
+        let non_conflicting_txs2 = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            false,
+            32,
+        );
+
+        let mut mocked_scheduler = MockInstalledScheduler::new();
+        let seq = Arc::new(Mutex::new(mockall::Sequence::new()));
+        let seq_cloned = seq.clone();
+        mocked_scheduler
+            .expect_context()
+            .times(1)
+            .in_sequence(&mut seq.lock().unwrap())
+            .return_const(context);
+        mocked_scheduler
+            .expect_schedule_execution()
+            .times(conflicting_txs.len() + non_conflicting_txs1.len() + non_conflicting_txs2.len())
+            .returning(|(_, _)| Ok(()));
+
+        mocked_scheduler
+            .expect_wait_for_termination()
+            .with(mockall::predicate::eq(true))
+            .times(1)
+            .in_sequence(&mut seq.lock().unwrap())
+            .returning(move |_| {
+                let mut mocked_uninstalled_scheduler = MockUninstalledScheduler::new();
+                mocked_uninstalled_scheduler
+                    .expect_return_to_pool()
+                    .times(1)
+                    .in_sequence(&mut seq_cloned.lock().unwrap())
+                    .returning(|| ());
+                (
+                    (Ok(()), ExecuteTimings::default()),
+                    Box::new(mocked_uninstalled_scheduler),
+                )
+            });
+        let bank = BankWithScheduler::new(bank, Some(Box::new(mocked_scheduler)));
+
+        let conflicting_batch = bank.prepare_sanitized_batch(&conflicting_txs);
+        let conflicting_batch_with_indexes = TransactionBatchWithIndexes {
+            batch: conflicting_batch,
+            transaction_indexes: (0..conflicting_txs.len()).collect(),
+            self_conflicting_batch: true,
+        };
+
+        let non_conflicting_batch1 = bank.prepare_sanitized_batch(&non_conflicting_txs1);
+        let non_conflicting_batch1_with_indexes = TransactionBatchWithIndexes {
+            batch: non_conflicting_batch1,
+            transaction_indexes: (0..non_conflicting_txs1.len()).collect(),
+            self_conflicting_batch: false,
+        };
+
+        let non_conflicting_batch2 = bank.prepare_sanitized_batch(&non_conflicting_txs2);
+        let non_conflicting_batch2_with_indexes = TransactionBatchWithIndexes {
+            batch: non_conflicting_batch2,
+            transaction_indexes: (0..non_conflicting_txs2.len()).collect(),
+            self_conflicting_batch: false,
+        };
+
+        let replay_tx_thread_pool = create_thread_pool(1);
+        let mut batch_execution_timing = BatchExecutionTiming::default();
+        let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
+        let result = process_batches(
+            &bank,
+            &replay_tx_thread_pool,
+            &[
+                non_conflicting_batch1_with_indexes,
+                conflicting_batch_with_indexes,
+                non_conflicting_batch2_with_indexes,
+            ],
+            None,
+            None,
+            &mut batch_execution_timing,
+            None,
+            &ignored_prioritization_fee_cache,
+        );
+        assert_matches!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_schedule_conflicting_batches_for_execution_success() {
+        do_test_schedule_conflicting_batches_for_execution();
+    }
+
     #[test]
     fn test_confirm_slot_entries_with_fix() {
         const HASHES_PER_TICK: u64 = 10;
@@ -5121,5 +5352,189 @@ pub mod tests {
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
             check_block_cost_limits(&bank, &commit_results, &txs)
         );
+    }
+
+    #[test]
+    /// checks rebatching for disjoint batches after introducing self_conflicting_batch
+    fn test_multiple_non_conflicting_batches() {
+        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        // batch 1
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            false,
+            6,
+        );
+        let non_conflicting_batch: TransactionBatch = bank.prepare_sanitized_batch(&txs);
+        let non_conflicting_batch_1_with_index = TransactionBatchWithIndexes {
+            batch: non_conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: false,
+        };
+
+        // batch 2
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            false,
+            6,
+        );
+        let non_conflicting_batch: TransactionBatch = bank.prepare_sanitized_batch(&txs);
+        let non_conflicting_batch_2_with_index = TransactionBatchWithIndexes {
+            batch: non_conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: false,
+        };
+
+        let number_of_conflicting_batches = check_conflicting_batches_after_rebatching(
+            &bank,
+            &[
+                non_conflicting_batch_1_with_index,
+                non_conflicting_batch_2_with_index,
+            ],
+        );
+        // As no self conflicting batch is provided
+        assert_eq!(number_of_conflicting_batches, 0);
+    }
+
+    #[test]
+    fn test_multiple_conflicting_batches() {
+        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        // self conflicting batch 1
+        let txs =
+            create_sanitized_transactions_for_tests(&mint_keypair, &genesis_config.hash(), true, 6);
+        let conflicting_batch: TransactionBatch = bank.prepare_sanitized_batch(&txs);
+        let conflicting_batch_1_with_index = TransactionBatchWithIndexes {
+            batch: conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: true,
+        };
+
+        // self conflicting batch 2
+        let txs =
+            create_sanitized_transactions_for_tests(&mint_keypair, &genesis_config.hash(), true, 6);
+        let conflicting_batch: TransactionBatch = bank.prepare_sanitized_batch(&txs);
+        let conflicting_batch_2_with_index = TransactionBatchWithIndexes {
+            batch: conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: true,
+        };
+
+        // self conflicting batch 3
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            true,
+            20,
+        );
+        let conflicting_batch = bank.prepare_sanitized_batch(&txs);
+        let conflicting_batch_3_with_index = TransactionBatchWithIndexes {
+            batch: conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: true,
+        };
+
+        let number_of_conflicting_batches = check_conflicting_batches_after_rebatching(
+            &bank,
+            &[
+                conflicting_batch_1_with_index,
+                conflicting_batch_2_with_index,
+                conflicting_batch_3_with_index,
+            ],
+        );
+        // the self conflicting batch should not be rebatched
+        assert_eq!(number_of_conflicting_batches, 3);
+    }
+    #[test]
+    fn test_mixture_of_conflicting_and_non_conflicting_batches() {
+        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        // batch 1
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            false,
+            6,
+        );
+        let non_conflicting_batch: TransactionBatch = bank.prepare_sanitized_batch(&txs);
+        let non_conflicting_batch_1_with_index = TransactionBatchWithIndexes {
+            batch: non_conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: false,
+        };
+
+        // batch 2
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            false,
+            20,
+        );
+        let non_conflicting_batch: TransactionBatch = bank.prepare_sanitized_batch(&txs);
+        let non_conflicting_batch_2_with_index = TransactionBatchWithIndexes {
+            batch: non_conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: false,
+        };
+
+        // batch 3
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            true,
+            20,
+        );
+        let conflicting_batch = bank.prepare_sanitized_batch(&txs);
+        let conflicting_batch_1_with_index = TransactionBatchWithIndexes {
+            batch: conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: true,
+        };
+
+        // batch 3
+        let txs = create_sanitized_transactions_for_tests(
+            &mint_keypair,
+            &genesis_config.hash(),
+            true,
+            40,
+        );
+        let conflicting_batch = bank.prepare_sanitized_batch(&txs);
+        let conflicting_batch_2_with_index = TransactionBatchWithIndexes {
+            batch: conflicting_batch,
+            transaction_indexes: (0..txs.len()).collect(),
+            self_conflicting_batch: true,
+        };
+
+        let number_of_conflicting_batches = check_conflicting_batches_after_rebatching(
+            &bank,
+            &[
+                non_conflicting_batch_1_with_index,
+                conflicting_batch_1_with_index,
+                non_conflicting_batch_2_with_index,
+                conflicting_batch_2_with_index,
+            ],
+        );
+        // the self conflicting batch should not be rebatched
+        assert_eq!(number_of_conflicting_batches, 2);
     }
 }
