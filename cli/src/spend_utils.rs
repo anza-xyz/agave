@@ -2,6 +2,7 @@ use {
     crate::{
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
+        stake,
     },
     clap::ArgMatches,
     solana_clap_utils::{input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG},
@@ -15,6 +16,7 @@ use {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SpendAmount {
     All,
+    Available,
     Some(u64),
     RentExempt,
 }
@@ -35,9 +37,16 @@ impl SpendAmount {
     }
 
     pub fn new_from_matches(matches: &ArgMatches<'_>, name: &str) -> Self {
-        let amount = lamports_of_sol(matches, name);
         let sign_only = matches.is_present(SIGN_ONLY_ARG.name);
-        SpendAmount::new(amount, sign_only)
+        let amount = lamports_of_sol(matches, name);
+        if amount.is_some() {
+            return SpendAmount::new(amount, sign_only);
+        }
+        match matches.value_of(name).unwrap_or("ALL") {
+            "ALL" if !sign_only => SpendAmount::All,
+            "AVAILABLE" if !sign_only => SpendAmount::Available,
+            _ => panic!("Only specific amounts are supported for sign-only operations"),
+        }
     }
 }
 
@@ -96,15 +105,45 @@ where
         )?;
         Ok((message, spend))
     } else {
-        let from_balance = rpc_client
+        let mut from_balance = rpc_client
             .get_balance_with_commitment(from_pubkey, commitment)?
             .value;
-        let from_rent_exempt_minimum = if amount == SpendAmount::RentExempt {
-            let data = rpc_client.get_account_data(from_pubkey)?;
-            rpc_client.get_minimum_balance_for_rent_exemption(data.len())?
-        } else {
-            0
-        };
+        let from_rent_exempt_minimum =
+            if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
+                let data = rpc_client.get_account_data(from_pubkey)?;
+                rpc_client.get_minimum_balance_for_rent_exemption(data.len())?
+            } else {
+                0
+            };
+        if amount == SpendAmount::Available {
+            if let Some(account) = rpc_client
+                .get_account_with_commitment(from_pubkey, commitment)?
+                .value
+            {
+                if account.owner == solana_sdk::stake::program::id() {
+                    let state = stake::get_account_stake_state(
+                        rpc_client,
+                        from_pubkey,
+                        account,
+                        true,
+                        None,
+                        false,
+                    )?;
+                    let mut sub_rent_exempt = false;
+                    if let Some(active_stake) = state.active_stake {
+                        from_balance = from_balance.saturating_sub(active_stake);
+                        sub_rent_exempt = true;
+                    }
+                    if let Some(activating_stake) = state.activating_stake {
+                        from_balance = from_balance.saturating_sub(activating_stake);
+                        sub_rent_exempt = true;
+                    }
+                    if sub_rent_exempt {
+                        from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
+                    }
+                }
+            }
+        }
         let (message, SpendAndFee { spend, fee }) = resolve_spend_message(
             rpc_client,
             amount,
@@ -172,7 +211,7 @@ where
                 fee,
             },
         )),
-        SpendAmount::All => {
+        SpendAmount::All | SpendAmount::Available => {
             let lamports = if from_pubkey == fee_pubkey {
                 from_balance.saturating_sub(fee)
             } else {
