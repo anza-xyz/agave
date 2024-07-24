@@ -176,11 +176,11 @@ fn execute_transactions(
         )| {
             match execution_result {
                 TransactionExecutionResult::Executed(executed_tx) => {
+                    let fee_details = executed_tx.loaded_transaction.fee_details;
                     let TransactionExecutionDetails {
                         status,
                         log_messages,
                         inner_instructions,
-                        fee_details,
                         return_data,
                         executed_units,
                         ..

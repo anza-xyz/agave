@@ -870,7 +870,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 status,
                 log_messages,
                 inner_instructions,
-                fee_details: loaded_transaction.fee_details,
                 return_data,
                 executed_units,
                 accounts_data_len_delta,

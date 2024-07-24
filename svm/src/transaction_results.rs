@@ -9,7 +9,6 @@ use {
     serde::{Deserialize, Serialize},
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
     solana_sdk::{
-        fee::FeeDetails,
         pubkey::Pubkey,
         rent_debits::RentDebits,
         transaction::{self, TransactionError},
@@ -103,7 +102,6 @@ pub struct TransactionExecutionDetails {
     pub status: transaction::Result<()>,
     pub log_messages: Option<Vec<String>>,
     pub inner_instructions: Option<InnerInstructionsList>,
-    pub fee_details: FeeDetails,
     pub return_data: Option<TransactionReturnData>,
     pub executed_units: u64,
     /// The change in accounts data len for this transaction.

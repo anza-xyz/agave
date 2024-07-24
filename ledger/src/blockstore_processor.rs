@@ -45,6 +45,7 @@ use {
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
         feature_set,
+        fee::FeeDetails,
         genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
@@ -2132,7 +2133,7 @@ pub enum TransactionStatusMessage {
 pub struct TransactionStatusBatch {
     pub bank: Arc<Bank>,
     pub transactions: Vec<SanitizedTransaction>,
-    pub execution_results: Vec<Option<TransactionExecutionDetails>>,
+    pub execution_results: Vec<Option<(TransactionExecutionDetails, FeeDetails)>>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
     pub rent_debits: Vec<RentDebits>,
@@ -2165,9 +2166,10 @@ impl TransactionStatusSender {
                 execution_results: execution_results
                     .into_iter()
                     .map(|result| match result {
-                        TransactionExecutionResult::Executed(executed_tx) => {
-                            Some(executed_tx.execution_details)
-                        }
+                        TransactionExecutionResult::Executed(executed_tx) => Some((
+                            executed_tx.execution_details,
+                            executed_tx.loaded_transaction.fee_details,
+                        )),
                         TransactionExecutionResult::NotExecuted(_) => None,
                     })
                     .collect(),
@@ -2265,7 +2267,6 @@ pub mod tests {
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             epoch_schedule::EpochSchedule,
-            fee::FeeDetails,
             hash::Hash,
             instruction::{Instruction, InstructionError},
             native_token::LAMPORTS_PER_SOL,
@@ -5119,7 +5120,6 @@ pub mod tests {
                     status: Ok(()),
                     log_messages: None,
                     inner_instructions: None,
-                    fee_details: FeeDetails::default(),
                     return_data: None,
                     executed_units: actual_execution_cu,
                     accounts_data_len_delta: 0,

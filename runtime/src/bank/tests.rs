@@ -241,7 +241,6 @@ fn new_execution_result(status: Result<()>, fee_details: FeeDetails) -> Transact
             status,
             log_messages: None,
             inner_instructions: None,
-            fee_details,
             return_data: None,
             executed_units: 0,
             accounts_data_len_delta: 0,

@@ -3859,8 +3859,7 @@ impl Bank {
             .iter()
             .map(|execution_result| match execution_result {
                 TransactionExecutionResult::Executed(executed_tx) => {
-                    let details = &executed_tx.execution_details;
-                    fees += details.fee_details.total_fee();
+                    fees += executed_tx.loaded_transaction.fee_details.total_fee();
                     Ok(())
                 }
                 TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
@@ -3882,8 +3881,7 @@ impl Bank {
             .iter()
             .map(|execution_result| match execution_result {
                 TransactionExecutionResult::Executed(executed_tx) => {
-                    let details = &executed_tx.execution_details;
-                    accumulated_fee_details.accumulate(&details.fee_details);
+                    accumulated_fee_details.accumulate(&executed_tx.loaded_transaction.fee_details);
                     Ok(())
                 }
                 TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),

@@ -180,7 +180,6 @@ mod tests {
                 status,
                 log_messages: None,
                 inner_instructions: None,
-                fee_details: loaded_transaction.fee_details,
                 return_data: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
