@@ -3144,11 +3144,7 @@ impl Bank {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn register_recent_blockhash_for_test(&self, hash: &Hash, lamports_per_signature: Option<u64>) {
-        // This is needed because recent_blockhash updates necessitate synchronizations for
-        // consistent tx check_age handling.
-        BankWithScheduler::wait_for_paused_scheduler(self, scheduler);
-
+    pub fn register_recent_blockhash_for_test(&self, blockhash: &Hash, lamports_per_signature: Option<u64>) {
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
