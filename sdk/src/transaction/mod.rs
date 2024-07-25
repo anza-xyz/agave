@@ -136,7 +136,7 @@ use {
 mod sanitized;
 mod versioned;
 
-pub use {solana_transaction_error::*, sanitized::*, versioned::*};
+pub use {sanitized::*, solana_transaction_error::*, versioned::*};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TransactionVerificationMode {

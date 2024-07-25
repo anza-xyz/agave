@@ -1,4 +1,8 @@
 #![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
 use {
     solana_program::{
         instruction::InstructionError,
@@ -7,10 +11,6 @@ use {
     solana_sanitize::SanitizeError,
     thiserror::Error,
 };
-#[cfg(feature = "frozen-abi")]
-use solana_frozen_abi_macro::{AbiExample, AbiEnumVisitor};
-#[cfg(feature = "serde")]
-use serde_derive::{Deserialize, Serialize};
 
 /// Reasons a transaction might be rejected.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
