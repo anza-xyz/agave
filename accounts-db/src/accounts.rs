@@ -540,19 +540,19 @@ impl Accounts {
         self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
     }
 
-    fn lock_account(
+    fn lock_account<'a>(
         &self,
         account_locks: &mut AccountLocks,
-        writable_keys: Vec<&Pubkey>,
-        readonly_keys: Vec<&Pubkey>,
+        writable_keys: impl Iterator<Item = &'a Pubkey> + Clone,
+        readonly_keys: impl Iterator<Item = &'a Pubkey> + Clone,
     ) -> Result<()> {
-        for k in writable_keys.iter() {
+        for k in writable_keys.clone() {
             if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
                 debug!("Writable account in use: {:?}", k);
                 return Err(TransactionError::AccountInUse);
             }
         }
-        for k in readonly_keys.iter() {
+        for k in readonly_keys.clone() {
             if account_locks.is_locked_write(k) {
                 debug!("Read-only account in use: {:?}", k);
                 return Err(TransactionError::AccountInUse);
@@ -572,11 +572,11 @@ impl Accounts {
         Ok(())
     }
 
-    fn unlock_account(
+    fn unlock_account<'a>(
         &self,
         account_locks: &mut AccountLocks,
-        writable_keys: Vec<&Pubkey>,
-        readonly_keys: Vec<&Pubkey>,
+        writable_keys: impl Iterator<Item = &'a Pubkey>,
+        readonly_keys: impl Iterator<Item = &'a Pubkey>,
     ) {
         for k in writable_keys {
             account_locks.unlock_write(k);
@@ -628,8 +628,8 @@ impl Accounts {
             .map(|tx_account_locks_result| match tx_account_locks_result {
                 Ok(tx_account_locks) => self.lock_account(
                     account_locks,
-                    tx_account_locks.writable,
-                    tx_account_locks.readonly,
+                    tx_account_locks.writable.into_iter(),
+                    tx_account_locks.readonly.into_iter(),
                 ),
                 Err(err) => Err(err),
             })
@@ -652,7 +652,11 @@ impl Accounts {
         let mut account_locks = self.account_locks.lock().unwrap();
         debug!("bank unlock accounts");
         keys.into_iter().for_each(|keys| {
-            self.unlock_account(&mut account_locks, keys.writable, keys.readonly);
+            self.unlock_account(
+                &mut account_locks,
+                keys.writable.into_iter(),
+                keys.readonly.into_iter(),
+            );
         });
     }
 
