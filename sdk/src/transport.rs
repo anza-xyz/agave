@@ -2,7 +2,7 @@
 
 #![cfg(feature = "full")]
 
-use {crate::transaction::TransactionError, std::io, thiserror::Error};
+use {solana_transaction_error::TransactionError, std::io, thiserror::Error};
 
 #[derive(Debug, Error)]
 pub enum TransportError {
