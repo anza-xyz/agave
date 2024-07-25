@@ -3144,7 +3144,11 @@ impl Bank {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn register_recent_blockhash_for_test(&self, blockhash: &Hash, lamports_per_signature: Option<u64>) {
+    pub fn register_recent_blockhash_for_test(
+        &self,
+        blockhash: &Hash,
+        lamports_per_signature: Option<u64>,
+    ) {
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
@@ -3152,7 +3156,8 @@ impl Bank {
         if let Some(lamports_per_signature) = lamports_per_signature {
             w_blockhash_queue.register_hash(blockhash, lamports_per_signature);
         } else {
-            w_blockhash_queue.register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
+            w_blockhash_queue
+                .register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
         }
         self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
