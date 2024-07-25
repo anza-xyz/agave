@@ -742,14 +742,14 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = message.fee_payer();
-        let budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
+        let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
             message.program_instructions_iter(),
         )?);
         let fee = solana_fee::calculate_fee(
             message,
             bank.get_lamports_per_signature() == 0,
             bank.fee_structure().lamports_per_signature,
-            budget_limits.prioritization_fee,
+            fee_budget_limits.prioritization_fee,
             bank.feature_set
                 .is_active(&feature_set::remove_rounding_in_fee_calculation::id()),
         );
