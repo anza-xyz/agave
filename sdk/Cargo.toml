@@ -115,7 +115,7 @@ solana-signature = { workspace = true, features = [
     "std",
     "verify",
 ], optional = true }
-solana-transaction-error = { workspace = true }
+solana-transaction-error = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

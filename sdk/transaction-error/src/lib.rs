@@ -4,16 +4,18 @@ use {
         instruction::InstructionError,
         message::{AddressLoaderError, SanitizeMessageError},
     },
-    serde_derive::{Deserialize, Serialize},
     solana_sanitize::SanitizeError,
     thiserror::Error,
 };
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{AbiExample, AbiEnumVisitor};
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
 
 /// Reasons a transaction might be rejected.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Error, Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
 pub enum TransactionError {
     /// An account is already being processed in another transaction in a way
     /// that does not support parallelism
