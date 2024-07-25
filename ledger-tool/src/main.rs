@@ -539,19 +539,20 @@ fn assert_capitalization(bank: &Bank) {
     assert!(bank.calculate_and_verify_capitalization(debug_verify));
 }
 
+struct SlotRecorderConfig {
+    transaction_recorder: Option<JoinHandle<()>>,
+    transaction_status_sender: Option<TransactionStatusSender>,
+    slot_details: Arc<Mutex<Vec<SlotDetails>>>,
+    file: File,
+}
+
 fn setup_slot_recording(
     arg_matches: &ArgMatches,
-) -> (
-    Option<TransactionStatusSender>,
-    Option<JoinHandle<()>>,
-    Option<ProcessSlotCallback>,
-    Option<File>,
-    Option<Arc<Mutex<Vec<SlotDetails>>>>,
-) {
+) -> (Option<ProcessSlotCallback>, Option<SlotRecorderConfig>) {
     let record_slots = arg_matches.occurrences_of("record_slots") > 0;
     let verify_slots = arg_matches.occurrences_of("verify_slots") > 0;
     match (record_slots, verify_slots) {
-        (false, false) => (None, None, None, None, None),
+        (false, false) => (None, None),
         (true, false) => {
             let filename = Path::new(arg_matches.value_of_os("record_slots").unwrap());
             let file = File::create(filename).unwrap_or_else(|err| {
@@ -571,22 +572,25 @@ fn setup_slot_recording(
                 }
             }
 
-            let slot_hashes = Arc::new(Mutex::new(Vec::new()));
-            let (transaction_status_sender, tx_receiver) = if include_tx {
+            let slot_details = Arc::new(Mutex::new(Vec::new()));
+            let (transaction_status_sender, transaction_recorder) = if include_tx {
                 let (sender, receiver) = crossbeam_channel::unbounded();
 
-                let slots = Arc::clone(&slot_hashes);
-                let tx_receiver = Some(std::thread::spawn(move || {
+                let slots = Arc::clone(&slot_details);
+                let transaction_recorder = Some(std::thread::spawn(move || {
                     record_transactions(receiver, slots);
                 }));
 
-                (Some(TransactionStatusSender { sender }), tx_receiver)
+                (
+                    Some(TransactionStatusSender { sender }),
+                    transaction_recorder,
+                )
             } else {
                 (None, None)
             };
 
             let slot_callback = Arc::new({
-                let slots = Arc::clone(&slot_hashes);
+                let slots = Arc::clone(&slot_details);
                 move |bank: &Bank| {
                     let mut details = if include_bank {
                         bank_hash_details::SlotDetails::try_from(bank).unwrap()
@@ -612,11 +616,13 @@ fn setup_slot_recording(
             });
 
             (
-                transaction_status_sender,
-                tx_receiver,
                 Some(slot_callback as ProcessSlotCallback),
-                Some(file),
-                Some(slot_hashes),
+                Some(SlotRecorderConfig {
+                    transaction_recorder,
+                    transaction_status_sender,
+                    slot_details,
+                    file,
+                }),
             )
         }
         (false, true) => {
@@ -655,13 +661,7 @@ fn setup_slot_recording(
                 }
             });
 
-            (
-                None,
-                None,
-                Some(slot_callback as ProcessSlotCallback),
-                None,
-                None,
-            )
+            (Some(slot_callback as ProcessSlotCallback), None)
         }
         (true, true) => {
             // .default_value() does not work with .conflicts_with() in clap 2.33
@@ -1670,14 +1670,11 @@ fn main() {
                     );
 
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
-                    let (
-                        transaction_status_sender,
-                        tx_receiver,
-                        slot_callback,
-                        record_slots_file,
-                        recorded_slots,
-                    ) = setup_slot_recording(arg_matches);
+                    let (slot_callback, slot_recorder_config) = setup_slot_recording(arg_matches);
                     process_options.slot_callback = slot_callback;
+                    let transaction_status_sender = slot_recorder_config
+                        .as_ref()
+                        .and_then(|config| config.transaction_status_sender.clone());
 
                     let output_format =
                         OutputFormat::from_matches(arg_matches, "output_format", false);
@@ -1721,22 +1718,21 @@ fn main() {
                             .ok();
                     }
 
-                    if let Some(tx_receiver) = tx_receiver {
-                        tx_receiver.join().unwrap();
-                    }
-
-                    if let Some(recorded_slots_file) = record_slots_file {
-                        if let Ok(recorded_slots) = recorded_slots.clone().unwrap().lock() {
-                            let bank_hashes =
-                                bank_hash_details::BankHashDetails::new(recorded_slots.to_vec());
-
-                            // writing the json file ends up with a syscall for each number, comma, indentation etc.
-                            // use BufWriter to speed things up
-
-                            let writer = std::io::BufWriter::new(recorded_slots_file);
-
-                            serde_json::to_writer_pretty(writer, &bank_hashes).unwrap();
+                    if let Some(slot_recorder_config) = slot_recorder_config {
+                        if let Some(transaction_recorder) =
+                            slot_recorder_config.transaction_recorder
+                        {
+                            transaction_recorder.join().unwrap();
                         }
+
+                        let slot_details = slot_recorder_config.slot_details.lock().unwrap();
+                        let bank_hashes =
+                            bank_hash_details::BankHashDetails::new(slot_details.to_vec());
+
+                        // writing the json file ends up with a syscall for each number, comma, indentation etc.
+                        // use BufWriter to speed things up
+                        let writer = std::io::BufWriter::new(slot_recorder_config.file);
+                        serde_json::to_writer_pretty(writer, &bank_hashes).unwrap();
                     }
 
                     exit_signal.store(true, Ordering::Relaxed);
