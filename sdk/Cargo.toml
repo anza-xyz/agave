@@ -46,6 +46,7 @@ frozen-abi = [
     "solana-program/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi"
+    "solana-transaction-error/frozen-abi"
 ]
 
 [dependencies]
@@ -114,6 +115,7 @@ solana-signature = { workspace = true, features = [
     "std",
     "verify",
 ], optional = true }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

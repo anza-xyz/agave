@@ -7953,6 +7953,7 @@ dependencies = [
  "solana-serde-varint",
  "solana-short-vec",
  "solana-signature",
+ "solana-transaction-error",
  "static_assertions",
  "thiserror",
  "tiny-bip39",
@@ -8527,6 +8528,19 @@ dependencies = [
  "solana-streamer",
  "solana-transaction-status",
  "solana-version",
+]
+
+[[package]]
+name = "solana-transaction-error"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-program",
+ "solana-sanitize",
+ "thiserror",
 ]
 
 [[package]]

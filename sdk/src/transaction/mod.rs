@@ -133,11 +133,10 @@ use {
     std::result,
 };
 
-mod error;
 mod sanitized;
 mod versioned;
 
-pub use {error::*, sanitized::*, versioned::*};
+pub use {solana_transaction_error::*, sanitized::*, versioned::*};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TransactionVerificationMode {

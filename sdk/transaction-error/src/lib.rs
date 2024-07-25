@@ -1,9 +1,9 @@
 use {
-    crate::{
+    solana_program::{
         instruction::InstructionError,
         message::{AddressLoaderError, SanitizeMessageError},
     },
-    serde::Serialize,
+    serde_derive::{Deserialize, Serialize},
     solana_sanitize::SanitizeError,
     thiserror::Error,
 };
