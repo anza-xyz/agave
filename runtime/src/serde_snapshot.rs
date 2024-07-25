@@ -208,7 +208,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
 #[derive(Serialize)]
-struct SerializableVersionedBank {
+pub(crate) struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     ancestors: AncestorsForSerialization,
     hash: Hash,
@@ -408,12 +408,13 @@ struct ExtraFieldsToDeserialize {
 /// be added to the deserialize struct a minor release before they are added to
 /// this one.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 #[derive(Debug, Serialize, PartialEq)]
 pub struct ExtraFieldsToSerialize<'a> {
     pub lamports_per_signature: u64,
     pub incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>,
     pub epoch_accounts_hash: Option<EpochAccountsHash>,
-    // (v2.1) versioned_epoch_stakes
+    pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
 }
 
 fn deserialize_bank_fields<R>(
@@ -614,9 +615,9 @@ where
 }
 
 /// Serializes bank snapshot into `stream` with bincode
-pub fn serialize_bank_snapshot_into<W>(
+pub(crate) fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
-    bank_fields: BankFieldsToSerialize,
+    serializable_bank: SerializableVersionedBank,
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
@@ -633,7 +634,7 @@ where
     );
     serialize_bank_snapshot_with(
         &mut serializer,
-        bank_fields,
+        serializable_bank,
         bank_hash_stats,
         accounts_delta_hash,
         accounts_hash,
@@ -644,9 +645,9 @@ where
 }
 
 /// Serializes bank snapshot with `serializer`
-pub fn serialize_bank_snapshot_with<S>(
+pub(crate) fn serialize_bank_snapshot_with<S>(
     serializer: S,
-    bank_fields: BankFieldsToSerialize,
+    serializable_bank: SerializableVersionedBank,
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
@@ -657,8 +658,7 @@ pub fn serialize_bank_snapshot_with<S>(
 where
     S: serde::Serializer,
 {
-    let slot = bank_fields.slot;
-    let serializable_bank = SerializableVersionedBank::from(bank_fields);
+    let slot = serializable_bank.slot;
     let serializable_accounts_db = SerializableAccountsDb::<'_> {
         slot,
         account_storage_entries,
@@ -683,15 +683,16 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
         S: serde::ser::Serializer,
     {
         let slot = self.bank.slot();
-        let fields = self.bank.get_fields_to_serialize();
+        let mut bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
         let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
-        let lamports_per_signature = fields.fee_rate_governor.lamports_per_signature;
+        let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
+        let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
         let bank_fields_to_serialize = (
-            SerializableVersionedBank::from(fields),
+            SerializableVersionedBank::from(bank_fields),
             SerializableAccountsDb::<'_> {
                 slot,
                 account_storage_entries: self.snapshot_storages,
@@ -700,11 +701,12 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
                 accounts_hash,
                 write_version,
             },
-            lamports_per_signature,
-            None::<BankIncrementalSnapshotPersistence>,
-            self.bank
-                .get_epoch_accounts_hash_to_serialize()
-                .map(|epoch_accounts_hash| *epoch_accounts_hash.as_ref()),
+            ExtraFieldsToSerialize {
+                lamports_per_signature,
+                incremental_snapshot_persistence: None,
+                epoch_accounts_hash: self.bank.get_epoch_accounts_hash_to_serialize(),
+                versioned_epoch_stakes,
+            },
         );
         bank_fields_to_serialize.serialize(serializer)
     }
@@ -723,14 +725,14 @@ impl<'a> Serialize for SerializableBankAndStorageNoExtra<'a> {
         S: serde::ser::Serializer,
     {
         let slot = self.bank.slot();
-        let fields = self.bank.get_fields_to_serialize();
+        let bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
         let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         (
-            SerializableVersionedBank::from(fields),
+            SerializableVersionedBank::from(bank_fields),
             SerializableAccountsDb::<'_> {
                 slot,
                 account_storage_entries: self.snapshot_storages,
