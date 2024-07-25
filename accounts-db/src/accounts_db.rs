@@ -3203,6 +3203,9 @@ impl AccountsDb {
 
         self.report_store_stats();
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanCollectCandidates);
         let mut key_timings = CleanKeyTimings::default();
         let (mut pubkeys, min_dirty_slot) = self.construct_candidate_clean_keys(
             max_clean_root_inclusive,
@@ -3211,7 +3214,11 @@ impl AccountsDb {
             &mut key_timings,
             epoch_schedule,
         );
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanSortCandidates);
         let mut sort = Measure::start("sort");
         if is_startup {
             pubkeys.par_sort_unstable();
@@ -3220,8 +3227,12 @@ impl AccountsDb {
                 .install(|| pubkeys.par_sort_unstable());
         }
         sort.stop();
+        drop(active_guard);
 
         let total_keys_count = pubkeys.len();
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanScanCandidates);
         let mut accounts_scan = Measure::start("accounts_scan");
         let uncleaned_roots = self.accounts_index.clone_uncleaned_roots();
         let found_not_zero_accum = AtomicU64::new(0);
@@ -3327,6 +3338,7 @@ impl AccountsDb {
                         },
                     )
             };
+
             if is_startup {
                 do_clean_scan()
             } else {
@@ -3334,7 +3346,9 @@ impl AccountsDb {
             }
         };
         accounts_scan.stop();
+        drop(active_guard);
 
+        let active_guard = self.active_stats.activate(ActiveStatItem::CleanOldAccounts);
         let mut clean_old_rooted = Measure::start("clean_old_roots");
         let ((purged_account_slots, removed_accounts), mut pubkeys_removed_from_accounts_index) =
             self.clean_accounts_older_than_root(
@@ -3346,7 +3360,11 @@ impl AccountsDb {
 
         self.do_reset_uncleaned_roots(max_clean_root_inclusive);
         clean_old_rooted.stop();
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanCollectStoreCounts);
         let mut store_counts_time = Measure::start("store_counts");
 
         // Calculate store counts as if everything was purged
@@ -3403,11 +3421,19 @@ impl AccountsDb {
             });
         }
         store_counts_time.stop();
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanCalcDeleteDeps);
         let mut calc_deps_time = Measure::start("calc_deps");
         Self::calc_delete_dependencies(&purges_zero_lamports, &mut store_counts, min_dirty_slot);
         calc_deps_time.stop();
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanFilterZeroLamport);
         let mut purge_filter = Measure::start("purge_filter");
         self.filter_zero_lamport_clean_for_incremental_snapshots(
             max_clean_root_inclusive,
@@ -3416,9 +3442,14 @@ impl AccountsDb {
             &mut purges_zero_lamports,
         );
         purge_filter.stop();
+        drop(active_guard);
 
         let mut reclaims_time = Measure::start("reclaims");
+
         // Recalculate reclaims with new purge set
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanCollectReclaims);
         let pubkey_to_slot_set: Vec<_> = purges_zero_lamports
             .into_iter()
             .map(|(key, (slots_list, _ref_count))| {
@@ -3431,13 +3462,21 @@ impl AccountsDb {
                 )
             })
             .collect();
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanPurgeReclaims);
         let (reclaims, pubkeys_removed_from_accounts_index2) =
             self.purge_keys_exact(pubkey_to_slot_set.iter());
         pubkeys_removed_from_accounts_index.extend(pubkeys_removed_from_accounts_index2);
+        drop(active_guard);
 
         // Don't reset from clean, since the pubkeys in those stores may need to be unref'ed
         // and those stores may be used for background hashing.
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanHandleReclaims);
         let reset_accounts = false;
         self.handle_reclaims(
             (!reclaims.is_empty()).then(|| reclaims.iter()),
@@ -3446,6 +3485,7 @@ impl AccountsDb {
             &pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
         );
+        drop(active_guard);
 
         reclaims_time.stop();
         measure_all.stop();
