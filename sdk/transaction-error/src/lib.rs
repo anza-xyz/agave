@@ -1,3 +1,4 @@
+#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
 use {
     solana_program::{
         instruction::InstructionError,
@@ -7,6 +8,8 @@ use {
     solana_sanitize::SanitizeError,
     thiserror::Error,
 };
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{AbiExample, AbiEnumVisitor};
 
 /// Reasons a transaction might be rejected.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]

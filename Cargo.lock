@@ -8534,6 +8534,7 @@ dependencies = [
 name = "solana-transaction-error"
 version = "2.1.0"
 dependencies = [
+ "rustc_version 0.4.0",
  "serde",
  "serde_derive",
  "solana-frozen-abi",

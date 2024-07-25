@@ -18,6 +18,9 @@ solana-program = { workspace = true }
 solana-sanitize = { workspace = true }
 thiserror = { workspace = true }
 
+[build-dependencies]
+rustc_version = { workspace = true }
+
 [features]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
