@@ -678,25 +678,24 @@ impl Accounts {
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
     pub fn unlock_accounts<'a>(
         &self,
-        txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)>,
+        txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)> + Clone,
     ) {
-        let keys: Vec<_> = txs_and_results
-            .filter(|(_, res)| res.is_ok())
-            .map(|(tx, _)| tx.get_account_locks_unchecked())
-            .collect();
-        if keys.is_empty() {
+        if !txs_and_results.clone().any(|(_, res)| res.is_ok()) {
             return;
         }
 
         let mut account_locks = self.account_locks.lock().unwrap();
         debug!("bank unlock accounts");
-        keys.into_iter().for_each(|keys| {
-            self.unlock_account(
-                &mut account_locks,
-                keys.writable.into_iter(),
-                keys.readonly.into_iter(),
-            );
-        });
+        for (tx, res) in txs_and_results {
+            if res.is_ok() {
+                let tx_account_locks = TransactionAccountLocksIterator::new(tx.message());
+                self.unlock_account(
+                    &mut account_locks,
+                    tx_account_locks.writable(),
+                    tx_account_locks.readonly(),
+                );
+            }
+        }
     }
 
     /// Store the accounts into the DB
