@@ -105,7 +105,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-            Arc, Condvar, Mutex,
+            Arc, Condvar, Mutex, RwLock,
         },
         thread::{sleep, Builder},
         time::{Duration, Instant},
@@ -1339,6 +1339,19 @@ impl StoreAccountsTiming {
         self.store_accounts_elapsed += other.store_accounts_elapsed;
         self.update_index_elapsed += other.update_index_elapsed;
         self.handle_reclaims_elapsed += other.handle_reclaims_elapsed;
+    }
+}
+
+#[derive(Default, Debug)]
+struct CleaningInfo {
+    pub slot_list: SlotList<AccountInfo>,
+    pub ref_count: u64,
+}
+
+impl CleaningInfo {
+    pub fn update(&mut self, slot_list: SlotList<AccountInfo>, ref_count: u64) {
+        self.slot_list = slot_list;
+        self.ref_count = ref_count;
     }
 }
 
@@ -2746,7 +2759,7 @@ impl AccountsDb {
     /// 1. one of the pubkeys in the store has account info to a store whose store count is not going to zero
     /// 2. a pubkey we were planning to remove is not removing all stores that contain the account
     fn calc_delete_dependencies(
-        purges: &HashMap<Pubkey, (SlotList<AccountInfo>, RefCount)>,
+        purges: &Vec<RwLock<HashMap<Pubkey, CleaningInfo>>>,
         store_counts: &mut HashMap<Slot, (usize, HashSet<Pubkey>)>,
         min_slot: Option<Slot>,
     ) {
@@ -2754,77 +2767,87 @@ impl AccountsDb {
         // do not match the criteria of deleting all appendvecs which contain them
         // then increment their storage count.
         let mut already_counted = IntSet::default();
-        for (pubkey, (slot_list, ref_count)) in purges.iter() {
-            let mut failed_slot = None;
-            let all_stores_being_deleted = slot_list.len() as RefCount == *ref_count;
-            if all_stores_being_deleted {
-                let mut delete = true;
-                for (slot, _account_info) in slot_list {
-                    if let Some(count) = store_counts.get(slot).map(|s| s.0) {
-                        debug!(
-                            "calc_delete_dependencies()
+        for bin in purges {
+            let bin = bin.read().unwrap();
+            for (
+                pubkey,
+                CleaningInfo {
+                    slot_list,
+                    ref_count,
+                },
+            ) in bin.iter()
+            {
+                let mut failed_slot = None;
+                let all_stores_being_deleted = slot_list.len() as RefCount == *ref_count;
+                if all_stores_being_deleted {
+                    let mut delete = true;
+                    for (slot, _account_info) in slot_list {
+                        if let Some(count) = store_counts.get(slot).map(|s| s.0) {
+                            debug!(
+                                "calc_delete_dependencies()
                             slot: {slot},
                             count len: {count}"
-                        );
-                        if count == 0 {
-                            // this store CAN be removed
-                            continue;
+                            );
+                            if count == 0 {
+                                // this store CAN be removed
+                                continue;
+                            }
                         }
+                        // One of the pubkeys in the store has account info to a store whose store count is not going to zero.
+                        // If the store cannot be found, that also means store isn't being deleted.
+                        failed_slot = Some(*slot);
+                        delete = false;
+                        break;
                     }
-                    // One of the pubkeys in the store has account info to a store whose store count is not going to zero.
-                    // If the store cannot be found, that also means store isn't being deleted.
-                    failed_slot = Some(*slot);
-                    delete = false;
-                    break;
-                }
-                if delete {
-                    // this pubkey can be deleted from all stores it is in
-                    continue;
-                }
-            } else {
-                // a pubkey we were planning to remove is not removing all stores that contain the account
-                debug!(
-                    "calc_delete_dependencies(),
+                    if delete {
+                        // this pubkey can be deleted from all stores it is in
+                        continue;
+                    }
+                } else {
+                    // a pubkey we were planning to remove is not removing all stores that contain the account
+                    debug!(
+                        "calc_delete_dependencies(),
                     pubkey: {},
                     slot_list: {:?},
                     slot_list_len: {},
                     ref_count: {}",
-                    pubkey,
-                    slot_list,
-                    slot_list.len(),
-                    ref_count,
-                );
-            }
-
-            // increment store_counts to non-zero for all stores that can not be deleted.
-            let mut pending_stores = IntSet::default();
-            for (slot, _account_info) in slot_list {
-                if !already_counted.contains(slot) {
-                    pending_stores.insert(*slot);
+                        pubkey,
+                        slot_list,
+                        slot_list.len(),
+                        ref_count,
+                    );
                 }
-            }
-            while !pending_stores.is_empty() {
-                let slot = pending_stores.iter().next().cloned().unwrap();
-                if Some(slot) == min_slot {
-                    if let Some(failed_slot) = failed_slot.take() {
-                        info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey} in slot {failed_slot}");
-                    } else {
-                        info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, slot list len: {}, ref count: {ref_count}", slot_list.len());
+
+                // increment store_counts to non-zero for all stores that can not be deleted.
+                let mut pending_stores = IntSet::default();
+                for (slot, _account_info) in slot_list {
+                    if !already_counted.contains(slot) {
+                        pending_stores.insert(*slot);
                     }
                 }
+                while !pending_stores.is_empty() {
+                    let slot = pending_stores.iter().next().cloned().unwrap();
+                    if Some(slot) == min_slot {
+                        if let Some(failed_slot) = failed_slot.take() {
+                            info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey} in slot {failed_slot}");
+                        } else {
+                            info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, account infos len: {}, ref count: {ref_count}", slot_list.len());
+                        }
+                    }
 
-                pending_stores.remove(&slot);
-                if !already_counted.insert(slot) {
-                    continue;
-                }
-                // the point of all this code: remove the store count for all stores we cannot remove
-                if let Some(store_count) = store_counts.remove(&slot) {
-                    // all pubkeys in this store also cannot be removed from all stores they are in
-                    let affected_pubkeys = &store_count.1;
-                    for key in affected_pubkeys {
-                        for (slot, _account_info) in &purges.get(key).unwrap().0 {
-                            if !already_counted.contains(slot) {
-                                pending_stores.insert(*slot);
+                    pending_stores.remove(&slot);
+                    if !already_counted.insert(slot) {
+                        continue;
+                    }
+                    // the point of all this code: remove the store count for all stores we cannot remove
+                    if let Some(store_count) = store_counts.remove(&slot) {
+                        // all pubkeys in this store also cannot be removed from all stores they are in
+                        let affected_pubkeys = &store_count.1;
+                        for key in affected_pubkeys {
+                            for (slot, _account_info) in &bin.get(key).unwrap().slot_list {
+                                if !already_counted.contains(slot) {
+                                    pending_stores.insert(*slot);
+                                }
                             }
                         }
                     }
@@ -2997,7 +3020,7 @@ impl AccountsDb {
         is_startup: bool,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
-    ) -> (Vec<Pubkey>, Option<Slot>) {
+    ) -> (Vec<RwLock<HashMap<Pubkey, CleaningInfo>>>, Option<Slot>) {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_slot_inclusive =
@@ -3016,7 +3039,10 @@ impl AccountsDb {
             }
         });
         let dirty_stores_len = dirty_stores.len();
-        let pubkeys = DashSet::new();
+        let num_bins = self.accounts_index.bins();
+        let pubkeys: Vec<RwLock<HashMap<Pubkey, CleaningInfo>>> = (0..num_bins)
+            .map(|_| RwLock::new(HashMap::new()))
+            .collect::<Vec<_>>();
         let dirty_ancient_stores = AtomicUsize::default();
         let mut dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
@@ -3029,8 +3055,10 @@ impl AccountsDb {
                             dirty_ancient_stores.fetch_add(1, Ordering::Relaxed);
                         }
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
-                        store.accounts.scan_pubkeys(|k| {
-                            pubkeys.insert(*k);
+                        store.accounts.scan_pubkeys(|key| {
+                            let index = self.accounts_index.bin_calculator.bin_from_pubkey(key);
+                            let mut pubkeys_bin = pubkeys[index].write().unwrap();
+                            pubkeys_bin.insert(*key, CleaningInfo::default());
                         });
                     });
                     oldest_dirty_slot
@@ -3053,9 +3081,15 @@ impl AccountsDb {
         trace!(
             "dirty_stores.len: {} pubkeys.len: {}",
             dirty_stores_len,
-            pubkeys.len()
+            pubkeys
+                .iter()
+                .map(|x| x.read().unwrap().len())
+                .sum::<usize>(),
         );
-        timings.dirty_pubkeys_count = pubkeys.len() as u64;
+        timings.dirty_pubkeys_count = pubkeys
+            .iter()
+            .map(|x| x.read().unwrap().len())
+            .sum::<usize>() as u64;
         dirty_store_processing_time.stop();
         timings.dirty_store_processing_us += dirty_store_processing_time.as_us();
         timings.dirty_ancient_stores = dirty_ancient_stores.load(Ordering::Relaxed);
@@ -3070,17 +3104,21 @@ impl AccountsDb {
         self.thread_pool_clean.install(|| {
             delta_keys.par_iter().for_each(|keys| {
                 for key in keys {
-                    pubkeys.insert(*key);
+                    let index = self.accounts_index.bin_calculator.bin_from_pubkey(key);
+                    let mut pubkeys_bin = pubkeys[index].write().unwrap();
+                    pubkeys_bin.insert(*key, CleaningInfo::default());
                 }
             });
         });
         delta_insert.stop();
         timings.delta_insert_us += delta_insert.as_us();
 
-        timings.delta_key_count = pubkeys.len() as u64;
+        timings.delta_key_count = pubkeys
+            .iter()
+            .map(|x| x.read().unwrap().len())
+            .sum::<usize>() as u64;
 
         let mut hashset_to_vec = Measure::start("flat_map");
-        let mut pubkeys: Vec<Pubkey> = pubkeys.into_iter().collect();
         hashset_to_vec.stop();
         timings.hashset_to_vec_us += hashset_to_vec.as_us();
 
@@ -3097,7 +3135,9 @@ impl AccountsDb {
                     let is_candidate_for_clean =
                         max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
-                        pubkeys.push(*pubkey);
+                        let index = self.accounts_index.bin_calculator.bin_from_pubkey(pubkey);
+                        let mut pubkeys_bin = pubkeys[index].write().unwrap();
+                        pubkeys_bin.insert(*pubkey, CleaningInfo::default());
                     }
                     !is_candidate_for_clean
                 });
@@ -3206,23 +3246,17 @@ impl AccountsDb {
         self.report_store_stats();
 
         let mut key_timings = CleanKeyTimings::default();
-        let (mut candidates, min_dirty_slot) = self.construct_candidate_clean_keys(
+        let (candidates, min_dirty_slot) = self.construct_candidate_clean_keys(
             max_clean_root_inclusive,
             is_startup,
             &mut key_timings,
             epoch_schedule,
         );
 
-        let mut sort = Measure::start("sort");
-        if is_startup {
-            candidates.par_sort_unstable();
-        } else {
-            self.thread_pool_clean
-                .install(|| candidates.par_sort_unstable());
-        }
-        sort.stop();
-
-        let num_candidates = candidates.len();
+        let num_candidates = candidates
+            .iter()
+            .map(|x| x.read().unwrap().len())
+            .sum::<usize>();
         let mut accounts_scan = Measure::start("accounts_scan");
         let uncleaned_roots = self.accounts_index.clone_uncleaned_roots();
         let found_not_zero_accum = AtomicU64::new(0);
@@ -3231,19 +3265,27 @@ impl AccountsDb {
         let useful_accum = AtomicU64::new(0);
 
         // parallel scan the index.
-        let (mut purges_zero_lamports, purges_old_accounts) = {
+        let purges_old_accounts = {
             let do_clean_scan = || {
                 candidates
-                    .par_chunks(4096)
-                    .map(|candidates: &[Pubkey]| {
-                        let mut purges_zero_lamports = HashMap::new();
+                    .par_iter()
+                    .map(|candidates_bin| {
                         let mut purges_old_accounts = Vec::new();
                         let mut found_not_zero = 0;
                         let mut not_found_on_fork = 0;
                         let mut missing = 0;
                         let mut useful = 0;
+                        // Must separate keys for passing as an argument to accounts_index.scan(),
+                        // otherwise two simultaneous, conflicting borrows occur
+                        // 1. immutable borrow of bin to iterate over the keys, and
+                        // 2. mutable borrow of bin to update bin values in the callback closure.
+                        // An alternative is to wrap the bin values in RefCell for non-exclusive
+                        // access.
+                        let candidate_keys: Vec<Pubkey> =
+                            candidates_bin.read().unwrap().keys().copied().collect();
+                        let mut candidates_bin = candidates_bin.write().unwrap();
                         self.accounts_index.scan(
-                            candidates.iter(),
+                            candidate_keys.iter(),
                             |candidate, slot_list_and_ref_count, _entry| {
                                 let mut useless = true;
                                 if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
@@ -3261,19 +3303,19 @@ impl AccountsDb {
                                                 &slot_list[index_in_slot_list];
                                             if account_info.is_zero_lamport() {
                                                 useless = false;
-                                                // the latest one is zero lamports. we may be able to purge it.
-                                                // so, add to purges_zero_lamports
-                                                purges_zero_lamports.insert(
-                                                    *candidate,
-                                                    (
-                                                        // add all the rooted entries that contain this pubkey. we know the highest rooted entry is zero lamports
+                                                // The latest one is zero lamports. We may be able to purge it.
+                                                if let Some(val) = candidates_bin.get_mut(candidate)
+                                                {
+                                                    val.update(
+                                                        // Add all the rooted entries that contain this pubkey.
+                                                        // We know the highest rooted entry is zero lamports.
                                                         self.accounts_index.get_rooted_entries(
                                                             slot_list,
                                                             max_clean_root_inclusive,
                                                         ),
                                                         ref_count,
-                                                    ),
-                                                );
+                                                    );
+                                                }
                                             } else {
                                                 found_not_zero += 1;
                                             }
@@ -3323,17 +3365,13 @@ impl AccountsDb {
                         not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
                         missing_accum.fetch_add(missing, Ordering::Relaxed);
                         useful_accum.fetch_add(useful, Ordering::Relaxed);
-                        (purges_zero_lamports, purges_old_accounts)
+                        purges_old_accounts
                     })
-                    .reduce(
-                        || (HashMap::new(), Vec::new()),
-                        |mut a, b| {
-                            // Collapse down the hashmaps/vecs into one.
-                            a.0.extend(b.0);
-                            a.1.extend(b.1);
-                            a
-                        },
-                    )
+                    .reduce(Vec::new, |mut a, b| {
+                        // Collapse down the vecs into one.
+                        a.extend(b);
+                        a
+                    })
             };
             if is_startup {
                 do_clean_scan()
@@ -3360,11 +3398,22 @@ impl AccountsDb {
         // Calculate store counts as if everything was purged
         // Then purge if we can
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
-        for (pubkey, (slot_list, ref_count)) in purges_zero_lamports.iter_mut() {
-            if purged_account_slots.contains_key(pubkey) {
-                *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
-            }
-            slot_list.retain(|(slot, account_info)| {
+        for candidates_bin in candidates
+            .iter()
+            .filter(|bin| !bin.read().unwrap().is_empty())
+        {
+            for (
+                pubkey,
+                CleaningInfo {
+                    slot_list,
+                    ref_count,
+                },
+            ) in candidates_bin.write().unwrap().iter_mut()
+            {
+                if purged_account_slots.contains_key(pubkey) {
+                    *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
+                }
+                slot_list.retain(|(slot, account_info)| {
                 let was_slot_purged = purged_account_slots
                     .get(pubkey)
                     .map(|slots_removed| slots_removed.contains(slot))
@@ -3409,35 +3458,43 @@ impl AccountsDb {
                 }
                 true
             });
+            }
         }
         store_counts_time.stop();
 
         let mut calc_deps_time = Measure::start("calc_deps");
-        Self::calc_delete_dependencies(&purges_zero_lamports, &mut store_counts, min_dirty_slot);
+        Self::calc_delete_dependencies(&candidates, &mut store_counts, min_dirty_slot);
         calc_deps_time.stop();
 
         let mut purge_filter = Measure::start("purge_filter");
         self.filter_zero_lamport_clean_for_incremental_snapshots(
             max_clean_root_inclusive,
             &store_counts,
-            &mut purges_zero_lamports,
+            &candidates,
         );
         purge_filter.stop();
 
         let mut reclaims_time = Measure::start("reclaims");
         // Recalculate reclaims with new purge set
-        let pubkey_to_slot_set: Vec<_> = purges_zero_lamports
-            .into_iter()
-            .map(|(key, (slots_list, _ref_count))| {
-                (
-                    key,
-                    slots_list
-                        .into_iter()
-                        .map(|(slot, _)| slot)
-                        .collect::<HashSet<Slot>>(),
-                )
-            })
-            .collect();
+        let mut pubkey_to_slot_set: Vec<(Pubkey, HashSet<Slot>)> = Vec::new();
+        for bin in candidates {
+            let bin = bin.read().unwrap();
+            if !bin.is_empty() {
+                for (pubkey, cleaning_info) in bin.iter() {
+                    let CleaningInfo {
+                        slot_list,
+                        ref_count: _,
+                    } = cleaning_info;
+                    pubkey_to_slot_set.push((
+                        *pubkey,
+                        slot_list
+                            .iter()
+                            .map(|(slot, _)| *slot)
+                            .collect::<HashSet<Slot>>(),
+                    ));
+                }
+            }
+        }
 
         let (reclaims, pubkeys_removed_from_accounts_index2) =
             self.purge_keys_exact(pubkey_to_slot_set.iter());
@@ -3491,7 +3548,6 @@ impl AccountsDb {
             ("delta_insert_us", key_timings.delta_insert_us, i64),
             ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
-            ("sort_us", sort.as_us(), i64),
             ("useful_keys", useful_accum.load(Ordering::Relaxed), i64),
             ("total_keys_count", num_candidates, i64),
             (
@@ -3685,7 +3741,7 @@ impl AccountsDb {
         &self,
         max_clean_root_inclusive: Option<Slot>,
         store_counts: &HashMap<Slot, (usize, HashSet<Pubkey>)>,
-        purges_zero_lamports: &mut HashMap<Pubkey, (SlotList<AccountInfo>, RefCount)>,
+        purges_zero_lamports: &Vec<RwLock<HashMap<Pubkey, CleaningInfo>>>,
     ) {
         let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
         let should_filter_for_incremental_snapshots = max_clean_root_inclusive.unwrap_or(Slot::MAX)
@@ -3695,45 +3751,51 @@ impl AccountsDb {
             "if filtering for incremental snapshots, then snapshots should be enabled",
         );
 
-        purges_zero_lamports.retain(|pubkey, (slot_account_infos, _ref_count)| {
-            // Only keep purges_zero_lamports where the entire history of the account in the root set
-            // can be purged. All AppendVecs for those updates are dead.
-            for (slot, _account_info) in slot_account_infos.iter() {
-                if let Some(store_count) = store_counts.get(slot) {
-                    if store_count.0 != 0 {
-                        // one store this pubkey is in is not being removed, so this pubkey cannot be removed at all
+        for bin in purges_zero_lamports {
+            let mut bin = bin.write().unwrap();
+            bin.retain(|pubkey, cleaning_info| {
+                let CleaningInfo {
+                    slot_list,
+                    ref_count: _,
+                } = cleaning_info;
+                // Only keep purges_zero_lamports where the entire history of the account in the root set
+                // can be purged. All AppendVecs for those updates are dead.
+                for (slot, _account_info) in slot_list.iter() {
+                    if let Some(store_count) = store_counts.get(slot) {
+                        if store_count.0 != 0 {
+                            // one store this pubkey is in is not being removed, so this pubkey cannot be removed at all
+                            return false;
+                        }
+                    } else {
+                        // store is not being removed, so this pubkey cannot be removed at all
                         return false;
                     }
-                } else {
-                    // store is not being removed, so this pubkey cannot be removed at all
-                    return false;
                 }
-            }
 
-            // Exit early if not filtering more for incremental snapshots
-            if !should_filter_for_incremental_snapshots {
-                return true;
-            }
-
-            let slot_account_info_at_highest_slot = slot_account_infos
-                .iter()
-                .max_by_key(|(slot, _account_info)| slot);
-
-            slot_account_info_at_highest_slot.map_or(true, |(slot, account_info)| {
-                // Do *not* purge zero-lamport accounts if the slot is greater than the last full
-                // snapshot slot.  Since we're `retain`ing the accounts-to-purge, I felt creating
-                // the `cannot_purge` variable made this easier to understand.  Accounts that do
-                // not get purged here are added to a list so they be considered for purging later
-                // (i.e. after the next full snapshot).
-                assert!(account_info.is_zero_lamport());
-                let cannot_purge = *slot > latest_full_snapshot_slot.unwrap();
-                if cannot_purge {
-                    self.zero_lamport_accounts_to_purge_after_full_snapshot
-                        .insert((*slot, *pubkey));
+                // Exit early if not filtering more for incremental snapshots
+                if !should_filter_for_incremental_snapshots {
+                    return true;
                 }
-                !cannot_purge
-            })
-        });
+
+                let slot_account_info_at_highest_slot =
+                    slot_list.iter().max_by_key(|(slot, _account_info)| slot);
+
+                slot_account_info_at_highest_slot.map_or(true, |(slot, account_info)| {
+                    // Do *not* purge zero-lamport accounts if the slot is greater than the last full
+                    // snapshot slot.  Since we're `retain`ing the accounts-to-purge, I felt creating
+                    // the `cannot_purge` variable made this easier to understand.  Accounts that do
+                    // not get purged here are added to a list so they be considered for purging later
+                    // (i.e. after the next full snapshot).
+                    assert!(account_info.is_zero_lamport());
+                    let cannot_purge = *slot > latest_full_snapshot_slot.unwrap();
+                    if cannot_purge {
+                        self.zero_lamport_accounts_to_purge_after_full_snapshot
+                            .insert((*slot, *pubkey));
+                    }
+                    !cannot_purge
+                })
+            });
+        }
     }
 
     // Must be kept private!, does sensitive cleanup that should only be called from
@@ -12454,18 +12516,39 @@ pub mod tests {
         accounts_index.add_root(1);
         accounts_index.add_root(2);
         accounts_index.add_root(3);
-        let mut purges = HashMap::new();
+        let num_bins = accounts_index.bins();
+        let purges: Vec<RwLock<HashMap<Pubkey, CleaningInfo>>> = (0..num_bins)
+            .map(|_| RwLock::new(HashMap::new()))
+            .collect::<Vec<_>>();
         for key in [&key0, &key1, &key2] {
             let index_entry = accounts_index.get_cloned(key).unwrap();
             let rooted_entries = accounts_index
                 .get_rooted_entries(index_entry.slot_list.read().unwrap().as_slice(), None);
             let ref_count = index_entry.ref_count();
-            purges.insert(*key, (rooted_entries, ref_count));
+            let index = accounts_index.bin_calculator.bin_from_pubkey(key);
+            let mut purges_bin = purges[index].write().unwrap();
+            purges_bin.insert(
+                *key,
+                CleaningInfo {
+                    slot_list: rooted_entries,
+                    ref_count,
+                },
+            );
         }
-        for (key, (list, ref_count)) in &purges {
-            info!(" purge {} ref_count {} =>", key, ref_count);
-            for x in list {
-                info!("  {:?}", x);
+        for purges_bin in &purges {
+            let purges_bin = purges_bin.read().unwrap();
+            for (
+                key,
+                CleaningInfo {
+                    slot_list: list,
+                    ref_count,
+                },
+            ) in purges_bin.iter()
+            {
+                info!(" purge {} ref_count {} =>", key, ref_count);
+                for x in list {
+                    info!("  {:?}", x);
+                }
             }
         }
 
@@ -14756,8 +14839,15 @@ pub mod tests {
             let store_count = 0;
             let mut store_counts = HashMap::default();
             store_counts.insert(slot, (store_count, key_set));
-            let mut purges_zero_lamports = HashMap::default();
-            purges_zero_lamports.insert(pubkey, (vec![(slot, account_info)], 1));
+            let purges_zero_lamports = vec![RwLock::new(HashMap::new())];
+            let mut purges_zero_lamports_bin = purges_zero_lamports[0].write().unwrap();
+            purges_zero_lamports_bin.insert(
+                pubkey,
+                CleaningInfo {
+                    slot_list: vec![(slot, account_info)],
+                    ref_count: 1,
+                },
+            );
 
             let accounts_db = AccountsDb::new_single_for_tests();
             if let Some(latest_full_snapshot_slot) = test_params.latest_full_snapshot_slot {
@@ -14766,11 +14856,14 @@ pub mod tests {
             accounts_db.filter_zero_lamport_clean_for_incremental_snapshots(
                 test_params.max_clean_root,
                 &store_counts,
-                &mut purges_zero_lamports,
+                &purges_zero_lamports,
             );
 
             assert_eq!(
-                purges_zero_lamports.contains_key(&pubkey),
+                purges_zero_lamports[0]
+                    .read()
+                    .unwrap()
+                    .contains_key(&pubkey),
                 test_params.should_contain
             );
         };
