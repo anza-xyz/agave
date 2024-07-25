@@ -92,7 +92,7 @@ impl Default for TestServerConfig {
 }
 
 pub struct SpawnTestServerResult {
-    pub handle: JoinHandle<()>,
+    pub join_handle: JoinHandle<()>,
     pub exit: Arc<AtomicBool>,
     pub receiver: crossbeam_channel::Receiver<PacketBatch>,
     pub server_address: SocketAddr,
@@ -164,7 +164,7 @@ pub fn setup_quic_server(
     )
     .unwrap();
     SpawnTestServerResult {
-        handle,
+        join_handle: handle,
         exit,
         receiver,
         server_address,
@@ -190,7 +190,7 @@ pub async fn make_client_endpoint(
     ));
     endpoint
         .connect(*addr, "localhost")
-        .expect("Connecting should be configured correctly.")
+        .expect("Endpoint configuration should be correct")
         .await
-        .expect("Connection should be able to be established.")
+        .expect("Test server should be already listening on 'localhost'")
 }

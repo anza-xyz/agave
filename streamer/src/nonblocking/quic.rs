@@ -1604,7 +1604,7 @@ pub mod test {
     #[tokio::test]
     async fn test_quic_server_exit() {
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver: _,
             server_address: _,
@@ -1618,7 +1618,7 @@ pub mod test {
     async fn test_quic_timeout() {
         solana_logger::setup();
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver,
             server_address,
@@ -1685,7 +1685,7 @@ pub mod test {
     async fn test_quic_stream_timeout() {
         solana_logger::setup();
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver: _,
             server_address,
@@ -1721,7 +1721,7 @@ pub mod test {
     async fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver: _,
             server_address,
@@ -1737,7 +1737,7 @@ pub mod test {
         solana_logger::setup();
 
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver: _,
             server_address,
@@ -1808,7 +1808,7 @@ pub mod test {
     async fn test_quic_server_multiple_writes() {
         solana_logger::setup();
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver,
             server_address,
@@ -1830,7 +1830,7 @@ pub mod test {
             HashMap::<Pubkey, u64>::default(), // overrides
         );
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver,
             server_address,
@@ -1862,7 +1862,7 @@ pub mod test {
             HashMap::<Pubkey, u64>::default(), // overrides
         );
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver,
             server_address,
@@ -1886,7 +1886,7 @@ pub mod test {
     async fn test_quic_server_unstaked_connection_removal() {
         solana_logger::setup();
         let SpawnTestServerResult {
-            handle,
+            join_handle,
             exit,
             receiver,
             server_address,
