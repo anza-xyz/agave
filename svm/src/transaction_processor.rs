@@ -37,10 +37,7 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
-        feature_set::{
-            include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
-        },
+        feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
         fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -449,11 +446,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = checked_details;
 
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let fee_details = fee_structure.calculate_fee_details(
+        let fee_details = solana_fee::calculate_fee_details(
             message,
-            lamports_per_signature,
-            &fee_budget_limits,
-            feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+            lamports_per_signature == 0,
+            fee_structure.lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
         );
 

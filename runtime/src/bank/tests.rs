@@ -10025,11 +10025,17 @@ fn calculate_test_fee(
     lamports_per_signature: u64,
     fee_structure: &FeeStructure,
 ) -> u64 {
-    let budget_limits = process_compute_budget_instructions(message.program_instructions_iter())
-        .unwrap_or_default()
-        .into();
-
-    fee_structure.calculate_fee(message, lamports_per_signature, &budget_limits, false, true)
+    let budget_limits = FeeBudgetLimits::from(
+        process_compute_budget_instructions(message.program_instructions_iter())
+            .unwrap_or_default(),
+    );
+    solana_fee::calculate_fee(
+        message,
+        lamports_per_signature == 0,
+        fee_structure.lamports_per_signature,
+        budget_limits.prioritization_fee,
+        true,
+    )
 }
 
 #[test]
