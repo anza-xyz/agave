@@ -7047,6 +7047,7 @@ dependencies = [
 name = "solana-transaction-error"
 version = "2.1.0"
 dependencies = [
+ "rustc_version",
  "serde",
  "serde_derive",
  "solana-program",
