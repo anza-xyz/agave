@@ -5501,6 +5501,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-sdk",
  "solana-stake-program",
+ "solana-svm-transaction",
  "solana-vote-program",
  "static_assertions",
  "strum",
