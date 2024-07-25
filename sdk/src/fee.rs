@@ -33,9 +33,9 @@ pub struct FeeStructure {
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
 pub struct FeeDetails {
-    transaction_fee: u64,
-    prioritization_fee: u64,
-    remove_rounding_in_fee_calculation: bool,
+    pub transaction_fee: u64,
+    pub prioritization_fee: u64,
+    pub remove_rounding_in_fee_calculation: bool,
 }
 
 impl FeeDetails {

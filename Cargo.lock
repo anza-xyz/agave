@@ -6298,6 +6298,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-fee"
+version = "2.1.0"
+dependencies = [
+ "solana-sdk",
+ "solana-svm-transaction",
+]
+
+[[package]]
 name = "solana-frozen-abi"
 version = "2.1.0"
 dependencies = [
