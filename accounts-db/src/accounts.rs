@@ -96,23 +96,14 @@ impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
         Self { transaction }
     }
 
-    pub(crate) fn writable(&self) -> impl Iterator<Item = &'a Pubkey> + Clone {
-        self.filtered_account_keys_iter::<true>()
-    }
-
-    pub(crate) fn readonly(&self) -> impl Iterator<Item = &'a Pubkey> + Clone {
-        self.filtered_account_keys_iter::<false>()
-    }
-
-    fn filtered_account_keys_iter<const WRITABLE: bool>(
+    pub(crate) fn accounts_with_is_writable(
         &self,
-    ) -> impl Iterator<Item = &'a Pubkey> + Clone {
-        let account_keys = self.transaction.account_keys();
-        account_keys
+    ) -> impl Iterator<Item = (&'a Pubkey, bool)> + Clone {
+        self.transaction
+            .account_keys()
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.transaction.is_writable(*i) == WRITABLE)
-            .map(|(_, key)| key)
+            .map(|(index, key)| (key, self.transaction.is_writable(index)))
     }
 }
 
@@ -573,28 +564,24 @@ impl Accounts {
     fn lock_account<'a>(
         &self,
         account_locks: &mut AccountLocks,
-        writable_keys: impl Iterator<Item = &'a Pubkey> + Clone,
-        readonly_keys: impl Iterator<Item = &'a Pubkey> + Clone,
+        keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
     ) -> Result<()> {
-        for k in writable_keys.clone() {
-            if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
-                debug!("Writable account in use: {:?}", k);
-                return Err(TransactionError::AccountInUse);
-            }
-        }
-        for k in readonly_keys.clone() {
-            if account_locks.is_locked_write(k) {
+        for (k, writable) in keys.clone() {
+            if writable {
+                if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
+                    debug!("Writable account in use: {:?}", k);
+                    return Err(TransactionError::AccountInUse);
+                }
+            } else if account_locks.is_locked_write(k) {
                 debug!("Read-only account in use: {:?}", k);
                 return Err(TransactionError::AccountInUse);
             }
         }
 
-        for k in writable_keys {
-            account_locks.write_locks.insert(*k);
-        }
-
-        for k in readonly_keys {
-            if !account_locks.lock_readonly(k) {
+        for (k, writable) in keys {
+            if writable {
+                account_locks.write_locks.insert(*k);
+            } else if !account_locks.lock_readonly(k) {
                 account_locks.insert_new_readonly(k);
             }
         }
@@ -605,14 +592,14 @@ impl Accounts {
     fn unlock_account<'a>(
         &self,
         account_locks: &mut AccountLocks,
-        writable_keys: impl Iterator<Item = &'a Pubkey>,
-        readonly_keys: impl Iterator<Item = &'a Pubkey>,
+        keys: impl Iterator<Item = (&'a Pubkey, bool)>,
     ) {
-        for k in writable_keys {
-            account_locks.unlock_write(k);
-        }
-        for k in readonly_keys {
-            account_locks.unlock_readonly(k);
+        for (k, writable) in keys {
+            if writable {
+                account_locks.unlock_write(k);
+            } else {
+                account_locks.unlock_readonly(k);
+            }
         }
     }
 
@@ -665,11 +652,9 @@ impl Accounts {
         tx_account_locks_results
             .into_iter()
             .map(|tx_account_locks_result| match tx_account_locks_result {
-                Ok(tx_account_locks) => self.lock_account(
-                    account_locks,
-                    tx_account_locks.writable(),
-                    tx_account_locks.readonly(),
-                ),
+                Ok(tx_account_locks) => {
+                    self.lock_account(account_locks, tx_account_locks.accounts_with_is_writable())
+                }
                 Err(err) => Err(err),
             })
             .collect()
@@ -691,8 +676,7 @@ impl Accounts {
                 let tx_account_locks = TransactionAccountLocksIterator::new(tx.message());
                 self.unlock_account(
                     &mut account_locks,
-                    tx_account_locks.writable(),
-                    tx_account_locks.readonly(),
+                    tx_account_locks.accounts_with_is_writable(),
                 );
             }
         }
