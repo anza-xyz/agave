@@ -4517,6 +4517,7 @@ dependencies = [
  "solana-nohash-hasher",
  "solana-rayon-threadlimit",
  "solana-sdk",
+ "solana-svm-transaction",
  "static_assertions",
  "tar",
  "tempfile",
@@ -6338,6 +6339,13 @@ dependencies = [
  "solana-timings",
  "solana-type-overrides",
  "solana-vote",
+]
+
+[[package]]
+name = "solana-svm-transaction"
+version = "2.1.0"
+dependencies = [
+ "solana-sdk",
 ]
 
 [[package]]
