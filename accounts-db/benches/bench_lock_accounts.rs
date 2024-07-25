@@ -83,8 +83,11 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
         group.bench_function(name.as_str(), move |b| {
             b.iter(|| {
                 for batch in &transaction_batches {
-                    let results =
-                        accounts.lock_accounts(black_box(batch.iter()), MAX_TX_ACCOUNT_LOCKS);
+                    let (results, _) = accounts.lock_accounts(
+                        test::black_box(batch.iter()),
+                        MAX_TX_ACCOUNT_LOCKS,
+                        false,
+                    );
                     accounts.unlock_accounts(batch.iter().zip(&results));
                 }
             })

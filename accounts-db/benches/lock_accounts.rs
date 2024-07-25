@@ -156,12 +156,15 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
             let transactions = create_transactions(&bank, 2_usize.pow(16), lock_count);
             let mut batches = transactions.chunks(batch_size).cycle();
 
-            let name = if lock_count==1 {
-                format!("batch_size_{batch_size}_locks_count_{}_write_only", lock_count*2)
+            let name = if lock_count == 1 {
+                format!(
+                    "batch_size_{batch_size}_locks_count_{}_write_only",
+                    lock_count * 2
+                )
             } else {
                 format!("batch_size_{batch_size}_locks_count_{lock_count}")
             };
-            
+
             group.bench_function(name.as_str(), move |b| {
                 b.iter(|| {
                     for batch in (0..batches_per_iteration).filter_map(|_| batches.next()) {
@@ -196,7 +199,7 @@ fn bench_entry_lock_accounts_with_self_conflicting_txs(c: &mut Criterion) {
             let transactions = create_transactions(&bank, 2_usize.pow(16), lock_count);
             let mut batches = transactions.chunks(batch_size).cycle();
 
-            let name = if lock_count==1 {
+            let name = if lock_count == 1 {
                 format!("batch_size_{batch_size}_locks_count_{}_write_only_self_conflicting_entries_allowed", lock_count*2)
             } else {
                 format!("batch_size_{batch_size}_locks_count_{lock_count}_self_conflicting_entries_allowed")
