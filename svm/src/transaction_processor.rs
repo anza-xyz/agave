@@ -1907,7 +1907,7 @@ mod tests {
                     fee_payer_rent_epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
             })
@@ -1979,7 +1979,7 @@ mod tests {
                     0, // rent epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new_for_tests(transaction_fee, 0, false),
+                fee_details: FeeDetails::new(transaction_fee, 0, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
             })
@@ -2220,7 +2220,7 @@ mod tests {
                         0, // fee_payer_rent_epoch
                     ),
                     compute_budget_limits,
-                    fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                    fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
                     fee_payer_rent_debit: 0, // rent due
                     fee_payer_account: post_validation_fee_payer_account,
                 })

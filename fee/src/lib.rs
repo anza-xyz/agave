@@ -32,9 +32,9 @@ pub fn calculate_fee_details(
         .num_total_signatures()
         .saturating_mul(lamports_per_signature);
 
-    FeeDetails {
-        transaction_fee: signature_fee,
+    FeeDetails::new(
+        signature_fee,
         prioritization_fee,
         remove_rounding_in_fee_calculation,
-    }
+    )
 }
