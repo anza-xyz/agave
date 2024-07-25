@@ -9,7 +9,7 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
-    ahash::AHashMap,
+    ahash::{AHashMap, AHashSet},
     dashmap::DashMap,
     log::*,
     solana_sdk::{
@@ -49,8 +49,8 @@ struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
     transaction: &'a T,
 #[derive(Debug, Default)]
 struct BatchAccountLocks {
-    writables: HashSet<Pubkey>,
-    readables: HashSet<Pubkey>,
+    writables: AHashSet<Pubkey>,
+    readables: AHashSet<Pubkey>,
 }
 
 thread_local! {
@@ -60,8 +60,8 @@ thread_local! {
 impl BatchAccountLocks {
     fn with_capacity(capacity: usize) -> Self {
         BatchAccountLocks {
-            writables: HashSet::with_capacity(capacity),
-            readables: HashSet::with_capacity(capacity),
+            writables: AHashSet::with_capacity(capacity),
+            readables: AHashSet::with_capacity(capacity),
         }
     }
 

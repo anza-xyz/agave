@@ -20,10 +20,10 @@ const LOCK_COUNTS: [usize; 2] = [2, 64];
 // total transactions per run
 const TOTAL_TRANSACTIONS: usize = 1024;
 
-fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<SanitizedTransaction> {
-    // keys available to be shared between transactions, depending on mode
-    // currently, we test batches with no conflicts and batches with reader/reader conflicts
-    // in the future with SIMD83, we will also test reader/writer and writer/writer conflicts
+fn create_test_transactions(
+    lock_count: usize,
+    self_conflicting_batch: bool,
+) -> Vec<SanitizedTransaction> {
     let shared_pubkeys: Vec<_> = (0..lock_count).map(|_| Pubkey::new_unique()).collect();
     let mut transactions = vec![];
 
@@ -37,11 +37,15 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
             let account_meta = if i == 0 {
                 AccountMeta::new(Pubkey::new_unique(), true)
             } else if i % 2 == 0 {
-                AccountMeta::new(Pubkey::new_unique(), false)
-            } else if read_conflicts {
-                AccountMeta::new_readonly(shared_pubkeys[i], false)
+                if !self_conflicting_batch {
+                    AccountMeta::new(Pubkey::new_unique(), false)
+                } else {
+                    AccountMeta::new_readonly(shared_pubkeys[i], false)
+                }
+            } else if self_conflicting_batch {
+                AccountMeta::new(shared_pubkeys[i], false)
             } else {
-                AccountMeta::new_readonly(Pubkey::new_unique(), false)
+                AccountMeta::new_readonly(shared_pubkeys[i], false)
             };
 
             account_metas.push(account_meta);
@@ -59,24 +63,21 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
 }
 
 fn bench_entry_lock_accounts(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bench_lock_accounts");
-
-    for (batch_size, lock_count, read_conflicts) in
+    for (batch_size, lock_count, self_conflicting_batch) in
         iproduct!(BATCH_SIZES, LOCK_COUNTS, [false, true])
     {
-        let name = format!(
-            "batch_size_{batch_size}_locks_count_{lock_count}{}",
-            if read_conflicts {
-                "_read_conflicts"
-            } else {
-                ""
-            }
-        );
+        let mut group = if self_conflicting_batch {
+            c.benchmark_group("bench_lock_accounts_with_conflicting_batches")
+        } else {
+            c.benchmark_group("bench_lock_accounts")
+        };
+
+        let name = format!("batch_size_{batch_size}_locks_count_{lock_count}");
 
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
-        let transactions = create_test_transactions(lock_count, read_conflicts);
+        let transactions = create_test_transactions(lock_count, self_conflicting_batch);
         group.throughput(Throughput::Elements(transactions.len() as u64));
         let transaction_batches: Vec<_> = transactions.chunks(batch_size).collect();
 
@@ -86,7 +87,7 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
                     let (results, _) = accounts.lock_accounts(
                         test::black_box(batch.iter()),
                         MAX_TX_ACCOUNT_LOCKS,
-                        false,
+                        self_conflicting_batch,
                     );
                     accounts.unlock_accounts(batch.iter().zip(&results));
                 }
