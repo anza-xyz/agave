@@ -3134,19 +3134,6 @@ impl Bank {
         self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
 
-    fn register_recent_blockhash_with_lamports_per_signature(&self, blockhash: &Hash, lamports_per_signature: u64, scheduler: &InstalledSchedulerRwLock) {
-        // This is needed because recent_blockhash updates necessitate synchronizations for
-        // consistent tx check_age handling.
-        BankWithScheduler::wait_for_paused_scheduler(self, scheduler);
-
-        // Only acquire the write lock for the blockhash queue on block boundaries because
-        // readers can starve this write lock acquisition and ticks would be slowed down too
-        // much if the write lock is acquired for each tick.
-        let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
-        w_blockhash_queue.register_hash(blockhash, lamports_per_signature);
-        self.update_recent_blockhashes_locked(&w_blockhash_queue);
-    }
-
     // gating this under #[cfg(feature = "dev-context-only-utils")] isn't easy due to
     // solana-program-test's usage...
     pub fn register_unique_recent_blockhash_for_test(&self) {
@@ -3158,11 +3145,20 @@ impl Bank {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn register_recent_blockhash_for_test(&self, hash: &Hash, lamports_per_signature: Option<u64>) {
+        // This is needed because recent_blockhash updates necessitate synchronizations for
+        // consistent tx check_age handling.
+        BankWithScheduler::wait_for_paused_scheduler(self, scheduler);
+
+        // Only acquire the write lock for the blockhash queue on block boundaries because
+        // readers can starve this write lock acquisition and ticks would be slowed down too
+        // much if the write lock is acquired for each tick.
+        let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
         if let Some(lamports_per_signature) = lamports_per_signature {
-            self.register_recent_blockhash_with_lamports_per_signature(hash, lamports_per_signature, &BankWithScheduler::no_scheduler_available());
+            w_blockhash_queue.register_hash(blockhash, lamports_per_signature);
         } else {
-            self.register_recent_blockhash(hash, &BankWithScheduler::no_scheduler_available());
+            w_blockhash_queue.register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
         }
+        self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
 
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls
