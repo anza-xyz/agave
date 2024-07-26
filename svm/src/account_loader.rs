@@ -72,7 +72,6 @@ pub struct RentDetails {
 
 pub struct LoadedAccountDetails {
     pub pubkey: Pubkey,
-    pub account: AccountSharedData,
     pub account_found: bool,
 }
 
@@ -524,7 +523,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             unique_loaded_accounts.insert(*key, account.clone());
             Ok(LoadedAccountDetails {
                 pubkey: *key,
-                account,
                 account_found,
             })
         })
