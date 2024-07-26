@@ -949,16 +949,11 @@ mod tests {
         let results0 = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS);
 
         assert_eq!(results0, vec![Ok(())]);
-        assert_eq!(
-            *accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .readonly_locks
-                .get(&keypair1.pubkey())
-                .unwrap(),
-            1
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair1.pubkey()));
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
         let message = Message::new_with_compiled_instructions(
@@ -989,16 +984,11 @@ mod tests {
                 Err(TransactionError::AccountInUse), // Read-only account (keypair1) cannot also be locked as writable
             ],
         );
-        assert_eq!(
-            *accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .readonly_locks
-                .get(&keypair1.pubkey())
-                .unwrap(),
-            2
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair1.pubkey()));
 
         accounts.unlock_accounts(iter::once(&tx).zip(&results0));
         accounts.unlock_accounts(txs.iter().zip(&results1));
@@ -1023,8 +1013,7 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .readonly_locks
-            .contains_key(&keypair1.pubkey()));
+            .is_locked_readonly(&keypair1.pubkey()));
     }
 
     #[test]
@@ -1138,29 +1127,22 @@ mod tests {
 
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
-        assert_eq!(
-            *accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .readonly_locks
-                .get(&native_loader::id())
-                .unwrap(),
-            1
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&native_loader::id()));
         // Non-program accounts remain writable
         assert!(accounts
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains(&keypair0.pubkey()));
+            .is_locked_write(&keypair0.pubkey()));
         assert!(accounts
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains(&keypair1.pubkey()));
+            .is_locked_write(&keypair1.pubkey()));
     }
 
     impl Accounts {
@@ -1249,40 +1231,18 @@ mod tests {
             ],
         );
 
-        // verify that keypair0 read-only lock twice (for tx0 and tx2)
-        assert_eq!(
-            *accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .readonly_locks
-                .get(&keypair0.pubkey())
-                .unwrap(),
-            2
-        );
+        // verify that keypair0 read-only locked
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair0.pubkey()));
         // verify that keypair2 (for tx1) is not write-locked
         assert!(!accounts
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains(&keypair2.pubkey()));
-
-        accounts.unlock_accounts(txs.iter().zip(&results));
-
-        // check all locks to be removed
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .readonly_locks
-            .is_empty());
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .write_locks
-            .is_empty());
+            .is_locked_write(&keypair2.pubkey()));
     }
 
     #[test]

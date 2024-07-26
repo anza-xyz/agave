@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
     log::debug,
@@ -7,8 +9,8 @@ use {
 
 #[derive(Debug, Default)]
 pub struct AccountLocks {
-    pub write_locks: AHashSet<Pubkey>,
-    pub readonly_locks: AHashMap<Pubkey, u64>,
+    write_locks: AHashSet<Pubkey>,
+    readonly_locks: AHashMap<Pubkey, u64>,
 }
 
 impl AccountLocks {
@@ -24,6 +26,7 @@ impl AccountLocks {
             if writable {
                 if !self.can_write_lock(key) {
                     debug!("Writable account in use: {:?}", key);
+                    return Err(TransactionError::AccountInUse);
                 }
             } else if !self.can_read_lock(key) {
                 debug!("Read-only account in use: {:?}", key);
@@ -59,6 +62,18 @@ impl AccountLocks {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn is_locked_readonly(&self, key: &Pubkey) -> bool {
+        self.readonly_locks
+            .get(key)
+            .map_or(false, |count| *count > 0)
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn is_locked_write(&self, key: &Pubkey) -> bool {
+        self.write_locks.contains(key)
+    }
+
     fn can_read_lock(&self, key: &Pubkey) -> bool {
         // If the key is not write-locked, it can be read-locked
         !self.is_locked_write(key)
@@ -75,16 +90,6 @@ impl AccountLocks {
 
     fn lock_write(&mut self, key: &Pubkey) {
         self.write_locks.insert(*key);
-    }
-
-    fn is_locked_readonly(&self, key: &Pubkey) -> bool {
-        self.readonly_locks
-            .get(key)
-            .map_or(false, |count| *count > 0)
-    }
-
-    fn is_locked_write(&self, key: &Pubkey) -> bool {
-        self.write_locks.contains(key)
     }
 
     fn unlock_readonly(&mut self, key: &Pubkey) {
