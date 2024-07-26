@@ -115,3 +115,48 @@ impl AccountLocks {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_account_locks() {
+        let mut account_locks = AccountLocks::default();
+
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+
+        // Add write and read-lock.
+        let result = account_locks
+            .lock_accounts_for_transaction([(&key1, true), (&key2, false)].into_iter());
+        assert!(result.is_ok());
+
+        // Try to add duplicate write-lock.
+        let result = account_locks.lock_accounts_for_transaction([(&key1, true)].into_iter());
+        assert_eq!(result, Err(TransactionError::AccountInUse));
+
+        // Try to add write lock on read-locked account.
+        let result = account_locks.lock_accounts_for_transaction([(&key2, true)].into_iter());
+        assert_eq!(result, Err(TransactionError::AccountInUse));
+
+        // Try to add read lock on write-locked account.
+        let result = account_locks.lock_accounts_for_transaction([(&key1, false)].into_iter());
+        assert_eq!(result, Err(TransactionError::AccountInUse));
+
+        // Add read lock on read-locked account.
+        let result = account_locks.lock_accounts_for_transaction([(&key2, false)].into_iter());
+        assert!(result.is_ok());
+
+        // Unlock write and read locks.
+        account_locks.unlock_accounts_for_transaction([(&key1, true), (&key2, false)].into_iter());
+
+        // No more remaining write-locks. Read-lock remains.
+        assert!(!account_locks.is_locked_write(&key1));
+        assert!(account_locks.is_locked_readonly(&key2));
+
+        // Unlock read lock.
+        account_locks.unlock_accounts_for_transaction([(&key2, false)].into_iter());
+        assert!(!account_locks.is_locked_readonly(&key2));
+    }
+}
