@@ -1344,15 +1344,8 @@ impl StoreAccountsTiming {
 
 #[derive(Default, Debug)]
 struct CleaningInfo {
-    pub slot_list: SlotList<AccountInfo>,
-    pub ref_count: u64,
-}
-
-impl CleaningInfo {
-    pub fn update(&mut self, slot_list: SlotList<AccountInfo>, ref_count: u64) {
-        self.slot_list = slot_list;
-        self.ref_count = ref_count;
-    }
+    slot_list: SlotList<AccountInfo>,
+    ref_count: u64,
 }
 
 /// Removing unrooted slots in Accounts Background Service needs to be synchronized with flushing
@@ -3304,18 +3297,16 @@ impl AccountsDb {
                                             if account_info.is_zero_lamport() {
                                                 useless = false;
                                                 // The latest one is zero lamports. We may be able to purge it.
-                                                if let Some(val) = candidates_bin.get_mut(candidate)
-                                                {
-                                                    val.update(
-                                                        // Add all the rooted entries that contain this pubkey.
-                                                        // We know the highest rooted entry is zero lamports.
-                                                        self.accounts_index.get_rooted_entries(
-                                                            slot_list,
-                                                            max_clean_root_inclusive,
-                                                        ),
-                                                        ref_count,
+                                                let val =
+                                                    candidates_bin.get_mut(candidate).expect("");
+                                                // Add all the rooted entries that contain this pubkey.
+                                                // We know the highest rooted entry is zero lamports.
+                                                val.slot_list =
+                                                    self.accounts_index.get_rooted_entries(
+                                                        slot_list,
+                                                        max_clean_root_inclusive,
                                                     );
-                                                }
+                                                val.ref_count = ref_count;
                                             } else {
                                                 found_not_zero += 1;
                                             }
