@@ -1611,7 +1611,7 @@ pub mod test {
             stats: _,
         } = setup_quic_server(None, TestServerConfig::default());
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1627,7 +1627,7 @@ pub mod test {
 
         check_timeout(receiver, server_address).await;
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1714,7 +1714,7 @@ pub mod test {
         assert!(s1.finish().await.is_err());
 
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1729,7 +1729,7 @@ pub mod test {
         } = setup_quic_server(None, TestServerConfig::default());
         check_block_multiple_connections(server_address).await;
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1801,7 +1801,7 @@ pub mod test {
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 2);
 
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1816,7 +1816,7 @@ pub mod test {
         } = setup_quic_server(None, TestServerConfig::default());
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1838,7 +1838,7 @@ pub mod test {
         } = setup_quic_server(Some(staked_nodes), TestServerConfig::default());
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
             stats
@@ -1870,7 +1870,7 @@ pub mod test {
         } = setup_quic_server(Some(staked_nodes), TestServerConfig::default());
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
             stats
@@ -1894,7 +1894,7 @@ pub mod test {
         } = setup_quic_server(None, TestServerConfig::default());
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
-        handle.await.unwrap();
+        join_handle.await.unwrap();
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
             stats
