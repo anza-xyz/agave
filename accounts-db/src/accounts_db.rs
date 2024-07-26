@@ -12526,7 +12526,7 @@ pub mod tests {
                 },
             );
         }
-        for purges_bin in &purges {
+        for purges_bin in purges.iter() {
             let purges_bin = purges_bin.read().unwrap();
             for (
                 key,
