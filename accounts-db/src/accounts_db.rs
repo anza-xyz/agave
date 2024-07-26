@@ -2752,7 +2752,7 @@ impl AccountsDb {
     /// 1. one of the pubkeys in the store has account info to a store whose store count is not going to zero
     /// 2. a pubkey we were planning to remove is not removing all stores that contain the account
     fn calc_delete_dependencies(
-        purges: &Vec<RwLock<HashMap<Pubkey, CleaningInfo>>>,
+        purges: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
         store_counts: &mut HashMap<Slot, (usize, HashSet<Pubkey>)>,
         min_slot: Option<Slot>,
     ) {
@@ -3734,7 +3734,7 @@ impl AccountsDb {
         &self,
         max_clean_root_inclusive: Option<Slot>,
         store_counts: &HashMap<Slot, (usize, HashSet<Pubkey>)>,
-        purges_zero_lamports: &Vec<RwLock<HashMap<Pubkey, CleaningInfo>>>,
+        purges_zero_lamports: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
     ) {
         let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
         let should_filter_for_incremental_snapshots = max_clean_root_inclusive.unwrap_or(Slot::MAX)
@@ -12510,9 +12510,10 @@ pub mod tests {
         accounts_index.add_root(2);
         accounts_index.add_root(3);
         let num_bins = accounts_index.bins();
-        let purges: Vec<RwLock<HashMap<Pubkey, CleaningInfo>>> = (0..num_bins)
-            .map(|_| RwLock::new(HashMap::new()))
-            .collect::<Vec<_>>();
+        let purges: Box<_> =
+            std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
+                .take(num_bins)
+                .collect();
         for key in [&key0, &key1, &key2] {
             let index_entry = accounts_index.get_cloned(key).unwrap();
             let rooted_entries = accounts_index
