@@ -6346,6 +6346,7 @@ dependencies = [
  "solana-metrics",
  "solana-program-runtime",
  "solana-sdk",
+ "solana-svm-transaction",
  "solana-system-program",
  "solana-timings",
  "solana-type-overrides",
