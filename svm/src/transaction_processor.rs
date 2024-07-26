@@ -32,6 +32,7 @@ use {
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
+    ahash::AHashSet,
     log::debug,
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::{
@@ -79,6 +80,7 @@ use {
 /// A list of log messages emitted during a transaction
 pub type TransactionLogMessages = Vec<String>;
 
+pub const DEFAULT_TRANSACTIONS_PER_BATCH: usize = 64;
 /// The output of the transaction batch processor's
 /// `load_and_execute_sanitized_transactions` method.
 pub struct LoadAndExecuteSanitizedTransactionsOutput {
@@ -597,7 +599,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         accounts: &TransactionLoadAccountResult,
         program_indices: &TransactionProgramIndices,
         fee_validation_result: &TransactionValidationResult,
-        rent_collection_result: RentDetails,
+        rent_collection_result: &RentDetails,
         unique_loaded_accounts: &mut UniqueLoadedAccounts,
     ) -> LoadedTransaction {
         let accounts: Vec<(Pubkey, AccountSharedData)> = accounts
@@ -610,18 +612,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 (key, account)
             })
             .collect();
-        let program_indices: Vec<Vec<u16>> = program_indices.to_vec();
         let tx_details = fee_validation_result.as_ref().unwrap().clone();
+        let rent_details = rent_collection_result.clone();
 
         LoadedTransaction {
             accounts,
-            program_indices,
+            program_indices: program_indices.to_vec(),
             fee_details: tx_details.fee_details,
             rollback_accounts: tx_details.rollback_accounts,
             compute_budget_limits: tx_details.compute_budget_limits,
             rent: rent_collection_result.rent,
-            rent_debits: rent_collection_result.rent_debits,
-            loaded_accounts_data_size: rent_collection_result.loaded_accounts_data_size,
+            rent_debits: rent_details.rent_debits,
+            loaded_accounts_data_size: rent_details.loaded_accounts_data_size,
         }
     }
 
