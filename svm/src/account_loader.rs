@@ -12,7 +12,6 @@ use {
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         feature_set::{self, FeatureSet},
         fee::FeeDetails,
-        message::SanitizedMessage,
         native_loader,
         nonce::State as NonceState,
         pubkey::Pubkey,
@@ -192,7 +191,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    message: &SanitizedMessage,
+    message: &impl SVMMessage,
     tx_details: ValidatedTransactionDetails,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
@@ -207,9 +206,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut accumulated_accounts_data_size: u32 = 0;
 
     let instruction_accounts = message
-        .instructions()
-        .iter()
-        .flat_map(|instruction| &instruction.accounts)
+        .instructions_iter()
+        .flat_map(|instruction| instruction.accounts)
         .unique()
         .collect::<Vec<&u8>>();
 
@@ -295,8 +293,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 
     let builtins_start_index = accounts.len();
     let program_indices = message
-        .instructions()
-        .iter()
+        .instructions_iter()
         .map(|instruction| {
             let mut account_indices = Vec::with_capacity(2);
             let program_index = instruction.program_id_index as usize;
@@ -416,7 +413,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 
         decompiled_instructions.push(BorrowedInstruction {
             accounts,
-            data: &instruction.data,
+            data: instruction.data,
             program_id,
         });
     }
