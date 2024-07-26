@@ -23,7 +23,7 @@ use {
             self,
             instructions::{construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction},
         },
-        transaction::{Result, SanitizedTransaction, TransactionError},
+        transaction::{Result, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_svm_transaction::svm_message::SVMMessage,
@@ -158,7 +158,7 @@ pub fn validate_fee_payer(
 /// second element.
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    txs: &[SanitizedTransaction],
+    txs: &[impl SVMMessage],
     validation_results: Vec<TransactionValidationResult>,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
@@ -170,12 +170,10 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         .zip(validation_results)
         .map(|etx| match etx {
             (tx, Ok(tx_details)) => {
-                let message = tx.message();
-
                 // load transactions
                 load_transaction_accounts(
                     callbacks,
-                    message,
+                    tx,
                     tx_details,
                     error_metrics,
                     account_overrides,
