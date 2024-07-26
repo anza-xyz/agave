@@ -562,8 +562,8 @@ mod tests {
                 incremental_capitalization: u64::default(),
             };
 
-            let bank_fields = bank.get_fields_to_serialize();
-            let versioned_epoch_stakes = bank_fields.versioned_epoch_stakes;
+            let mut bank_fields = bank.get_fields_to_serialize();
+            let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
             serde_snapshot::serialize_bank_snapshot_with(
                 serializer,
                 SerializableVersionedBank::from(bank_fields),
