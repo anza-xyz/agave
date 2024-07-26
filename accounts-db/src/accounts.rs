@@ -1,5 +1,6 @@
 use {
     crate::{
+        account_locks::AccountLocks,
         accounts_db::{
             AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
             ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
@@ -8,7 +9,6 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
-    ahash::{AHashMap, AHashSet},
     dashmap::DashMap,
     log::*,
     solana_sdk::{
@@ -18,13 +18,13 @@ use {
         message::v0::{LoadedAddresses, MessageAddressTableLookup},
         pubkey::Pubkey,
         slot_hashes::SlotHashes,
-        transaction::{Result, SanitizedTransaction, TransactionError},
+        transaction::{Result, SanitizedTransaction},
         transaction_context::TransactionAccount,
     },
     solana_svm_transaction::svm_message::SVMMessage,
     std::{
         cmp::Reverse,
-        collections::{hash_map, BinaryHeap, HashSet},
+        collections::{BinaryHeap, HashSet},
         ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -34,58 +34,6 @@ use {
 };
 
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
-
-#[derive(Debug, Default)]
-pub struct AccountLocks {
-    write_locks: AHashSet<Pubkey>,
-    readonly_locks: AHashMap<Pubkey, u64>,
-}
-
-impl AccountLocks {
-    fn is_locked_readonly(&self, key: &Pubkey) -> bool {
-        self.readonly_locks
-            .get(key)
-            .map_or(false, |count| *count > 0)
-    }
-
-    fn is_locked_write(&self, key: &Pubkey) -> bool {
-        self.write_locks.contains(key)
-    }
-
-    fn insert_new_readonly(&mut self, key: &Pubkey) {
-        assert!(self.readonly_locks.insert(*key, 1).is_none());
-    }
-
-    fn lock_readonly(&mut self, key: &Pubkey) -> bool {
-        self.readonly_locks.get_mut(key).map_or(false, |count| {
-            *count += 1;
-            true
-        })
-    }
-
-    fn unlock_readonly(&mut self, key: &Pubkey) {
-        if let hash_map::Entry::Occupied(mut occupied_entry) = self.readonly_locks.entry(*key) {
-            let count = occupied_entry.get_mut();
-            *count -= 1;
-            if *count == 0 {
-                occupied_entry.remove_entry();
-            }
-        } else {
-            debug_assert!(
-                false,
-                "Attempted to remove a read-lock for a key that wasn't read-locked"
-            );
-        }
-    }
-
-    fn unlock_write(&mut self, key: &Pubkey) {
-        let removed = self.write_locks.remove(key);
-        debug_assert!(
-            removed,
-            "Attempted to remove a write-lock for a key that wasn't write-locked"
-        );
-    }
-}
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
     transaction: &'a T,
@@ -561,48 +509,6 @@ impl Accounts {
         self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
     }
 
-    fn lock_account<'a>(
-        &self,
-        account_locks: &mut AccountLocks,
-        keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
-    ) -> Result<()> {
-        for (k, writable) in keys.clone() {
-            if writable {
-                if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
-                    debug!("Writable account in use: {:?}", k);
-                    return Err(TransactionError::AccountInUse);
-                }
-            } else if account_locks.is_locked_write(k) {
-                debug!("Read-only account in use: {:?}", k);
-                return Err(TransactionError::AccountInUse);
-            }
-        }
-
-        for (k, writable) in keys {
-            if writable {
-                account_locks.write_locks.insert(*k);
-            } else if !account_locks.lock_readonly(k) {
-                account_locks.insert_new_readonly(k);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn unlock_account<'a>(
-        &self,
-        account_locks: &mut AccountLocks,
-        keys: impl Iterator<Item = (&'a Pubkey, bool)>,
-    ) {
-        for (k, writable) in keys {
-            if writable {
-                account_locks.unlock_write(k);
-            } else {
-                account_locks.unlock_readonly(k);
-            }
-        }
-    }
-
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time
     #[must_use]
@@ -653,7 +559,7 @@ impl Accounts {
             .into_iter()
             .map(|tx_account_locks_result| match tx_account_locks_result {
                 Ok(tx_account_locks) => {
-                    self.lock_account(account_locks, tx_account_locks.accounts_with_is_writable())
+                    account_locks.lock_account(tx_account_locks.accounts_with_is_writable())
                 }
                 Err(err) => Err(err),
             })
@@ -674,10 +580,7 @@ impl Accounts {
         for (tx, res) in txs_and_results {
             if res.is_ok() {
                 let tx_account_locks = TransactionAccountLocksIterator::new(tx.message());
-                self.unlock_account(
-                    &mut account_locks,
-                    tx_account_locks.accounts_with_is_writable(),
-                );
+                account_locks.unlock_account(tx_account_locks.accounts_with_is_writable());
             }
         }
     }
@@ -714,7 +617,7 @@ mod tests {
             message::{Message, MessageHeader},
             native_loader,
             signature::{signers::Signers, Keypair, Signer},
-            transaction::{Transaction, MAX_TX_ACCOUNT_LOCKS},
+            transaction::{Transaction, TransactionError, MAX_TX_ACCOUNT_LOCKS},
         },
         std::{
             borrow::Cow,
