@@ -3467,24 +3467,26 @@ impl AccountsDb {
 
         let mut reclaims_time = Measure::start("reclaims");
         // Recalculate reclaims with new purge set
-        let mut pubkey_to_slot_set: Vec<(Pubkey, HashSet<Slot>)> = Vec::new();
-        for bin in candidates {
-            let bin = bin.read().unwrap();
-            if !bin.is_empty() {
-                for (pubkey, cleaning_info) in bin.iter() {
+        let mut pubkey_to_slot_set = Vec::new();
+        for candidates_bin in candidates {
+            let candidates_bin = candidates_bin.read().unwrap();
+            let mut bin_set = candidates_bin
+                .iter()
+                .map(|(pubkey, cleaning_info)| {
                     let CleaningInfo {
                         slot_list,
                         ref_count: _,
                     } = cleaning_info;
-                    pubkey_to_slot_set.push((
+                    (
                         *pubkey,
                         slot_list
                             .iter()
                             .map(|(slot, _)| *slot)
                             .collect::<HashSet<Slot>>(),
-                    ));
-                }
-            }
+                    )
+                })
+                .collect::<Vec<(Pubkey, HashSet<_>)>>();
+            pubkey_to_slot_set.append(&mut bin_set);
         }
 
         let (reclaims, pubkeys_removed_from_accounts_index2) =
