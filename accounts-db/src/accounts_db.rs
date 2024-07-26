@@ -3071,18 +3071,15 @@ impl AccountsDb {
                 dirty_store_routine();
             });
         }
-        trace!(
-            "dirty_stores.len: {} pubkeys.len: {}",
-            dirty_stores_len,
-            pubkeys
-                .iter()
-                .map(|x| x.read().unwrap().len())
-                .sum::<usize>(),
-        );
         timings.dirty_pubkeys_count = pubkeys
             .iter()
             .map(|x| x.read().unwrap().len())
             .sum::<usize>() as u64;
+        trace!(
+            "dirty_stores.len: {} pubkeys.len: {}",
+            dirty_stores_len,
+            timings.dirty_pubkeys_count,
+        );
         dirty_store_processing_time.stop();
         timings.dirty_store_processing_us += dirty_store_processing_time.as_us();
         timings.dirty_ancient_stores = dirty_ancient_stores.load(Ordering::Relaxed);
