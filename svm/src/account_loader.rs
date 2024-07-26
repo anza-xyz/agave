@@ -20,10 +20,14 @@ use {
         rent_collector::{CollectedInfo, RentCollector, RENT_EXEMPT_RENT_EPOCH},
         rent_debits::RentDebits,
         saturating_add_assign,
-        sysvar::{self, instructions::construct_instructions_data},
+        sysvar::{
+            self,
+            instructions::{construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction},
+        },
         transaction::{Result, SanitizedTransaction, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
     std::num::NonZeroU32,
 };
@@ -393,9 +397,32 @@ fn accumulate_and_check_loaded_account_data_size(
     }
 }
 
-fn construct_instructions_account(message: &SanitizedMessage) -> AccountSharedData {
+fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
+    let account_keys = message.account_keys();
+    let mut decompiled_instructions = Vec::with_capacity(message.num_instructions());
+    for (program_id, instruction) in message.program_instructions_iter() {
+        let accounts = instruction
+            .accounts
+            .iter()
+            .map(|account_index| {
+                let account_index = usize::from(*account_index);
+                BorrowedAccountMeta {
+                    is_signer: message.is_signer(account_index),
+                    is_writable: message.is_writable(account_index),
+                    pubkey: account_keys.get(account_index).unwrap(),
+                }
+            })
+            .collect();
+
+        decompiled_instructions.push(BorrowedInstruction {
+            accounts,
+            data: &instruction.data,
+            program_id,
+        });
+    }
+
     AccountSharedData::from(Account {
-        data: construct_instructions_data(&message.decompile_instructions()),
+        data: construct_instructions_data(&decompiled_instructions),
         owner: sysvar::id(),
         ..Account::default()
     })
