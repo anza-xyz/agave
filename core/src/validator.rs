@@ -595,7 +595,9 @@ impl Validator {
             open_genesis_config(ledger_path, config.max_genesis_archive_unpacked_size)
                 .context("Failed to open genesis config")?;
 
-        metrics_config_sanity_check(genesis_config.cluster_type)?;
+        metrics_config_sanity_check(genesis_config.cluster_type).map_err(|err| {
+            anyhow!("Invalid metrics configuration detected in genesis config: {err}")
+        })?;
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
