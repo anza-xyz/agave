@@ -3,11 +3,10 @@
 use serde_derive::{Deserialize, Serialize};
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
+#[cfg(not(target_os = "solana"))]
+use solana_program::message::{AddressLoaderError, SanitizeMessageError};
 use {
-    solana_program::{
-        instruction::InstructionError,
-        message::{AddressLoaderError, SanitizeMessageError},
-    },
+    solana_program::instruction::InstructionError,
     solana_sanitize::SanitizeError,
     thiserror::Error,
 };
@@ -185,6 +184,7 @@ impl From<SanitizeError> for TransactionError {
     }
 }
 
+#[cfg(not(target_os = "solana"))]
 impl From<SanitizeMessageError> for TransactionError {
     fn from(err: SanitizeMessageError) -> Self {
         match err {
@@ -194,6 +194,7 @@ impl From<SanitizeMessageError> for TransactionError {
     }
 }
 
+#[cfg(not(target_os = "solana"))]
 impl From<AddressLoaderError> for TransactionError {
     fn from(err: AddressLoaderError) -> Self {
         match err {
