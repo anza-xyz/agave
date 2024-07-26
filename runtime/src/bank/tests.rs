@@ -34,9 +34,10 @@ use {
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_processor::{self, MAX_COMPUTE_UNIT_LIMIT},
+        compute_budget_limits::{DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT},
         prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
     },
+    solana_compute_budget_processor::process_compute_budget_instructions,
     solana_inline_spl::token,
     solana_logger,
     solana_program_runtime::{
@@ -9708,9 +9709,7 @@ fn test_compute_budget_program_noop() {
         assert_eq!(
             *compute_budget,
             ComputeBudget {
-                compute_unit_limit: u64::from(
-                    compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
+                compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
             }
@@ -9721,7 +9720,7 @@ fn test_compute_budget_program_noop() {
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(
-                compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
@@ -9753,9 +9752,7 @@ fn test_compute_request_instruction() {
         assert_eq!(
             *compute_budget,
             ComputeBudget {
-                compute_unit_limit: u64::from(
-                    compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
+                compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
             }
@@ -9766,7 +9763,7 @@ fn test_compute_request_instruction() {
     let message = Message::new(
         &[
             ComputeBudgetInstruction::set_compute_unit_limit(
-                compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
             ),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
@@ -9806,9 +9803,7 @@ fn test_failed_compute_request_instruction() {
         assert_eq!(
             *compute_budget,
             ComputeBudget {
-                compute_unit_limit: u64::from(
-                    compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
+                compute_unit_limit: u64::from(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
             }

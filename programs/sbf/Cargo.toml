@@ -31,6 +31,7 @@ solana-bn254 = { path = "../../curves/bn254", version = "=2.1.0" }
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=2.1.0" }
 solana-cli-output = { path = "../../cli-output", version = "=2.1.0" }
 solana-compute-budget = { path = "../../compute-budget", version = "=2.1.0" }
+solana-compute-budget-processor = { path = "../../compute-budget-processor", version = "=2.1.0" }
 solana-curve25519 = { path = "../../curves/curve25519", version = "=2.1.0" }
 solana-decode-error = { path = "../../sdk/decode-error", version = "=2.1.0" }
 solana-ledger = { path = "../../ledger", version = "=2.1.0" }
@@ -99,6 +100,7 @@ solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-compute-budget-processor = { workspace = true }
 solana-ledger = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }

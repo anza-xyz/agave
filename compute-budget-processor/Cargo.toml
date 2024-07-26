@@ -1,7 +1,7 @@
 [package]
-name = "solana-cost-model"
-description = "Solana cost model"
-documentation = "https://docs.rs/solana-cost-model"
+name = "solana-compute-budget-processor"
+description = "Solana compute budget instructions processor"
+documentation = "https://docs.rs/solana-compute-budget-processor"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -10,27 +10,20 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-ahash = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-compute-budget-processor = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
-solana-metrics = { workspace = true }
 solana-sdk = { workspace = true }
-solana-vote-program = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
-name = "solana_cost_model"
+name = "solana_compute_budget_processor"
 
 [dev-dependencies]
 itertools = { workspace = true }
 solana-logger = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
-solana-system-program = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
@@ -43,11 +36,5 @@ rustc_version = { workspace = true }
 [features]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-compute-budget/frozen-abi",
     "solana-sdk/frozen-abi",
-    "solana-vote-program/frozen-abi",
 ]
-
-[[bench]]
-name = "cost_tracker"

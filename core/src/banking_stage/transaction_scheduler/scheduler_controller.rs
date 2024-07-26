@@ -23,7 +23,7 @@ use {
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
-    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
+    solana_compute_budget_processor::process_compute_budget_instructions,
     solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},

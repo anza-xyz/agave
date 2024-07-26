@@ -11,9 +11,8 @@
 //!    with its dynamic metadata loaded.
 use {
     crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
-    solana_compute_budget::compute_budget_processor::{
-        process_compute_budget_instructions, ComputeBudgetLimits,
-    },
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_compute_budget_processor::process_compute_budget_instructions,
     solana_sdk::{
         hash::Hash,
         message::{AddressLoader, SanitizedMessage, SanitizedVersionedMessage},

@@ -13,10 +13,8 @@ use {
     solana_account_decoder::parse_bpf_loader::{
         parse_bpf_upgradeable_loader, BpfUpgradeableLoaderAccountType,
     },
-    solana_compute_budget::{
-        compute_budget::ComputeBudget,
-        compute_budget_processor::process_compute_budget_instructions,
-    },
+    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget_processor::process_compute_budget_instructions,
     solana_ledger::token_balances::collect_token_balances,
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_rbpf::vm::ContextObject,

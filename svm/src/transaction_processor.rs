@@ -21,10 +21,8 @@ use {
     log::debug,
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::{
-        compute_budget::ComputeBudget,
-        compute_budget_processor::process_compute_budget_instructions,
-    },
+    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget_processor::process_compute_budget_instructions,
     solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_log_collector::LogCollector,
     solana_measure::{measure::Measure, measure_us},
@@ -979,7 +977,7 @@ mod tests {
             account_loader::ValidatedTransactionDetails, nonce_info::NoncePartial,
             rollback_accounts::RollbackAccounts,
         },
-        solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
+        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
