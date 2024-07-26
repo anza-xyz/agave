@@ -212,10 +212,6 @@ impl VoteAccounts {
     }
 
     fn add_node_stake(&mut self, stake: u64, vote_account: &VoteAccount) {
-        if stake == 0u64 {
-            return;
-        }
-
         let Some(staked_nodes) = self.staked_nodes.get_mut() else {
             return;
         };
@@ -228,6 +224,10 @@ impl VoteAccounts {
         stake: u64,
         node_pubkey: Option<&Pubkey>,
     ) {
+        if stake == 0u64 {
+            return;
+        }
+
         node_pubkey.map(|node_pubkey| {
             Arc::make_mut(staked_nodes)
                 // Note we take an Option<&Pubkey> instead of taking by value, which is usually a
@@ -240,9 +240,6 @@ impl VoteAccounts {
     }
 
     fn sub_node_stake(&mut self, stake: u64, vote_account: &VoteAccount) {
-        if stake == 0u64 {
-            return;
-        }
         let Some(staked_nodes) = self.staked_nodes.get_mut() else {
             return;
         };
@@ -255,6 +252,10 @@ impl VoteAccounts {
         stake: u64,
         node_pubkey: Option<&Pubkey>,
     ) {
+        if stake == 0u64 {
+            return;
+        }
+
         if let Some(node_pubkey) = node_pubkey {
             let staked_nodes = Arc::make_mut(staked_nodes);
             let current_stake = staked_nodes
@@ -583,6 +584,78 @@ mod tests {
             }
         }
         assert!(vote_accounts.staked_nodes.get().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_staked_nodes_update() {
+        let mut vote_accounts = VoteAccounts::default();
+
+        let mut rng = rand::thread_rng();
+        let pubkey = Pubkey::new_unique();
+        let node_pubkey = Pubkey::new_unique();
+        let (account1, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+        let vote_account1 = VoteAccount::try_from(account1).unwrap();
+
+        // first insert
+        let ret = vote_accounts.insert(pubkey, vote_account1.clone(), || 42);
+        assert_eq!(ret, None);
+        assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 42);
+        assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), Some(&42));
+
+        // update with unchanged state
+        let ret = vote_accounts.insert(pubkey, vote_account1.clone(), || {
+            panic!("should not be called")
+        });
+        assert_eq!(ret, Some(vote_account1.clone()));
+        assert_eq!(vote_accounts.get(&pubkey), Some(&vote_account1));
+        // stake is unchanged
+        assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 42);
+        assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), Some(&42));
+
+        // update with changed state, same node pubkey
+        let (account2, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+        let vote_account2 = VoteAccount::try_from(account2).unwrap();
+        let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
+            panic!("should not be called")
+        });
+        assert_eq!(ret, Some(vote_account1.clone()));
+        assert_eq!(vote_accounts.get(&pubkey), Some(&vote_account2));
+        // stake is unchanged
+        assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 42);
+        assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), Some(&42));
+
+        // update with new node pubkey, stake must be moved
+        let new_node_pubkey = Pubkey::new_unique();
+        let (account3, _) = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
+        let vote_account3 = VoteAccount::try_from(account3).unwrap();
+        let ret = vote_accounts.insert(pubkey, vote_account3.clone(), || {
+            panic!("should not be called")
+        });
+        assert_eq!(ret, Some(vote_account2.clone()));
+        assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), None);
+        assert_eq!(
+            vote_accounts.staked_nodes().get(&new_node_pubkey),
+            Some(&42)
+        );
+    }
+
+    #[test]
+    fn test_staked_nodes_zero_stake() {
+        let mut vote_accounts = VoteAccounts::default();
+
+        let mut rng = rand::thread_rng();
+        let pubkey = Pubkey::new_unique();
+        let node_pubkey = Pubkey::new_unique();
+        let (account1, _) = new_rand_vote_account(&mut rng, Some(node_pubkey));
+        let vote_account1 = VoteAccount::try_from(account1).unwrap();
+
+        // we call this here to initialize VoteAccounts::staked_nodes which is a OnceLock
+        assert!(vote_accounts.staked_nodes().is_empty());
+        let ret = vote_accounts.insert(pubkey, vote_account1.clone(), || 0);
+        assert_eq!(ret, None);
+        assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 0);
+        // ensure that we didn't add a 0 stake entry to staked_nodes
+        assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), None);
     }
 
     // Asserts that returned staked-nodes are copy-on-write references.
