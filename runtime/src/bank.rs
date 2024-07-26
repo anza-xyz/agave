@@ -113,10 +113,9 @@ use {
         epoch_schedule::EpochSchedule,
         feature,
         feature_set::{
-            self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, reward_full_priority_fee, FeatureSet,
+            self, remove_rounding_in_fee_calculation, reward_full_priority_fee, FeatureSet,
         },
-        fee::{FeeDetails, FeeStructure},
+        fee::{FeeBudgetLimits, FeeDetails, FeeStructure},
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         hard_forks::HardForks,
@@ -3045,14 +3044,15 @@ impl Bank {
         message: &SanitizedMessage,
         lamports_per_signature: u64,
     ) -> u64 {
-        self.fee_structure().calculate_fee(
+        let fee_budget_limits = FeeBudgetLimits::from(
+            process_compute_budget_instructions(message.program_instructions_iter())
+                .unwrap_or_default(),
+        );
+        solana_fee::calculate_fee(
             message,
-            lamports_per_signature,
-            &process_compute_budget_instructions(message.program_instructions_iter())
-                .unwrap_or_default()
-                .into(),
-            self.feature_set
-                .is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+            lamports_per_signature == 0,
+            self.fee_structure().lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
             self.feature_set
                 .is_active(&remove_rounding_in_fee_calculation::id()),
         )
@@ -3144,8 +3144,22 @@ impl Bank {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn register_recent_blockhash_for_test(&self, hash: &Hash) {
-        self.register_recent_blockhash(hash, &BankWithScheduler::no_scheduler_available());
+    pub fn register_recent_blockhash_for_test(
+        &self,
+        blockhash: &Hash,
+        lamports_per_signature: Option<u64>,
+    ) {
+        // Only acquire the write lock for the blockhash queue on block boundaries because
+        // readers can starve this write lock acquisition and ticks would be slowed down too
+        // much if the write lock is acquired for each tick.
+        let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
+        if let Some(lamports_per_signature) = lamports_per_signature {
+            w_blockhash_queue.register_hash(blockhash, lamports_per_signature);
+        } else {
+            w_blockhash_queue
+                .register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
+        }
+        self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
 
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls

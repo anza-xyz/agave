@@ -39,10 +39,7 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
-        feature_set::{
-            include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
-        },
+        feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
         fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -58,7 +55,6 @@ use {
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
-        cell::RefCell,
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
@@ -254,7 +250,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut error_metrics
         ));
 
-        let (program_cache_for_tx_batch, program_cache_us) = measure_us!({
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let mut program_accounts_map = Self::filter_executable_program_accounts(
                 callbacks,
                 sanitized_txs,
@@ -265,14 +261,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_accounts_map.insert(*builtin_program, 0);
             }
 
-            let program_cache_for_tx_batch = Rc::new(RefCell::new(self.replenish_program_cache(
+            let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
                 &program_accounts_map,
                 config.check_program_modification_slot,
                 config.limit_to_load_programs,
-            )));
+            );
 
-            if program_cache_for_tx_batch.borrow().hit_max_limit {
+            if program_cache_for_tx_batch.hit_max_limit {
                 const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
                 let execution_results =
                     vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
@@ -296,7 +292,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
-            &program_cache_for_tx_batch.borrow(),
+            &program_cache_for_tx_batch,
         ));
 
         let (execution_results, execution_us): (Vec<TransactionExecutionResult>, u64) =
@@ -311,7 +307,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             loaded_transaction,
                             &mut execute_timings,
                             &mut error_metrics,
-                            &mut program_cache_for_tx_batch.borrow_mut(),
+                            &mut program_cache_for_tx_batch,
                             environment,
                             config,
                         );
@@ -319,9 +315,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         // Update batch specific cache of the loaded programs with the modifications
                         // made by the transaction, if it executed successfully.
                         if executed_tx.was_successful() {
-                            program_cache_for_tx_batch
-                                .borrow_mut()
-                                .merge(&executed_tx.programs_modified_by_tx);
+                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
                         }
 
                         TransactionExecutionResult::Executed(Box::new(executed_tx))
@@ -333,9 +327,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if program_cache_for_tx_batch.borrow().loaded_missing
-            || program_cache_for_tx_batch.borrow().merged_modified
-        {
+        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -440,11 +432,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = checked_details;
 
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let fee_details = fee_structure.calculate_fee_details(
+        let fee_details = solana_fee::calculate_fee_details(
             message,
-            lamports_per_signature,
-            &fee_budget_limits,
-            feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+            lamports_per_signature == 0,
+            fee_structure.lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
         );
 
@@ -1868,7 +1860,7 @@ mod tests {
                     fee_payer_rent_epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
             })
@@ -1940,7 +1932,7 @@ mod tests {
                     0, // rent epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new_for_tests(transaction_fee, 0, false),
+                fee_details: FeeDetails::new(transaction_fee, 0, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
             })
@@ -2181,7 +2173,7 @@ mod tests {
                         0, // fee_payer_rent_epoch
                     ),
                     compute_budget_limits,
-                    fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                    fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
                     fee_payer_rent_debit: 0, // rent due
                     fee_payer_account: post_validation_fee_payer_account,
                 })
