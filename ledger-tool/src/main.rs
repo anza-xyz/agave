@@ -553,6 +553,17 @@ fn setup_slot_recording(
     let verify_slots = arg_matches.occurrences_of("verify_slots") > 0;
     match (record_slots, verify_slots) {
         (false, false) => (None, None),
+        (true, true) => {
+            // .default_value() does not work with .conflicts_with() in clap 2.33
+            // .conflicts_with("verify_slots")
+            // https://github.com/clap-rs/clap/issues/1605#issuecomment-722326915
+            // So open-code the conflicts_with() here
+            eprintln!(
+                "error: The argument '--verify-slots <FILENAME>' cannot be used with \
+                '--record-slots <FILENAME>'"
+            );
+            exit(1);
+        }
         (true, false) => {
             let filename = Path::new(arg_matches.value_of_os("record_slots").unwrap());
             let file = File::create(filename).unwrap_or_else(|err| {
@@ -662,17 +673,6 @@ fn setup_slot_recording(
             });
 
             (Some(slot_callback as ProcessSlotCallback), None)
-        }
-        (true, true) => {
-            // .default_value() does not work with .conflicts_with() in clap 2.33
-            // .conflicts_with("verify_slots")
-            // https://github.com/clap-rs/clap/issues/1605#issuecomment-722326915
-            // So open-code the conflicts_with() here
-            eprintln!(
-                "error: The argument '--verify-slots <FILENAME>' cannot be used with \
-                '--record-slots <FILENAME>'"
-            );
-            exit(1);
         }
     }
 }
