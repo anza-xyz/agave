@@ -3,7 +3,9 @@
     <img alt="Solana" src="https://i.imgur.com/0vfIMHo.png" width="250" />
   </a>
 </p>
-
+$ curl https://sh.rustup.rs -sSf | sh
+$ source $HOME/.cargo/env
+$ rustup component add rustfmt
 [![Solana crate](https://img.shields.io/crates/v/solana-core.svg)](https://crates.io/crates/solana-core)
 [![Solana documentation](https://docs.rs/solana-core/badge.svg)](https://docs.rs/solana-core)
 [![Build status](https://badge.buildkite.com/8cc350de251d61483db98bdfc895b9ea0ac8ffa4a32ee850ed.svg?branch=master)](https://buildkite.com/solana-labs/solana/builds?branch=master)
@@ -18,13 +20,13 @@ $ curl https://sh.rustup.rs -sSf | sh
 $ source $HOME/.cargo/env
 $ rustup component add rustfmt
 ```
-
+https://sh.rustup.rs
 When building the master branch, please make sure you are using the latest stable rust version by running:
 
 ```bash
 $ rustup update
 ```
-
+$ rustup update
 When building a specific release branch, you should check the rust version in `ci/rust-version.sh` and if necessary, install that version by running:
 ```bash
 $ rustup install VERSION
@@ -38,25 +40,27 @@ On Ubuntu:
 $ sudo apt-get update
 $ sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
 ```
-
+$ rustup install VERSION
 On Fedora:
 ```bash
 $ sudo dnf install openssl-devel systemd-devel pkg-config zlib-devel llvm clang cmake make protobuf-devel protobuf-compiler perl-core
 ```
-
+$ sudo apt-get update
+$ sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
 ## **2. Download the source code.**
 
 ```bash
 $ git clone https://github.com/anza-xyz/agave.git
 $ cd agave
 ```
-
+$ sudo dnf install openssl-devel systemd-devel pkg-config zlib-devel llvm clang cmake make protobuf-devel protobuf-compiler perl-core
 ## **3. Build.**
 
 ```bash
 $ ./cargo build
 ```
-
+$ sudo apt-get update
+$ sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
 # Testing
 
 **Run the test suite:**
@@ -64,7 +68,7 @@ $ ./cargo build
 ```bash
 $ ./cargo test
 ```
-
+$ sudo dnf install openssl-devel systemd-devel pkg-config zlib-devel llvm clang cmake make protobuf-devel protobuf-compiler perl-core
 ### Starting a local testnet
 
 Start your own testnet locally, instructions are in the [online docs](https://docs.solanalabs.com/clusters/benchmark).
