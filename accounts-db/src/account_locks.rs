@@ -20,23 +20,22 @@ impl AccountLocks {
         &mut self,
         keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
     ) -> Result<(), TransactionError> {
-        for (k, writable) in keys.clone() {
+        for (key, writable) in keys.clone() {
             if writable {
-                if self.is_locked_write(k) || self.is_locked_readonly(k) {
-                    debug!("Writable account in use: {:?}", k);
-                    return Err(TransactionError::AccountInUse);
+                if !self.can_write_lock(key) {
+                    debug!("Writable account in use: {:?}", key);
                 }
-            } else if self.is_locked_write(k) {
-                debug!("Read-only account in use: {:?}", k);
+            } else if !self.can_read_lock(key) {
+                debug!("Read-only account in use: {:?}", key);
                 return Err(TransactionError::AccountInUse);
             }
         }
 
-        for (k, writable) in keys {
+        for (key, writable) in keys {
             if writable {
-                self.write_locks.insert(*k);
-            } else if !self.lock_readonly(k) {
-                self.insert_new_readonly(k);
+                self.lock_write(key);
+            } else {
+                self.lock_readonly(key);
             }
         }
 
@@ -60,6 +59,24 @@ impl AccountLocks {
         }
     }
 
+    fn can_read_lock(&self, key: &Pubkey) -> bool {
+        // If the key is not write-locked, it can be read-locked
+        !self.is_locked_write(key)
+    }
+
+    fn can_write_lock(&self, key: &Pubkey) -> bool {
+        // If the key is not read-locked or write-locked, it can be write-locked
+        !self.is_locked_readonly(key) && !self.is_locked_write(key)
+    }
+
+    fn lock_readonly(&mut self, key: &Pubkey) {
+        *self.readonly_locks.entry(*key).or_default() += 1;
+    }
+
+    fn lock_write(&mut self, key: &Pubkey) {
+        self.write_locks.insert(*key);
+    }
+
     fn is_locked_readonly(&self, key: &Pubkey) -> bool {
         self.readonly_locks
             .get(key)
@@ -68,17 +85,6 @@ impl AccountLocks {
 
     fn is_locked_write(&self, key: &Pubkey) -> bool {
         self.write_locks.contains(key)
-    }
-
-    fn insert_new_readonly(&mut self, key: &Pubkey) {
-        assert!(self.readonly_locks.insert(*key, 1).is_none());
-    }
-
-    fn lock_readonly(&mut self, key: &Pubkey) -> bool {
-        self.readonly_locks.get_mut(key).map_or(false, |count| {
-            *count += 1;
-            true
-        })
     }
 
     fn unlock_readonly(&mut self, key: &Pubkey) {
