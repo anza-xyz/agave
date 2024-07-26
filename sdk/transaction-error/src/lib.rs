@@ -6,9 +6,7 @@ use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
 #[cfg(not(target_os = "solana"))]
 use solana_program::message::{AddressLoaderError, SanitizeMessageError};
 use {
-    solana_program::instruction::InstructionError,
-    solana_sanitize::SanitizeError,
-    thiserror::Error,
+    solana_program::instruction::InstructionError, solana_sanitize::SanitizeError, thiserror::Error,
 };
 
 /// Reasons a transaction might be rejected.
