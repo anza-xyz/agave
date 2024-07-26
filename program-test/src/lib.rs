@@ -16,9 +16,9 @@ use {
     solana_banks_server::banks_server::start_local_server,
     solana_bpf_loader_program::serialization::serialize_parameters,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::ic_msg,
     solana_program_runtime::{
-        ic_msg, invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
-        stable_log, timings::ExecuteTimings,
+        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry, stable_log,
     },
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -47,6 +47,7 @@ use {
         stable_layout::stable_instruction::StableInstruction,
         sysvar::{Sysvar, SysvarId},
     },
+    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::{
         cell::RefCell,

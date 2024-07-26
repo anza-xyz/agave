@@ -12,7 +12,6 @@ edition = { workspace = true }
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
-eager = { workspace = true }
 enum-iterator = { workspace = true }
 itertools = { workspace = true }
 libc = { workspace = true }
@@ -25,9 +24,11 @@ serde = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-sdk = { workspace = true }
+solana-timings = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
 solana_rbpf = { workspace = true }

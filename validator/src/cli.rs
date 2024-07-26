@@ -47,6 +47,7 @@ use {
     solana_send_transaction_service::send_transaction_service::{
         self, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{path::PathBuf, str::FromStr},
@@ -499,20 +500,21 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .long("no-incremental-snapshots")
                 .takes_value(false)
                 .help("Disable incremental snapshots")
-                .long_help(
-                    "Disable incremental snapshots by setting this flag. When enabled, \
-                     --snapshot-interval-slots will set the incremental snapshot interval. To set \
-                     the full snapshot interval, use --full-snapshot-interval-slots.",
-                ),
         )
         .arg(
-            Arg::with_name("incremental_snapshot_interval_slots")
-                .long("incremental-snapshot-interval-slots")
-                .alias("snapshot-interval-slots")
+            Arg::with_name("snapshot_interval_slots")
+                .long("snapshot-interval-slots")
+                .alias("incremental-snapshot-interval-slots")
                 .value_name("NUMBER")
                 .takes_value(true)
                 .default_value(&default_args.incremental_snapshot_archive_interval_slots)
-                .help("Number of slots between generating snapshots, 0 to disable snapshots"),
+                .help("Number of slots between generating snapshots")
+                .long_help(
+                    "Number of slots between generating snapshots. \
+                     If incremental snapshots are enabled, this sets the incremental snapshot interval. \
+                     If incremental snapshots are disabled, this sets the full snapshot interval. \
+                     Setting this to 0 disables all snapshots.",
+                ),
         )
         .arg(
             Arg::with_name("full_snapshot_interval_slots")
@@ -520,9 +522,10 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .value_name("NUMBER")
                 .takes_value(true)
                 .default_value(&default_args.full_snapshot_archive_interval_slots)
-                .help(
+                .help("Number of slots between generating full snapshots")
+                .long_help(
                     "Number of slots between generating full snapshots. Must be a multiple of the \
-                     incremental snapshot interval.",
+                     incremental snapshot interval. Only used when incremental snapshots are enabled.",
                 ),
         )
         .arg(
@@ -902,6 +905,17 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Controls the rate of the clients connections per IpAddr per minute."),
         )
         .arg(
+            Arg::with_name("num_quic_endpoints")
+                .long("num-quic-endpoints")
+                .takes_value(true)
+                .default_value(&default_args.num_quic_endpoints)
+                .validator(is_parsable::<usize>)
+                .hidden(hidden_unless_forced())
+                .help("The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased to \
+                       increase network ingest throughput, at the expense of higher CPU and general \
+                       validator load."),
+        )
+        .arg(
             Arg::with_name("staked_nodes_overrides")
                 .long("staked-nodes-overrides")
                 .value_name("PATH")
@@ -1177,6 +1191,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .multiple(true)
                 .help("Specify the configuration file for the Geyser plugin."),
+        )
+        .arg(
+            Arg::with_name("geyser_plugin_always_enabled")
+                .long("geyser-plugin-always-enabled")
+                .value_name("BOOLEAN")
+                .takes_value(true)
+                .default_value("false")
+                .help("Еnable Geyser interface even if no Geyser configs are specified."),
         )
         .arg(
             Arg::with_name("snapshot_archive_format")
@@ -1528,6 +1550,16 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .possible_values(BlockProductionMethod::cli_names())
                 .help(BlockProductionMethod::cli_message()),
+        )
+        .arg(
+            Arg::with_name("disable_block_production_forwarding")
+            .long("disable-block-production-forwarding")
+            .requires("staked_nodes_overrides")
+            .takes_value(false)
+            .help("Disable forwarding of non-vote transactions in block production. \
+                   By default, forwarding is already disabled, it is enabled by setting \
+                   \"staked-nodes-overrides\". This flag can be used to disable forwarding \
+                   even when \"staked-nodes-overrides\" is set."),
         )
         .arg(
             Arg::with_name("unified_scheduler_handler_threads")
@@ -1958,16 +1990,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         (@into-option $v:expr) => { Some($v) };
     }
 
-    add_arg!(Arg::with_name("accounts_db_caching_enabled").long("accounts-db-caching-enabled"));
-    add_arg!(
-        Arg::with_name("accounts_db_index_hashing")
-            .long("accounts-db-index-hashing")
-            .help(
-                "Enables the use of the index in hash calculation in \
-                 AccountsHashVerifier/Accounts Background Service.",
-            ),
-        usage_warning: "The accounts hash is only calculated without using the index.",
-    );
     add_arg!(
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
@@ -2037,41 +2059,10 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("enable-quic-servers"),
         usage_warning: "The quic server is now enabled by default.",
     );
-    add_arg!(
-        Arg::with_name("halt_on_known_validators_accounts_hash_mismatch")
-            .alias("halt-on-trusted-validators-accounts-hash-mismatch")
-            .long("halt-on-known-validators-accounts-hash-mismatch")
-            .requires("known_validators")
-            .takes_value(false)
-            .help(
-                "Abort the validator if a bank hash mismatch is detected within known validator \
-                 set"
-            ),
-    );
-    add_arg!(Arg::with_name("incremental_snapshots")
-        .long("incremental-snapshots")
-        .takes_value(false)
-        .conflicts_with("no_incremental_snapshots")
-        .help("Enable incremental snapshots")
-        .long_help(
-            "Enable incremental snapshots by setting this flag.  When enabled, \
-             --snapshot-interval-slots will set the incremental snapshot interval. To set the \
-             full snapshot interval, use --full-snapshot-interval-slots.",
-        ));
     add_arg!(Arg::with_name("minimal_rpc_api")
         .long("minimal-rpc-api")
         .takes_value(false)
         .help("Only expose the RPC methods required to serve snapshots to other nodes"));
-    add_arg!(
-        Arg::with_name("no_accounts_db_index_hashing")
-            .long("no-accounts-db-index-hashing")
-            .help(
-                "This is obsolete. See --accounts-db-index-hashing. \
-                 Disables the use of the index in hash calculation in \
-                 AccountsHashVerifier/Accounts Background Service.",
-            ),
-        usage_warning: "The accounts hash is only calculated without using the index.",
-    );
     add_arg!(
         Arg::with_name("no_check_vote_account")
             .long("no-check-vote-account")
@@ -2234,6 +2225,7 @@ pub struct DefaultArgs {
     pub accounts_shrink_ratio: String,
     pub tpu_connection_pool_size: String,
     pub tpu_max_connections_per_ipaddr_per_minute: String,
+    pub num_quic_endpoints: String,
 
     // Exit subcommand
     pub exit_min_idle_time: String,
@@ -2325,6 +2317,7 @@ impl DefaultArgs {
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE.to_string(),
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
+            num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             exit_min_idle_time: "10".to_string(),
             exit_max_delinquent_stake: "5".to_string(),

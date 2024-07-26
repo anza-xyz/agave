@@ -42,7 +42,7 @@ use {
             ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
         },
     },
-    solana_measure::{measure, measure::Measure},
+    solana_measure::{measure::Measure, measure_time},
     solana_runtime::{
         bank::{
             bank_hash_details::{self, SlotDetails, TransactionDetails},
@@ -522,7 +522,7 @@ fn minimize_bank_for_snapshot(
     snapshot_slot: Slot,
     ending_slot: Slot,
 ) -> bool {
-    let ((transaction_account_set, possibly_incomplete), transaction_accounts_measure) = measure!(
+    let ((transaction_account_set, possibly_incomplete), transaction_accounts_measure) = measure_time!(
         blockstore.get_accounts_used_in_range(bank, snapshot_slot, ending_slot),
         "get transaction accounts"
     );
@@ -990,6 +990,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("create-snapshot")
                 .about("Create a new ledger snapshot")
+                .arg(&os_memory_stats_reporting_arg)
                 .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
@@ -1716,6 +1717,21 @@ fn main() {
                     }
                 }
                 ("create-snapshot", Some(arg_matches)) => {
+                    let exit_signal = Arc::new(AtomicBool::new(false));
+                    let system_monitor_service = arg_matches
+                        .is_present("os_memory_stats_reporting")
+                        .then(|| {
+                            SystemMonitorService::new(
+                                Arc::clone(&exit_signal),
+                                SystemMonitorStatsReportConfig {
+                                    report_os_memory_stats: true,
+                                    report_os_network_stats: false,
+                                    report_os_cpu_stats: false,
+                                    report_os_disk_stats: false,
+                                },
+                            )
+                        });
+
                     let is_incremental = arg_matches.is_present("incremental");
                     let is_minimized = arg_matches.is_present("minimized");
                     let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
@@ -1871,11 +1887,6 @@ fn main() {
                         process_options,
                         None,
                     );
-                    // Snapshot creation will implicitly perform AccountsDb
-                    // flush and clean operations. These operations cannot be
-                    // run concurrently, so ensure ABS is stopped to avoid that
-                    // possibility.
-                    accounts_background_service.join().unwrap();
 
                     let mut bank = bank_forks
                         .read()
@@ -1885,6 +1896,24 @@ fn main() {
                             eprintln!("Error: Slot {snapshot_slot} is not available");
                             exit(1);
                         });
+
+                    // Snapshot creation will implicitly perform AccountsDb
+                    // flush and clean operations. These operations cannot be
+                    // run concurrently, so ensure ABS is stopped to avoid that
+                    // possibility.
+                    accounts_background_service.join().unwrap();
+
+                    // Similar to waiting for ABS to stop, we also wait for the initial startup
+                    // verification to complete. The startup verification runs in the background
+                    // and verifies the snapshot's accounts hashes are correct. We only want a
+                    // single accounts hash calculation to run at a time, and since snapshot
+                    // creation below will calculate the accounts hash, we wait for the startup
+                    // verification to complete before proceeding.
+                    bank.rc
+                        .accounts
+                        .accounts_db
+                        .verify_accounts_hash_in_bg
+                        .wait_for_complete();
 
                     let child_bank_required = rent_burn_percentage.is_ok()
                         || hashes_per_tick.is_some()
@@ -2249,6 +2278,11 @@ fn main() {
                         "Shred version: {}",
                         compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()))
                     );
+
+                    if let Some(system_monitor_service) = system_monitor_service {
+                        exit_signal.store(true, Ordering::Relaxed);
+                        system_monitor_service.join().unwrap();
+                    }
                 }
                 ("accounts", Some(arg_matches)) => {
                     let process_options = parse_process_options(&ledger_path, arg_matches);
@@ -2294,7 +2328,7 @@ fn main() {
 
                     let accounts_streamer =
                         AccountsOutputStreamer::new(bank, output_format, config);
-                    let (_, scan_time) = measure!(
+                    let (_, scan_time) = measure_time!(
                         accounts_streamer
                             .output()
                             .map_err(|err| error!("Error while outputting accounts: {err}")),
@@ -2871,6 +2905,7 @@ fn record_transactions(
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
+                    let execution_results = execution_results.map(|(details, _)| details);
 
                     TransactionDetails {
                         accounts,

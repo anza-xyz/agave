@@ -9,7 +9,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
-rust-version = "1.75.0" # solana platform-tools rust version
+rust-version = "1.75.0"                          # solana platform-tools rust version
 
 [dependencies]
 bincode = { workspace = true }
@@ -32,10 +32,14 @@ serde_derive = { workspace = true }
 sha2 = { workspace = true }
 sha3 = { workspace = true }
 solana-atomic-u64 = { workspace = true }
+solana-decode-error = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-program-memory = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
+solana-secp256k1-recover = { workspace = true }
+solana-short-vec = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
@@ -49,14 +53,9 @@ getrandom = { workspace = true, features = ["custom"] }
 solana-define-syscall = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
-ark-bn254 = { workspace = true }
-ark-ec = { workspace = true }
-ark-ff = { workspace = true }
-ark-serialize = { workspace = true }
 base64 = { workspace = true, features = ["alloc", "std"] }
 bitflags = { workspace = true }
 curve25519-dalek = { workspace = true }
-libsecp256k1 = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
 
@@ -97,4 +96,4 @@ crate-type = ["cdylib", "rlib"]
 default = ["borsh"]
 borsh = ["dep:borsh", "dep:borsh0-10"]
 dev-context-only-utils = ["dep:qualifier_attr"]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro", "solana-short-vec/frozen-abi"]

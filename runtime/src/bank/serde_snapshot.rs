@@ -11,8 +11,8 @@ mod tests {
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{
-                self, BankIncrementalSnapshotPersistence, SerdeAccountsHash,
-                SerdeIncrementalAccountsHash, SnapshotStreams,
+                self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
+                SerdeAccountsHash, SerdeIncrementalAccountsHash, SnapshotStreams,
             },
             snapshot_bank_utils,
             snapshot_utils::{
@@ -169,8 +169,12 @@ mod tests {
             accounts_db.get_accounts_delta_hash(bank2_slot).unwrap(),
             expected_accounts_hash,
             &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
-            expected_incremental_snapshot_persistence.as_ref(),
-            expected_epoch_accounts_hash,
+            ExtraFieldsToSerialize {
+                lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
+                incremental_snapshot_persistence: expected_incremental_snapshot_persistence
+                    .as_ref(),
+                epoch_accounts_hash: expected_epoch_accounts_hash,
+            },
             accounts_db.write_version.load(Ordering::Acquire),
         )
         .unwrap();
@@ -228,10 +232,6 @@ mod tests {
             assert_eq!(dbank.get_accounts_hash(), Some(expected_accounts_hash));
             assert_eq!(dbank.get_incremental_accounts_hash(), None);
         }
-        assert_eq!(
-            dbank.incremental_snapshot_persistence,
-            expected_incremental_snapshot_persistence,
-        );
         assert_eq!(
             dbank.get_epoch_accounts_hash_to_serialize(),
             expected_epoch_accounts_hash,
@@ -473,34 +473,53 @@ mod tests {
         assert_eq!(dbank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 
-    #[cfg(RUSTC_WITH_SPECIALIZATION)]
+    #[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
     mod test_bank_serialize {
         use {
             super::*,
             solana_accounts_db::{
                 account_storage::meta::StoredMetaWriteVersion, accounts_db::BankHashStats,
             },
+            solana_frozen_abi::abi_example::AbiExample,
             solana_sdk::clock::Slot,
+            std::marker::PhantomData,
         };
 
-        // This some what long test harness is required to freeze the ABI of
-        // Bank's serialization due to versioned nature
+        // This some what long test harness is required to freeze the ABI of Bank's serialization,
+        // which is implemented manually by calling serialize_bank_snapshot_with() mainly based on
+        // get_fields_to_serialize(). However, note that Bank's serialization is coupled with
+        // snapshot storages as well.
+        //
+        // It was avoided to impl AbiExample for Bank by wrapping it around PhantomData inside the
+        // spcecial wrapper called BankAbiTestWrapper. And internally, it creates an actual bank
+        // from Bank::default_for_tests().
+        //
+        // In this way, frozen abi can increase the coverage of the serialization code path as much
+        // as possible. Alternatively, we could derive AbiExample for the minimum set of actually
+        // serialized fields of bank as an ad-hoc tuple. But that was avoided to avoid maintenance
+        // burden instead.
+        //
+        // Involving the Bank here is preferred conceptually because snapshot abi is
+        // important and snapshot is just a (rooted) serialized bank at the high level. Only
+        // abi-freezing bank.get_fields_to_serialize() is kind of relying on the implementation
+        // detail.
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "6riNuebfnAUpS2e3GYb5G8udH5PoEtep48ULchLjRDCB")
+            frozen_abi(digest = "AMm4uzGQ6E7fj8MkDjUtFR7kYAjtUyWddXAPLjwaqKqV")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
             #[serde(serialize_with = "wrapper")]
-            bank: Bank,
+            bank: PhantomData<Bank>,
         }
 
-        pub fn wrapper<S>(bank: &Bank, serializer: S) -> Result<S::Ok, S::Error>
+        pub fn wrapper<S>(_bank: &PhantomData<Bank>, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
-            let snapshot_storages = bank.get_snapshot_storages(None);
+            let bank = Bank::default_for_tests();
+            let snapshot_storages = AccountsDb::example().get_snapshot_storages(0..1).0;
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
 
@@ -519,8 +538,11 @@ mod tests {
                 AccountsDeltaHash(Hash::new_unique()),
                 AccountsHash(Hash::new_unique()),
                 &get_storages_to_serialize(&snapshot_storages),
-                Some(&incremental_snapshot_persistence),
-                Some(EpochAccountsHash::new(Hash::new_unique())),
+                ExtraFieldsToSerialize {
+                    lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
+                    incremental_snapshot_persistence: Some(&incremental_snapshot_persistence),
+                    epoch_accounts_hash: Some(EpochAccountsHash::new(Hash::new_unique())),
+                },
                 StoredMetaWriteVersion::default(),
             )
         }

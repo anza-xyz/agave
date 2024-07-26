@@ -5,7 +5,7 @@ use {
     crate::{
         accounts_hash_verifier::AccountsHashVerifier,
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
-        banking_trace::{self, BankingTracer},
+        banking_trace::{self, BankingTracer, TraceError},
         cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -27,6 +27,7 @@ use {
         tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
+    anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     lazy_static::lazy_static,
     quinn::Endpoint,
@@ -136,6 +137,7 @@ use {
     },
     strum::VariantNames,
     strum_macros::{Display, EnumString, EnumVariantNames, IntoStaticStr},
+    thiserror::Error,
     tokio::runtime::Runtime as TokioRuntime,
 };
 
@@ -266,6 +268,7 @@ pub struct ValidatorConfig {
     pub banking_trace_dir_byte_limit: banking_trace::DirByteLimit,
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
+    pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub wen_restart_proto_path: Option<PathBuf>,
@@ -337,6 +340,7 @@ impl Default for ValidatorConfig {
             banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
+            enable_block_production_forwarding: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
@@ -355,6 +359,7 @@ impl ValidatorConfig {
             enforce_ulimit_nofile: false,
             rpc_config: JsonRpcConfig::default_for_test(),
             block_production_method: BlockProductionMethod::default(),
+            enable_block_production_forwarding: true, // enable forwarding by default for tests
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(get_max_thread_count())
                 .expect("thread count is non-zero"),
@@ -513,7 +518,7 @@ impl Validator {
         tpu_enable_udp: bool,
         tpu_max_connections_per_ipaddr_per_minute: u64,
         admin_rpc_service_post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
-    ) -> Result<Self, ValidatorError> {
+    ) -> Result<Self> {
         let start_time = Instant::now();
 
         let id = identity_keypair.pubkey();
@@ -523,8 +528,9 @@ impl Validator {
         info!("vote account pubkey: {vote_account}");
 
         if !config.no_os_network_stats_reporting {
-            verify_net_stats_access()
-                .map_err(|err| format!("Failed to access network stats: {err:?}"))?;
+            verify_net_stats_access().map_err(|e| {
+                ValidatorError::Other(format!("Failed to access network stats: {e:?}"))
+            })?;
         }
 
         let mut bank_notification_senders = Vec::new();
@@ -543,7 +549,9 @@ impl Validator {
                         geyser_plugin_config_files,
                         rpc_to_plugin_manager_receiver_and_exit,
                     )
-                    .map_err(|err| format!("Failed to load the Geyser plugin: {err:?}"))?,
+                    .map_err(|err| {
+                        ValidatorError::Other(format!("Failed to load the Geyser plugin: {err:?}"))
+                    })?,
                 )
             } else {
                 None
@@ -579,13 +587,13 @@ impl Validator {
         info!("Initializing sigverify done.");
 
         if !ledger_path.is_dir() {
-            return Err(ValidatorError::Error(format!(
+            return Err(anyhow!(
                 "ledger directory does not exist or is not accessible: {ledger_path:?}"
             )));
         }
         let genesis_config =
             open_genesis_config(ledger_path, config.max_genesis_archive_unpacked_size)
-                .map_err(|err| format!("Failed to open genesis config: {err}"))?;
+                .context("Failed to open genesis config")?;
 
         metrics_config_sanity_check(genesis_config.cluster_type).map_err(|err| {
             format!("Invalid metrics configuration detected in genesis config: {err}")
@@ -600,12 +608,10 @@ impl Validator {
                     wait_for_supermajority_slot + 1,
                     expected_shred_version,
                 )
-                .map_err(|err| {
-                    format!(
-                        "Failed to backup and clear shreds with incorrect \
-                        shred version from blockstore: {err:?}"
-                    )
-                })?;
+                .context(
+                    "Failed to backup and clear shreds with incorrect \
+                        shred version from blockstore",
+                )?;
             }
         }
 
@@ -627,7 +633,7 @@ impl Validator {
             &config.snapshot_config.bank_snapshots_dir,
             &config.account_snapshot_paths,
         )
-        .map_err(|err| format!("failed to clean orphaned account snapshot directories: {err}"))?;
+        .context("failed to clean orphaned account snapshot directories")?;
         timer.stop();
         info!("Cleaning orphaned account snapshot directories done. {timer}");
 
@@ -729,7 +735,8 @@ impl Validator {
             transaction_notifier,
             entry_notifier,
             Some(poh_timing_point_sender.clone()),
-        )?;
+        )
+        .map_err(ValidatorError::Other)?;
         let hard_forks = bank_forks.read().unwrap().root_bank().hard_forks();
         if !hard_forks.is_empty() {
             info!("Hard forks: {:?}", hard_forks);
@@ -745,11 +752,12 @@ impl Validator {
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if expected_shred_version != node.info.shred_version() {
-                return Err(ValidatorError::Error(format!(
+                return Err(ValidatorError::Other(format!(
                     "shred version mismatch: expected {} found: {}",
                     expected_shred_version,
                     node.info.shred_version(),
-                )));
+                ))
+                .into());
             }
         }
 
@@ -886,10 +894,13 @@ impl Validator {
             &bank_forks,
             &leader_schedule_cache,
             &accounts_background_request_sender,
-        )?;
+        )
+        .map_err(ValidatorError::Other)?;
 
         if config.process_ledger_before_services {
-            process_blockstore.process()?;
+            process_blockstore
+                .process()
+                .map_err(ValidatorError::Other)?;
         }
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
@@ -963,7 +974,9 @@ impl Validator {
                         &identity_keypair,
                         node.info
                             .tpu(Protocol::UDP)
-                            .map_err(|err| format!("Invalid TPU address: {err:?}"))?
+                            .map_err(|err| {
+                                ValidatorError::Other(format!("Invalid TPU address: {err:?}"))
+                            })?
                             .ip(),
                     )),
                     Some((&staked_nodes, &identity_keypair.pubkey())),
@@ -1027,7 +1040,8 @@ impl Validator {
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
                 prioritization_fee_cache.clone(),
-            )?;
+            )
+            .map_err(ValidatorError::Other)?;
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -1168,8 +1182,7 @@ impl Validator {
             &cluster_info,
             rpc_override_health_check,
             &start_progress,
-        )
-        .map_err(|err| format!("wait_for_supermajority failed: {err:?}"))?;
+        )?;
 
         let blockstore_metric_report_service =
             BlockstoreMetricReportService::new(blockstore.clone(), exit.clone());
@@ -1204,8 +1217,7 @@ impl Validator {
                 &blockstore.banking_trace_path(),
                 exit.clone(),
                 config.banking_trace_dir_byte_limit,
-            )))
-            .map_err(|err| format!("{} [{:?}]", &err, &err))?;
+            )))?;
         if banking_tracer.is_enabled() {
             info!(
                 "Enabled banking trace (dir_byte_limit: {})",
@@ -1368,11 +1380,12 @@ impl Validator {
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
-        )?;
+        )
+        .map_err(ValidatorError::Other)?;
 
         if in_wen_restart {
             info!("Waiting for wen_restart phase one to finish");
-            match wait_for_wen_restart(WenRestartConfig {
+            wait_for_wen_restart(WenRestartConfig {
                 wen_restart_path: config.wen_restart_proto_path.clone().unwrap(),
                 last_vote,
                 blockstore: blockstore.clone(),
@@ -1385,16 +1398,8 @@ impl Validator {
                 accounts_background_request_sender: accounts_background_request_sender.clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
-            }) {
-                Ok(()) => {
-                    return Err(ValidatorError::WenRestartReset);
-                }
-                Err(e) => {
-                    return Err(ValidatorError::Error(format!(
-                        "wait_for_wen_restart failed: {e:?}"
-                    )))
-                }
-            };
+            })?;
+            return Err(ValidatorError::WenRestartFinished.into());
         }
 
         let (tpu, mut key_notifies) = Tpu::new(
@@ -1438,6 +1443,7 @@ impl Validator {
             tpu_max_connections_per_ipaddr_per_minute,
             &prioritization_fee_cache,
             config.block_production_method.clone(),
+            config.enable_block_production_forwarding,
             config.generator_config.clone(),
         );
 
@@ -2332,20 +2338,22 @@ fn initialize_rpc_transaction_history_services(
     }
 }
 
-#[derive(Debug, Display, PartialEq, Eq)]
+#[derive(Error, Debug)]
 pub enum ValidatorError {
+    #[error("Bad expected bank hash")]
     BadExpectedBankHash,
+
+    #[error("Ledger does not have enough data to wait for supermajority")]
     NotEnoughLedgerData,
-    Error(String),
-    WenRestartReset,
-}
 
-impl std::error::Error for ValidatorError {}
+    #[error("{0}")]
+    Other(String),
 
-impl From<String> for ValidatorError {
-    fn from(err: String) -> Self {
-        ValidatorError::Error(err)
-    }
+    #[error(transparent)]
+    TraceError(#[from] TraceError),
+
+    #[error("Wen Restart finished, please continue with --wait-for-supermajority")]
+    WenRestartFinished,
 }
 
 // Return if the validator waited on other nodes to start. In this case
@@ -2366,7 +2374,9 @@ fn wait_for_supermajority(
         None => Ok(false),
         Some(wait_for_supermajority_slot) => {
             if let Some(process_blockstore) = process_blockstore {
-                process_blockstore.process()?;
+                process_blockstore
+                    .process()
+                    .map_err(ValidatorError::Other)?;
             }
 
             let bank = bank_forks.read().unwrap().working_bank();
@@ -2770,7 +2780,7 @@ mod tests {
 
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
-        assert_eq!(
+        matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -2779,7 +2789,7 @@ mod tests {
                 rpc_override_health_check.clone(),
                 &start_progress,
             ),
-            Err(ValidatorError::NotEnoughLedgerData)
+            Err(ValidatorError::NotEnoughLedgerData),
         );
 
         // bank=1, wait=0, should pass, bank is past the wait slot
@@ -2802,7 +2812,7 @@ mod tests {
         // bank=1, wait=1, equal, but bad hash provided
         config.wait_for_supermajority = Some(1);
         config.expected_bank_hash = Some(hash(&[1]));
-        assert_eq!(
+        matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -2811,7 +2821,7 @@ mod tests {
                 rpc_override_health_check,
                 &start_progress,
             ),
-            Err(ValidatorError::BadExpectedBankHash)
+            Err(ValidatorError::BadExpectedBankHash),
         );
     }
 
