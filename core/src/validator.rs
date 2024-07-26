@@ -589,14 +589,14 @@ impl Validator {
         if !ledger_path.is_dir() {
             return Err(anyhow!(
                 "ledger directory does not exist or is not accessible: {ledger_path:?}"
-            )));
+            ));
         }
         let genesis_config =
             open_genesis_config(ledger_path, config.max_genesis_archive_unpacked_size)
                 .context("Failed to open genesis config")?;
 
         metrics_config_sanity_check(genesis_config.cluster_type).map_err(|err| {
-            format!("Invalid metrics configuration detected in genesis config: {err}")
+            anyhow!("Invalid metrics configuration detected in genesis config: {err}")
         })?;
 
         if let Some(expected_shred_version) = config.expected_shred_version {

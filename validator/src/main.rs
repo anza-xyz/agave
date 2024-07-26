@@ -2062,14 +2062,16 @@ pub fn main() {
         admin_service_post_init,
     ) {
         Ok(validator) => validator,
-        Err(ValidatorError::WenRestartReset) => {
-            error!("Please remove --wen_restart and use --wait_for_supermajority now");
-            exit(200);
-        }
-        Err(err) => {
-            error!("Failed to start validator: {:?}", err);
-            exit(1);
-        }
+        Err(err) => match err.downcast_ref() {
+            Some(ValidatorError::WenRestartFinished) => {
+                error!("Please remove --wen_restart and use --wait_for_supermajority now");
+                exit(200);
+            }
+            _ => {
+                error!("Failed to start validator: {:?}", err);
+                exit(1);
+            }
+        },
     };
 
     if let Some(filename) = init_complete_file {
