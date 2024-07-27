@@ -479,6 +479,17 @@ impl VoteState {
         }
     }
 
+    /// Deserializes the input `VoteStateVersions` buffer directly into the provided `VoteState`.
+    ///
+    /// In a SBPF context, V0_23_5 is not supported, but in non-SBPF, all versions are supported for
+    /// compatibility with `bincode::deserialize`.
+    pub fn deserialize_into(
+        input: &[u8],
+        vote_state: &mut VoteState,
+    ) -> Result<(), InstructionError> {
+        VoteState::deserialize_into_ptr(input, vote_state as *mut VoteState)
+    }
+
     /// Deserializes the input `VoteStateVersions` buffer directly into the provided
     /// `MaybeUninit<VoteState>`.
     ///
@@ -488,11 +499,17 @@ impl VoteState {
     /// On success, `vote_state` is fully initialized and can be converted to `VoteState` using
     /// [MaybeUninit::assume_init]. On failure, `vote_state` may still be uninitialized and must not
     /// be converted to `VoteState`.
-    pub fn deserialize_into(
+    pub fn deserialize_into_uninit(
         input: &[u8],
         vote_state: &mut MaybeUninit<VoteState>,
     ) -> Result<(), InstructionError> {
-        let vote_state = vote_state.as_mut_ptr();
+        VoteState::deserialize_into_ptr(input, vote_state.as_mut_ptr())
+    }
+
+    fn deserialize_into_ptr(
+        input: &[u8],
+        vote_state: *mut VoteState,
+    ) -> Result<(), InstructionError> {
         let mut cursor = Cursor::new(input);
 
         let variant = read_u32(&mut cursor)?;
@@ -1107,14 +1124,14 @@ mod tests {
     }
 
     #[test]
-    fn test_vote_deserialize_into() {
+    fn test_vote_deserialize_into_uninit() {
         // base case
         let target_vote_state = VoteState::default();
         let vote_state_buf =
             bincode::serialize(&VoteStateVersions::new_current(target_vote_state.clone())).unwrap();
 
         let mut test_vote_state = MaybeUninit::uninit();
-        VoteState::deserialize_into(&vote_state_buf, &mut test_vote_state).unwrap();
+        VoteState::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state).unwrap();
         let test_vote_state = unsafe { test_vote_state.assume_init() };
 
         assert_eq!(target_vote_state, test_vote_state);
@@ -1132,7 +1149,7 @@ mod tests {
             let target_vote_state = target_vote_state_versions.convert_to_current();
 
             let mut test_vote_state = MaybeUninit::uninit();
-            VoteState::deserialize_into(&vote_state_buf, &mut test_vote_state).unwrap();
+            VoteState::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state).unwrap();
             let test_vote_state = unsafe { test_vote_state.assume_init() };
 
             assert_eq!(target_vote_state, test_vote_state);
@@ -1140,10 +1157,10 @@ mod tests {
     }
 
     #[test]
-    fn test_vote_deserialize_into_nopanic() {
+    fn test_vote_deserialize_into_uninit_nopanic() {
         // base case
         let mut test_vote_state = MaybeUninit::uninit();
-        let e = VoteState::deserialize_into(&[], &mut test_vote_state).unwrap_err();
+        let e = VoteState::deserialize_into_uninit(&[], &mut test_vote_state).unwrap_err();
         assert_eq!(e, InstructionError::InvalidAccountData);
 
         // variant
@@ -1165,7 +1182,7 @@ mod tests {
             // it is extremely improbable, though theoretically possible, for random bytes to be syntactically valid
             // so we only check that the parser does not panic and that it succeeds or fails exactly in line with bincode
             let mut test_vote_state = MaybeUninit::uninit();
-            let test_res = VoteState::deserialize_into(&raw_data, &mut test_vote_state);
+            let test_res = VoteState::deserialize_into_uninit(&raw_data, &mut test_vote_state);
             let bincode_res = bincode::deserialize::<VoteStateVersions>(&raw_data)
                 .map(|versioned| versioned.convert_to_current());
 
@@ -1179,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vote_deserialize_into_ill_sized() {
+    fn test_vote_deserialize_into_uninit_ill_sized() {
         // provide 4x the minimum struct size in bytes to ensure we typically touch every field
         let struct_bytes_x4 = std::mem::size_of::<VoteState>() * 4;
         for _ in 0..1000 {
@@ -1198,7 +1215,7 @@ mod tests {
 
             // truncated fails
             let mut test_vote_state = MaybeUninit::uninit();
-            let test_res = VoteState::deserialize_into(&truncated_buf, &mut test_vote_state);
+            let test_res = VoteState::deserialize_into_uninit(&truncated_buf, &mut test_vote_state);
             let bincode_res = bincode::deserialize::<VoteStateVersions>(&truncated_buf)
                 .map(|versioned| versioned.convert_to_current());
 
@@ -1207,7 +1224,7 @@ mod tests {
 
             // expanded succeeds
             let mut test_vote_state = MaybeUninit::uninit();
-            VoteState::deserialize_into(&expanded_buf, &mut test_vote_state).unwrap();
+            VoteState::deserialize_into_uninit(&expanded_buf, &mut test_vote_state).unwrap();
             let bincode_res = bincode::deserialize::<VoteStateVersions>(&expanded_buf)
                 .map(|versioned| versioned.convert_to_current());
 
