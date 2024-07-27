@@ -3013,7 +3013,7 @@ impl AccountsDb {
         is_startup: bool,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
-    ) -> (Vec<RwLock<HashMap<Pubkey, CleaningInfo>>>, Option<Slot>) {
+    ) -> (Box<[RwLock<HashMap<Pubkey, CleaningInfo>>]>, Option<Slot>) {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_slot_inclusive =
@@ -3033,9 +3033,10 @@ impl AccountsDb {
         });
         let dirty_stores_len = dirty_stores.len();
         let num_bins = self.accounts_index.bins();
-        let pubkeys: Vec<RwLock<HashMap<Pubkey, CleaningInfo>>> = (0..num_bins)
-            .map(|_| RwLock::new(HashMap::new()))
-            .collect::<Vec<_>>();
+        let candidates: Box<_> =
+            std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
+                .take(num_bins)
+                .collect();
         let dirty_ancient_stores = AtomicUsize::default();
         let mut dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
@@ -3050,8 +3051,8 @@ impl AccountsDb {
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
                         store.accounts.scan_pubkeys(|key| {
                             let index = self.accounts_index.bin_calculator.bin_from_pubkey(key);
-                            let mut pubkeys_bin = pubkeys[index].write().unwrap();
-                            pubkeys_bin.insert(*key, CleaningInfo::default());
+                            let mut candidates_bin = candidates[index].write().unwrap();
+                            candidates_bin.insert(*key, CleaningInfo::default());
                         });
                     });
                     oldest_dirty_slot
@@ -3071,7 +3072,7 @@ impl AccountsDb {
                 dirty_store_routine();
             });
         }
-        timings.dirty_pubkeys_count = pubkeys
+        timings.dirty_pubkeys_count = candidates
             .iter()
             .map(|x| x.read().unwrap().len())
             .sum::<usize>() as u64;
@@ -3095,15 +3096,15 @@ impl AccountsDb {
             delta_keys.par_iter().for_each(|keys| {
                 for key in keys {
                     let index = self.accounts_index.bin_calculator.bin_from_pubkey(key);
-                    let mut pubkeys_bin = pubkeys[index].write().unwrap();
-                    pubkeys_bin.insert(*key, CleaningInfo::default());
+                    let mut candidates_bin = candidates[index].write().unwrap();
+                    candidates_bin.insert(*key, CleaningInfo::default());
                 }
             });
         });
         delta_insert.stop();
         timings.delta_insert_us += delta_insert.as_us();
 
-        timings.delta_key_count = pubkeys
+        timings.delta_key_count = candidates
             .iter()
             .map(|x| x.read().unwrap().len())
             .sum::<usize>() as u64;
@@ -3126,14 +3127,14 @@ impl AccountsDb {
                         max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
                         let index = self.accounts_index.bin_calculator.bin_from_pubkey(pubkey);
-                        let mut pubkeys_bin = pubkeys[index].write().unwrap();
-                        pubkeys_bin.insert(*pubkey, CleaningInfo::default());
+                        let mut candidates_bin = candidates[index].write().unwrap();
+                        candidates_bin.insert(*pubkey, CleaningInfo::default());
                     }
                     !is_candidate_for_clean
                 });
         }
 
-        (pubkeys, min_dirty_slot)
+        (candidates, min_dirty_slot)
     }
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
@@ -3465,7 +3466,7 @@ impl AccountsDb {
         let mut reclaims_time = Measure::start("reclaims");
         // Recalculate reclaims with new purge set
         let mut pubkey_to_slot_set = Vec::new();
-        for candidates_bin in candidates {
+        for candidates_bin in candidates.iter() {
             let candidates_bin = candidates_bin.read().unwrap();
             let mut bin_set = candidates_bin
                 .iter()
