@@ -164,7 +164,7 @@ impl VoteAccounts {
                         // The node keys have changed, we move the stake from the old node to the
                         // new one
                         Self::do_sub_node_stake(staked_nodes, *stake, old_node_pubkey);
-                        Self::do_add_node_stake(staked_nodes, *stake, new_node_pubkey);
+                        Self::do_add_node_stake(staked_nodes, *stake, new_node_pubkey.copied());
                     }
                 }
 
@@ -175,7 +175,11 @@ impl VoteAccounts {
                 // This is a new vote account. We don't know the stake yet, so we need to compute it.
                 let (stake, vote_account) = entry.insert((calculate_stake(), new_vote_account));
                 if let Some(staked_nodes) = self.staked_nodes.get_mut() {
-                    Self::do_add_node_stake(staked_nodes, *stake, vote_account.node_pubkey());
+                    Self::do_add_node_stake(
+                        staked_nodes,
+                        *stake,
+                        vote_account.node_pubkey().copied(),
+                    );
                 }
                 None
             }
@@ -216,13 +220,13 @@ impl VoteAccounts {
             return;
         };
 
-        VoteAccounts::do_add_node_stake(staked_nodes, stake, vote_account.node_pubkey());
+        VoteAccounts::do_add_node_stake(staked_nodes, stake, vote_account.node_pubkey().copied());
     }
 
     fn do_add_node_stake(
         staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
         stake: u64,
-        node_pubkey: Option<&Pubkey>,
+        node_pubkey: Option<Pubkey>,
     ) {
         if stake == 0u64 {
             return;
@@ -230,10 +234,7 @@ impl VoteAccounts {
 
         node_pubkey.map(|node_pubkey| {
             Arc::make_mut(staked_nodes)
-                // Note we take an Option<&Pubkey> instead of taking by value, which is usually a
-                // bit of an anti pattern, but none of the callers of this function have an owned
-                // Option<Pubkey> so effectively this avoids a copy when node_pubkey is None.
-                .entry(*node_pubkey)
+                .entry(node_pubkey)
                 .and_modify(|s| *s += stake)
                 .or_insert(stake)
         });
