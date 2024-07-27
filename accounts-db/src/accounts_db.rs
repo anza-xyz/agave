@@ -1348,6 +1348,13 @@ struct CleaningInfo {
     ref_count: u64,
 }
 
+/// This is the return type of AccountsDb::construct_candidate_clean_keys.
+/// It's a collection of pubkeys with associated information to
+/// facilitate the decision making about which accounts can be removed
+/// from the accounts index. In addition, the minimal dirty slot is
+/// included in the returned value.
+type CleaningCandidates = (Box<[RwLock<HashMap<Pubkey, CleaningInfo>>]>, Option<Slot>);
+
 /// Removing unrooted slots in Accounts Background Service needs to be synchronized with flushing
 /// slots from the Accounts Cache.  This keeps track of those slots and the Mutex + Condvar for
 /// synchronization.
@@ -3013,7 +3020,7 @@ impl AccountsDb {
         is_startup: bool,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
-    ) -> (Box<[RwLock<HashMap<Pubkey, CleaningInfo>>]>, Option<Slot>) {
+    ) -> CleaningCandidates {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_slot_inclusive =
