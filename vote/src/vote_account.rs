@@ -656,6 +656,18 @@ mod tests {
         assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 0);
         // ensure that we didn't add a 0 stake entry to staked_nodes
         assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), None);
+
+        // update with new node pubkey, stake is 0 and should remain 0
+        let new_node_pubkey = Pubkey::new_unique();
+        let (account2, _) = new_rand_vote_account(&mut rng, Some(new_node_pubkey));
+        let vote_account2 = VoteAccount::try_from(account2).unwrap();
+        let ret = vote_accounts.insert(pubkey, vote_account2.clone(), || {
+            panic!("should not be called")
+        });
+        assert_eq!(ret, Some(vote_account1));
+        assert_eq!(vote_accounts.get_delegated_stake(&pubkey), 0);
+        assert_eq!(vote_accounts.staked_nodes().get(&node_pubkey), None);
+        assert_eq!(vote_accounts.staked_nodes().get(&new_node_pubkey), None);
     }
 
     // Asserts that returned staked-nodes are copy-on-write references.
