@@ -153,13 +153,12 @@ impl From<VersionedEpochStakes> for EpochStakes {
     }
 }
 
-/// Only the "delegations" epoch stakes enum variant is unable to be serialized
-/// as a "stakes" epoch stakes enum variant so leave those entries and split off
-/// the other epoch stakes enum variants into a new map which will be serialized
-/// into the new `versioned_epoch_stakes` snapshot field.  After a cluster
-/// transitions to serializing epoch stakes in the new format, "delegations"
-/// epoch stakes enum variants for recent epochs will no longer be created and
-/// can be deprecated.
+/// Only the `StakesEnum::Delegations` variant is unable to be serialized as a
+/// `StakesEnum::Stakes` variant, so leave those entries and split off the other
+/// epoch stakes enum variants into a new map which will be serialized into the
+/// new `versioned_epoch_stakes` snapshot field.  After a cluster transitions to
+/// serializing epoch stakes in the new format, `StakesEnum::Delegations`
+/// variants for recent epochs will no longer be created and can be deprecated.
 pub(crate) fn split_epoch_stakes(
     bank_epoch_stakes: HashMap<Epoch, EpochStakes>,
 ) -> (
