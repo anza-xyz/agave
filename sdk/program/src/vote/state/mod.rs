@@ -487,7 +487,14 @@ impl VoteState {
         input: &[u8],
         vote_state: &mut VoteState,
     ) -> Result<(), InstructionError> {
-        VoteState::deserialize_into_ptr(input, vote_state as *mut VoteState)
+        // Safety: vote_state is valid to_drop (see drop_in_place() docs). After
+        // dropping, the pointer is treated as uninitialized and only accessed
+        // through ptr::write, which is safe as per drop_in_place docs.
+        unsafe {
+            std::ptr::drop_in_place(vote_state);
+        }
+
+        VoteState::deserialize_into_ptr(input, vote_state)
     }
 
     /// Deserializes the input `VoteStateVersions` buffer directly into the provided
