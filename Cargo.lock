@@ -7602,6 +7602,7 @@ dependencies = [
  "solana-timings",
  "solana-type-overrides",
  "solana-vote",
+ "thiserror",
 ]
 
 [[package]]
