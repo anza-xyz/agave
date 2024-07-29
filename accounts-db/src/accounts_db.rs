@@ -3490,7 +3490,7 @@ impl AccountsDb {
                             .collect::<HashSet<Slot>>(),
                     )
                 })
-                .collect::<Vec<(Pubkey, HashSet<_>)>>();
+                .collect::<Vec<_>>();
             pubkey_to_slot_set.append(&mut bin_set);
         }
 
