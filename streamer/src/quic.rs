@@ -187,7 +187,6 @@ pub struct StreamerStats {
     // Per IP rate-limiting is triggered each time when there are too many connections
     // opened from a particular IP address.
     pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
-    pub(crate) throttled_streams: AtomicUsize,
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
     pub(crate) stream_load_capacity_overflow: AtomicUsize,
@@ -195,8 +194,10 @@ pub struct StreamerStats {
     pub(crate) perf_track_overhead_us: AtomicU64,
     pub(crate) total_staked_packets_sent_for_batching: AtomicUsize,
     pub(crate) total_unstaked_packets_sent_for_batching: AtomicUsize,
-    pub(crate) throttled_staked_streams: AtomicUsize,
-    pub(crate) throttled_unstaked_streams: AtomicUsize,
+    // Counters for staked/unstaked throttling events i.e. when the stream handling
+    // is intentionally slowed down.
+    pub(crate) throttle_events_staked: AtomicUsize,
+    pub(crate) throttle_events_unstaked: AtomicUsize,
     pub(crate) connection_rate_limiter_length: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
@@ -463,11 +464,6 @@ impl StreamerStats {
                 i64
             ),
             (
-                "throttled_streams",
-                self.throttled_streams.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "stream_load_ema",
                 self.stream_load_ema.load(Ordering::Relaxed),
                 i64
@@ -483,13 +479,13 @@ impl StreamerStats {
                 i64
             ),
             (
-                "throttled_unstaked_streams",
-                self.throttled_unstaked_streams.swap(0, Ordering::Relaxed),
+                "throttle_events_staked",
+                self.throttle_events_staked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "throttled_staked_streams",
-                self.throttled_staked_streams.swap(0, Ordering::Relaxed),
+                "throttle_events_unstaked",
+                self.throttle_events_unstaked.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
