@@ -208,7 +208,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
 #[derive(Serialize)]
-pub(crate) struct SerializableVersionedBank {
+struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
     ancestors: AncestorsForSerialization,
     hash: Hash,
@@ -615,9 +615,9 @@ where
 }
 
 /// Serializes bank snapshot into `stream` with bincode
-pub(crate) fn serialize_bank_snapshot_into<W>(
+pub fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
-    serializable_bank: SerializableVersionedBank,
+    bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
@@ -634,7 +634,7 @@ where
     );
     serialize_bank_snapshot_with(
         &mut serializer,
-        serializable_bank,
+        bank_fields,
         bank_hash_stats,
         accounts_delta_hash,
         accounts_hash,
@@ -645,9 +645,9 @@ where
 }
 
 /// Serializes bank snapshot with `serializer`
-pub(crate) fn serialize_bank_snapshot_with<S>(
+pub fn serialize_bank_snapshot_with<S>(
     serializer: S,
-    serializable_bank: SerializableVersionedBank,
+    bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
@@ -658,7 +658,8 @@ pub(crate) fn serialize_bank_snapshot_with<S>(
 where
     S: serde::Serializer,
 {
-    let slot = serializable_bank.slot;
+    let slot = bank_fields.slot;
+    let serializable_bank = SerializableVersionedBank::from(bank_fields);
     let serializable_accounts_db = SerializableAccountsDb::<'_> {
         slot,
         account_storage_entries,

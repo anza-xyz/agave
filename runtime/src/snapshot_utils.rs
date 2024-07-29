@@ -2,8 +2,7 @@ use {
     crate::{
         bank::{BankFieldsToSerialize, BankSlotDelta},
         serde_snapshot::{
-            self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
-            SerializableVersionedBank, SnapshotStreams,
+            self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize, SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -888,7 +887,7 @@ fn serialize_snapshot(
             };
             serde_snapshot::serialize_bank_snapshot_into(
                 stream,
-                SerializableVersionedBank::from(bank_fields),
+                bank_fields,
                 bank_hash_stats,
                 accounts_delta_hash,
                 accounts_hash,

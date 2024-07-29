@@ -12,8 +12,7 @@ mod tests {
             runtime_config::RuntimeConfig,
             serde_snapshot::{
                 self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
-                SerdeAccountsHash, SerdeIncrementalAccountsHash, SerializableVersionedBank,
-                SnapshotStreams,
+                SerdeAccountsHash, SerdeIncrementalAccountsHash, SnapshotStreams,
             },
             snapshot_bank_utils,
             snapshot_utils::{
@@ -197,7 +196,7 @@ mod tests {
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             serde_snapshot::serialize_bank_snapshot_into(
                 &mut writer,
-                SerializableVersionedBank::from(bank_fields),
+                bank_fields,
                 accounts_db.get_bank_hash_stats(bank2_slot).unwrap(),
                 accounts_db.get_accounts_delta_hash(bank2_slot).unwrap(),
                 expected_accounts_hash,
@@ -566,7 +565,7 @@ mod tests {
             let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
             serde_snapshot::serialize_bank_snapshot_with(
                 serializer,
-                SerializableVersionedBank::from(bank_fields),
+                bank_fields,
                 BankHashStats::default(),
                 AccountsDeltaHash(Hash::new_unique()),
                 AccountsHash(Hash::new_unique()),
