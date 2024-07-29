@@ -3966,31 +3966,24 @@ impl Bank {
 
         // Cached vote and stake accounts are synchronized with accounts-db
         // after each transaction.
-        let mut update_stakes_cache_time = Measure::start("update_stakes_cache_time");
-        self.update_stakes_cache(sanitized_txs, &execution_results);
-        update_stakes_cache_time.stop();
+        let ((), update_stakes_cache_us) =
+            measure_us!(self.update_stakes_cache(sanitized_txs, &execution_results));
 
-        let mut store_executors_which_were_deployed_time =
-            Measure::start("store_executors_which_were_deployed_time");
-        let mut cache = None;
-        for execution_result in &execution_results {
-            if let TransactionExecutionResult::Executed(executed_tx) = execution_result {
-                let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
-                if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
-                    cache
-                        .get_or_insert_with(|| {
-                            self.transaction_processor.program_cache.write().unwrap()
-                        })
-                        .merge(programs_modified_by_tx);
+        let ((), update_executors_us) = measure_us!({
+            let mut cache = None;
+            for execution_result in &execution_results {
+                if let TransactionExecutionResult::Executed(executed_tx) = execution_result {
+                    let programs_modified_by_tx = &executed_tx.programs_modified_by_tx;
+                    if executed_tx.was_successful() && !programs_modified_by_tx.is_empty() {
+                        cache
+                            .get_or_insert_with(|| {
+                                self.transaction_processor.program_cache.write().unwrap()
+                            })
+                            .merge(programs_modified_by_tx);
+                    }
                 }
             }
-        }
-        drop(cache);
-        store_executors_which_were_deployed_time.stop();
-        saturating_add_assign!(
-            timings.execute_accessories.update_executors_us,
-            store_executors_which_were_deployed_time.as_us()
-        );
+        });
 
         let accounts_data_len_delta = execution_results
             .iter()
@@ -4004,31 +3997,35 @@ impl Bank {
             .sum();
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
 
-        timings.saturating_add_in_place(ExecuteTimingType::StoreUs, store_accounts_us);
-        timings.saturating_add_in_place(
-            ExecuteTimingType::UpdateStakesCacheUs,
-            update_stakes_cache_time.as_us(),
-        );
+        let ((), update_transaction_statuses_us) =
+            measure_us!(self.update_transaction_statuses(sanitized_txs, &execution_results));
 
-        let mut update_transaction_statuses_time = Measure::start("update_transaction_statuses");
-        self.update_transaction_statuses(sanitized_txs, &execution_results);
         let fee_collection_results = if self.feature_set.is_active(&reward_full_priority_fee::id())
         {
             self.filter_program_errors_and_collect_fee_details(&execution_results)
         } else {
             self.filter_program_errors_and_collect_fee(&execution_results)
         };
-        update_transaction_statuses_time.stop();
-        timings.saturating_add_in_place(
-            ExecuteTimingType::UpdateTransactionStatuses,
-            update_transaction_statuses_time.as_us(),
-        );
 
         let loaded_accounts_stats = Self::collect_loaded_accounts_stats(&execution_results);
         assert_eq!(
             loaded_accounts_stats.len(),
             execution_results.len(),
             "loaded_account_stats and execution_results are not the same size"
+        );
+
+        saturating_add_assign!(
+            timings.execute_accessories.update_executors_us,
+            update_executors_us
+        );
+        timings.saturating_add_in_place(ExecuteTimingType::StoreUs, store_accounts_us);
+        timings.saturating_add_in_place(
+            ExecuteTimingType::UpdateStakesCacheUs,
+            update_stakes_cache_us,
+        );
+        timings.saturating_add_in_place(
+            ExecuteTimingType::UpdateTransactionStatuses,
+            update_transaction_statuses_us,
         );
 
         TransactionResults {
