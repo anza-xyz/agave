@@ -119,19 +119,16 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 pub fn update_unique_loaded_accounts(
-    loaded_transaction: LoadedTransaction,
+    loaded_transaction: &LoadedTransaction,
     unique_loaded_accounts: &mut UniqueLoadedAccounts,
 ) {
-    let _ = loaded_transaction
-        .accounts
-        .into_iter()
-        .map(|(key, account)| {
-            unique_loaded_accounts.insert(key, account);
-        });
+    let _ = loaded_transaction.accounts.iter().map(|(key, account)| {
+        unique_loaded_accounts.insert(*key, account.clone());
+    });
 }
 
 pub fn limited_update_unique_loaded_accounts(
-    loaded_transaction: LoadedTransaction,
+    loaded_transaction: &LoadedTransaction,
     unique_loaded_accounts: &mut UniqueLoadedAccounts,
 ) {
     // update fee payer

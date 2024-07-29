@@ -18,9 +18,9 @@ use {
             collect_rent_from_account, limited_update_unique_loaded_accounts, load_accounts,
             update_unique_loaded_accounts, validate_fee_payer, CheckedTransactionDetails,
             LoadedAccountDetails, LoadedTransaction, RentDetails, TransactionCheckResult,
-            TransactionLoadAccountResult, TransactionLoadResult, TransactionProgramIndices,
-            TransactionRent, TransactionRentResult, TransactionValidationResult,
-            UniqueLoadedAccounts, ValidatedTransactionDetails,
+            TransactionLoadAccountResult, TransactionProgramIndices, TransactionRent,
+            TransactionRentResult, TransactionValidationResult, UniqueLoadedAccounts,
+            ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
@@ -241,12 +241,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
-    pub fn return_failure(
-        &self,
-        loaded_transactions: &mut Vec<Result<LoadedTransaction, TransactionError>>,
-        err: &TransactionError,
-    ) -> TransactionExecutionResult {
-        loaded_transactions.push(Err(err.clone()));
+    pub fn return_failure(&self, err: &TransactionError) -> TransactionExecutionResult {
         TransactionExecutionResult::NotExecuted(err.clone())
     }
 
@@ -263,17 +258,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
 
-        let mut program_cache_time = Measure::start("program_cache");
-        let mut program_accounts_map = Self::filter_executable_program_accounts(
-            callbacks,
-            config.account_overrides,
-            sanitized_txs,
-            &check_results,
-            PROGRAM_OWNERS,
-        );
-        for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-            program_accounts_map.insert(*builtin_program, 0);
-        }
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
+            let mut program_accounts_map = Self::filter_executable_program_accounts(
+                callbacks,
+                sanitized_txs,
+                &check_results,
+                PROGRAM_OWNERS,
+            );
+            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
+                program_accounts_map.insert(*builtin_program, 0);
+            }
 
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
@@ -295,18 +289,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch
         });
 
-        let (loaded_transactions, load_accounts_us) = measure_us!(load_accounts(
-        let mut load_time = Measure::start("accounts_load");
         let mut unique_loaded_accounts: UniqueLoadedAccounts = HashMap::default();
-        let mut initial_load_results = load_accounts(
+        let (mut initial_load_results, load_accounts_us) = measure_us!(load_accounts(
             callbacks,
             sanitized_txs,
             &check_results,
             config.account_overrides,
-            &program_cache_for_tx_batch.borrow(),
+            &program_cache_for_tx_batch,
             &mut unique_loaded_accounts,
-        );
-        load_time.stop();
+        ));
 
         let enable_transaction_loading_failure_fees = environment
             .feature_set
@@ -349,12 +340,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                     &mut unique_loaded_accounts,
                                 ) {
                                     Ok(rent_details) => rent_details,
-                                    Err(e) => {
-                                        return self.return_failure(&mut loaded_transactions, &e)
-                                    }
+                                    Err(e) => return self.return_failure(&e),
                                 }
                             }
-                            Err(e) => return self.return_failure(&mut loaded_transactions, e),
+                            Err(e) => return self.return_failure(e),
                         };
 
                         // check for duplicate nonces at this point as beyond this point there will be
@@ -362,10 +351,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         if tx.get_durable_nonce().is_some() {
                             let nonce_hash = tx.message().recent_blockhash();
                             if dedup_nonce_lookup.contains(nonce_hash) {
-                                return self.return_failure(
-                                    &mut loaded_transactions,
-                                    &TransactionError::BlockhashNotFound,
-                                );
+                                return self.return_failure(&TransactionError::BlockhashNotFound);
                             } else {
                                 dedup_nonce_lookup.insert(*nonce_hash);
                             }
@@ -373,8 +359,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                         Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                     }
-                })
-                .collect());
+                }
+            )
+            .collect());
 
         // Skip eviction when there's no chance this particular tx batch has increased the size of
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
@@ -399,17 +386,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, total_validation_time);
-        execute_timings.saturating_add_in_place(
-            ExecuteTimingType::ProgramCacheUs,
-            program_cache_time.as_us(),
-        );
-        execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_time.as_us());
-        execute_timings
             .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
         execute_timings
             .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_accounts_us);
+        execute_timings.saturating_add_in_place(
+            ExecuteTimingType::LoadProgramIndicesUs,
+            load_program_indices_us,
+        );
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
 
         LoadAndExecuteSanitizedTransactionsOutput {
@@ -851,7 +835,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
-    ) -> TransactionExecutionResult {
+    ) -> ExecutedTransaction {
         let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
 
         fn transaction_accounts_lamports_sum(
