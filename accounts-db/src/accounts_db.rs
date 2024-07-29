@@ -3397,7 +3397,6 @@ impl AccountsDb {
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
         for candidates_bin in candidates
             .iter()
-            .filter(|bin| !bin.read().unwrap().is_empty())
         {
             for (
                 pubkey,
