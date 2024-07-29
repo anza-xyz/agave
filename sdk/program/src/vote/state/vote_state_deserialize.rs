@@ -17,12 +17,15 @@ pub(super) fn deserialize_vote_state_into(
     vote_state: *mut VoteState,
     has_latency: bool,
 ) -> Result<(), InstructionError> {
+    // Safety: if vote_state is non-null, all the fields are guaranteed to be valid pointers
     unsafe {
         addr_of_mut!((*vote_state).node_pubkey).write(read_pubkey(cursor)?);
         addr_of_mut!((*vote_state).authorized_withdrawer).write(read_pubkey(cursor)?);
         addr_of_mut!((*vote_state).commission).write(read_u8(cursor)?);
     }
+
     let votes = read_votes(cursor, has_latency)?;
+    // Safety: if vote_state is non-null, root_slot is guaranteed to be valid too
     unsafe {
         addr_of_mut!((*vote_state).root_slot).write(read_option_u64(cursor)?);
     }
@@ -33,6 +36,8 @@ pub(super) fn deserialize_vote_state_into(
 
     // Defer writing the collections until we know we're going to succeed. This way if we fail we
     // still drop the collections and don't leak memory.
+    //
+    // Safety: if vote_state is non-null, all the fields are guaranteed to be valid pointers
     unsafe {
         addr_of_mut!((*vote_state).votes).write(votes);
         addr_of_mut!((*vote_state).authorized_voters).write(authorized_voters);
@@ -81,6 +86,7 @@ fn read_prior_voters_into<T: AsRef<[u8]>>(
     cursor: &mut Cursor<T>,
     vote_state: *mut VoteState,
 ) -> Result<(), InstructionError> {
+    // Safety: if vote_state is non-null, prior_voters is guaranteed to be valid too
     unsafe {
         let prior_voters = addr_of_mut!((*vote_state).prior_voters);
         let prior_voters_buf = addr_of_mut!((*prior_voters).buf) as *mut (Pubkey, u64, u64);

@@ -526,6 +526,11 @@ impl VoteState {
             0 => {
                 #[cfg(not(target_os = "solana"))]
                 {
+                    // Safety: vote_state is valid as it comes from `&mut MaybeUninit<VoteState>` or
+                    // `&mut VoteState`. In the first case, the value is uninitialized so we write()
+                    // to avoid dropping invalid data; in the latter case, we `drop_in_place()`
+                    // before writing so the value has already been dropped and we just write a new
+                    // one in place.
                     unsafe {
                         vote_state.write(
                             bincode::deserialize::<VoteStateVersions>(input)
