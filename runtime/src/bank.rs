@@ -3593,7 +3593,6 @@ impl Bank {
         processing_config: TransactionProcessingConfig,
     ) -> LoadAndExecuteTransactionsOutput {
         let sanitized_txs = batch.sanitized_transactions();
-        debug!("processing transactions: {}", sanitized_txs.len());
         let mut error_counters = TransactionErrorMetrics::default();
 
         let retryable_transaction_indexes: Vec<_> = batch
@@ -3632,16 +3631,13 @@ impl Bank {
             })
             .collect();
 
-        let mut check_time = Measure::start("check_transactions");
-        let check_results = self.check_transactions(
+        let (check_results, check_us) = measure_us!(self.check_transactions(
             sanitized_txs,
             batch.lock_results(),
             max_age,
             &mut error_counters,
-        );
-        check_time.stop();
-        debug!("check: {}us", check_time.as_us());
-        timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_time.as_us());
+        ));
+        timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
         let processing_environment = TransactionProcessingEnvironment {
@@ -3679,8 +3675,9 @@ impl Bank {
         let transaction_log_collector_config =
             self.transaction_log_collector_config.read().unwrap();
 
-        let mut collect_logs_time = Measure::start("collect_logs_time");
-        for (execution_result, tx) in sanitized_output.execution_results.iter().zip(sanitized_txs) {
+        let ((), collect_logs_us) = measure_us!(for (execution_result, tx) in
+            sanitized_output.execution_results.iter().zip(sanitized_txs)
+        {
             if let Some(debug_keys) = &self.transaction_debug_keys {
                 for key in tx.message().account_keys().iter() {
                     if debug_keys.contains(key) {
@@ -3773,18 +3770,8 @@ impl Bank {
                     *err_count += 1;
                 }
             }
-        }
-        collect_logs_time.stop();
-        timings
-            .saturating_add_in_place(ExecuteTimingType::CollectLogsUs, collect_logs_time.as_us());
-
-        if *err_count > 0 {
-            debug!(
-                "{} errors of {} txs",
-                *err_count,
-                *err_count + executed_with_successful_result_count
-            );
-        }
+        });
+        timings.saturating_add_in_place(ExecuteTimingType::CollectLogsUs, collect_logs_us);
 
         LoadAndExecuteTransactionsOutput {
             execution_results: sanitized_output.execution_results,
