@@ -1733,10 +1733,7 @@ fn process_next_slots(
 
     // This is a fork point if there are multiple children, create a new child bank for each fork
     for next_slot in &meta.next_slots {
-        let skip_next_slot = halt_at_slot
-            .map(|halt_at_slot| *next_slot > halt_at_slot)
-            .unwrap_or(false);
-        if skip_next_slot {
+        if halt_at_slot.is_some_and(|halt_at_slot| *next_slot > halt_at_slot) {
             continue;
         }
 
