@@ -1,6 +1,7 @@
 use {
     super::{MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
     crate::{
+        clock::Epoch,
         instruction::InstructionError,
         pubkey::Pubkey,
         serialize_utils::cursor::*,
@@ -17,17 +18,25 @@ pub(super) fn deserialize_vote_state_into(
     vote_state: *mut VoteState,
     has_latency: bool,
 ) -> Result<(), InstructionError> {
+    // General safety note: we must use add_or_mut! to access the `vote_state` fields as the value
+    // is assumed to be _uninitialized_, so creating references to the state or any of its inner
+    // fields is UB.
+
+    let node_pubkey = read_pubkey(cursor)?;
+    let authorized_withdrawer = read_pubkey(cursor)?;
+    let commission = read_u8(cursor)?;
     // Safety: if vote_state is non-null, all the fields are guaranteed to be valid pointers
     unsafe {
-        addr_of_mut!((*vote_state).node_pubkey).write(read_pubkey(cursor)?);
-        addr_of_mut!((*vote_state).authorized_withdrawer).write(read_pubkey(cursor)?);
-        addr_of_mut!((*vote_state).commission).write(read_u8(cursor)?);
+        addr_of_mut!((*vote_state).node_pubkey).write(node_pubkey);
+        addr_of_mut!((*vote_state).authorized_withdrawer).write(authorized_withdrawer);
+        addr_of_mut!((*vote_state).commission).write(commission);
     }
 
     let votes = read_votes(cursor, has_latency)?;
+    let root_slot = read_option_u64(cursor)?;
     // Safety: if vote_state is non-null, root_slot is guaranteed to be valid too
     unsafe {
-        addr_of_mut!((*vote_state).root_slot).write(read_option_u64(cursor)?);
+        addr_of_mut!((*vote_state).root_slot).write(root_slot);
     }
     let authorized_voters = read_authorized_voters(cursor)?;
     read_prior_voters_into(cursor, vote_state)?;
@@ -89,7 +98,7 @@ fn read_prior_voters_into<T: AsRef<[u8]>>(
     // Safety: if vote_state is non-null, prior_voters is guaranteed to be valid too
     unsafe {
         let prior_voters = addr_of_mut!((*vote_state).prior_voters);
-        let prior_voters_buf = addr_of_mut!((*prior_voters).buf) as *mut (Pubkey, u64, u64);
+        let prior_voters_buf = addr_of_mut!((*prior_voters).buf) as *mut (Pubkey, Epoch, Epoch);
 
         for i in 0..MAX_ITEMS {
             let prior_voter = read_pubkey(cursor)?;
