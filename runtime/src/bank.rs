@@ -3949,8 +3949,7 @@ impl Bank {
                 .fetch_max(executed_transactions_count, Relaxed);
         }
 
-        let mut write_time = Measure::start("write_time");
-        {
+        let ((), store_accounts_us) = measure_us!({
             let durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
             let (accounts_to_store, transactions) = collect_accounts_to_store(
                 sanitized_txs,
@@ -3961,7 +3960,8 @@ impl Bank {
             self.rc
                 .accounts
                 .store_cached((self.slot(), accounts_to_store.as_slice()), &transactions);
-        }
+        });
+
         let rent_debits = self.collect_rent(&mut execution_results);
 
         // Cached vote and stake accounts are synchronized with accounts-db
@@ -3969,14 +3969,6 @@ impl Bank {
         let mut update_stakes_cache_time = Measure::start("update_stakes_cache_time");
         self.update_stakes_cache(sanitized_txs, &execution_results);
         update_stakes_cache_time.stop();
-
-        // once committed there is no way to unroll
-        write_time.stop();
-        debug!(
-            "store: {}us txs_len={}",
-            write_time.as_us(),
-            sanitized_txs.len()
-        );
 
         let mut store_executors_which_were_deployed_time =
             Measure::start("store_executors_which_were_deployed_time");
@@ -4012,7 +4004,7 @@ impl Bank {
             .sum();
         self.update_accounts_data_size_delta_on_chain(accounts_data_len_delta);
 
-        timings.saturating_add_in_place(ExecuteTimingType::StoreUs, write_time.as_us());
+        timings.saturating_add_in_place(ExecuteTimingType::StoreUs, store_accounts_us);
         timings.saturating_add_in_place(
             ExecuteTimingType::UpdateStakesCacheUs,
             update_stakes_cache_time.as_us(),
