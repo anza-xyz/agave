@@ -3302,9 +3302,9 @@ impl AccountsDb {
                                             if account_info.is_zero_lamport() {
                                                 useless = false;
                                                 // The latest one is zero lamports. We may be able to purge it.
-                                                let val = candidates_bin.get_mut(candidate).expect(
-                                                    "candidate should be in the bin",
-                                                );
+                                                let val = candidates_bin
+                                                    .get_mut(candidate)
+                                                    .expect("candidate should be in the bin");
                                                 // Add all the rooted entries that contain this pubkey.
                                                 // We know the highest rooted entry is zero lamports.
                                                 val.slot_list =
@@ -3395,9 +3395,7 @@ impl AccountsDb {
         // Calculate store counts as if everything was purged
         // Then purge if we can
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
-        for candidates_bin in candidates
-            .iter()
-        {
+        for candidates_bin in candidates.iter() {
             for (
                 pubkey,
                 CleaningInfo {
