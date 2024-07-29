@@ -5683,6 +5683,7 @@ version = "2.1.0"
 dependencies = [
  "log",
  "rustc_version",
+ "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-sdk",
  "thiserror",
