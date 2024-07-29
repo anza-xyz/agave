@@ -272,18 +272,41 @@ impl StandardBroadcastRun {
         // 2) Convert entries to shreds and coding shreds
         let is_last_in_slot = last_tick_height == bank.max_tick_height();
         let reference_tick = bank.tick_height() % bank.ticks_per_slot();
-        let (data_shreds, coding_shreds) = self
-            .entries_to_shreds(
-                keypair,
-                &receive_results.entries,
-                reference_tick as u8,
-                is_last_in_slot,
-                cluster_type,
-                &mut process_stats,
-                blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
-                shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
-            )
-            .unwrap();
+        let (data_shreds, coding_shreds) = match self.entries_to_shreds(
+            keypair,
+            &receive_results.entries,
+            reference_tick as u8,
+            is_last_in_slot,
+            cluster_type,
+            &mut process_stats,
+            blockstore::MAX_DATA_SHREDS_PER_SLOT as u32,
+            shred_code::MAX_CODE_SHREDS_PER_SLOT as u32,
+        ) {
+            Ok(shreds) => shreds,
+            Err(BroadcastError::TooManyShreds) => {
+                if !self.completed {
+                    let shreds = self.finish_prev_slot(
+                        keypair,
+                        bank.ticks_per_slot() as u8,
+                        cluster_type,
+                        &mut process_stats,
+                    );
+                    debug_assert!(shreds.iter().all(|shred| shred.slot() == self.slot));
+                    // Broadcast shreds for the interrupted slot.
+                    let batch_info = Some(BroadcastShredBatchInfo {
+                        slot: self.slot,
+                        num_expected_batches: Some(self.num_batches + 1),
+                        slot_start_ts: self.slot_broadcast_start,
+                        was_interrupted: true,
+                    });
+                    let shreds = Arc::new(shreds);
+                    socket_sender.send((shreds.clone(), batch_info.clone()))?;
+                    blockstore_sender.send((shreds, batch_info))?;
+                }
+                return Err(Error::TooManyShreds(bank.slot()));
+            }
+        };
+
         // Insert the first data shred synchronously so that blockstore stores
         // that the leader started this block. This must be done before the
         // blocks are sent out over the wire, so that the slots we have already
