@@ -3303,7 +3303,7 @@ impl AccountsDb {
                                                 useless = false;
                                                 // The latest one is zero lamports. We may be able to purge it.
                                                 let val = candidates_bin.get_mut(candidate).expect(
-                                                    "Candidate {candidate} not found in the bin.",
+                                                    "candidate should be in the bin",
                                                 );
                                                 // Add all the rooted entries that contain this pubkey.
                                                 // We know the highest rooted entry is zero lamports.
