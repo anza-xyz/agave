@@ -33,10 +33,10 @@ Release channels have their own copy of this changelog:
     getConfirmedSignaturesForAddress, getConfirmedBlock, getConfirmedBlocks, getConfirmedBlocksWithLimit,
     getConfirmedTransaction, getConfirmedSignaturesForAddress2, getRecentBlockhash, getFees,
     getFeeCalculatorForBlockhash, getFeeRateGovernor, getSnapshotSlot getStakeActivation
-  * `--enable-rpc-obsolete_v1_7` flag removed
   * Deprecated methods are removed from `RpcClient` and `RpcClient::nonblocking`
   * `solana-client`: deprecated re-exports removed; please import `solana-connection-cache`, `solana-quic-client`, or `solana-udp-client` directly
-  * Deprecated arguments are removed from `agave-validator`. Such as:
+  * Deprecated arguments removed from `agave-validator`:
+    * `--enable-rpc-obsolete_v1_7` (#1886)
     * `--accounts-db-caching-enabled` (#2063)
     * `--accounts-db-index-hashing` (#2063)
     * `--no-accounts-db-index-hashing` (#2063)
