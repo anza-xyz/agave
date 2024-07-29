@@ -2775,7 +2775,7 @@ impl AccountsDb {
                     slot_list,
                     ref_count,
                 },
-            ) in bin.iter()
+            ) in bin.iter().filter(|x| !x.1.slot_list.is_empty())
             {
                 let mut failed_slot = None;
                 let all_stores_being_deleted = slot_list.len() as RefCount == *ref_count;
