@@ -608,10 +608,10 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
         (fee_payer, Signature::new_unique()),
         true,
     );
-    all_transactions.push(sanitized_transaction.clone());
+    all_transactions.push(sanitized_transaction.clone().unwrap());
     transaction_checks.push(Ok(CheckedTransactionDetails {
         nonce: None,
-        lamports_per_signature: Some(20),
+        lamports_per_signature: 20,
     }));
 
     // fee payer with enough funds to pay for 2 transactions
@@ -619,7 +619,8 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     account_data.set_lamports(25000);
     mock_bank
         .account_shared_data
-        .borrow_mut()
+        .write()
+        .unwrap()
         .insert(fee_payer, account_data);
 
     // Sender
@@ -627,7 +628,8 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     account_data.set_lamports(9000000);
     mock_bank
         .account_shared_data
-        .borrow_mut()
+        .write()
+        .unwrap()
         .insert(sender, account_data);
 
     // recipient
@@ -635,7 +637,8 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     account_data.set_lamports(9000000);
     mock_bank
         .account_shared_data
-        .borrow_mut()
+        .write()
+        .unwrap()
         .insert(recipient, account_data);
 
     //Second transaction
@@ -666,10 +669,10 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
 
     let sanitized_transaction =
         transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), true);
-    all_transactions.push(sanitized_transaction.clone());
+    all_transactions.push(sanitized_transaction.clone().unwrap());
     transaction_checks.push(Ok(CheckedTransactionDetails {
         nonce: None,
-        lamports_per_signature: Some(20),
+        lamports_per_signature: 20,
     }));
 
     //Third transaction where fee payer dont have enough to pay fee
@@ -703,10 +706,10 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
         (fee_payer, Signature::new_unique()),
         true,
     );
-    all_transactions.push(sanitized_transaction.clone());
+    all_transactions.push(sanitized_transaction.clone().unwrap());
     transaction_checks.push(Ok(CheckedTransactionDetails {
         nonce: None,
-        lamports_per_signature: Some(20),
+        lamports_per_signature: 20,
     }));
 
     // Two duplicate transactions
@@ -740,16 +743,16 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
 
     let sanitized_transaction =
         transaction_builder.build(Hash::default(), (fee_payer1, Signature::new_unique()), true);
-    all_transactions.push(sanitized_transaction.clone());
+    all_transactions.push(sanitized_transaction.clone().unwrap());
     transaction_checks.push(Ok(CheckedTransactionDetails {
         nonce: None,
-        lamports_per_signature: Some(20),
+        lamports_per_signature: 20,
     }));
 
-    all_transactions.push(sanitized_transaction.clone());
+    all_transactions.push(sanitized_transaction.clone().unwrap());
     transaction_checks.push(Ok(CheckedTransactionDetails {
         nonce: None,
-        lamports_per_signature: Some(20),
+        lamports_per_signature: 20,
     }));
 
     // fee payer
@@ -757,7 +760,8 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     account_data.set_lamports(250000);
     mock_bank
         .account_shared_data
-        .borrow_mut()
+        .write()
+        .unwrap()
         .insert(fee_payer1, account_data);
 
     // Sender
@@ -765,7 +769,8 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     account_data.set_lamports(9000000);
     mock_bank
         .account_shared_data
-        .borrow_mut()
+        .write()
+        .unwrap()
         .insert(sender, account_data);
 
     // recipient
@@ -773,7 +778,8 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     account_data.set_lamports(9000000);
     mock_bank
         .account_shared_data
-        .borrow_mut()
+        .write()
+        .unwrap()
         .insert(recipient, account_data);
 
     (all_transactions, transaction_checks)
@@ -913,9 +919,11 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         .is_ok());
 
     let fee_payer_key = transactions[5].message().account_keys()[0];
-    let fee_payer_data = result.loaded_transactions[5]
+    let fee_payer_data = result.execution_results[5]
+        .executed_transaction()
         .as_ref()
         .unwrap()
+        .loaded_transaction
         .accounts
         .iter()
         .find(|key| key.0 == fee_payer_key)
@@ -924,21 +932,24 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     assert_eq!(fee_payer_data.1.lamports(), 15000);
 
     let sender_key = transactions[5].message().account_keys()[1];
-    let sender_data = result.loaded_transactions[5]
+    let sender_data = result.execution_results[5]
+        .executed_transaction()
         .as_ref()
         .unwrap()
+        .loaded_transaction
         .accounts
         .iter()
         .find(|key| key.0 == sender_key)
         .unwrap();
 
     assert_eq!(sender_data.1.lamports(), 8995000);
-    // println!("sender: {} ", sender_data.1.lamports());
 
     let recipient_key = transactions[5].message().account_keys()[2];
-    let recipient_data = result.loaded_transactions[5]
+    let recipient_data = result.execution_results[5]
+        .executed_transaction()
         .as_ref()
         .unwrap()
+        .loaded_transaction
         .accounts
         .iter()
         .find(|key| key.0 == recipient_key)
@@ -947,17 +958,20 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     assert_eq!(recipient_data.1.lamports(), 9005000);
 
     // Second transactons with same fee payer
-    // println!("result {:?}", result.execution_results[6]);
     assert!(result.execution_results[6]
-        .details()
+        .executed_transaction()
+        .as_ref()
         .unwrap()
+        .execution_details
         .status
         .is_ok());
 
     let fee_payer_key = transactions[6].message().account_keys()[0];
-    let fee_payer_data = result.loaded_transactions[6]
+    let fee_payer_data = result.execution_results[6]
+        .executed_transaction()
         .as_ref()
         .unwrap()
+        .loaded_transaction
         .accounts
         .iter()
         .find(|key| key.0 == fee_payer_key)
@@ -966,21 +980,24 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     assert_eq!(fee_payer_data.1.lamports(), 5000);
 
     let sender_key = transactions[6].message().account_keys()[1];
-    let sender_data = result.loaded_transactions[6]
+    let sender_data = result.execution_results[6]
+        .executed_transaction()
         .as_ref()
         .unwrap()
+        .loaded_transaction
         .accounts
         .iter()
         .find(|key| key.0 == sender_key)
         .unwrap();
 
     assert_eq!(sender_data.1.lamports(), 8990000);
-    // println!("sender: {} ", sender_data.1.lamports());
 
     let recipient_key = transactions[6].message().account_keys()[2];
-    let recipient_data = result.loaded_transactions[6]
+    let recipient_data = result.execution_results[6]
+        .executed_transaction()
         .as_ref()
         .unwrap()
+        .loaded_transaction
         .accounts
         .iter()
         .find(|key| key.0 == recipient_key)
