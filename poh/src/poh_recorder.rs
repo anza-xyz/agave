@@ -452,11 +452,8 @@ impl PohRecorder {
         })
     }
 
-    fn prev_slot_was_mine(&self, my_pubkey: &Pubkey, current_slot: Slot) -> bool {
-        if let Some(leader_id) = self
-            .leader_schedule_cache
-            .slot_leader_at(current_slot.saturating_sub(1), None)
-        {
+    fn prev_slot_was_mine(&self, my_pubkey: &Pubkey, parent_slot: Slot) -> bool {
+        if let Some(leader_id) = self.leader_schedule_cache.slot_leader_at(parent_slot, None) {
             &leader_id == my_pubkey
         } else {
             false
@@ -475,7 +472,7 @@ impl PohRecorder {
         let next_tick_height = self.tick_height.saturating_add(1);
         let next_slot = self.slot_for_tick_height(next_tick_height);
 
-        if self.prev_slot_was_mine(my_pubkey, next_slot) {
+        if self.prev_slot_was_mine(my_pubkey, self.start_slot()) {
             // Building off my own blocks. No need to wait.
             return true;
         }
