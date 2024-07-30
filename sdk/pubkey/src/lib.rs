@@ -306,10 +306,6 @@ impl Pubkey {
     }
 
     /// Decode a string into a Pubkey, usable in a const context
-    ///
-    /// Note: Until https://github.com/Nullus157/bs58-rs/pull/120 lands, this
-    /// function does not include a check that the output decodes to exactly 32
-    /// bytes.
     pub const fn from_str_const(s: &str) -> Self {
         let id_array = five8_const::decode_32_const(s);
         Pubkey::new_from_array(id_array)
