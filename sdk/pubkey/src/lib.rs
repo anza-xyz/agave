@@ -305,6 +305,16 @@ impl Pubkey {
         Self(pubkey_array)
     }
 
+    /// Decode a string into a Pubkey, usable in a const context
+    ///
+    /// Note: Until https://github.com/Nullus157/bs58-rs/pull/120 lands, this
+    /// function does not include a check that the output decodes to exactly 32
+    /// bytes.
+    pub const fn from_str_const(s: &str) -> Self {
+        let id_array = five8_const::decode_32_const(s);
+        Pubkey::new_from_array(id_array)
+    }
+
     /// unique Pubkey for tests and benchmarks.
     pub fn new_unique() -> Self {
         use solana_atomic_u64::AtomicU64;
@@ -1006,6 +1016,53 @@ impl Pubkey {
         result.set(0, address.into());
         result.set(1, bump_seed.into());
         Ok(result.into())
+    }
+}
+
+/// Convenience macro to declare a static public key and functions to interact with it.
+///
+/// Input: a single literal base58 string representation of a program's ID.
+///
+/// # Example
+///
+/// ```
+/// # // wrapper is used so that the macro invocation occurs in the item position
+/// # // rather than in the statement position which isn't allowed.
+/// use std::str::FromStr;
+/// use solana_pubkey::{declare_id, Pubkey};
+///
+/// # mod item_wrapper {
+/// #   use solana_pubkey::declare_id;
+/// declare_id!("My11111111111111111111111111111111111111111");
+/// # }
+/// # use item_wrapper::id;
+///
+/// let my_id = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
+/// assert_eq!(id(), my_id);
+/// ```
+#[macro_export]
+macro_rules! declare_id {
+    ($address:expr) => {
+        /// The const program ID.
+        pub const ID: $crate::Pubkey = $crate::Pubkey::from_str_const($address);
+
+        /// Returns `true` if given pubkey is the program ID.
+        // TODO make this const once `derive_const` makes it out of nightly
+        // and we can `derive_const(PartialEq)` on `Pubkey`.
+        pub fn check_id(id: &$crate::Pubkey) -> bool {
+            id == &ID
+        }
+
+        /// Returns the program ID.
+        pub const fn id() -> $crate::Pubkey {
+            ID
+        }
+
+        #[cfg(test)]
+        #[test]
+        fn test_id() {
+            assert!(check_id(&id()));
+        }
     }
 }
 
