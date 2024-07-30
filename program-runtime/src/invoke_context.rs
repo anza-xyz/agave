@@ -489,6 +489,7 @@ impl<'a> InvokeContext<'a> {
 
         // The Murmur3 hash value (used by RBPF) of the string "entrypoint"
         const ENTRYPOINT_KEY: u32 = 0x71E3CF81;
+        // XXX HANA does this imply the loaders are all in the program cache? and also we dont need to add to account array??
         let entry = self
             .program_cache_for_tx_batch
             .find(&builtin_id)
@@ -503,6 +504,7 @@ impl<'a> InvokeContext<'a> {
         .ok_or(InstructionError::UnsupportedProgramId)?;
         entry.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
 
+        // XXX i presume this is the actual program and not the loader? what happens if you pass the program for self-cpi?
         let program_id = *instruction_context.get_last_program_key(self.transaction_context)?;
         self.transaction_context
             .set_return_data(program_id, Vec::new())?;

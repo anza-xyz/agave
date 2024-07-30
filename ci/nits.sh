@@ -54,9 +54,9 @@ fi
 #
 # shellcheck disable=1001
 declare useGithubIssueInsteadOf=(
-  X\XX
+  #X\XX
   T\BD
-  F\IXME
+  #F\IXME
   #T\ODO  # TODO: Disable TODOs once all other TODOs are purged
 )
 

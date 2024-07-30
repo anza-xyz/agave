@@ -6,12 +6,18 @@ use {
         transaction_processing_callback::TransactionProcessingCallback,
     },
     itertools::Itertools,
-    solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
+    solana_compute_budget::{
+        //compute_budget::ComputeBudget,
+        compute_budget_processor::{process_compute_budget_instructions, ComputeBudgetLimits},
+    },
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        feature_set::{self, FeatureSet},
-        fee::FeeDetails,
+        feature_set::{
+            self, include_loaded_accounts_data_size_in_fee_calculation,
+            remove_rounding_in_fee_calculation, FeatureSet,
+        },
+        fee::{FeeBudgetLimits, FeeDetails, FeeStructure},
         message::SanitizedMessage,
         native_loader,
         nonce::State as NonceState,
@@ -25,7 +31,7 @@ use {
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroU32,
+    std::{collections::HashMap, num::NonZeroU32},
 };
 
 // for the load instructions
@@ -146,6 +152,363 @@ pub fn validate_fee_payer(
         payer_account,
         payer_index,
     )
+}
+
+// XXX mostly taken from the thing in account loader, most of this will be disassembled tho
+fn hana_validate_transaction_fee_payer(
+    message: &SanitizedMessage,
+    // XXX combine in one arg
+    fee_payer_address: &Pubkey,
+    fee_payer_account: &mut AccountSharedData,
+    checked_details: CheckedTransactionDetails,
+    feature_set: &FeatureSet,
+    fee_structure: &FeeStructure,
+    rent_collector: &RentCollector,
+    error_counters: &mut TransactionErrorMetrics,
+) -> Result<ValidatedTransactionDetails> {
+    let compute_budget_limits = process_compute_budget_instructions(
+        message.program_instructions_iter(),
+    )
+    .map_err(|err| {
+        error_counters.invalid_compute_budget += 1;
+        err
+    })?;
+
+    // XXX i believe i can remove this stuff from the validation struct
+    let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
+    let fee_payer_rent_debit = 0;
+
+    let CheckedTransactionDetails {
+        nonce,
+        lamports_per_signature,
+    } = checked_details;
+
+    let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
+    let fee_details = fee_structure.calculate_fee_details(
+        message,
+        lamports_per_signature,
+        &fee_budget_limits,
+        feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+        feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
+    );
+
+    let fee_payer_index = 0;
+    validate_fee_payer(
+        fee_payer_address,
+        fee_payer_account,
+        fee_payer_index,
+        error_counters,
+        rent_collector,
+        fee_details.total_fee(),
+    )?;
+
+    // XXX i believe i can get rid of rollback data, if i do fee payer validation *after* program checks
+    // well. actually maybe not. execute_transaction does checks simd82 removes that also can result in non-executing?
+    // look over the state of things in b15080 more closely, this definitely didnt used to exist
+    let rollback_accounts = RollbackAccounts::new(
+        nonce,
+        *fee_payer_address,
+        fee_payer_account.clone(),
+        fee_payer_rent_debit,
+        fee_payer_loaded_rent_epoch,
+    );
+
+    Ok(ValidatedTransactionDetails {
+        fee_details,
+        fee_payer_account: fee_payer_account.clone(), // XXX stupid
+        fee_payer_rent_debit,
+        rollback_accounts,
+        compute_budget_limits,
+    })
+}
+
+pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    txs: &[SanitizedTransaction],
+    check_results: &Vec<TransactionCheckResult>,
+    account_overrides: Option<&AccountOverrides>,
+) -> HashMap<Pubkey, AccountSharedData> {
+    let mut accounts_cache = HashMap::new();
+
+    let checked_messages: Vec<_> = txs
+        .iter()
+        .zip(check_results)
+        .filter(|(_, tx_details)| tx_details.is_ok())
+        .map(|(tx, _)| tx.message())
+        .collect();
+
+    let account_keys: Vec<_> = checked_messages
+        .iter()
+        .flat_map(|m| m.account_keys().iter())
+        .unique()
+        .collect();
+
+    for key in account_keys {
+        if solana_sdk::sysvar::instructions::check_id(key) {
+            continue;
+        } else if let Some(account_override) =
+            account_overrides.and_then(|overrides| overrides.get(key))
+        {
+            accounts_cache.insert(*key, account_override.clone());
+        } else if let Some(account) = callbacks.get_account_shared_data(key) {
+            accounts_cache.insert(*key, account);
+        }
+        // XXX we do not insert the default account here because we need to know if its not found later
+        // it raises the question however of whether we need to track if a program account is created in the batch
+    }
+
+    // XXX it is possible we want to fully validate programs for messages here
+    // that depends on the question re: what if a program account is created mid-batch
+    // need to get a detailed description of what behavior satisfies the spec
+    for message in checked_messages {
+        for instruction in message.instructions() {
+            let program_index = instruction.program_id_index as usize;
+            let program_id = message.account_keys()[program_index];
+
+            println!("\nHANA checking program_id {}", program_id);
+            if native_loader::check_id(&program_id) {
+                continue;
+            }
+
+            println!("HANA getting program_id from cache...");
+            let Some(program_account) = accounts_cache.get(&program_id) else {
+                println!("HANA program not in cache!");
+                continue;
+            };
+
+            /* XXX FIXME HANA highly unusual behavior. the programs that come from the callback are not marked executable
+               unsure if such a thing is a test artifact or normal. temporarily removing this check for testing
+            println!("HANA checking executable");
+            if !program_account.executable() {
+                println!("HANA NOT executable: {:#?}", program_account);
+                println!("HANA what about from cb: {:#?}", callbacks.get_account_shared_data(&program_id));
+                continue;
+            }
+            */
+
+            println!("HANA getting owner");
+            let owner_id = program_account.owner();
+            if native_loader::check_id(owner_id) {
+                continue;
+            }
+
+            println!("HANA checking owner_id {}", owner_id);
+            if !accounts_cache.contains_key(owner_id) {
+                println!("HANA not in cache...");
+                if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                    println!("HANA got from callback...");
+                    if native_loader::check_id(owner_account.owner()) && owner_account.executable()
+                    {
+                        println!("HANA inserting!");
+                        accounts_cache.insert(*owner_id, owner_account);
+                    }
+                }
+            }
+        }
+    }
+
+    accounts_cache
+}
+
+pub(crate) fn hana_load_transaction_accounts(
+    accounts_cache: &HashMap<Pubkey, AccountSharedData>,
+    message: &SanitizedMessage,
+    tx_details: CheckedTransactionDetails,
+    error_metrics: &mut TransactionErrorMetrics,
+    feature_set: &FeatureSet,
+    rent_collector: &RentCollector,
+    loaded_programs: &ProgramCacheForTxBatch,
+) -> Result<LoadedTransaction> {
+    let mut tx_rent: TransactionRent = 0;
+    let account_keys = message.account_keys();
+    let mut accounts_found = Vec::with_capacity(account_keys.len());
+    let mut rent_debits = RentDebits::default();
+    let mut accumulated_accounts_data_size: u32 = 0;
+
+    // XXX remove this from tx validation, i need it before
+    let compute_budget_limits = process_compute_budget_instructions(
+        message.program_instructions_iter(),
+    )
+    .map_err(|err| {
+        error_metrics.invalid_compute_budget += 1;
+        err
+    })?;
+
+    let instruction_accounts = message
+        .instructions()
+        .iter()
+        .flat_map(|instruction| &instruction.accounts)
+        .unique()
+        .collect::<Vec<&u8>>();
+
+    let mut accounts = account_keys
+        .iter()
+        .enumerate()
+        .map(|(i, key)| {
+            let mut account_found = true;
+
+            #[allow(clippy::collapsible_else_if)]
+            let account = if solana_sdk::sysvar::instructions::check_id(key) {
+                construct_instructions_account(message)
+            } else {
+                let instruction_account = u8::try_from(i)
+                    .map(|i| instruction_accounts.contains(&&i))
+                    .unwrap_or(false);
+
+                let (account_size, account, rent) = if let Some(program) = (!instruction_account
+                    && !message.is_writable(i))
+                .then_some(())
+                .and_then(|_| loaded_programs.find(key))
+                {
+                    if !accounts_cache.contains_key(key) {
+                        return Err(TransactionError::AccountNotFound);
+                    }
+
+                    // Optimization to skip loading of accounts which are only used as
+                    // programs in top-level instructions and not passed as instruction accounts.
+                    let program_account = account_shared_data_from_program(&program);
+                    (program.account_size, program_account.clone(), 0)
+                } else {
+                    accounts_cache
+                        .get(key)
+                        .cloned() // XXX another one
+                        .map(|mut account| {
+                            if message.is_writable(i) {
+                                let rent_due = collect_rent_from_account(
+                                    feature_set,
+                                    rent_collector,
+                                    key,
+                                    &mut account,
+                                )
+                                .rent_amount;
+
+                                (account.data().len(), account, rent_due)
+                            } else {
+                                (account.data().len(), account, 0)
+                            }
+                        })
+                        .unwrap_or_else(|| {
+                            account_found = false;
+                            let mut default_account = AccountSharedData::default();
+                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                            // with this field already set would allow us to skip rent collection for these accounts.
+                            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                            (default_account.data().len(), default_account, 0)
+                        })
+                };
+
+                // XXX accumulating this way is kind of pointless now
+                // the intent, as i understand it, was to short-circuit loading if someone blows their limit
+                // it used to short-circuit loading if the limit is exceeded, and only load for fee-valid txns
+                // now we load all the accounts up front so this is a bit late to check
+                // but we cant really do anything about it anyway since accounts may be realloced...
+                accumulate_and_check_loaded_account_data_size(
+                    &mut accumulated_accounts_data_size,
+                    account_size,
+                    compute_budget_limits.loaded_accounts_bytes,
+                    error_metrics,
+                )?;
+
+                tx_rent += rent;
+                rent_debits.insert(key, rent, account.lamports());
+
+                account
+            };
+
+            accounts_found.push(account_found);
+            Ok((*key, account))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let builtins_start_index = accounts.len();
+    let program_indices = message
+        .instructions()
+        .iter()
+        .map(|instruction| {
+            let mut account_indices = Vec::with_capacity(2);
+            let program_index = instruction.program_id_index as usize;
+            // This command may never return error, because the transaction is sanitized
+            println!("\nHANA ixn looking up id...");
+            let (program_id, program_account) = accounts
+                .get(program_index)
+                .ok_or(TransactionError::ProgramAccountNotFound)?;
+            println!("HANA ok need program {}", program_id);
+            if native_loader::check_id(program_id) {
+                return Ok(account_indices);
+            }
+
+            let account_found = accounts_found.get(program_index).unwrap_or(&true);
+            if !account_found {
+                println!("HANA failed in accounts_found");
+                error_metrics.account_not_found += 1;
+                return Err(TransactionError::ProgramAccountNotFound);
+            }
+
+            if !program_account.executable() {
+                error_metrics.invalid_program_for_execution += 1;
+                return Err(TransactionError::InvalidProgramForExecution);
+            }
+            account_indices.insert(0, program_index as IndexOfAccount);
+            let owner_id = program_account.owner();
+            if native_loader::check_id(owner_id) {
+                return Ok(account_indices);
+            }
+            println!("HANA continuing to get owner");
+            if !accounts
+                .get(builtins_start_index..)
+                .ok_or(TransactionError::ProgramAccountNotFound)?
+                .iter()
+                .any(|(key, _)| key == owner_id)
+            {
+                println!("HANA getting owner {} from cache", owner_id);
+                if let Some(owner_account) = accounts_cache.get(owner_id) {
+                    if !native_loader::check_id(owner_account.owner())
+                        || !owner_account.executable()
+                    {
+                        error_metrics.invalid_program_for_execution += 1;
+                        return Err(TransactionError::InvalidProgramForExecution);
+                    }
+                    accumulate_and_check_loaded_account_data_size(
+                        &mut accumulated_accounts_data_size,
+                        owner_account.data().len(),
+                        compute_budget_limits.loaded_accounts_bytes,
+                        error_metrics,
+                    )?;
+                    accounts.push((*owner_id, owner_account.clone()));
+                } else {
+                    println!("HANA failed to get owner from cache");
+                    error_metrics.account_not_found += 1;
+                    return Err(TransactionError::ProgramAccountNotFound);
+                }
+            }
+            println!("HANA account indicies successfully assembled from ix");
+            Ok(account_indices)
+        })
+        .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
+    println!("HANA collected ALL account indicies for tx");
+
+    let validated_tx_details = hana_validate_transaction_fee_payer(
+        message,
+        message.fee_payer(),
+        &mut accounts[0].1,
+        tx_details,
+        feature_set,
+        &FeeStructure::default(), // XXX pass this in...
+        rent_collector,
+        error_metrics,
+    )?;
+
+    Ok(LoadedTransaction {
+        accounts,
+        program_indices,
+        fee_details: validated_tx_details.fee_details,
+        rollback_accounts: validated_tx_details.rollback_accounts,
+        compute_budget_limits: validated_tx_details.compute_budget_limits,
+        rent: tx_rent,
+        rent_debits,
+        loaded_accounts_data_size: accumulated_accounts_data_size,
+    })
 }
 
 /// Collect information about accounts used in txs transactions and
@@ -315,6 +678,13 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Err(TransactionError::InvalidProgramForExecution);
             }
             account_indices.insert(0, program_index as IndexOfAccount);
+
+            // XXX HANA i believe loading the loader and adding to accounts is pointless but i havent proved it yet
+            // removing this stuff breaks some tests but it is likely the tests are outdated and pedantic
+            // as far as i can tell, process_executable_chain in InvokeContext gets all loaders from the batch program cache
+            // and it *looks* like the loaders are forced into the cache in load_and_execute_sanitized_transactions setup
+            // svm tests only put system and loaderv3 in there... but bank tests put all builtins, which is a good omen
+            // ok yea im pretty sure the tests are wrong and this is logic that is not needed in a world with program cache
             let owner_id = program_account.owner();
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);

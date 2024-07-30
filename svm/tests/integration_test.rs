@@ -421,6 +421,8 @@ fn svm_integration() {
         ..Default::default()
     };
 
+    //println!("HANA txns: {:#?}", transactions);
+
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
@@ -428,6 +430,8 @@ fn svm_integration() {
         &TransactionProcessingEnvironment::default(),
         &processing_config,
     );
+
+    println!("HANA results: {:?}", result.execution_results);
 
     assert_eq!(result.execution_results.len(), 5);
 

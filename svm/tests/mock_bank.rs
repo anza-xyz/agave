@@ -64,6 +64,7 @@ impl TransactionProcessingCallback for MockBankCallback {
     }
 
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
+        println!("HANA addding pid: {}", program_id);
         let account_data = native_loader::create_loadable_account_with_fields(name, (5000, 0));
 
         self.account_shared_data
