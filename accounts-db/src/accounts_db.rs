@@ -2831,7 +2831,8 @@ impl AccountsDb {
                         if let Some(failed_slot) = failed_slot.take() {
                             info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey} in slot {failed_slot}");
                         } else {
-                            info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, account infos len: {}, ref count: {ref_count}", slot_list.len());
+
+                            info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, slot_list len: {}, ref count: {ref_count}", slot_list.len());
                         }
                     }
 
