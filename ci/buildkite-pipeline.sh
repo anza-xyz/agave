@@ -244,7 +244,7 @@ EOF
     command_step shuttle "ci/docker-run-default-image.sh ci/test-shuttle.sh" 10
   else
     annotate --style info \
-      "test-shttle skipped as no relevant files were modified"
+      "test-shuttle skipped as no relevant files were modified"
   fi
 
   # Downstream backwards compatibility
