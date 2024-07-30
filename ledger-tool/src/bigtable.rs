@@ -180,6 +180,62 @@ struct ShredConfig {
     allow_mock_poh: bool,
 }
 
+fn get_shred_config_from_ledger(
+    arg_matches: &ArgMatches,
+    ledger_path: &Path,
+    blockstore: Arc<Blockstore>,
+    allow_mock_poh: bool,
+    starting_slot: Slot,
+    ending_slot: Slot,
+) -> ShredConfig {
+    let process_options = parse_process_options(ledger_path, arg_matches);
+    let genesis_config = open_genesis_config_by(ledger_path, arg_matches);
+    let LoadAndProcessLedgerOutput { bank_forks, .. } = load_and_process_ledger_or_exit(
+        arg_matches,
+        &genesis_config,
+        blockstore.clone(),
+        process_options,
+        None,
+    );
+
+    let bank = bank_forks.read().unwrap().working_bank();
+    // If mock PoH is allowed, ensure that the requested slots are in
+    // the same epoch as the working bank. This will ensure the values
+    // extracted from the Bank are accurate for the slot range
+    if allow_mock_poh {
+        let working_bank_epoch = bank.epoch();
+        let epoch_schedule = bank.epoch_schedule();
+        let starting_epoch = epoch_schedule.get_epoch(starting_slot);
+        let ending_epoch = epoch_schedule.get_epoch(ending_slot);
+        if starting_epoch != ending_epoch {
+            eprintln!(
+                "The specified --starting-slot and --ending-slot must be in the\
+                same epoch. --starting-slot {starting_slot} is in epoch {starting_epoch},\
+                but --ending-slot {ending_slot} is in epoch {ending_epoch}."
+            );
+            exit(1);
+        }
+        if starting_epoch != working_bank_epoch {
+            eprintln!(
+                "The range of slots between --starting-slot and --ending-slot are in a \
+                different epoch than the working bank. The specified range is in epoch \
+                {starting_epoch}, but the working bank is in {working_bank_epoch}."
+            );
+            exit(1);
+        }
+    }
+
+    let shred_version = compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
+    let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
+    let num_ticks_per_slot = bank.ticks_per_slot();
+    ShredConfig {
+        shred_version,
+        num_hashes_per_tick,
+        num_ticks_per_slot,
+        allow_mock_poh,
+    }
+}
+
 async fn shreds(
     blockstore: Arc<Blockstore>,
     starting_slot: Slot,
@@ -1367,58 +1423,19 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let allow_mock_poh = arg_matches.is_present("allow_mock_poh");
 
             let ledger_path = canonicalize_ledger_path(ledger_path);
-            let process_options = parse_process_options(&ledger_path, arg_matches);
-            let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
             let blockstore = Arc::new(crate::open_blockstore(
                 &ledger_path,
                 arg_matches,
                 AccessType::Primary,
             ));
-            let LoadAndProcessLedgerOutput { bank_forks, .. } = load_and_process_ledger_or_exit(
+            let shred_config = get_shred_config_from_ledger(
                 arg_matches,
-                &genesis_config,
+                &ledger_path,
                 blockstore.clone(),
-                process_options,
-                None,
-            );
-
-            let bank = bank_forks.read().unwrap().working_bank();
-            // If mock PoH is allowed, ensure that the requested slots are in
-            // the same epoch as the working bank. This will ensure the values
-            // extracted from the Bank are accurate for the slot range
-            if allow_mock_poh {
-                let working_bank_epoch = bank.epoch();
-                let epoch_schedule = bank.epoch_schedule();
-                let starting_epoch = epoch_schedule.get_epoch(starting_slot);
-                let ending_epoch = epoch_schedule.get_epoch(ending_slot);
-                if starting_epoch != ending_epoch {
-                    eprintln!(
-                        "The specified --starting-slot and --ending-slot must be in the\
-                        same epoch. --starting-slot {starting_slot} is in epoch {starting_epoch},\
-                        but --ending-slot {ending_slot} is in epoch {ending_epoch}."
-                    );
-                    exit(1);
-                }
-                if starting_epoch != working_bank_epoch {
-                    eprintln!(
-                        "The range of slots between --starting-slot and --ending-slot are in a \
-                        different epoch than the working bank. The specified range is in epoch \
-                        {starting_epoch}, but the working bank is in {working_bank_epoch}."
-                    );
-                    exit(1);
-                }
-            }
-
-            let shred_version =
-                compute_shred_version(&genesis_config.hash(), Some(&bank.hard_forks()));
-            let num_hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
-            let num_ticks_per_slot = bank.ticks_per_slot();
-            let shred_config = ShredConfig {
-                shred_version,
-                num_hashes_per_tick,
-                num_ticks_per_slot,
                 allow_mock_poh,
-            };
+                starting_slot,
+                ending_slot,
+            );
 
             let config = solana_storage_bigtable::LedgerStorageConfig {
                 read_only: true,
