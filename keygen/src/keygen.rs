@@ -52,7 +52,7 @@ use {
 mod smallest_length_44_public_key {
     use solana_sdk::{pubkey, pubkey::Pubkey};
 
-    pub(super) static PUBKEY: Pubkey = pubkey!("21111111111111111111111111111111111111111111");
+    pub(super) static PUBKEY: Pubkey = Pubkey::from_str_const("21111111111111111111111111111111111111111111");
 
     #[test]
     fn assert_length() {
