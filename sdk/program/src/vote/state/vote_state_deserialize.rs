@@ -22,33 +22,34 @@ pub(super) fn deserialize_vote_state_into(
     // is assumed to be _uninitialized_, so creating references to the state or any of its inner
     // fields is UB.
 
-    let node_pubkey = read_pubkey(cursor)?;
-    let authorized_withdrawer = read_pubkey(cursor)?;
+    read_pubkey_into(
+        cursor,
+        // Safety: if vote_state is non-null, node_pubkey is guaranteed to be valid too
+        unsafe { addr_of_mut!((*vote_state).node_pubkey) },
+    )?;
+    read_pubkey_into(
+        cursor,
+        // Safety: if vote_state is non-null, authorized_withdrawer is guaranteed to be valid too
+        unsafe { addr_of_mut!((*vote_state).authorized_withdrawer) },
+    )?;
     let commission = read_u8(cursor)?;
-    // Safety: if vote_state is non-null, all the fields are guaranteed to be valid pointers
-    unsafe {
-        addr_of_mut!((*vote_state).node_pubkey).write(node_pubkey);
-        addr_of_mut!((*vote_state).authorized_withdrawer).write(authorized_withdrawer);
-        addr_of_mut!((*vote_state).commission).write(commission);
-    }
-
     let votes = read_votes(cursor, has_latency)?;
     let root_slot = read_option_u64(cursor)?;
-    // Safety: if vote_state is non-null, root_slot is guaranteed to be valid too
-    unsafe {
-        addr_of_mut!((*vote_state).root_slot).write(root_slot);
-    }
     let authorized_voters = read_authorized_voters(cursor)?;
     read_prior_voters_into(cursor, vote_state)?;
     let epoch_credits = read_epoch_credits(cursor)?;
     read_last_timestamp_into(cursor, vote_state)?;
 
-    // Defer writing the collections until we know we're going to succeed. This way if we fail we
-    // still drop the collections and don't leak memory.
+    // Safety: if vote_state is non-null, all the fields are guaranteed to be
+    // valid pointers.
     //
-    // Safety: if vote_state is non-null, all the fields are guaranteed to be valid pointers
+    // Heap allocated collections - votes, authorized_voters and epoch_credits -
+    // are guaranteed not to leak after this point as the VoteState is fully
+    // initialized and will be regularly dropped.
     unsafe {
+        addr_of_mut!((*vote_state).commission).write(commission);
         addr_of_mut!((*vote_state).votes).write(votes);
+        addr_of_mut!((*vote_state).root_slot).write(root_slot);
         addr_of_mut!((*vote_state).authorized_voters).write(authorized_voters);
         addr_of_mut!((*vote_state).epoch_credits).write(epoch_credits);
     }
