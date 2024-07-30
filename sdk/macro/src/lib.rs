@@ -180,7 +180,10 @@ impl ToTokens for ProgramSdkIdDeprecated {
     }
 }
 
-#[deprecated(since = "2.1.0", note = "Use `solana_program::pubkey::Pubkey::from_str_const` instead")]
+#[deprecated(
+    since = "2.1.0",
+    note = "Use `solana_program::pubkey::Pubkey::from_str_const` instead"
+)]
 #[proc_macro]
 pub fn pubkey(input: TokenStream) -> TokenStream {
     let id = parse_macro_input!(input as SdkPubkey);

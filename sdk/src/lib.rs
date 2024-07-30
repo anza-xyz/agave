@@ -144,8 +144,10 @@ pub use solana_sdk_macro::declare_deprecated_id;
 /// assert_eq!(id(), my_id);
 /// ```
 pub use solana_sdk_macro::declare_id;
-
-#[deprecated(since = "2.1.0", note = "Use `solana_program::pubkey::Pubkey::from_str_const` instead")]
+#[deprecated(
+    since = "2.1.0",
+    note = "Use `solana_program::pubkey::Pubkey::from_str_const` instead"
+)]
 /// Convenience macro to define a static public key.
 ///
 /// Input: a single literal base58 string representation of a Pubkey
