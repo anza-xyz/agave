@@ -2759,6 +2759,7 @@ impl AccountsDb {
     /// 1. one of the pubkeys in the store has account info to a store whose store count is not going to zero
     /// 2. a pubkey we were planning to remove is not removing all stores that contain the account
     fn calc_delete_dependencies(
+        &self,
         purges: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
         store_counts: &mut HashMap<Slot, (usize, HashSet<Pubkey>)>,
         min_slot: Option<Slot>,
@@ -2844,6 +2845,9 @@ impl AccountsDb {
                         // all pubkeys in this store also cannot be removed from all stores they are in
                         let affected_pubkeys = &store_count.1;
                         for key in affected_pubkeys {
+                            let purges_bin_index =
+                                self.accounts_index.bin_calculator.bin_from_pubkey(key);
+                            let bin = purges[purges_bin_index].read().unwrap();
                             for (slot, _account_info) in &bin.get(key).unwrap().slot_list {
                                 if !already_counted.contains(slot) {
                                     pending_stores.insert(*slot);
@@ -3455,7 +3459,7 @@ impl AccountsDb {
         store_counts_time.stop();
 
         let mut calc_deps_time = Measure::start("calc_deps");
-        Self::calc_delete_dependencies(&candidates, &mut store_counts, min_dirty_slot);
+        self.calc_delete_dependencies(&candidates, &mut store_counts, min_dirty_slot);
         calc_deps_time.stop();
 
         let mut purge_filter = Measure::start("purge_filter");
@@ -12552,7 +12556,8 @@ pub mod tests {
         store_counts.insert(1, (0, HashSet::from_iter(vec![key0, key1])));
         store_counts.insert(2, (0, HashSet::from_iter(vec![key1, key2])));
         store_counts.insert(3, (1, HashSet::from_iter(vec![key2])));
-        AccountsDb::calc_delete_dependencies(&purges, &mut store_counts, None);
+        let accounts = AccountsDb::new_single_for_tests();
+        accounts.calc_delete_dependencies(&purges, &mut store_counts, None);
         let mut stores: Vec<_> = store_counts.keys().cloned().collect();
         stores.sort_unstable();
         for store in &stores {
