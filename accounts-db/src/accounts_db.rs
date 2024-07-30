@@ -14835,17 +14835,13 @@ pub mod tests {
             let mut store_counts = HashMap::default();
             store_counts.insert(slot, (store_count, key_set));
             let purges_zero_lamports = [RwLock::new(HashMap::new())];
-            let mut purges_zero_lamports_bin = purges_zero_lamports[0].write().unwrap();
-            purges_zero_lamports_bin.insert(
+            purges_zero_lamports[0].write().unwrap().insert(
                 pubkey,
                 CleaningInfo {
                     slot_list: vec![(slot, account_info)],
                     ref_count: 1,
                 },
             );
-            // forcibly release the write lock needed inside
-            // filter_zero_lamport_clean_for_incremental_snapshots()
-            drop(purges_zero_lamports_bin);
             let accounts_db = AccountsDb::new_single_for_tests();
             if let Some(latest_full_snapshot_slot) = test_params.latest_full_snapshot_slot {
                 accounts_db.set_latest_full_snapshot_slot(latest_full_snapshot_slot);
