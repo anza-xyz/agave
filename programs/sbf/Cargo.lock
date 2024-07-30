@@ -5686,6 +5686,7 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-sdk",
+ "solana-svm-transaction",
  "thiserror",
 ]
 
