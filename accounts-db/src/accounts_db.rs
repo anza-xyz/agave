@@ -2831,7 +2831,6 @@ impl AccountsDb {
                         if let Some(failed_slot) = failed_slot.take() {
                             info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey} in slot {failed_slot}");
                         } else {
-
                             info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, slot_list len: {}, ref count: {ref_count}", slot_list.len());
                         }
                     }
@@ -3265,27 +3264,26 @@ impl AccountsDb {
 
         // parallel scan the index.
         let purges_old_accounts = {
-            let do_clean_scan = || {
-                candidates
-                    .par_iter()
-                    .map(|candidates_bin| {
-                        let mut purges_old_accounts = Vec::new();
-                        let mut found_not_zero = 0;
-                        let mut not_found_on_fork = 0;
-                        let mut missing = 0;
-                        let mut useful = 0;
-                        // Must separate keys for passing as an argument to accounts_index.scan(),
-                        // otherwise two simultaneous, conflicting borrows occur
-                        // 1. immutable borrow of bin to iterate over the keys, and
-                        // 2. mutable borrow of bin to update bin values in the callback closure.
-                        // An alternative is to wrap the bin values in RefCell for non-exclusive
-                        // access.
-                        let candidate_keys: Vec<Pubkey> =
-                            candidates_bin.read().unwrap().keys().copied().collect();
-                        let mut candidates_bin = candidates_bin.write().unwrap();
-                        self.accounts_index.scan(
-                            candidate_keys.iter(),
-                            |candidate, slot_list_and_ref_count, _entry| {
+            let do_clean_scan =
+                || {
+                    candidates
+                        .par_iter()
+                        .map(|candidates_bin| {
+                            let mut purges_old_accounts = Vec::new();
+                            let mut found_not_zero = 0;
+                            let mut not_found_on_fork = 0;
+                            let mut missing = 0;
+                            let mut useful = 0;
+                            let mut candidates_bin = candidates_bin.write().unwrap();
+                            // Iterate over each HashMap entry to
+                            // avoid capturing the HashMap in the
+                            // closure passed to scan thus making
+                            // conflicting read and write borrows.
+                            candidates_bin.iter_mut().for_each(
+                                |(candidate_pubkey, candidate_info)| {
+                                    self.accounts_index.scan(
+                            [*candidate_pubkey].iter(),
+                            |candidate_pubkey, slot_list_and_ref_count, _entry| {
                                 let mut useless = true;
                                 if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
                                     // find the highest rooted slot in the slot list
@@ -3303,17 +3301,14 @@ impl AccountsDb {
                                             if account_info.is_zero_lamport() {
                                                 useless = false;
                                                 // The latest one is zero lamports. We may be able to purge it.
-                                                let val = candidates_bin
-                                                    .get_mut(candidate)
-                                                    .expect("candidate should be in the bin");
                                                 // Add all the rooted entries that contain this pubkey.
                                                 // We know the highest rooted entry is zero lamports.
-                                                val.slot_list =
+                                                candidate_info.slot_list =
                                                     self.accounts_index.get_rooted_entries(
                                                         slot_list,
                                                         max_clean_root_inclusive,
                                                     );
-                                                val.ref_count = ref_count;
+                                                candidate_info.ref_count = ref_count;
                                             } else {
                                                 found_not_zero += 1;
                                             }
@@ -3327,7 +3322,7 @@ impl AccountsDb {
                                                 }
                                                 if slot_list.len() > 1 {
                                                     // no need to purge old accounts if there is only 1 slot in the slot list
-                                                    purges_old_accounts.push(*candidate);
+                                                    purges_old_accounts.push(*candidate_pubkey);
                                                     useless = false;
                                                 } else {
                                                     self.clean_accounts_stats
@@ -3345,7 +3340,7 @@ impl AccountsDb {
                                             // touched in must be unrooted.
                                             not_found_on_fork += 1;
                                             useless = false;
-                                            purges_old_accounts.push(*candidate);
+                                            purges_old_accounts.push(*candidate_pubkey);
                                         }
                                     }
                                 } else {
@@ -3359,18 +3354,20 @@ impl AccountsDb {
                             None,
                             false,
                         );
-                        found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
-                        not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
-                        missing_accum.fetch_add(missing, Ordering::Relaxed);
-                        useful_accum.fetch_add(useful, Ordering::Relaxed);
-                        purges_old_accounts
-                    })
-                    .reduce(Vec::new, |mut a, b| {
-                        // Collapse down the vecs into one.
-                        a.extend(b);
-                        a
-                    })
-            };
+                                },
+                            );
+                            found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
+                            not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
+                            missing_accum.fetch_add(missing, Ordering::Relaxed);
+                            useful_accum.fetch_add(useful, Ordering::Relaxed);
+                            purges_old_accounts
+                        })
+                        .reduce(Vec::new, |mut a, b| {
+                            // Collapse down the vecs into one.
+                            a.extend(b);
+                            a
+                        })
+                };
             if is_startup {
                 do_clean_scan()
             } else {
