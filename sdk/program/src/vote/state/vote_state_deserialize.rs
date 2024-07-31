@@ -119,7 +119,7 @@ fn read_prior_voters_into<T: AsRef<[u8]>>(
 
 fn read_epoch_credits<T: AsRef<[u8]>>(
     cursor: &mut Cursor<T>,
-) -> Result<Vec<(u64, u64, u64)>, InstructionError> {
+) -> Result<Vec<(Epoch, u64, u64)>, InstructionError> {
     let epoch_credit_count = read_u64(cursor)? as usize;
     let mut epoch_credits = Vec::with_capacity(epoch_credit_count.min(MAX_EPOCH_CREDITS_HISTORY));
 
@@ -142,6 +142,7 @@ fn read_last_timestamp_into<T: AsRef<[u8]>>(
 
     let last_timestamp = BlockTimestamp { slot, timestamp };
 
+    // Safety: if vote_state is non-null, last_timestamp is guaranteed to be valid too
     unsafe {
         addr_of_mut!((*vote_state).last_timestamp).write(last_timestamp);
     }

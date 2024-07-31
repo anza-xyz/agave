@@ -1,8 +1,11 @@
 use {
-    crate::{instruction::InstructionError, pubkey::Pubkey},
+    crate::{
+        instruction::InstructionError,
+        pubkey::{Pubkey, PUBKEY_BYTES},
+    },
     std::{
         io::{BufRead as _, Cursor, Read},
-        mem, ptr,
+        ptr,
     },
 };
 
@@ -57,18 +60,16 @@ pub(crate) fn read_pubkey_into(
     cursor: &mut Cursor<&[u8]>,
     pubkey: *mut Pubkey,
 ) -> Result<(), InstructionError> {
-    const PUBKEY_SIZE: usize = mem::size_of::<Pubkey>();
-
     match cursor.fill_buf() {
-        Ok(buf) if buf.len() >= PUBKEY_SIZE => {
+        Ok(buf) if buf.len() >= PUBKEY_BYTES => {
             // Safety: `buf` is guaranteed to be at least `PUBKEY_SIZE` bytes
             // long. Pubkey a #[repr(transparent)] wrapper around a byte array,
             // so this is a byte to byte copy and it's safe.
             unsafe {
-                ptr::copy_nonoverlapping(buf.as_ptr(), pubkey as *mut u8, PUBKEY_SIZE);
+                ptr::copy_nonoverlapping(buf.as_ptr(), pubkey as *mut u8, PUBKEY_BYTES);
             }
 
-            cursor.consume(PUBKEY_SIZE);
+            cursor.consume(PUBKEY_BYTES);
         }
         _ => return Err(InstructionError::InvalidAccountData),
     }

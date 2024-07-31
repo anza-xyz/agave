@@ -1,5 +1,7 @@
 //! Vote state
 
+use std::{mem, ptr};
+
 #[cfg(not(target_os = "solana"))]
 use bincode::deserialize;
 #[cfg(test)]
@@ -492,7 +494,7 @@ impl VoteState {
     ) -> Result<(), InstructionError> {
         // Rebind vote_state to *mut VoteState so that the &mut binding isn't
         // accessible anymore, preventing accidental use after this point.
-        let vote_state = vote_state as *mut VoteState;
+        let vote_state = ptr::from_mut(vote_state);
 
         // Safety: vote_state is valid to_drop (see drop_in_place() docs). After
         // dropping, the pointer is treated as uninitialized and only accessed
@@ -501,24 +503,36 @@ impl VoteState {
             std::ptr::drop_in_place(vote_state);
         }
 
-        match VoteState::deserialize_into_ptr(input, vote_state) {
-            Ok(()) => Ok(()),
-            Err(err) => {
+        // This is to reset vote_state to VoteState::default() if deserialize fails or panics.
+        struct DropGuard {
+            vote_state: *mut VoteState,
+        }
+
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
                 // Safety:
                 //
-                // Deserialize failed so at this point vote_state is uninitialized. We must write a
-                // new _valid_ value into it or after returning from this function the caller is
-                // left with an uninitialized `&mut VoteState`, which is UB (references must always
-                // be valid).
+                // Deserialize failed or panicked so at this point vote_state is uninitialized. We
+                // must write a new _valid_ value into it or after returning (or unwinding) from
+                // this function the caller is left with an uninitialized `&mut VoteState`, which is
+                // UB (references must always be valid).
                 //
                 // This is always safe and doesn't leak memory because deserialize_into_ptr() writes
                 // into the fields that heap alloc only when it returns Ok().
                 unsafe {
-                    vote_state.write(VoteState::default());
+                    self.vote_state.write(VoteState::default());
                 }
-                Err(err)
             }
         }
+
+        let guard = DropGuard { vote_state };
+
+        let res = VoteState::deserialize_into_ptr(input, vote_state);
+        if res.is_ok() {
+            mem::forget(guard);
+        }
+
+        res
     }
 
     /// Deserializes the input `VoteStateVersions` buffer directly into the provided
