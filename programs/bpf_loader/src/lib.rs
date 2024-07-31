@@ -8,6 +8,7 @@ use {
     solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_feature_set::{
         bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
+        remove_accounts_executable_flag_checks,
     },
     solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_measure::measure::Measure,
@@ -423,14 +424,27 @@ pub fn process_instruction_inner(
             Err(InstructionError::UnsupportedProgramId)
         } else {
             ic_logger_msg!(log_collector, "Invalid BPF loader id");
-            Err(InstructionError::IncorrectProgramId)
+            Err(
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&remove_accounts_executable_flag_checks::id())
+                {
+                    InstructionError::UnsupportedProgramId
+                } else {
+                    InstructionError::IncorrectProgramId
+                },
+            )
         }
         .map(|_| 0)
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error>);
     }
 
     // Program Invocation
-    if !program_account.is_executable() {
+    if !invoke_context
+        .get_feature_set()
+        .is_active(&remove_accounts_executable_flag_checks::id())
+        && !program_account.is_executable()
+    {
         ic_logger_msg!(log_collector, "Program is not executable");
         return Err(Box::new(InstructionError::IncorrectProgramId));
     }
@@ -441,7 +455,14 @@ pub fn process_instruction_inner(
         .find(program_account.get_key())
         .ok_or_else(|| {
             ic_logger_msg!(log_collector, "Program is not cached");
-            InstructionError::InvalidAccountData
+            if invoke_context
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+            {
+                InstructionError::UnsupportedProgramId
+            } else {
+                InstructionError::InvalidAccountData
+            }
         })?;
     drop(program_account);
     get_or_create_executor_time.stop();
@@ -456,10 +477,28 @@ pub fn process_instruction_inner(
         | ProgramCacheEntryType::Closed
         | ProgramCacheEntryType::DelayVisibility => {
             ic_logger_msg!(log_collector, "Program is not deployed");
-            Err(Box::new(InstructionError::InvalidAccountData) as Box<dyn std::error::Error>)
+            let instruction_error = if invoke_context
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+            {
+                InstructionError::UnsupportedProgramId
+            } else {
+                InstructionError::InvalidAccountData
+            };
+            Err(Box::new(instruction_error) as Box<dyn std::error::Error>)
         }
         ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
-        _ => Err(Box::new(InstructionError::IncorrectProgramId) as Box<dyn std::error::Error>),
+        _ => {
+            let instruction_error = if invoke_context
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+            {
+                InstructionError::UnsupportedProgramId
+            } else {
+                InstructionError::IncorrectProgramId
+            };
+            Err(Box::new(instruction_error) as Box<dyn std::error::Error>)
+        }
     }
     .map(|_| 0)
 }
@@ -718,7 +757,11 @@ fn process_loader_upgradeable_instruction(
 
             let program =
                 instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
-            if !program.is_executable() {
+            if !invoke_context
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+                && !program.is_executable()
+            {
                 ic_logger_msg!(log_collector, "Program account not executable");
                 return Err(InstructionError::AccountNotExecutable);
             }
@@ -1457,13 +1500,19 @@ pub fn execute<'a, 'b: 'a>(
                                 instruction_account_index as IndexOfAccount,
                             )?;
 
-                            error = EbpfError::SyscallError(Box::new(if account.is_executable() {
-                                InstructionError::ExecutableDataModified
-                            } else if account.is_writable() {
-                                InstructionError::ExternalAccountDataModified
-                            } else {
-                                InstructionError::ReadonlyDataModified
-                            }));
+                            error = EbpfError::SyscallError(Box::new(
+                                if !invoke_context
+                                    .get_feature_set()
+                                    .is_active(&remove_accounts_executable_flag_checks::id())
+                                    && account.is_executable()
+                                {
+                                    InstructionError::ExecutableDataModified
+                                } else if account.is_writable() {
+                                    InstructionError::ExternalAccountDataModified
+                                } else {
+                                    InstructionError::ReadonlyDataModified
+                                },
+                            ));
                         }
                     }
                 }
