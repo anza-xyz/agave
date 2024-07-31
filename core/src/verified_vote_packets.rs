@@ -208,14 +208,14 @@ impl VerifiedVotePackets {
         vote_packets_receiver: &VerifiedLabelVotePacketsReceiver,
         would_be_leader: bool,
     ) -> Result<()> {
-        if !would_be_leader {
-            return Ok(());
-        }
-
         use SingleValidatorVotes::*;
         const RECV_TIMEOUT: Duration = Duration::from_millis(200);
         let vote_packets = vote_packets_receiver.recv_timeout(RECV_TIMEOUT)?;
         let vote_packets = std::iter::once(vote_packets).chain(vote_packets_receiver.try_iter());
+
+        if !would_be_leader {
+            return Ok(());
+        }
 
         for gossip_votes in vote_packets {
             for verfied_vote_metadata in gossip_votes {
