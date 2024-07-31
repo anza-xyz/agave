@@ -79,17 +79,20 @@ fn collect_accounts_for_successful_tx<'a>(
     transaction_accounts: &'a [TransactionAccount],
 ) {
     let message = transaction.message();
-    for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
-        if message.is_writable(i) {
-            // Accounts that are invoked and also not passed as an instruction
-            // account to a program don't need to be stored because it's assumed
-            // to be impossible for a committable transaction to modify an
-            // invoked account if said account isn't passed to some program.
-            if !message.is_invoked(i) || message.is_instruction_account(i) {
-                collected_accounts.push((address, account));
-                collected_account_transactions.push(Some(transaction));
+    for (_, (address, account)) in (0..message.account_keys().len())
+        .zip(transaction_accounts)
+        .filter(|(i, _)| {
+            message.is_writable(*i) && {
+                // Accounts that are invoked and also not passed as an instruction
+                // account to a program don't need to be stored because it's assumed
+                // to be impossible for a committable transaction to modify an
+                // invoked account if said account isn't passed to some program.
+                !message.is_invoked(*i) || message.is_instruction_account(*i)
             }
-        }
+        })
+    {
+        collected_accounts.push((address, account));
+        collected_account_transactions.push(Some(transaction));
     }
 }
 
@@ -112,7 +115,7 @@ fn collect_accounts_for_failed_tx<'a>(
             // Since we know we are dealing with a valid nonce account,
             // unwrap is safe here
             nonce
-                .try_advance_account(*durable_nonce, lamports_per_signature)
+                .try_advance_nonce(*durable_nonce, lamports_per_signature)
                 .unwrap();
             collected_accounts.push((nonce.address(), nonce.account()));
             collected_account_transactions.push(Some(transaction));
@@ -127,7 +130,7 @@ fn collect_accounts_for_failed_tx<'a>(
             // Since we know we are dealing with a valid nonce account,
             // unwrap is safe here
             nonce
-                .try_advance_account(*durable_nonce, lamports_per_signature)
+                .try_advance_nonce(*durable_nonce, lamports_per_signature)
                 .unwrap();
             collected_accounts.push((nonce.address(), nonce.account()));
             collected_account_transactions.push(Some(transaction));

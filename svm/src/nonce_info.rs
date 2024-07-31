@@ -39,7 +39,7 @@ impl NoncePartial {
     // Advance the stored blockhash to prevent fee theft by someone
     // replaying nonce transactions that have failed with an
     // `InstructionError`.
-    pub fn try_advance_account(
+    pub fn try_advance_nonce(
         &mut self,
         durable_nonce: DurableNonce,
         lamports_per_signature: u64,
@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_advance_account_success() {
+    fn test_try_advance_nonce_success() {
         let authority = Pubkey::new_unique();
         let mut nonce_partial = NoncePartial::new(
             Pubkey::new_unique(),
@@ -127,7 +127,7 @@ mod tests {
 
         let new_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let new_lamports_per_signature = 100;
-        let result = nonce_partial.try_advance_account(new_nonce, new_lamports_per_signature);
+        let result = nonce_partial.try_advance_nonce(new_nonce, new_lamports_per_signature);
         assert_eq!(result, Ok(()));
 
         let nonce_versions = StateMut::<NonceVersions>::state(&nonce_partial.account).unwrap();
@@ -142,26 +142,26 @@ mod tests {
     }
 
     #[test]
-    fn test_try_advance_account_invalid() {
+    fn test_try_advance_nonce_invalid() {
         let mut nonce_partial = NoncePartial::new(
             Pubkey::new_unique(),
             AccountSharedData::new(1_000_000, 0, &Pubkey::default()),
         );
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let result = nonce_partial.try_advance_account(durable_nonce, 5000);
+        let result = nonce_partial.try_advance_nonce(durable_nonce, 5000);
         assert_eq!(result, Err(AdvanceNonceError::Invalid));
     }
 
     #[test]
-    fn test_try_advance_account_uninitialized() {
+    fn test_try_advance_nonce_uninitialized() {
         let mut nonce_partial = NoncePartial::new(
             Pubkey::new_unique(),
             create_nonce_account(NonceState::Uninitialized),
         );
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let result = nonce_partial.try_advance_account(durable_nonce, 5000);
+        let result = nonce_partial.try_advance_nonce(durable_nonce, 5000);
         assert_eq!(result, Err(AdvanceNonceError::Uninitialized));
     }
 }
