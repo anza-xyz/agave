@@ -28,6 +28,9 @@ use {
 pub const MAX_STAKED_CONNECTIONS: usize = 2000;
 pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
+// This will be adjusted and parameterized in follow-on PRs.
+pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
+
 pub struct SkipClientVerification;
 
 impl SkipClientVerification {
@@ -136,7 +139,7 @@ impl NotifyKeyUpdate for EndpointKeyUpdater {
 }
 
 #[derive(Default)]
-pub struct StreamStats {
+pub struct StreamerStats {
     pub(crate) total_connections: AtomicUsize,
     pub(crate) total_new_connections: AtomicUsize,
     pub(crate) total_streams: AtomicUsize,
@@ -178,8 +181,12 @@ pub struct StreamStats {
     pub(crate) connection_setup_error_locally_closed: AtomicUsize,
     pub(crate) connection_removed: AtomicUsize,
     pub(crate) connection_remove_failed: AtomicUsize,
-    pub(crate) connection_throttled_across_all: AtomicUsize,
-    pub(crate) connection_throttled_per_ipaddr: AtomicUsize,
+    // Number of connections to the endpoint exceeding the allowed limit
+    // regardless of the source IP address.
+    pub(crate) connection_rate_limited_across_all: AtomicUsize,
+    // Per IP rate-limiting is triggered each time when there are too many connections
+    // opened from a particular IP address.
+    pub(crate) connection_rate_limited_per_ipaddr: AtomicUsize,
     pub(crate) throttled_streams: AtomicUsize,
     pub(crate) stream_load_ema: AtomicUsize,
     pub(crate) stream_load_ema_overflow: AtomicUsize,
@@ -193,9 +200,10 @@ pub struct StreamStats {
     pub(crate) connection_rate_limiter_length: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
+    pub(crate) quic_endpoints_count: AtomicUsize,
 }
 
-impl StreamStats {
+impl StreamerStats {
     pub fn report(&self, name: &'static str) {
         let process_sampled_packets_us_hist = {
             let mut metrics = self.process_sampled_packets_us_hist.lock().unwrap();
@@ -328,14 +336,14 @@ impl StreamStats {
                 i64
             ),
             (
-                "connection_throttled_across_all",
-                self.connection_throttled_across_all
+                "connection_rate_limited_across_all",
+                self.connection_rate_limited_across_all
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
-                "connection_throttled_per_ipaddr",
-                self.connection_throttled_per_ipaddr
+                "connection_rate_limited_per_ipaddr",
+                self.connection_rate_limited_per_ipaddr
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -531,6 +539,11 @@ impl StreamStats {
                 "total_incoming_connection_attempts",
                 self.total_incoming_connection_attempts
                     .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "quic_endpoints_count",
+                self.quic_endpoints_count.load(Ordering::Relaxed),
                 i64
             ),
         );

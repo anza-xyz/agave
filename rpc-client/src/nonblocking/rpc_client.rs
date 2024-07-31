@@ -32,14 +32,13 @@ use {
             Error as ClientError, ErrorKind as ClientErrorKind, Result as ClientResult,
         },
         config::{RpcAccountInfoConfig, *},
-        filter::{self, RpcFilterType},
         request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
         response::*,
     },
     solana_sdk::{
         account::Account,
         clock::{Epoch, Slot, UnixTimestamp, DEFAULT_MS_PER_SLOT},
-        commitment_config::{CommitmentConfig, CommitmentLevel},
+        commitment_config::CommitmentConfig,
         epoch_info::EpochInfo,
         epoch_schedule::EpochSchedule,
         hash::Hash,
@@ -57,7 +56,7 @@ use {
         str::FromStr,
         time::{Duration, Instant},
     },
-    tokio::{sync::RwLock, time::sleep},
+    tokio::time::sleep,
 };
 
 /// A client of a remote Solana node.
@@ -141,7 +140,6 @@ use {
 pub struct RpcClient {
     sender: Box<dyn RpcSender + Send + Sync + 'static>,
     config: RpcClientConfig,
-    node_version: RwLock<Option<semver::Version>>,
 }
 
 impl RpcClient {
@@ -157,7 +155,6 @@ impl RpcClient {
     ) -> Self {
         Self {
             sender: Box::new(sender),
-            node_version: RwLock::new(None),
             config,
         }
     }
@@ -509,28 +506,9 @@ impl RpcClient {
         self.sender.url()
     }
 
-    pub async fn set_node_version(&self, version: semver::Version) -> Result<(), ()> {
-        let mut w_node_version = self.node_version.write().await;
-        *w_node_version = Some(version);
+    #[deprecated(since = "2.0.2", note = "RpcClient::node_version is no longer used")]
+    pub async fn set_node_version(&self, _version: semver::Version) -> Result<(), ()> {
         Ok(())
-    }
-
-    async fn get_node_version(&self) -> Result<semver::Version, RpcError> {
-        let r_node_version = self.node_version.read().await;
-        if let Some(version) = &*r_node_version {
-            Ok(version.clone())
-        } else {
-            drop(r_node_version);
-            let mut w_node_version = self.node_version.write().await;
-            let node_version = self.get_version().await.map_err(|e| {
-                RpcError::RpcRequestError(format!("cluster version query failed: {e}"))
-            })?;
-            let node_version = semver::Version::parse(&node_version.solana_core).map_err(|e| {
-                RpcError::RpcRequestError(format!("failed to parse cluster version: {e}"))
-            })?;
-            *w_node_version = Some(node_version.clone());
-            Ok(node_version)
-        }
     }
 
     /// Get the configured default [commitment level][cl].
@@ -548,37 +526,6 @@ impl RpcClient {
     /// [`RpcClient::confirm_transaction_with_commitment`].
     pub fn commitment(&self) -> CommitmentConfig {
         self.config.commitment_config
-    }
-
-    async fn use_deprecated_commitment(&self) -> Result<bool, RpcError> {
-        Ok(self.get_node_version().await? < semver::Version::new(1, 5, 5))
-    }
-
-    async fn maybe_map_commitment(
-        &self,
-        requested_commitment: CommitmentConfig,
-    ) -> Result<CommitmentConfig, RpcError> {
-        if matches!(
-            requested_commitment.commitment,
-            CommitmentLevel::Finalized | CommitmentLevel::Confirmed | CommitmentLevel::Processed
-        ) && self.use_deprecated_commitment().await?
-        {
-            return Ok(CommitmentConfig::use_deprecated_commitment(
-                requested_commitment,
-            ));
-        }
-        Ok(requested_commitment)
-    }
-
-    #[allow(deprecated)]
-    async fn maybe_map_filters(
-        &self,
-        mut filters: Vec<RpcFilterType>,
-    ) -> Result<Vec<RpcFilterType>, RpcError> {
-        let node_version = self.get_node_version().await?;
-        filter::maybe_map_filters(Some(node_version), &mut filters)
-            .map_err(RpcError::RpcRequestError)?;
-        Ok(filters)
     }
 
     /// Submit a transaction and wait for confirmation.
@@ -822,11 +769,7 @@ impl RpcClient {
         self.send_transaction_with_config(
             transaction,
             RpcSendTransactionConfig {
-                preflight_commitment: Some(
-                    self.maybe_map_commitment(self.commitment())
-                        .await?
-                        .commitment,
-                ),
+                preflight_commitment: Some(self.commitment().commitment),
                 ..RpcSendTransactionConfig::default()
             },
         )
@@ -919,15 +862,10 @@ impl RpcClient {
         transaction: &impl SerializableTransaction,
         config: RpcSendTransactionConfig,
     ) -> ClientResult<Signature> {
-        let encoding = if let Some(encoding) = config.encoding {
-            encoding
-        } else {
-            self.default_cluster_transaction_encoding().await?
-        };
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base64);
         let preflight_commitment = CommitmentConfig {
             commitment: config.preflight_commitment.unwrap_or_default(),
         };
-        let preflight_commitment = self.maybe_map_commitment(preflight_commitment).await?;
         let config = RpcSendTransactionConfig {
             encoding: Some(encoding),
             preflight_commitment: Some(preflight_commitment.commitment),
@@ -1210,16 +1148,6 @@ impl RpcClient {
         }
     }
 
-    async fn default_cluster_transaction_encoding(
-        &self,
-    ) -> Result<UiTransactionEncoding, RpcError> {
-        if self.get_node_version().await? < semver::Version::new(1, 3, 16) {
-            Ok(UiTransactionEncoding::Base58)
-        } else {
-            Ok(UiTransactionEncoding::Base64)
-        }
-    }
-
     /// Simulates sending a transaction.
     ///
     /// If the transaction fails, then the [`err`] field of the returned
@@ -1369,13 +1297,8 @@ impl RpcClient {
         transaction: &impl SerializableTransaction,
         config: RpcSimulateTransactionConfig,
     ) -> RpcResult<RpcSimulateTransactionResult> {
-        let encoding = if let Some(encoding) = config.encoding {
-            encoding
-        } else {
-            self.default_cluster_transaction_encoding().await?
-        };
+        let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base64);
         let commitment = config.commitment.unwrap_or_default();
-        let commitment = self.maybe_map_commitment(commitment).await?;
         let config = RpcSimulateTransactionConfig {
             encoding: Some(encoding),
             commitment: Some(commitment),
@@ -1844,11 +1767,8 @@ impl RpcClient {
         &self,
         commitment_config: CommitmentConfig,
     ) -> ClientResult<Slot> {
-        self.send(
-            RpcRequest::GetSlot,
-            json!([self.maybe_map_commitment(commitment_config).await?]),
-        )
-        .await
+        self.send(RpcRequest::GetSlot, json!([commitment_config]))
+            .await
     }
 
     /// Returns the block height that has reached the configured [commitment level][cl].
@@ -1908,11 +1828,8 @@ impl RpcClient {
         &self,
         commitment_config: CommitmentConfig,
     ) -> ClientResult<u64> {
-        self.send(
-            RpcRequest::GetBlockHeight,
-            json!([self.maybe_map_commitment(commitment_config).await?]),
-        )
-        .await
+        self.send(RpcRequest::GetBlockHeight, json!([commitment_config]))
+            .await
     }
 
     /// Returns the slot leaders for a given slot range.
@@ -2034,103 +1951,6 @@ impl RpcClient {
             .await
     }
 
-    /// Returns epoch activation information for a stake account.
-    ///
-    /// This method uses the configured [commitment level].
-    ///
-    /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
-    ///
-    /// # RPC Reference
-    ///
-    /// This method corresponds directly to the [`getStakeActivation`] RPC method.
-    ///
-    /// [`getStakeActivation`]: https://solana.com/docs/rpc/http/getstakeactivation
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use solana_rpc_client_api::{
-    /// #     client_error::Error,
-    /// #     response::StakeActivationState,
-    /// # };
-    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-    /// # use solana_sdk::{
-    /// #     signer::keypair::Keypair,
-    /// #     signature::Signer,
-    /// #     pubkey::Pubkey,
-    /// #     stake,
-    /// #     stake::state::{Authorized, Lockup},
-    /// #     transaction::Transaction
-    /// # };
-    /// # use std::str::FromStr;
-    /// # futures::executor::block_on(async {
-    /// #     let alice = Keypair::new();
-    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
-    /// // Find some vote account to delegate to
-    /// let vote_accounts = rpc_client.get_vote_accounts().await?;
-    /// let vote_account = vote_accounts.current.get(0).unwrap_or_else(|| &vote_accounts.delinquent[0]);
-    /// let vote_account_pubkey = &vote_account.vote_pubkey;
-    /// let vote_account_pubkey = Pubkey::from_str(vote_account_pubkey).expect("pubkey");
-    ///
-    /// // Create a stake account
-    /// let stake_account = Keypair::new();
-    /// let stake_account_pubkey = stake_account.pubkey();
-    ///
-    /// // Build the instructions to create new stake account,
-    /// // funded by alice, and delegate to a validator's vote account.
-    /// let instrs = stake::instruction::create_account_and_delegate_stake(
-    ///     &alice.pubkey(),
-    ///     &stake_account_pubkey,
-    ///     &vote_account_pubkey,
-    ///     &Authorized::auto(&stake_account_pubkey),
-    ///     &Lockup::default(),
-    ///     1_000_000,
-    /// );
-    ///
-    /// let latest_blockhash = rpc_client.get_latest_blockhash().await?;
-    /// let tx = Transaction::new_signed_with_payer(
-    ///     &instrs,
-    ///     Some(&alice.pubkey()),
-    ///     &[&alice, &stake_account],
-    ///     latest_blockhash,
-    /// );
-    ///
-    /// rpc_client.send_and_confirm_transaction(&tx).await?;
-    ///
-    /// let epoch_info = rpc_client.get_epoch_info().await?;
-    /// let activation = rpc_client.get_stake_activation(
-    ///     stake_account_pubkey,
-    ///     Some(epoch_info.epoch),
-    /// ).await?;
-    ///
-    /// assert_eq!(activation.state, StakeActivationState::Activating);
-    /// #     Ok::<(), Error>(())
-    /// # })?;
-    /// # Ok::<(), Error>(())
-    /// ```
-    #[deprecated(
-        since = "1.18.18",
-        note = "Do not use; getStakeActivation is deprecated on the JSON-RPC server"
-    )]
-    pub async fn get_stake_activation(
-        &self,
-        stake_account: Pubkey,
-        epoch: Option<Epoch>,
-    ) -> ClientResult<RpcStakeActivation> {
-        self.send(
-            RpcRequest::GetStakeActivation,
-            json!([
-                stake_account.to_string(),
-                RpcEpochConfig {
-                    epoch,
-                    commitment: Some(self.commitment()),
-                    min_context_slot: None,
-                }
-            ]),
-        )
-        .await
-    }
-
     /// Returns information about the current supply.
     ///
     /// This method uses the configured [commitment level][cl].
@@ -2187,11 +2007,8 @@ impl RpcClient {
         &self,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<RpcSupply> {
-        self.send(
-            RpcRequest::GetSupply,
-            json!([self.maybe_map_commitment(commitment_config).await?]),
-        )
-        .await
+        self.send(RpcRequest::GetSupply, json!([commitment_config]))
+            .await
     }
 
     /// Returns the 20 largest accounts, by lamport balance.
@@ -2233,7 +2050,6 @@ impl RpcClient {
         config: RpcLargestAccountsConfig,
     ) -> RpcResult<Vec<RpcAccountBalance>> {
         let commitment = config.commitment.unwrap_or_default();
-        let commitment = self.maybe_map_commitment(commitment).await?;
         let config = RpcLargestAccountsConfig {
             commitment: Some(commitment),
             ..config
@@ -2303,7 +2119,7 @@ impl RpcClient {
         commitment_config: CommitmentConfig,
     ) -> ClientResult<RpcVoteAccountStatus> {
         self.get_vote_accounts_with_config(RpcGetVoteAccountsConfig {
-            commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+            commitment: Some(commitment_config),
             ..RpcGetVoteAccountsConfig::default()
         })
         .await
@@ -2644,16 +2460,9 @@ impl RpcClient {
         commitment_config: CommitmentConfig,
     ) -> ClientResult<Vec<Slot>> {
         let json = if end_slot.is_some() {
-            json!([
-                start_slot,
-                end_slot,
-                self.maybe_map_commitment(commitment_config).await?
-            ])
+            json!([start_slot, end_slot, commitment_config])
         } else {
-            json!([
-                start_slot,
-                self.maybe_map_commitment(commitment_config).await?
-            ])
+            json!([start_slot, commitment_config])
         };
         self.send(RpcRequest::GetBlocks, json).await
     }
@@ -2748,11 +2557,7 @@ impl RpcClient {
     ) -> ClientResult<Vec<Slot>> {
         self.send(
             RpcRequest::GetBlocksWithLimit,
-            json!([
-                start_slot,
-                limit,
-                self.maybe_map_commitment(commitment_config).await?
-            ]),
+            json!([start_slot, limit, commitment_config]),
         )
         .await
     }
@@ -3093,11 +2898,8 @@ impl RpcClient {
         &self,
         commitment_config: CommitmentConfig,
     ) -> ClientResult<EpochInfo> {
-        self.send(
-            RpcRequest::GetEpochInfo,
-            json!([self.maybe_map_commitment(commitment_config).await?]),
-        )
-        .await
+        self.send(RpcRequest::GetEpochInfo, json!([commitment_config]))
+            .await
     }
 
     /// Returns the leader schedule for an epoch.
@@ -3170,7 +2972,7 @@ impl RpcClient {
         self.get_leader_schedule_with_config(
             slot,
             RpcLeaderScheduleConfig {
-                commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+                commitment: Some(commitment_config),
                 ..RpcLeaderScheduleConfig::default()
             },
         )
@@ -3616,7 +3418,7 @@ impl RpcClient {
     ) -> RpcResult<Option<Account>> {
         let config = RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::Base64Zstd),
-            commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+            commitment: Some(commitment_config),
             data_slice: None,
             min_context_slot: None,
         };
@@ -3843,7 +3645,7 @@ impl RpcClient {
             pubkeys,
             RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64Zstd),
-                commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+                commitment: Some(commitment_config),
                 data_slice: None,
                 min_context_slot: None,
             },
@@ -4072,10 +3874,7 @@ impl RpcClient {
     ) -> RpcResult<u64> {
         self.send(
             RpcRequest::GetBalance,
-            json!([
-                pubkey.to_string(),
-                self.maybe_map_commitment(commitment_config).await?
-            ]),
+            json!([pubkey.to_string(), commitment_config]),
         )
         .await
     }
@@ -4195,11 +3994,7 @@ impl RpcClient {
             .account_config
             .commitment
             .unwrap_or_else(|| self.commitment());
-        let commitment = self.maybe_map_commitment(commitment).await?;
         config.account_config.commitment = Some(commitment);
-        if let Some(filters) = config.filters {
-            config.filters = Some(self.maybe_map_filters(filters).await?);
-        }
 
         let accounts = self
             .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
@@ -4264,7 +4059,7 @@ impl RpcClient {
         Ok(self
             .send::<Response<u64>>(
                 RpcRequest::GetStakeMinimumDelegation,
-                json!([self.maybe_map_commitment(commitment_config).await?]),
+                json!([commitment_config]),
             )
             .await?
             .value)
@@ -4280,11 +4075,8 @@ impl RpcClient {
         &self,
         commitment_config: CommitmentConfig,
     ) -> ClientResult<u64> {
-        self.send(
-            RpcRequest::GetTransactionCount,
-            json!([self.maybe_map_commitment(commitment_config).await?]),
-        )
-        .await
+        self.send(RpcRequest::GetTransactionCount, json!([commitment_config]))
+            .await
     }
 
     pub async fn get_first_available_block(&self) -> ClientResult<Slot> {
@@ -4323,7 +4115,7 @@ impl RpcClient {
     ) -> RpcResult<Option<UiTokenAccount>> {
         let config = RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::JsonParsed),
-            commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+            commitment: Some(commitment_config),
             data_slice: None,
             min_context_slot: None,
         };
@@ -4386,10 +4178,7 @@ impl RpcClient {
     ) -> RpcResult<UiTokenAmount> {
         self.send(
             RpcRequest::GetTokenAccountBalance,
-            json!([
-                pubkey.to_string(),
-                self.maybe_map_commitment(commitment_config).await?
-            ]),
+            json!([pubkey.to_string(), commitment_config]),
         )
         .await
     }
@@ -4424,7 +4213,7 @@ impl RpcClient {
 
         let config = RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::JsonParsed),
-            commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+            commitment: Some(commitment_config),
             data_slice: None,
             min_context_slot: None,
         };
@@ -4466,7 +4255,7 @@ impl RpcClient {
 
         let config = RpcAccountInfoConfig {
             encoding: Some(UiAccountEncoding::JsonParsed),
-            commitment: Some(self.maybe_map_commitment(commitment_config).await?),
+            commitment: Some(commitment_config),
             data_slice: None,
             min_context_slot: None,
         };
@@ -4495,10 +4284,7 @@ impl RpcClient {
     ) -> RpcResult<Vec<RpcTokenAccountBalance>> {
         self.send(
             RpcRequest::GetTokenLargestAccounts,
-            json!([
-                mint.to_string(),
-                self.maybe_map_commitment(commitment_config).await?
-            ]),
+            json!([mint.to_string(), commitment_config]),
         )
         .await
     }
@@ -4517,10 +4303,7 @@ impl RpcClient {
     ) -> RpcResult<UiTokenAmount> {
         self.send(
             RpcRequest::GetTokenSupply,
-            json!([
-                mint.to_string(),
-                self.maybe_map_commitment(commitment_config).await?
-            ]),
+            json!([mint.to_string(), commitment_config]),
         )
         .await
     }
@@ -4561,7 +4344,6 @@ impl RpcClient {
         config: RpcRequestAirdropConfig,
     ) -> ClientResult<Signature> {
         let commitment = config.commitment.unwrap_or_default();
-        let commitment = self.maybe_map_commitment(commitment).await?;
         let config = RpcRequestAirdropConfig {
             commitment: Some(commitment),
             ..config
@@ -4784,10 +4566,7 @@ impl RpcClient {
             blockhash,
             last_valid_block_height,
         } = self
-            .send::<Response<RpcBlockhash>>(
-                RpcRequest::GetLatestBlockhash,
-                json!([self.maybe_map_commitment(commitment).await?]),
-            )
+            .send::<Response<RpcBlockhash>>(RpcRequest::GetLatestBlockhash, json!([commitment]))
             .await?
             .value;
         let blockhash = blockhash.parse().map_err(|_| {

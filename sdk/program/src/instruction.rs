@@ -18,11 +18,8 @@ use crate::wasm_bindgen;
 #[cfg(feature = "borsh")]
 use borsh::BorshSerialize;
 use {
-    crate::{pubkey::Pubkey, short_vec},
-    bincode::serialize,
-    serde::Serialize,
-    solana_sanitize::Sanitize,
-    thiserror::Error,
+    crate::pubkey::Pubkey, bincode::serialize, serde::Serialize, solana_sanitize::Sanitize,
+    solana_short_vec as short_vec, thiserror::Error,
 };
 
 /// Reasons the runtime might have rejected an instruction.
@@ -517,14 +514,6 @@ impl Instruction {
             accounts,
             data: data.to_vec(),
         }
-    }
-
-    #[deprecated(
-        since = "1.6.0",
-        note = "Please use another Instruction constructor instead, such as `Instruction::new_with_borsh`"
-    )]
-    pub fn new<T: Serialize>(program_id: Pubkey, data: &T, accounts: Vec<AccountMeta>) -> Self {
-        Self::new_with_bincode(program_id, data, accounts)
     }
 }
 

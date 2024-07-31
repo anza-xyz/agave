@@ -9,7 +9,6 @@ use {
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
-    solana_client::rpc_request::MAX_MULTIPLE_ACCOUNTS,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
@@ -32,6 +31,7 @@ use {
     solana_net_utils::PortRange,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
+    solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
         bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig, snapshot_config::SnapshotConfig,
@@ -77,14 +77,6 @@ pub struct AccountInfo<'a> {
     pub filename: &'a str,
 }
 
-#[deprecated(since = "1.16.0", note = "Please use `UpgradeableProgramInfo` instead")]
-#[derive(Clone)]
-pub struct ProgramInfo {
-    pub program_id: Pubkey,
-    pub loader: Pubkey,
-    pub program_path: PathBuf,
-}
-
 #[derive(Clone)]
 pub struct UpgradeableProgramInfo {
     pub program_id: Pubkey,
@@ -126,8 +118,6 @@ pub struct TestValidatorGenesis {
     rpc_ports: Option<(u16, u16)>, // (JsonRpc, JsonRpcPubSub), None == random ports
     warp_slot: Option<Slot>,
     accounts: HashMap<Pubkey, AccountSharedData>,
-    #[allow(deprecated)]
-    programs: Vec<ProgramInfo>,
     upgradeable_programs: Vec<UpgradeableProgramInfo>,
     ticks_per_slot: Option<u64>,
     epoch_schedule: Option<EpochSchedule>,
@@ -160,8 +150,6 @@ impl Default for TestValidatorGenesis {
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
             accounts: HashMap::<Pubkey, AccountSharedData>::default(),
-            #[allow(deprecated)]
-            programs: Vec::<ProgramInfo>::default(),
             upgradeable_programs: Vec::<UpgradeableProgramInfo>::default(),
             ticks_per_slot: Option::<u64>::default(),
             epoch_schedule: Option::<EpochSchedule>::default(),
@@ -317,11 +305,6 @@ impl TestValidatorGenesis {
     pub fn compute_unit_limit(&mut self, compute_unit_limit: u64) -> &mut Self {
         self.compute_unit_limit = Some(compute_unit_limit);
         self
-    }
-
-    #[deprecated(note = "Please use `compute_unit_limit` instead")]
-    pub fn max_compute_units(&mut self, max_compute_units: u64) -> &mut Self {
-        self.compute_unit_limit(max_compute_units)
     }
 
     /// Add an account to the test environment
@@ -581,19 +564,6 @@ impl TestValidatorGenesis {
         self
     }
 
-    /// Add a list of programs to the test environment.
-    #[deprecated(
-        since = "1.16.0",
-        note = "Please use `add_upgradeable_programs_with_path()` instead"
-    )]
-    #[allow(deprecated)]
-    pub fn add_programs_with_path(&mut self, programs: &[ProgramInfo]) -> &mut Self {
-        for program in programs {
-            self.programs.push(program.clone());
-        }
-        self
-    }
-
     /// Add a list of upgradeable programs to the test environment.
     pub fn add_upgradeable_programs_with_path(
         &mut self,
@@ -794,20 +764,6 @@ impl TestValidator {
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_test::programs::spl_programs(&config.rent) {
             accounts.entry(address).or_insert(account);
-        }
-        #[allow(deprecated)]
-        for program in &config.programs {
-            let data = solana_program_test::read_file(&program.program_path);
-            accounts.insert(
-                program.program_id,
-                AccountSharedData::from(Account {
-                    lamports: Rent::default().minimum_balance(data.len()).max(1),
-                    data,
-                    owner: program.loader,
-                    executable: true,
-                    rent_epoch: 0,
-                }),
-            );
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);

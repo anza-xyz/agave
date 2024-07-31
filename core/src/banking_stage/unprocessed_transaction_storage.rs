@@ -17,7 +17,7 @@ use {
     },
     itertools::Itertools,
     min_max_heap::MinMaxHeap,
-    solana_measure::{measure, measure_us},
+    solana_measure::measure_us,
     solana_runtime::bank::Bank,
     solana_sdk::{
         clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, feature_set::FeatureSet, hash::Hash,
@@ -636,35 +636,24 @@ impl ThreadLocalUnprocessedPackets {
                         if accepting_packets {
                             let (
                                 (sanitized_transactions, transaction_to_packet_indexes),
-                                packet_conversion_time,
-                            ): (
-                                (Vec<SanitizedTransaction>, Vec<usize>),
-                                _,
-                            ) = measure!(
-                                self.sanitize_unforwarded_packets(
-                                    &packets_to_forward,
-                                    &bank,
-                                    &mut total_dropped_packets
-                                ),
-                                "sanitize_packet",
-                            );
+                                packet_conversion_us,
+                            ) = measure_us!(self.sanitize_unforwarded_packets(
+                                &packets_to_forward,
+                                &bank,
+                                &mut total_dropped_packets
+                            ));
                             saturating_add_assign!(
                                 total_packet_conversion_us,
-                                packet_conversion_time.as_us()
+                                packet_conversion_us
                             );
 
-                            let (forwardable_transaction_indexes, filter_packets_time) = measure!(
-                                Self::filter_invalid_transactions(
+                            let (forwardable_transaction_indexes, filter_packets_us) =
+                                measure_us!(Self::filter_invalid_transactions(
                                     &sanitized_transactions,
                                     &bank,
                                     &mut total_dropped_packets
-                                ),
-                                "filter_packets",
-                            );
-                            saturating_add_assign!(
-                                total_filter_packets_us,
-                                filter_packets_time.as_us()
-                            );
+                                ));
+                            saturating_add_assign!(total_filter_packets_us, filter_packets_us);
 
                             for forwardable_transaction_index in &forwardable_transaction_indexes {
                                 saturating_add_assign!(total_forwardable_packets, 1);
@@ -1069,7 +1058,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10);
-        let current_bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (current_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let simple_transactions: Vec<Transaction> = (0..256)
             .map(|_id| {

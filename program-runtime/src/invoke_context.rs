@@ -1,16 +1,14 @@
 use {
     crate::{
-        ic_msg,
         loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
             ProgramRuntimeEnvironments,
         },
-        log_collector::LogCollector,
         stable_log,
         sysvar_cache::SysvarCache,
-        timings::{ExecuteDetailsTimings, ExecuteTimings},
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_rbpf::{
         ebpf::MM_HEAP_START,
@@ -36,6 +34,7 @@ use {
             IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
         },
     },
+    solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
@@ -476,6 +475,7 @@ impl<'a> InvokeContext<'a> {
         let process_executable_chain_time = Measure::start("process_executable_chain_time");
 
         let builtin_id = {
+            debug_assert!(instruction_context.get_number_of_program_accounts() <= 1);
             let borrowed_root_account = instruction_context
                 .try_borrow_program_account(self.transaction_context, 0)
                 .map_err(|_| InstructionError::UnsupportedProgramId)?;
@@ -677,6 +677,7 @@ macro_rules! with_mock_invoke_context {
     ) => {
         use {
             solana_compute_budget::compute_budget::ComputeBudget,
+            solana_log_collector::LogCollector,
             solana_sdk::{
                 account::ReadableAccount, feature_set::FeatureSet, hash::Hash, sysvar::rent::Rent,
                 transaction_context::TransactionContext,
@@ -685,7 +686,6 @@ macro_rules! with_mock_invoke_context {
             $crate::{
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
-                log_collector::LogCollector,
                 sysvar_cache::SysvarCache,
             },
         };
@@ -768,9 +768,11 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
             is_writable: account_meta.is_writable,
         });
     }
-    program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
-    let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
-    transaction_accounts.push((*loader_id, processor_account));
+    if program_indices.is_empty() {
+        program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
+        let processor_account = AccountSharedData::new(0, 0, &native_loader::id());
+        transaction_accounts.push((*loader_id, processor_account));
+    }
     let pop_epoch_schedule_account = if !transaction_accounts
         .iter()
         .any(|(key, _)| *key == sysvar::epoch_schedule::id())

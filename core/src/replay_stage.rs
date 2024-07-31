@@ -50,7 +50,6 @@ use {
     },
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
-    solana_program_runtime::timings::ExecuteTimings,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
@@ -76,7 +75,8 @@ use {
         timing::timestamp,
         transaction::Transaction,
     },
-    solana_vote_program::vote_state::VoteTransaction,
+    solana_timings::ExecuteTimings,
+    solana_vote_program::vote_state::{VoteState, VoteTransaction},
     std::{
         collections::{HashMap, HashSet},
         num::NonZeroUsize,
@@ -1390,15 +1390,21 @@ impl ReplayStage {
     ) -> (ProgressMap, HeaviestSubtreeForkChoice) {
         let (root_bank, frozen_banks, duplicate_slot_hashes) = {
             let bank_forks = bank_forks.read().unwrap();
+            let root_bank = bank_forks.root_bank();
             let duplicate_slots = blockstore
-                .duplicate_slots_iterator(bank_forks.root_bank().slot())
+                // It is important that the root bank is not marked as duplicate on initialization.
+                // Although this bank could contain a duplicate proof, the fact that it was rooted
+                // either during a previous run or artificially means that we should ignore any
+                // duplicate proofs for the root slot, thus we start consuming duplicate proofs
+                // from the root slot + 1
+                .duplicate_slots_iterator(root_bank.slot().saturating_add(1))
                 .unwrap();
             let duplicate_slot_hashes = duplicate_slots.filter_map(|slot| {
                 let bank = bank_forks.get(slot)?;
                 Some((slot, bank.hash()))
             });
             (
-                bank_forks.root_bank(),
+                root_bank,
                 bank_forks.frozen_banks().values().cloned().collect(),
                 duplicate_slot_hashes.collect::<Vec<(Slot, Hash)>>(),
             )
@@ -2406,10 +2412,28 @@ impl ReplayStage {
         }
 
         let mut update_commitment_cache_time = Measure::start("update_commitment_cache");
+        // Send (voted) bank along with the updated vote account state for this node, the vote
+        // state is always newer than the one in the bank by definition, because banks can't
+        // contain vote transactions which are voting on its own slot.
+        //
+        // It should be acceptable to aggressively use the vote for our own _local view_ of
+        // commitment aggregation, although it's not guaranteed that the new vote transaction is
+        // observed by other nodes at this point.
+        //
+        // The justification stems from the assumption of the sensible voting behavior from the
+        // consensus subsystem. That's because it means there would be a slashing possibility
+        // otherwise.
+        //
+        // This behavior isn't significant normally for mainnet-beta, because staked nodes aren't
+        // servicing RPC requests. However, this eliminates artificial 1-slot delay of the
+        // `finalized` confirmation if a node is materially staked and servicing RPC requests at
+        // the same time for development purposes.
+        let node_vote_state = (*vote_account_pubkey, tower.vote_state.clone());
         Self::update_commitment_cache(
             bank.clone(),
             bank_forks.read().unwrap().root(),
             progress.get_fork_stats(bank.slot()).unwrap().total_stake,
+            node_vote_state,
             lockouts_sender,
         );
         update_commitment_cache_time.stop();
@@ -2699,11 +2723,15 @@ impl ReplayStage {
         bank: Arc<Bank>,
         root: Slot,
         total_stake: Stake,
+        node_vote_state: (Pubkey, VoteState),
         lockouts_sender: &Sender<CommitmentAggregationData>,
     ) {
-        if let Err(e) =
-            lockouts_sender.send(CommitmentAggregationData::new(bank, root, total_stake))
-        {
+        if let Err(e) = lockouts_sender.send(CommitmentAggregationData::new(
+            bank,
+            root,
+            total_stake,
+            node_vote_state,
+        )) {
             trace!("lockouts_sender failed: {:?}", e);
         }
     }
@@ -3048,37 +3076,22 @@ impl ReplayStage {
                     }
                 }
 
-                if bank.collector_id() != my_pubkey {
-                    // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK shreds in the last FEC set,
-                    // mark it dead. No reason to perform this check on our leader block.
-                    if !blockstore
-                        .is_last_fec_set_full(bank.slot())
-                        .inspect_err(|e| {
-                            warn!(
-                                "Unable to determine if last fec set is full for slot {} {},
-                                marking as dead: {e:?}",
-                                bank.slot(),
-                                bank.hash()
-                            )
-                        })
-                        .unwrap_or(false)
-                    {
-                        // Update metric regardless of feature flag
-                        datapoint_warn!(
-                            "incomplete_final_fec_set",
-                            ("slot", bank_slot, i64),
-                            ("hash", bank.hash().to_string(), String)
-                        );
-                        if bank
-                            .feature_set
-                            .is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
-                        {
+                let _block_id = if bank.collector_id() != my_pubkey {
+                    // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
+                    // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
+                    match blockstore.check_last_fec_set_and_get_block_id(
+                        bank.slot(),
+                        bank.hash(),
+                        &bank.feature_set,
+                    ) {
+                        Ok(block_id) => block_id,
+                        Err(result_err) => {
                             let root = bank_forks.read().unwrap().root();
                             Self::mark_dead_slot(
                                 blockstore,
                                 bank,
                                 root,
-                                &BlockstoreProcessorError::IncompleteFinalFecSet,
+                                &result_err,
                                 rpc_subscriptions,
                                 duplicate_slots_tracker,
                                 duplicate_confirmed_slots,
@@ -3092,7 +3105,9 @@ impl ReplayStage {
                             continue;
                         }
                     }
-                }
+                } else {
+                    None
+                };
 
                 let r_replay_stats = replay_stats.read().unwrap();
                 let replay_progress = bank_progress.replay_progress.clone();
@@ -3208,7 +3223,7 @@ impl ReplayStage {
                         &parent_blockhash.to_string(),
                         bank.slot(),
                         &bank.last_blockhash().to_string(),
-                        &bank.rewards,
+                        &bank.get_rewards_and_num_partitions(),
                         Some(bank.clock().unix_timestamp),
                         Some(bank.block_height()),
                         bank.executed_transaction_count(),
@@ -4499,6 +4514,9 @@ pub(crate) mod tests {
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
         },
+        blockstore_processor::{
+            confirm_full_slot, fill_blockstore_slot_with_ticks, process_bank_0, ProcessOptions,
+        },
         crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_entry::entry::{self, Entry},
@@ -5281,13 +5299,14 @@ pub(crate) mod tests {
 
     #[test]
     fn test_replay_commitment_cache() {
-        fn leader_vote(vote_slot: Slot, bank: &Bank, pubkey: &Pubkey) {
+        fn leader_vote(vote_slot: Slot, bank: &Bank, pubkey: &Pubkey) -> (Pubkey, VoteState) {
             let mut leader_vote_account = bank.get_account(pubkey).unwrap();
             let mut vote_state = vote_state::from(&leader_vote_account).unwrap();
             vote_state::process_slot_vote_unchecked(&mut vote_state, vote_slot);
-            let versioned = VoteStateVersions::new_current(vote_state);
+            let versioned = VoteStateVersions::new_current(vote_state.clone());
             vote_state::to(&versioned, &mut leader_vote_account).unwrap();
             bank.store_account(pubkey, &leader_vote_account);
+            (*pubkey, vote_state)
         }
 
         let leader_pubkey = solana_sdk::pubkey::new_rand();
@@ -5353,11 +5372,12 @@ pub(crate) mod tests {
             }
 
             let arc_bank = bank_forks.read().unwrap().get(i).unwrap();
-            leader_vote(i - 1, &arc_bank, &leader_voting_pubkey);
+            let node_vote_state = leader_vote(i - 1, &arc_bank, &leader_voting_pubkey);
             ReplayStage::update_commitment_cache(
                 arc_bank.clone(),
                 0,
                 leader_lamports,
+                node_vote_state,
                 &lockouts_sender,
             );
             arc_bank.freeze();
@@ -9007,5 +9027,137 @@ pub(crate) mod tests {
                 .unwrap();
         assert_eq!(tower.vote_state, expected_tower.vote_state);
         assert_eq!(tower.node_pubkey, expected_tower.node_pubkey);
+    }
+
+    #[test]
+    fn test_initialize_progress_and_fork_choice_with_duplicates() {
+        solana_logger::setup();
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(123);
+
+        let ticks_per_slot = 1;
+        genesis_config.ticks_per_slot = ticks_per_slot;
+        let (ledger_path, blockhash) =
+            solana_ledger::create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        /*
+          Bank forks with:
+               slot 0
+                 |
+               slot 1 -> Duplicate before restart, the restart slot
+                 |
+               slot 2
+                 |
+               slot 3 -> Duplicate before restart, artificially rooted
+                 |
+               slot 4 -> Duplicate before restart, artificially rooted
+                 |
+               slot 5 -> Duplicate before restart
+                 |
+               slot 6
+        */
+
+        let mut last_hash = blockhash;
+        for i in 0..6 {
+            last_hash =
+                fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, i + 1, i, last_hash);
+        }
+        // Artifically root 3 and 4
+        blockstore.set_roots([3, 4].iter()).unwrap();
+
+        // Set up bank0
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+        let recyclers = VerifyRecyclers::default();
+        let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .thread_name(|i| format!("solReplayTx{i:02}"))
+            .build()
+            .expect("new rayon threadpool");
+
+        process_bank_0(
+            &bank0,
+            &blockstore,
+            &replay_tx_thread_pool,
+            &ProcessOptions::default(),
+            &recyclers,
+            None,
+            None,
+        );
+
+        // Mark block 1, 3, 4, 5 as duplicate
+        blockstore.store_duplicate_slot(1, vec![], vec![]).unwrap();
+        blockstore.store_duplicate_slot(3, vec![], vec![]).unwrap();
+        blockstore.store_duplicate_slot(4, vec![], vec![]).unwrap();
+        blockstore.store_duplicate_slot(5, vec![], vec![]).unwrap();
+
+        let bank1 = bank_forks.write().unwrap().insert(Bank::new_from_parent(
+            bank0.clone_without_scheduler(),
+            &Pubkey::default(),
+            1,
+        ));
+        confirm_full_slot(
+            &blockstore,
+            &bank1,
+            &replay_tx_thread_pool,
+            &ProcessOptions::default(),
+            &recyclers,
+            &mut ConfirmationProgress::new(bank0.last_blockhash()),
+            None,
+            None,
+            None,
+            &mut ExecuteTimings::default(),
+        )
+        .unwrap();
+
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(
+                1,
+                &solana_runtime::accounts_background_service::AbsRequestSender::default(),
+                None,
+            )
+            .unwrap();
+
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank1);
+
+        // process_blockstore_from_root() from slot 1 onwards
+        blockstore_processor::process_blockstore_from_root(
+            &blockstore,
+            &bank_forks,
+            &leader_schedule_cache,
+            &ProcessOptions::default(),
+            None,
+            None,
+            None,
+            &AbsRequestSender::default(),
+        )
+        .unwrap();
+
+        assert_eq!(bank_forks.read().unwrap().root(), 4);
+
+        // Verify that fork choice can be initialized and that the root is not marked duplicate
+        let (_progress, fork_choice) =
+            ReplayStage::initialize_progress_and_fork_choice_with_locked_bank_forks(
+                &bank_forks,
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &blockstore,
+            );
+
+        let bank_forks = bank_forks.read().unwrap();
+        // 4 (the artificial root) is the tree root and no longer duplicate
+        assert_eq!(fork_choice.tree_root().0, 4);
+        assert!(fork_choice
+            .is_candidate(&(4, bank_forks.bank_hash(4).unwrap()))
+            .unwrap());
+
+        // 5 is still considered duplicate, so it is not a valid fork choice candidate
+        assert!(!fork_choice
+            .is_candidate(&(5, bank_forks.bank_hash(5).unwrap()))
+            .unwrap());
     }
 }

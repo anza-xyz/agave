@@ -8,6 +8,7 @@ use {
     solana_send_transaction_service::tpu_info::TpuInfo,
     std::{
         collections::HashMap,
+        iter::once,
         net::SocketAddr,
         sync::{Arc, RwLock},
     },
@@ -36,6 +37,7 @@ impl TpuInfo for ClusterTpuInfo {
             .cluster_info
             .tpu_peers()
             .into_iter()
+            .chain(once(self.cluster_info.my_contact_info()))
             .filter_map(|node| {
                 Some((
                     *node.pubkey(),
@@ -75,8 +77,8 @@ impl TpuInfo for ClusterTpuInfo {
     ) -> Vec<(&SocketAddr, Slot)> {
         let recorder = self.poh_recorder.read().unwrap();
         let leaders: Vec<_> = (0..max_count)
+            .rev()
             .filter_map(|future_slot| {
-                let future_slot = max_count.wrapping_sub(future_slot);
                 NUM_CONSECUTIVE_LEADER_SLOTS
                     .checked_mul(future_slot)
                     .and_then(|slots_in_the_future| {
@@ -126,6 +128,74 @@ mod test {
         solana_streamer::socket::SocketAddrSpace,
         std::{net::Ipv4Addr, sync::atomic::AtomicBool},
     };
+
+    #[test]
+    fn test_refresh_recent_peers() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let validator_vote_keypairs0 = ValidatorVoteKeypairs::new_rand();
+        let validator_vote_keypairs1 = ValidatorVoteKeypairs::new_rand();
+        let validator_vote_keypairs2 = ValidatorVoteKeypairs::new_rand();
+        let mut expected_validator_pubkeys = vec![
+            validator_vote_keypairs0.node_keypair.pubkey(),
+            validator_vote_keypairs1.node_keypair.pubkey(),
+            validator_vote_keypairs2.node_keypair.pubkey(),
+        ];
+        expected_validator_pubkeys.sort();
+        let validator_keypairs = vec![
+            &validator_vote_keypairs0,
+            &validator_vote_keypairs1,
+            &validator_vote_keypairs2,
+        ];
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![10_000; 3],
+        );
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let (poh_recorder, _entry_receiver, _record_receiver) = PohRecorder::new(
+            0,
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((2, 2)),
+            bank.ticks_per_slot(),
+            Arc::new(blockstore),
+            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+            &PohConfig::default(),
+            Arc::new(AtomicBool::default()),
+        );
+
+        let validator0_contact_info = ContactInfo::new_localhost(
+            &validator_vote_keypairs0.node_keypair.pubkey(),
+            timestamp(),
+        );
+        let validator1_contact_info = ContactInfo::new_localhost(
+            &validator_vote_keypairs1.node_keypair.pubkey(),
+            timestamp(),
+        );
+        let validator2_contact_info = ContactInfo::new_localhost(
+            &validator_vote_keypairs2.node_keypair.pubkey(),
+            timestamp(),
+        );
+        let cluster_info = Arc::new(ClusterInfo::new(
+            validator0_contact_info,
+            Arc::new(validator_vote_keypairs0.node_keypair),
+            SocketAddrSpace::Unspecified,
+        ));
+        cluster_info.insert_info(validator1_contact_info);
+        cluster_info.insert_info(validator2_contact_info);
+
+        let mut leader_info =
+            ClusterTpuInfo::new(cluster_info, Arc::new(RwLock::new(poh_recorder)));
+        leader_info.refresh_recent_peers();
+        let mut refreshed_recent_peers =
+            leader_info.recent_peers.keys().copied().collect::<Vec<_>>();
+        refreshed_recent_peers.sort();
+
+        assert_eq!(refreshed_recent_peers, expected_validator_pubkeys);
+    }
 
     #[test]
     fn test_get_leader_tpus() {
@@ -208,6 +278,10 @@ mod test {
             leader_info.get_leader_tpus(1, Protocol::UDP),
             vec![&recent_peers.get(&first_leader).unwrap().0]
         );
+        assert_eq!(
+            leader_info.get_leader_tpus_with_slots(1, Protocol::UDP),
+            vec![(&recent_peers.get(&first_leader).unwrap().0, 0)]
+        );
 
         let second_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
             slot + NUM_CONSECUTIVE_LEADER_SLOTS,
@@ -222,6 +296,13 @@ mod test {
         assert_eq!(
             leader_info.get_leader_tpus(2, Protocol::UDP),
             expected_leader_sockets
+        );
+        assert_eq!(
+            leader_info.get_leader_tpus_with_slots(2, Protocol::UDP),
+            expected_leader_sockets
+                .into_iter()
+                .zip([0, 4])
+                .collect::<Vec<_>>()
         );
 
         let third_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
@@ -239,9 +320,24 @@ mod test {
             leader_info.get_leader_tpus(3, Protocol::UDP),
             expected_leader_sockets
         );
+        // Only 2 leader tpus are returned always... so [0, 4, 8] isn't right here.
+        // This assumption is safe. After all, leader schedule generation must be deterministic.
+        assert_eq!(
+            leader_info.get_leader_tpus_with_slots(3, Protocol::UDP),
+            expected_leader_sockets
+                .into_iter()
+                .zip([0, 4])
+                .collect::<Vec<_>>()
+        );
 
         for x in 4..8 {
             assert!(leader_info.get_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len());
+            assert!(
+                leader_info
+                    .get_leader_tpus_with_slots(x, Protocol::UDP)
+                    .len()
+                    <= recent_peers.len()
+            );
         }
     }
 }

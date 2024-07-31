@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         block_error::BlockError,
@@ -25,12 +27,8 @@ use {
     solana_entry::entry::{
         self, create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers,
     },
-    solana_measure::{measure, measure::Measure},
+    solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
-    solana_program_runtime::{
-        report_execute_timings,
-        timings::{ExecuteTimingType, ExecuteTimings},
-    },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -47,6 +45,7 @@ use {
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
         feature_set,
+        fee::FeeDetails,
         genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
@@ -66,6 +65,7 @@ use {
             TransactionLoadedAccountsStats, TransactionResults,
         },
     },
+    solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
@@ -188,24 +188,23 @@ pub fn execute_batch(
         ..
     } = tx_results;
 
-    let (check_block_cost_limits_result, check_block_cost_limits_time): (Result<()>, Measure) =
-        measure!(if bank
-            .feature_set
-            .is_active(&feature_set::apply_cost_tracker_during_replay::id())
-        {
-            check_block_cost_limits(
-                bank,
-                &loaded_accounts_stats,
-                &execution_results,
-                batch.sanitized_transactions(),
-            )
-        } else {
-            Ok(())
-        });
+    let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
+        .feature_set
+        .is_active(&feature_set::apply_cost_tracker_during_replay::id())
+    {
+        check_block_cost_limits(
+            bank,
+            &loaded_accounts_stats,
+            &execution_results,
+            batch.sanitized_transactions(),
+        )
+    } else {
+        Ok(())
+    });
 
     timings.saturating_add_in_place(
         ExecuteTimingType::CheckBlockLimitsUs,
-        check_block_cost_limits_time.as_us(),
+        check_block_cost_limits_us,
     );
     check_block_cost_limits_result?;
 
@@ -329,20 +328,15 @@ fn execute_batches_internal(
                 let transaction_count =
                     transaction_batch.batch.sanitized_transactions().len() as u64;
                 let mut timings = ExecuteTimings::default();
-                let (result, execute_batches_time): (Result<()>, Measure) = measure!(
-                    {
-                        execute_batch(
-                            transaction_batch,
-                            bank,
-                            transaction_status_sender,
-                            replay_vote_sender,
-                            &mut timings,
-                            log_messages_bytes_limit,
-                            prioritization_fee_cache,
-                        )
-                    },
-                    "execute_batch",
-                );
+                let (result, execute_batches_us) = measure_us!(execute_batch(
+                    transaction_batch,
+                    bank,
+                    transaction_status_sender,
+                    replay_vote_sender,
+                    &mut timings,
+                    log_messages_bytes_limit,
+                    prioritization_fee_cache,
+                ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
                 execution_timings_per_thread
@@ -355,14 +349,14 @@ fn execute_batches_internal(
                             total_transactions_executed,
                             execute_timings: total_thread_execute_timings,
                         } = thread_execution_time;
-                        *total_thread_us += execute_batches_time.as_us();
+                        *total_thread_us += execute_batches_us;
                         *total_transactions_executed += transaction_count;
                         total_thread_execute_timings
                             .saturating_add_in_place(ExecuteTimingType::TotalBatchesLen, 1);
                         total_thread_execute_timings.accumulate(&timings);
                     })
                     .or_insert(ThreadExecuteTimings {
-                        total_thread_us: execute_batches_time.as_us(),
+                        total_thread_us: execute_batches_us,
                         total_transactions_executed: transaction_count,
                         execute_timings: timings,
                     });
@@ -769,6 +763,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("incomplete final fec set")]
     IncompleteFinalFecSet,
+
+    #[error("invalid retransmitter signature final fec set")]
+    InvalidRetransmitterSignatureFinalFecSet,
 }
 
 /// Callback for accessing bank state after each slot is confirmed while
@@ -1078,6 +1075,7 @@ fn verify_ticks(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
@@ -1684,6 +1682,7 @@ fn confirm_slot_entries(
 }
 
 // Special handling required for processing the entries in slot 0
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn process_bank_0(
     bank0: &BankWithScheduler,
     blockstore: &Blockstore,
@@ -1726,7 +1725,7 @@ fn process_next_slots(
     blockstore: &Blockstore,
     leader_schedule_cache: &LeaderScheduleCache,
     pending_slots: &mut Vec<(SlotMeta, Bank, Hash)>,
-    halt_at_slot: Option<Slot>,
+    opts: &ProcessOptions,
 ) -> result::Result<(), BlockstoreProcessorError> {
     if meta.next_slots.is_empty() {
         return Ok(());
@@ -1734,10 +1733,13 @@ fn process_next_slots(
 
     // This is a fork point if there are multiple children, create a new child bank for each fork
     for next_slot in &meta.next_slots {
-        let skip_next_slot = halt_at_slot
-            .map(|halt_at_slot| *next_slot > halt_at_slot)
-            .unwrap_or(false);
-        if skip_next_slot {
+        if opts
+            .halt_at_slot
+            .is_some_and(|halt_at_slot| *next_slot > halt_at_slot)
+        {
+            continue;
+        }
+        if !opts.allow_dead_slots && blockstore.is_dead(*next_slot) {
             continue;
         }
 
@@ -1816,7 +1818,7 @@ fn load_frozen_forks(
         blockstore,
         leader_schedule_cache,
         &mut pending_slots,
-        opts.halt_at_slot,
+        opts,
     )?;
 
     let on_halt_store_hash_raw_data_for_debug = opts.on_halt_store_hash_raw_data_for_debug;
@@ -1995,7 +1997,7 @@ fn load_frozen_forks(
                 blockstore,
                 leader_schedule_cache,
                 &mut pending_slots,
-                opts.halt_at_slot,
+                opts,
             )?;
         }
     } else if on_halt_store_hash_raw_data_for_debug {
@@ -2134,7 +2136,7 @@ pub enum TransactionStatusMessage {
 pub struct TransactionStatusBatch {
     pub bank: Arc<Bank>,
     pub transactions: Vec<SanitizedTransaction>,
-    pub execution_results: Vec<Option<TransactionExecutionDetails>>,
+    pub execution_results: Vec<Option<(TransactionExecutionDetails, FeeDetails)>>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
     pub rent_debits: Vec<RentDebits>,
@@ -2167,7 +2169,10 @@ impl TransactionStatusSender {
                 execution_results: execution_results
                     .into_iter()
                     .map(|result| match result {
-                        TransactionExecutionResult::Executed { details, .. } => Some(details),
+                        TransactionExecutionResult::Executed(executed_tx) => Some((
+                            executed_tx.execution_details,
+                            executed_tx.loaded_transaction.fee_details,
+                        )),
                         TransactionExecutionResult::NotExecuted(_) => None,
                     })
                     .collect(),
@@ -2274,7 +2279,10 @@ pub mod tests {
             system_transaction,
             transaction::{Transaction, TransactionError},
         },
-        solana_svm::transaction_processor::ExecutionRecordingConfig,
+        solana_svm::{
+            account_loader::LoadedTransaction, transaction_processor::ExecutionRecordingConfig,
+            transaction_results::ExecutedTransaction,
+        },
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
             self,
@@ -3007,7 +3015,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(2);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair = Keypair::new();
         let slot_entries = create_ticks(genesis_config.ticks_per_slot, 1, genesis_config.hash());
         let tx = system_transaction::transfer(
@@ -3172,7 +3180,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
 
@@ -3209,7 +3217,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3269,7 +3277,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3419,12 +3427,11 @@ pub mod tests {
 
         let mock_program_id = solana_sdk::pubkey::new_rand();
 
-        let bank = Bank::new_with_mockup_builtin_for_tests(
+        let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
             &genesis_config,
             mock_program_id,
             MockBuiltinOk::vm,
-        )
-        .0;
+        );
 
         let tx = Transaction::new_signed_with_payer(
             &[Instruction::new_with_bincode(
@@ -3463,12 +3470,11 @@ pub mod tests {
         let mut bankhash_err = None;
 
         (0..get_instruction_errors().len()).for_each(|err| {
-            let bank = Bank::new_with_mockup_builtin_for_tests(
+            let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
                 &genesis_config,
                 mock_program_id,
                 MockBuiltinErr::vm,
-            )
-            .0;
+            );
 
             let tx = Transaction::new_signed_with_payer(
                 &[Instruction::new_with_bincode(
@@ -3504,7 +3510,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3598,7 +3604,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3644,7 +3650,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1_000_000_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         const NUM_TRANSFERS_PER_ENTRY: usize = 8;
         const NUM_TRANSFERS: usize = NUM_TRANSFERS_PER_ENTRY * 32;
@@ -3711,7 +3717,7 @@ pub mod tests {
             ..
         } = create_genesis_config((num_accounts + 1) as u64 * initial_lamports);
 
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let mut keypairs: Vec<Keypair> = vec![];
 
@@ -3778,7 +3784,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3840,7 +3846,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let pubkey = solana_sdk::pubkey::new_rand();
         bank.transfer(1_000, &mint_keypair, &pubkey).unwrap();
         assert_eq!(bank.transaction_count(), 1);
@@ -3881,7 +3887,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let success_tx = system_transaction::transfer(
@@ -4181,7 +4187,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(100);
-        let bank0 = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let genesis_hash = genesis_config.hash();
         let keypair = Keypair::new();
 
@@ -4245,7 +4251,7 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1_000_000_000);
-        let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let present_account_key = Keypair::new();
         let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
@@ -4714,9 +4720,8 @@ pub mod tests {
             ..
         } = create_genesis_config(100 * LAMPORTS_PER_SOL);
         let genesis_hash = genesis_config.hash();
-        let bank = BankWithScheduler::new_without_scheduler(
-            Bank::new_with_bank_forks_for_tests(&genesis_config).0,
-        );
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = BankWithScheduler::new_without_scheduler(bank);
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut timing = ConfirmationTiming::default();
         let mut progress = ConfirmationProgress::new(genesis_hash);
@@ -5112,18 +5117,18 @@ pub mod tests {
             .set_limits(u64::MAX, block_limit, u64::MAX);
         let txs = vec![tx.clone(), tx];
         let results = vec![
-            TransactionExecutionResult::Executed {
-                details: TransactionExecutionDetails {
+            TransactionExecutionResult::Executed(Box::new(ExecutedTransaction {
+                loaded_transaction: LoadedTransaction::default(),
+                execution_details: TransactionExecutionDetails {
                     status: Ok(()),
                     log_messages: None,
                     inner_instructions: None,
-                    fee_details: solana_sdk::fee::FeeDetails::default(),
                     return_data: None,
                     executed_units: actual_execution_cu,
                     accounts_data_len_delta: 0,
                 },
                 programs_modified_by_tx: HashMap::new(),
-            },
+            })),
             TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
         ];
         let loaded_accounts_stats = vec![

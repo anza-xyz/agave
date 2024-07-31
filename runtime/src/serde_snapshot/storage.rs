@@ -30,11 +30,11 @@ impl SerializableStorage for SerializableAccountStorageEntry {
 impl From<&AccountStorageEntry> for SerializableAccountStorageEntry {
     fn from(rhs: &AccountStorageEntry) -> Self {
         Self {
-            id: rhs.append_vec_id() as SerializedAccountsFileId,
+            id: rhs.id() as SerializedAccountsFileId,
             accounts_current_len: rhs.accounts.len(),
         }
     }
 }
 
 #[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
-impl solana_frozen_abi::abi_example::IgnoreAsHelper for SerializableAccountStorageEntry {}
+impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountStorageEntry {}

@@ -33,7 +33,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::blockstore_processor::TransactionStatusSender,
-    solana_measure::{measure, measure_us},
+    solana_measure::measure_us,
     solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
@@ -339,6 +339,7 @@ impl BankingStage {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        enable_forwarding: bool,
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
@@ -354,6 +355,7 @@ impl BankingStage {
             connection_cache,
             bank_forks,
             prioritization_fee_cache,
+            enable_forwarding,
         )
     }
 
@@ -372,6 +374,7 @@ impl BankingStage {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        enable_forwarding: bool,
     ) -> Self {
         match block_production_method {
             BlockProductionMethod::ThreadLocalMultiIterator => {
@@ -403,6 +406,7 @@ impl BankingStage {
                 connection_cache,
                 bank_forks,
                 prioritization_fee_cache,
+                enable_forwarding,
             ),
         }
     }
@@ -505,6 +509,7 @@ impl BankingStage {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        enable_forwarding: bool,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
         // Single thread to generate entries from many banks.
@@ -586,13 +591,15 @@ impl BankingStage {
             )
         }
 
-        let forwarder = Forwarder::new(
-            poh_recorder.clone(),
-            bank_forks.clone(),
-            cluster_info.clone(),
-            connection_cache.clone(),
-            data_budget.clone(),
-        );
+        let forwarder = enable_forwarding.then(|| {
+            Forwarder::new(
+                poh_recorder.clone(),
+                bank_forks.clone(),
+                cluster_info.clone(),
+                connection_cache.clone(),
+                data_budget.clone(),
+            )
+        });
 
         // Spawn the central scheduler thread
         bank_thread_hdls.push({
@@ -669,13 +676,13 @@ impl BankingStage {
         if unprocessed_transaction_storage.should_not_process() {
             return;
         }
-        let (decision, make_decision_time) =
-            measure!(decision_maker.make_consume_or_forward_decision());
+        let (decision, make_decision_us) =
+            measure_us!(decision_maker.make_consume_or_forward_decision());
         let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(
             decision.bank_start(),
             Some(unprocessed_transaction_storage),
         );
-        slot_metrics_tracker.increment_make_decision_us(make_decision_time.as_us());
+        slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
         match decision {
             BufferedPacketsDecision::Consume(bank_start) => {
@@ -684,17 +691,15 @@ impl BankingStage {
                 // packet processing metrics from the next slot towards the metrics
                 // of the previous slot
                 slot_metrics_tracker.apply_action(metrics_action);
-                let (_, consume_buffered_packets_time) = measure!(
-                    consumer.consume_buffered_packets(
+                let (_, consume_buffered_packets_us) = measure_us!(consumer
+                    .consume_buffered_packets(
                         &bank_start,
                         unprocessed_transaction_storage,
                         banking_stage_stats,
                         slot_metrics_tracker,
-                    ),
-                    "consume_buffered_packets",
-                );
+                    ));
                 slot_metrics_tracker
-                    .increment_consume_buffered_packets_us(consume_buffered_packets_time.as_us());
+                    .increment_consume_buffered_packets_us(consume_buffered_packets_us);
             }
             BufferedPacketsDecision::Forward => {
                 let ((), forward_us) = measure_us!(forwarder.handle_forwarding(
@@ -743,20 +748,17 @@ impl BankingStage {
             if !unprocessed_transaction_storage.is_empty()
                 || last_metrics_update.elapsed() >= SLOT_BOUNDARY_CHECK_PERIOD
             {
-                let (_, process_buffered_packets_time) = measure!(
-                    Self::process_buffered_packets(
-                        decision_maker,
-                        forwarder,
-                        consumer,
-                        &mut unprocessed_transaction_storage,
-                        &banking_stage_stats,
-                        &mut slot_metrics_tracker,
-                        &mut tracer_packet_stats,
-                    ),
-                    "process_buffered_packets",
-                );
+                let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
+                    decision_maker,
+                    forwarder,
+                    consumer,
+                    &mut unprocessed_transaction_storage,
+                    &banking_stage_stats,
+                    &mut slot_metrics_tracker,
+                    &mut tracer_packet_stats,
+                ));
                 slot_metrics_tracker
-                    .increment_process_buffered_packets_us(process_buffered_packets_time.as_us());
+                    .increment_process_buffered_packets_us(process_buffered_packets_us);
                 last_metrics_update = Instant::now();
             }
 
@@ -883,6 +885,7 @@ mod tests {
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
+                false,
             );
             drop(non_vote_sender);
             drop(tpu_vote_sender);
@@ -938,6 +941,7 @@ mod tests {
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
+                false,
             );
             trace!("sending bank");
             drop(non_vote_sender);
@@ -1015,8 +1019,9 @@ mod tests {
                 replay_vote_sender,
                 None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
-                bank_forks,
+                bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
+                false,
             );
 
             // fund another account so we can send 2 good transactions in a single batch.
@@ -1064,7 +1069,7 @@ mod tests {
             drop(poh_recorder);
 
             let mut blockhash = start_hash;
-            let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+            let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
             bank.process_transaction(&fund_tx).unwrap();
             //receive entries + ticks
             loop {
@@ -1208,7 +1213,7 @@ mod tests {
                 .map(|(_bank, (entry, _tick_height))| entry)
                 .collect();
 
-            let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+            let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
             for entry in entries {
                 bank.process_entry_transactions(entry.transactions)
                     .iter()
@@ -1232,7 +1237,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Blockstore::open(ledger_path.path())
@@ -1378,6 +1383,7 @@ mod tests {
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
+                false,
             );
 
             let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

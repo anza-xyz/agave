@@ -21,7 +21,7 @@ use {
         poh::Poh,
     },
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
-    solana_measure::{measure, measure_us},
+    solana_measure::measure_us,
     solana_metrics::poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
     solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
     solana_sdk::{
@@ -471,57 +471,61 @@ impl PohRecorder {
             .any(|pending_slot| *pending_slot < next_slot)
     }
 
+    fn can_skip_grace_ticks(&self, my_pubkey: &Pubkey) -> bool {
+        let next_tick_height = self.tick_height.saturating_add(1);
+        let next_slot = self.slot_for_tick_height(next_tick_height);
+
+        if self.prev_slot_was_mine(my_pubkey, next_slot) {
+            // Building off my own blocks. No need to wait.
+            return true;
+        }
+
+        if self.is_same_fork_as_previous_leader(next_slot) {
+            // Planning to build off block produced by the leader previous to me. Need to wait.
+            return false;
+        }
+
+        if !self.is_new_reset_bank_pending(next_slot) {
+            // No pending blocks from previous leader have been observed.
+            return true;
+        }
+
+        self.report_pending_fork_was_detected(next_slot);
+        if !self.delay_leader_block_for_pending_fork {
+            // Not configured to wait for pending blocks from previous leader.
+            return true;
+        }
+
+        // Wait for grace ticks
+        false
+    }
+
     fn reached_leader_tick(
         &self,
         my_pubkey: &Pubkey,
         leader_first_tick_height_including_grace_ticks: u64,
     ) -> bool {
-        // Check if PoH was reset to run immediately
         if self.start_tick_height + self.grace_ticks
             == leader_first_tick_height_including_grace_ticks
         {
+            // PoH was reset to run immediately.
             return true;
         }
 
-        // Check if we have finished waiting for grace ticks
         let target_tick_height = leader_first_tick_height_including_grace_ticks.saturating_sub(1);
         if self.tick_height >= target_tick_height {
+            // We have finished waiting for grace ticks.
             return true;
         }
 
-        // Check if we ticked to our leader slot and can skip grace ticks
         let ideal_target_tick_height = target_tick_height.saturating_sub(self.grace_ticks);
-        if self.tick_height >= ideal_target_tick_height {
-            let next_tick_height = self.tick_height.saturating_add(1);
-            let next_slot = self.slot_for_tick_height(next_tick_height);
-
-            // If the previous slot was mine, skip grace ticks
-            if self.prev_slot_was_mine(my_pubkey, next_slot) {
-                return true;
-            }
-
-            // If we are not reset to a bank by the previous leader, skip grace
-            // ticks if there isn't a pending reset bank or we aren't configured
-            // to apply grace ticks when we detect a pending reset bank.
-            if !self.is_same_fork_as_previous_leader(next_slot) {
-                // If there is no pending reset bank, skip grace ticks
-                if !self.is_new_reset_bank_pending(next_slot) {
-                    return true;
-                }
-
-                // If we aren't configured to wait for pending forks, skip grace ticks
-                self.report_pending_fork_was_detected(next_slot);
-                if !self.delay_leader_block_for_pending_fork {
-                    return true;
-                }
-            }
-
-            // Wait for grace ticks
+        if self.tick_height < ideal_target_tick_height {
+            // We haven't ticked to our leader slot yet.
             return false;
         }
 
-        // Keep ticking
-        false
+        // We're in the grace tick zone. Check if we can skip grace ticks.
+        self.can_skip_grace_ticks(my_pubkey)
     }
 
     // Report metrics when poh recorder detects a pending fork that could
@@ -565,20 +569,25 @@ impl PohRecorder {
 
         let next_tick_height = self.tick_height + 1;
         let next_poh_slot = self.slot_for_tick_height(next_tick_height);
-        if let Some(leader_first_tick_height_including_grace_ticks) =
+        let Some(leader_first_tick_height_including_grace_ticks) =
             self.leader_first_tick_height_including_grace_ticks
-        {
-            if self.reached_leader_tick(my_pubkey, leader_first_tick_height_including_grace_ticks) {
-                assert!(next_tick_height >= self.start_tick_height);
-                let poh_slot = next_poh_slot;
-                let parent_slot = self.start_slot();
-                return PohLeaderStatus::Reached {
-                    poh_slot,
-                    parent_slot,
-                };
-            }
+        else {
+            // No next leader slot, so no leader slot has been reached.
+            return PohLeaderStatus::NotReached;
+        };
+
+        if !self.reached_leader_tick(my_pubkey, leader_first_tick_height_including_grace_ticks) {
+            // PoH hasn't ticked far enough yet.
+            return PohLeaderStatus::NotReached;
         }
-        PohLeaderStatus::NotReached
+
+        assert!(next_tick_height >= self.start_tick_height);
+        let poh_slot = next_poh_slot;
+        let parent_slot = self.start_slot();
+        PohLeaderStatus::Reached {
+            poh_slot,
+            parent_slot,
+        }
     }
 
     // returns (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) given the next
@@ -848,20 +857,17 @@ impl PohRecorder {
     }
 
     pub fn tick(&mut self) {
-        let ((poh_entry, target_time), tick_lock_contention_time) = measure!(
-            {
-                let mut poh_l = self.poh.lock().unwrap();
-                let poh_entry = poh_l.tick();
-                let target_time = if poh_entry.is_some() {
-                    Some(poh_l.target_poh_time(self.target_ns_per_tick))
-                } else {
-                    None
-                };
-                (poh_entry, target_time)
-            },
-            "tick_lock_contention",
-        );
-        self.tick_lock_contention_us += tick_lock_contention_time.as_us();
+        let ((poh_entry, target_time), tick_lock_contention_us) = measure_us!({
+            let mut poh_l = self.poh.lock().unwrap();
+            let poh_entry = poh_l.tick();
+            let target_time = if poh_entry.is_some() {
+                Some(poh_l.target_poh_time(self.target_ns_per_tick))
+            } else {
+                None
+            };
+            (poh_entry, target_time)
+        });
+        self.tick_lock_contention_us += tick_lock_contention_us;
 
         if let Some(poh_entry) = poh_entry {
             self.tick_height += 1;
@@ -884,24 +890,19 @@ impl PohRecorder {
                 self.tick_height,
             ));
 
-            let (_flush_res, flush_cache_and_tick_time) =
-                measure!(self.flush_cache(true), "flush_cache_and_tick");
-            self.flush_cache_tick_us += flush_cache_and_tick_time.as_us();
+            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true));
+            self.flush_cache_tick_us += flush_cache_and_tick_us;
 
-            let sleep_time = measure!(
-                {
-                    let target_time = target_time.unwrap();
-                    // sleep is not accurate enough to get a predictable time.
-                    // Kernel can not schedule the thread for a while.
-                    while Instant::now() < target_time {
-                        // TODO: a caller could possibly desire to reset or record while we're spinning here
-                        std::hint::spin_loop();
-                    }
-                },
-                "poh_sleep",
-            )
-            .1;
-            self.total_sleep_us += sleep_time.as_us();
+            let (_, sleep_us) = measure_us!({
+                let target_time = target_time.unwrap();
+                // sleep is not accurate enough to get a predictable time.
+                // Kernel can not schedule the thread for a while.
+                while Instant::now() < target_time {
+                    // TODO: a caller could possibly desire to reset or record while we're spinning here
+                    std::hint::spin_loop();
+                }
+            });
+            self.total_sleep_us += sleep_us;
         }
     }
 
@@ -949,13 +950,12 @@ impl PohRecorder {
         // cannot be generated by `record()`
         assert!(!transactions.is_empty(), "No transactions provided");
 
-        let ((), report_metrics_time) = measure!(self.report_metrics(bank_slot), "report_metrics");
-        self.report_metrics_us += report_metrics_time.as_us();
+        let ((), report_metrics_us) = measure_us!(self.report_metrics(bank_slot));
+        self.report_metrics_us += report_metrics_us;
 
         loop {
-            let (flush_cache_res, flush_cache_time) =
-                measure!(self.flush_cache(false), "flush_cache");
-            self.flush_cache_no_tick_us += flush_cache_time.as_us();
+            let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false));
+            self.flush_cache_no_tick_us += flush_cache_us;
             flush_cache_res?;
 
             let working_bank = self
@@ -966,30 +966,26 @@ impl PohRecorder {
                 return Err(PohRecorderError::MaxHeightReached);
             }
 
-            let (mut poh_lock, poh_lock_time) = measure!(self.poh.lock().unwrap(), "poh_lock");
-            self.record_lock_contention_us += poh_lock_time.as_us();
+            let (mut poh_lock, poh_lock_us) = measure_us!(self.poh.lock().unwrap());
+            self.record_lock_contention_us += poh_lock_us;
 
-            let (record_mixin_res, record_mixin_time) =
-                measure!(poh_lock.record(mixin), "record_mixin");
-            self.record_us += record_mixin_time.as_us();
+            let (record_mixin_res, record_mixin_us) = measure_us!(poh_lock.record(mixin));
+            self.record_us += record_mixin_us;
 
             drop(poh_lock);
 
             if let Some(poh_entry) = record_mixin_res {
                 let num_transactions = transactions.len();
-                let (send_entry_res, send_entry_time) = measure!(
-                    {
-                        let entry = Entry {
-                            num_hashes: poh_entry.num_hashes,
-                            hash: poh_entry.hash,
-                            transactions,
-                        };
-                        let bank_clone = working_bank.bank.clone();
-                        self.sender.send((bank_clone, (entry, self.tick_height)))
-                    },
-                    "send_poh_entry",
-                );
-                self.send_entry_us += send_entry_time.as_us();
+                let (send_entry_res, send_entry_us) = measure_us!({
+                    let entry = Entry {
+                        num_hashes: poh_entry.num_hashes,
+                        hash: poh_entry.hash,
+                        transactions,
+                    };
+                    let bank_clone = working_bank.bank.clone();
+                    self.sender.send((bank_clone, (entry, self.tick_height)))
+                });
+                self.send_entry_us += send_entry_us;
                 send_entry_res?;
                 let starting_transaction_index =
                     working_bank.transaction_index.map(|transaction_index| {

@@ -1,7 +1,9 @@
 use {
     crate::{
         bank::{BankFieldsToSerialize, BankSlotDelta},
-        serde_snapshot::{self, BankIncrementalSnapshotPersistence, SnapshotStreams},
+        serde_snapshot::{
+            self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize, SnapshotStreams,
+        },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
             SnapshotArchiveInfoGetter,
@@ -30,7 +32,7 @@ use {
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
-    solana_measure::{measure, measure::Measure},
+    solana_measure::{measure::Measure, measure_time, measure_us},
     solana_sdk::{
         clock::{Epoch, Slot},
         hash::Hash,
@@ -40,6 +42,7 @@ use {
         collections::{HashMap, HashSet},
         fmt, fs,
         io::{BufReader, BufWriter, Error as IoError, Read, Result as IoResult, Seek, Write},
+        mem,
         num::NonZeroUsize,
         ops::RangeInclusive,
         path::{Path, PathBuf},
@@ -824,7 +827,7 @@ fn serialize_snapshot(
     snapshot_version: SnapshotVersion,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     slot_deltas: &[BankSlotDelta],
-    bank_fields: BankFieldsToSerialize,
+    mut bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
@@ -855,7 +858,7 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let (_, measure_flush) = measure!({
+        let (_, flush_storages_us) = measure_us!({
             for storage in snapshot_storages {
                 storage.flush().map_err(|err| {
                     AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
@@ -867,13 +870,21 @@ fn serialize_snapshot(
         // constructing a bank from this directory.  It acts like an archive to include the full state.
         // The set of the account storages files is the necessary part of this snapshot state.  Hard-link them
         // from the operational accounts/ directory to here.
-        let (_, measure_hard_linking) =
-            measure!(
-                hard_link_storages_to_snapshot(&bank_snapshot_dir, slot, snapshot_storages)
-                    .map_err(AddBankSnapshotError::HardLinkStorages)?
-            );
+        let (_, hard_link_storages_us) = measure_us!(hard_link_storages_to_snapshot(
+            &bank_snapshot_dir,
+            slot,
+            snapshot_storages
+        )
+        .map_err(AddBankSnapshotError::HardLinkStorages)?);
 
         let bank_snapshot_serializer = move |stream: &mut BufWriter<fs::File>| -> Result<()> {
+            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
+            let extra_fields = ExtraFieldsToSerialize {
+                lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
+                incremental_snapshot_persistence: bank_incremental_snapshot_persistence,
+                epoch_accounts_hash,
+                versioned_epoch_stakes,
+            };
             serde_snapshot::serialize_bank_snapshot_into(
                 stream,
                 bank_fields,
@@ -881,26 +892,25 @@ fn serialize_snapshot(
                 accounts_delta_hash,
                 accounts_hash,
                 &get_storages_to_serialize(snapshot_storages),
-                bank_incremental_snapshot_persistence,
-                epoch_accounts_hash,
+                extra_fields,
                 write_version,
             )?;
             Ok(())
         };
-        let (bank_snapshot_consumed_size, bank_serialize) = measure!(
+        let (bank_snapshot_consumed_size, bank_serialize) = measure_time!(
             serialize_snapshot_data_file(&bank_snapshot_path, bank_snapshot_serializer)
                 .map_err(|err| AddBankSnapshotError::SerializeBank(Box::new(err)))?,
             "bank serialize"
         );
 
         let status_cache_path = bank_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-        let (status_cache_consumed_size, status_cache_serialize) = measure!(
+        let (status_cache_consumed_size, status_cache_serialize_us) = measure_us!(
             snapshot_bank_utils::serialize_status_cache(slot_deltas, &status_cache_path)
                 .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
         );
 
         let version_path = bank_snapshot_dir.join(SNAPSHOT_VERSION_FILENAME);
-        let (_, measure_write_version_file) = measure!(fs::write(
+        let (_, write_version_file_us) = measure_us!(fs::write(
             &version_path,
             snapshot_version.as_str().as_bytes(),
         )
@@ -908,8 +918,8 @@ fn serialize_snapshot(
 
         // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
         let state_complete_path = bank_snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-        let (_, measure_write_state_complete_file) =
-            measure!(fs::File::create(&state_complete_path).map_err(|err| {
+        let (_, write_state_complete_file_us) = measure_us!(fs::File::create(&state_complete_path)
+            .map_err(|err| {
                 AddBankSnapshotError::CreateStateCompleteFile(err, state_complete_path)
             })?);
 
@@ -921,22 +931,14 @@ fn serialize_snapshot(
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),
-            ("flush_storages_us", measure_flush.as_us(), i64),
-            ("hard_link_storages_us", measure_hard_linking.as_us(), i64),
+            ("flush_storages_us", flush_storages_us, i64),
+            ("hard_link_storages_us", hard_link_storages_us, i64),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
-            (
-                "status_cache_serialize_us",
-                status_cache_serialize.as_us(),
-                i64
-            ),
-            (
-                "write_version_file_us",
-                measure_write_version_file.as_us(),
-                i64
-            ),
+            ("status_cache_serialize_us", status_cache_serialize_us, i64),
+            ("write_version_file_us", write_version_file_us, i64),
             (
                 "write_state_complete_file_us",
-                measure_write_state_complete_file.as_us(),
+                write_state_complete_file_us,
                 i64
             ),
             ("total_us", measure_everything.as_us(), i64),
@@ -1044,10 +1046,8 @@ fn archive_snapshot(
                 .map_err(E::ArchiveSnapshotsDir)?;
 
             for storage in snapshot_storages {
-                let path_in_archive = Path::new(ACCOUNTS_DIR).join(AccountsFile::file_name(
-                    storage.slot(),
-                    storage.append_vec_id(),
-                ));
+                let path_in_archive = Path::new(ACCOUNTS_DIR)
+                    .join(AccountsFile::file_name(storage.slot(), storage.id()));
                 match storage.accounts.internals_for_archive() {
                     InternalsForArchive::Mmap(data) => {
                         let mut header = tar::Header::new_gnu();
@@ -1480,7 +1480,7 @@ pub fn hard_link_storages_to_snapshot(
         )?;
         // The appendvec could be recycled, so its filename may not be consistent to the slot and id.
         // Use the storage slot and id to compose a consistent file name for the hard-link file.
-        let hardlink_filename = AccountsFile::file_name(storage.slot(), storage.append_vec_id());
+        let hardlink_filename = AccountsFile::file_name(storage.slot(), storage.id());
         let hard_link_path = snapshot_hardlink_dir.join(hardlink_filename);
         fs::hard_link(storage_path, &hard_link_path).map_err(|err| {
             HardLinkStoragesToSnapshotError::HardLinkStorage(
@@ -1695,7 +1695,7 @@ fn unarchive_snapshot(
     let num_rebuilder_threads = num_cpus::get_physical()
         .saturating_sub(parallel_divisions)
         .max(1);
-    let (version_and_storages, measure_untar) = measure!(
+    let (version_and_storages, measure_untar) = measure_time!(
         SnapshotStorageRebuilder::rebuild_storage(
             file_receiver,
             num_rebuilder_threads,
