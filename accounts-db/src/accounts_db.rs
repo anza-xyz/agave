@@ -105,7 +105,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-            Arc, Condvar, Mutex, RwLock,
+            Arc, Condvar, Mutex, RwLock, RwLockReadGuard,
         },
         thread::{sleep, Builder},
         time::{Duration, Instant},
@@ -2768,7 +2768,7 @@ impl AccountsDb {
         // do not match the criteria of deleting all appendvecs which contain them
         // then increment their storage count.
         let mut already_counted = IntSet::default();
-        for bin in purges {
+        for (bin_index, bin) in purges.iter().enumerate() {
             let bin = bin.read().unwrap();
             for (
                 pubkey,
@@ -2847,11 +2847,18 @@ impl AccountsDb {
                         for key in affected_pubkeys {
                             let purges_bin_index =
                                 self.accounts_index.bin_calculator.bin_from_pubkey(key);
-                            let bin = purges[purges_bin_index].read().unwrap();
-                            for (slot, _account_info) in &bin.get(key).unwrap().slot_list {
-                                if !already_counted.contains(slot) {
-                                    pending_stores.insert(*slot);
-                                }
+                            let mut update_pending_stores =
+                                |bin: &RwLockReadGuard<HashMap<Pubkey, CleaningInfo>>| {
+                                    for (slot, _account_info) in &bin.get(key).unwrap().slot_list {
+                                        if !already_counted.contains(slot) {
+                                            pending_stores.insert(*slot);
+                                        }
+                                    }
+                                };
+                            if purges_bin_index == bin_index {
+                                update_pending_stores(&bin);
+                            } else {
+                                update_pending_stores(&purges[purges_bin_index].read().unwrap());
                             }
                         }
                     }
