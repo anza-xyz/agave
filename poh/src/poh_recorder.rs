@@ -452,12 +452,8 @@ impl PohRecorder {
         })
     }
 
-    fn prev_slot_was_mine(&self, my_pubkey: &Pubkey, parent_slot: Slot) -> bool {
-        if let Some(leader_id) = self.leader_schedule_cache.slot_leader_at(parent_slot, None) {
-            &leader_id == my_pubkey
-        } else {
-            false
-        }
+    fn start_slot_was_mine(&self, my_pubkey: &Pubkey) -> bool {
+        self.start_bank.collector_id() == my_pubkey
     }
 
     // Active descendants of the last reset bank that are smaller than the
@@ -472,7 +468,7 @@ impl PohRecorder {
         let next_tick_height = self.tick_height.saturating_add(1);
         let next_slot = self.slot_for_tick_height(next_tick_height);
 
-        if self.prev_slot_was_mine(my_pubkey, self.start_slot()) {
+        if self.start_slot_was_mine(my_pubkey) {
             // Building off my own block. No need to wait.
             return true;
         }
