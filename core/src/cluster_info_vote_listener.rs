@@ -30,11 +30,10 @@ use {
         epoch_stakes::EpochStakes, vote_sender_types::ReplayVoteReceiver,
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
+        clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
         hash::Hash,
         pubkey::Pubkey,
         signature::Signature,
-        slot_hashes,
         timing::AtomicInterval,
         transaction::Transaction,
     },
@@ -392,7 +391,7 @@ impl ClusterInfoVoteListener {
             let would_be_leader = poh_recorder
                 .read()
                 .unwrap()
-                .would_be_leader(3 * slot_hashes::MAX_ENTRIES as u64 * DEFAULT_TICKS_PER_SLOT);
+                .would_be_leader(MAX_PROCESSING_AGE as u64 * DEFAULT_TICKS_PER_SLOT);
 
             if let Err(e) = verified_vote_packets.receive_and_process_vote_packets(
                 &verified_vote_label_packets_receiver,
