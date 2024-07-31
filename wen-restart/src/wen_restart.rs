@@ -31,7 +31,6 @@ use {
         clock::{Epoch, Slot},
         hash::Hash,
     },
-    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
         bank::Bank,
@@ -1896,7 +1895,18 @@ mod tests {
                 received: HashMap::new(),
                 final_result: Some(LastVotedForkSlotsAggregateFinal {
                     slots_stake_map: HashMap::new(),
-                    total_active_stake: 1000,
+                    epoch_infos: vec![
+                        LastVotedForkSlotsEpochInfoRecord {
+                            epoch: 1,
+                            total_active_stake: 800,
+                            total_stake: 1000,
+                        },
+                        LastVotedForkSlotsEpochInfoRecord {
+                            epoch: 2,
+                            total_active_stake: 900,
+                            total_stake: 1000,
+                        },
+                    ],
                 }),
             }),
             ..Default::default()
@@ -1913,7 +1923,18 @@ mod tests {
                 WenRestartProgressInternalState::FindHeaviestFork {
                     aggregate_final_result: LastVotedForkSlotsFinalResult {
                         slots_stake_map: HashMap::new(),
-                        total_active_stake: 1000,
+                        epoch_info_vec: vec![
+                            LastVotedForkSlotsEpochInfo {
+                                epoch: 1,
+                                total_active_stake: 800,
+                                total_stake: 1000,
+                            },
+                            LastVotedForkSlotsEpochInfo {
+                                epoch: 2,
+                                total_active_stake: 900,
+                                total_stake: 1000,
+                            }
+                        ],
                     },
                     my_heaviest_fork: progress.my_heaviest_fork.clone(),
                 },
