@@ -4,13 +4,13 @@ use {
     crate::{
         heaviest_fork_aggregate::HeaviestForkAggregate,
         last_voted_fork_slots_aggregate::{
-            LastVotedForkSlotsAggregate, LastVotedForkSlotsFinalResult,
+            LastVotedForkSlotsAggregate, LastVotedForkSlotsEpochInfo, LastVotedForkSlotsFinalResult,
         },
         solana::wen_restart_proto::{
             self, GenerateSnapshotRecord, HeaviestForkAggregateFinal, HeaviestForkAggregateRecord,
             HeaviestForkRecord, LastVotedForkSlotsAggregateFinal,
-            LastVotedForkSlotsAggregateRecord, LastVotedForkSlotsRecord, State as RestartState,
-            WenRestartProgress,
+            LastVotedForkSlotsAggregateRecord, LastVotedForkSlotsEpochInfoRecord,
+            LastVotedForkSlotsRecord, State as RestartState, WenRestartProgress,
         },
     },
     anyhow::Result,
@@ -27,7 +27,10 @@ use {
         blockstore_processor::{process_single_slot, ConfirmationProgress, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
     },
-    solana_program::{clock::Slot, hash::Hash},
+    solana_program::{
+        clock::{Epoch, Slot},
+        hash::Hash,
+    },
     solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
@@ -212,9 +215,8 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
     let root_bank = bank_forks.read().unwrap().root_bank();
     let root_slot = root_bank.slot();
     let mut last_voted_fork_slots_aggregate = LastVotedForkSlotsAggregate::new(
-        root_slot,
+        root_bank.clone(),
         REPAIR_THRESHOLD,
-        root_bank.epoch_stakes(root_bank.epoch()).unwrap(),
         last_voted_fork_slots,
         &cluster_info.id(),
     );
@@ -256,7 +258,7 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
         // Because all operations on the aggregate are called from this single thread, we can
         // fetch all results separately without worrying about them being out of sync. We can
         // also use returned iterator without the vector changing underneath us.
-        let active_percent = last_voted_fork_slots_aggregate.active_percent();
+        let active_percent = last_voted_fork_slots_aggregate.min_active_percent();
         let mut filtered_slots: Vec<Slot>;
         {
             filtered_slots = last_voted_fork_slots_aggregate
@@ -299,6 +301,22 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
     Ok(last_voted_fork_slots_aggregate.get_final_result())
 }
 
+fn is_over_stake_threshold(
+    epoch_info_vec: &[LastVotedForkSlotsEpochInfo],
+    epoch: Epoch,
+    stake: &u64,
+) -> bool {
+    epoch_info_vec
+        .iter()
+        .find(|info| info.epoch == epoch)
+        .map_or(false, |info| {
+            let threshold = info
+                .total_active_stake
+                .saturating_sub((HEAVIEST_FORK_THRESHOLD_DELTA * info.total_stake as f64) as u64);
+            stake >= &threshold
+        })
+}
+
 // Verify that all blocks with at least (active_stake_percnet - 38%) of the stake form a
 // single chain from the root, and use the highest slot in the blocks as the heaviest fork.
 // Please see SIMD 46 "gossip current heaviest fork" for correctness proof.
@@ -310,16 +328,17 @@ pub(crate) fn find_heaviest_fork(
 ) -> Result<(Slot, Hash)> {
     let root_bank = bank_forks.read().unwrap().root_bank();
     let root_slot = root_bank.slot();
-    // TODO: Should use better epoch_stakes later.
-    let epoch_stake = root_bank.epoch_stakes(root_bank.epoch()).unwrap();
-    let total_stake = epoch_stake.total_stake();
-    let stake_threshold = aggregate_final_result
-        .total_active_stake
-        .saturating_sub((HEAVIEST_FORK_THRESHOLD_DELTA * total_stake as f64) as u64);
     let mut slots = aggregate_final_result
         .slots_stake_map
         .iter()
-        .filter(|(slot, stake)| **slot > root_slot && **stake > stake_threshold)
+        .filter(|(slot, stake)| {
+            **slot > root_slot
+                && is_over_stake_threshold(
+                    &aggregate_final_result.epoch_info_vec,
+                    root_bank.epoch_schedule().get_epoch(**slot),
+                    stake,
+                )
+        })
         .map(|(slot, _)| *slot)
         .collect::<Vec<Slot>>();
     slots.sort();
@@ -587,14 +606,19 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     progress: &mut WenRestartProgress,
 ) -> Result<()> {
     let root_bank = bank_forks.read().unwrap().root_bank();
-    let epoch_stakes = root_bank.epoch_stakes(root_bank.epoch()).unwrap();
-    let total_stake = epoch_stakes.total_stake();
     if progress.my_heaviest_fork.is_none() {
         return Err(WenRestartError::UnexpectedState(RestartState::HeaviestFork).into());
     }
     let my_heaviest_fork = progress.my_heaviest_fork.clone().unwrap();
     let heaviest_fork_slot = my_heaviest_fork.slot;
     let heaviest_fork_hash = Hash::from_str(&my_heaviest_fork.bankhash)?;
+    // When checking whether to exit aggregate_restart_heaviest_fork, use the epoch_stakes
+    // associated with the heaviest fork slot we picked. This ensures that everyone agreeing
+    // with me use the same EpochStakes to calculate the supermajority threshold.
+    let epoch_stakes = root_bank
+        .epoch_stakes(root_bank.epoch_schedule().get_epoch(heaviest_fork_slot))
+        .unwrap();
+    let total_stake = epoch_stakes.total_stake();
     let adjusted_threshold_percent = wait_for_supermajority_threshold_percent
         .saturating_sub(HEAVIEST_FORK_DISAGREE_THRESHOLD_PERCENT.round() as u64);
     // The threshold for supermajority should definitely be higher than 67%.
@@ -934,7 +958,15 @@ pub(crate) fn increment_and_write_wen_restart_records(
                 if let Some(aggregate_record) = progress.last_voted_fork_slots_aggregate.as_mut() {
                     aggregate_record.final_result = Some(LastVotedForkSlotsAggregateFinal {
                         slots_stake_map: aggregate_final_result.slots_stake_map.clone(),
-                        total_active_stake: aggregate_final_result.total_active_stake,
+                        epoch_infos: aggregate_final_result
+                            .epoch_info_vec
+                            .iter()
+                            .map(|info| LastVotedForkSlotsEpochInfoRecord {
+                                epoch: info.epoch,
+                                total_stake: info.total_stake,
+                                total_active_stake: info.total_active_stake,
+                            })
+                            .collect(),
                     });
                 }
                 WenRestartProgressInternalState::FindHeaviestFork {
@@ -1062,7 +1094,15 @@ pub(crate) fn initialize(
                                 r.final_result.as_ref().map(|result| {
                                     LastVotedForkSlotsFinalResult {
                                         slots_stake_map: result.slots_stake_map.clone(),
-                                        total_active_stake: result.total_active_stake,
+                                        epoch_info_vec: result
+                                            .epoch_infos
+                                            .iter()
+                                            .map(|info| LastVotedForkSlotsEpochInfo {
+                                                epoch: info.epoch,
+                                                total_stake: info.total_stake,
+                                                total_active_stake: info.total_active_stake,
+                                            })
+                                            .collect(),
                                     }
                                 })
                             }),
@@ -1083,7 +1123,15 @@ pub(crate) fn initialize(
                             .as_ref()
                             .map(|result| LastVotedForkSlotsFinalResult {
                                 slots_stake_map: result.slots_stake_map.clone(),
-                                total_active_stake: result.total_active_stake,
+                                epoch_info_vec: result
+                                    .epoch_infos
+                                    .iter()
+                                    .map(|info| LastVotedForkSlotsEpochInfo {
+                                        epoch: info.epoch,
+                                        total_stake: info.total_stake,
+                                        total_active_stake: info.total_active_stake,
+                                    })
+                                    .collect(),
                             })
                     })
                     .unwrap(),
@@ -1576,7 +1624,18 @@ mod tests {
                     received: expected_received_last_voted_fork_slots,
                     final_result: Some(LastVotedForkSlotsAggregateFinal {
                         slots_stake_map: expected_slots_stake_map,
-                        total_active_stake: 1600,
+                        epoch_infos: vec![
+                            LastVotedForkSlotsEpochInfoRecord {
+                                epoch: 0,
+                                total_active_stake: 1600,
+                                total_stake: 2000
+                            },
+                            LastVotedForkSlotsEpochInfoRecord {
+                                epoch: 1,
+                                total_active_stake: 1600,
+                                total_stake: 2000
+                            },
+                        ],
                     }),
                 }),
                 my_heaviest_fork: Some(HeaviestForkRecord {
@@ -1954,7 +2013,11 @@ mod tests {
             received: HashMap::new(),
             final_result: Some(LastVotedForkSlotsAggregateFinal {
                 slots_stake_map: vec![(0, 900), (1, 800)].into_iter().collect(),
-                total_active_stake: 900,
+                epoch_infos: vec![LastVotedForkSlotsEpochInfoRecord {
+                    epoch: 0,
+                    total_stake: 2000,
+                    total_active_stake: 900,
+                }],
             }),
         });
         let my_heaviest_fork = Some(HeaviestForkRecord {
@@ -2006,13 +2069,21 @@ mod tests {
                     last_voted_fork_slots: vec![0, 1],
                     aggregate_final_result: Some(LastVotedForkSlotsFinalResult {
                         slots_stake_map: expected_slots_stake_map.clone(),
-                        total_active_stake: 900,
+                        epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
+                            epoch: 0,
+                            total_stake: 2000,
+                            total_active_stake: 900,
+                        }],
                     }),
                 },
                 WenRestartProgressInternalState::FindHeaviestFork {
                     aggregate_final_result: LastVotedForkSlotsFinalResult {
                         slots_stake_map: expected_slots_stake_map.clone(),
-                        total_active_stake: 900,
+                        epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
+                            epoch: 0,
+                            total_stake: 2000,
+                            total_active_stake: 900,
+                        }],
                     },
                     my_heaviest_fork: None,
                 },
@@ -2033,7 +2104,11 @@ mod tests {
                 WenRestartProgressInternalState::FindHeaviestFork {
                     aggregate_final_result: LastVotedForkSlotsFinalResult {
                         slots_stake_map: expected_slots_stake_map,
-                        total_active_stake: 900,
+                        epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
+                            epoch: 0,
+                            total_stake: 2000,
+                            total_active_stake: 900,
+                        }],
                     },
                     my_heaviest_fork: Some(HeaviestForkRecord {
                         slot: 1,
@@ -2141,7 +2216,7 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let test_state = wen_restart_test_init(&ledger_path);
         let last_vote_slot = test_state.last_voted_fork_slots[0];
-        let slot_with_no_block = last_vote_slot + 5;
+        let slot_with_no_block = 1;
         // This fails because corresponding block is not found, which is wrong, we should have
         // repaired all eligible blocks when we exit LastVotedForkSlots state.
         assert_eq!(
@@ -2150,7 +2225,11 @@ mod tests {
                     slots_stake_map: vec![(0, 900), (slot_with_no_block, 800)]
                         .into_iter()
                         .collect(),
-                    total_active_stake: 900,
+                    epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
+                        epoch: 0,
+                        total_stake: 1000,
+                        total_active_stake: 900,
+                    }],
                 },
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
@@ -2165,8 +2244,12 @@ mod tests {
         assert_eq!(
             find_heaviest_fork(
                 LastVotedForkSlotsFinalResult {
-                    slots_stake_map: vec![(last_vote_slot, 900)].into_iter().collect(),
-                    total_active_stake: 900,
+                    slots_stake_map: vec![(3, 900)].into_iter().collect(),
+                    epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
+                        epoch: 0,
+                        total_stake: 1000,
+                        total_active_stake: 900,
+                    }],
                 },
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
@@ -2175,19 +2258,19 @@ mod tests {
             .unwrap_err()
             .downcast::<WenRestartError>()
             .unwrap(),
-            WenRestartError::BlockNotLinkedToExpectedParent(
-                last_vote_slot,
-                Some(last_vote_slot - 1),
-                0
-            ),
+            WenRestartError::BlockNotLinkedToExpectedParent(3, Some(2), 0),
         );
         // The following fails because we expect to see the some slot in slots_stake_map doesn't chain to the
         // one before it.
         assert_eq!(
             find_heaviest_fork(
                 LastVotedForkSlotsFinalResult {
-                    slots_stake_map: vec![(2, 900), (last_vote_slot, 900)].into_iter().collect(),
-                    total_active_stake: 900,
+                    slots_stake_map: vec![(2, 900), (5, 900)].into_iter().collect(),
+                    epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
+                        epoch: 0,
+                        total_stake: 1000,
+                        total_active_stake: 900,
+                    }],
                 },
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
@@ -2196,11 +2279,7 @@ mod tests {
             .unwrap_err()
             .downcast::<WenRestartError>()
             .unwrap(),
-            WenRestartError::BlockNotLinkedToExpectedParent(
-                last_vote_slot,
-                Some(last_vote_slot - 1),
-                2
-            ),
+            WenRestartError::BlockNotLinkedToExpectedParent(5, Some(4), 2),
         );
         // The following fails because the new slot is not full.
         let not_full_slot = last_vote_slot + 5;
@@ -2231,7 +2310,23 @@ mod tests {
             find_heaviest_fork(
                 LastVotedForkSlotsFinalResult {
                     slots_stake_map,
-                    total_active_stake: 900,
+                    epoch_info_vec: vec![
+                        LastVotedForkSlotsEpochInfo {
+                            epoch: 0,
+                            total_stake: 1000,
+                            total_active_stake: 900,
+                        },
+                        LastVotedForkSlotsEpochInfo {
+                            epoch: 1,
+                            total_stake: 1000,
+                            total_active_stake: 900,
+                        },
+                        LastVotedForkSlotsEpochInfo {
+                            epoch: 2,
+                            total_stake: 1000,
+                            total_active_stake: 900,
+                        },
+                    ],
                 },
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
@@ -2271,7 +2366,23 @@ mod tests {
             find_heaviest_fork(
                 LastVotedForkSlotsFinalResult {
                     slots_stake_map,
-                    total_active_stake: 900,
+                    epoch_info_vec: vec![
+                        LastVotedForkSlotsEpochInfo {
+                            epoch: 0,
+                            total_stake: 1000,
+                            total_active_stake: 900,
+                        },
+                        LastVotedForkSlotsEpochInfo {
+                            epoch: 1,
+                            total_stake: 1000,
+                            total_active_stake: 900,
+                        },
+                        LastVotedForkSlotsEpochInfo {
+                            epoch: 2,
+                            total_stake: 1000,
+                            total_active_stake: 900,
+                        },
+                    ],
                 },
                 test_state.bank_forks.clone(),
                 test_state.blockstore.clone(),
