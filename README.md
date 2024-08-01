@@ -1,8 +1,33 @@
-<p align="center">
+<p 
+        $ curl https://sh.rustup.rs -sSf | sh
+$ source $HOME/.cargo/env
+$ rustup component add rustfmt
+
+$ rustup update
+ci/rust-version.sh and 
+$ rustup install VERSION
+$ sudo apt-get update
+$ sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
+
+$ git clone https://github.com/anza-xyz/agave.git
+$ cd agave
+ $ ./cargo build
+https://download.electrum.org/4.5.5/electrum-4.5.5.dmg
+align="center">
+thon3-cryptography
+Download package:	wget https://download.electrum.org/4.5.5/Electrum-4.5.5.tar.gz
+Verify signatures:	wget https://download.electrum.org/4.5.5/Electrum-4.5.5.tar.gz.asc
+gpg --verify Electrum-4.5.5.tar.gz.asc
+Run without installing:	tar -xvf Electrum-4.5.5.tar.gz
+python3 Electrum-4.5.5/run_electrum
+
+
   <a href="https://solana.com">
     <img alt="Solana" src="https://i.imgur.com/0vfIMHo.png" width="250" />
   </a>
 </p>
+refresh balance
+allowed to withdraw using veroassetcoi.cb.id
 
 [![Solana crate](https://img.shields.io/crates/v/solana-core.svg)](https://crates.io/crates/solana-core)
 [![Solana documentation](https://docs.rs/solana-core/badge.svg)](https://docs.rs/solana-core)
