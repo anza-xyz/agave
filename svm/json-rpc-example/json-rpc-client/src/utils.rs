@@ -45,7 +45,7 @@ pub fn get_config(config: &Option<&str>) -> Result<yaml_rust::Yaml> {
             None => {
                 return Err(Error::ConfigRead(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    "failed to locate homedir and thus can not locoate solana config",
+                    "failed to locate homedir and thus can not locate solana config",
                 )));
             }
         },
