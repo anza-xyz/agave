@@ -2832,7 +2832,7 @@ impl AccountsDb {
                         if let Some(failed_slot) = failed_slot.take() {
                             info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey} in slot {failed_slot}");
                         } else {
-                            info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, slot_list len: {}, ref count: {ref_count}", slot_list.len());
+                            info!("calc_delete_dependencies, oldest slot is not able to be deleted because of {pubkey}, slot list len: {}, ref count: {ref_count}", slot_list.len());
                         }
                     }
 
@@ -3484,18 +3484,22 @@ impl AccountsDb {
             let candidates_bin = candidates_bin.read().unwrap();
             let mut bin_set = candidates_bin
                 .iter()
-                .map(|(pubkey, cleaning_info)| {
+                .filter_map(|(pubkey, cleaning_info)| {
                     let CleaningInfo {
                         slot_list,
                         ref_count: _,
                     } = cleaning_info;
-                    (
-                        *pubkey,
-                        slot_list
-                            .iter()
-                            .map(|(slot, _)| *slot)
-                            .collect::<HashSet<Slot>>(),
-                    )
+                    if slot_list.is_empty() {
+                        None
+                    } else {
+                        Some((
+                            *pubkey,
+                            slot_list
+                                .iter()
+                                .map(|(slot, _)| *slot)
+                                .collect::<HashSet<Slot>>(),
+                        ))
+                    }
                 })
                 .collect::<Vec<_>>();
             pubkey_to_slot_set.append(&mut bin_set);
