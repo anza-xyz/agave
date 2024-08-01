@@ -105,7 +105,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-            Arc, Condvar, Mutex, RwLock, RwLockReadGuard,
+            Arc, Condvar, Mutex, RwLock,
         },
         thread::{sleep, Builder},
         time::{Duration, Instant},
@@ -2848,7 +2848,7 @@ impl AccountsDb {
                             let purges_bin_index =
                                 self.accounts_index.bin_calculator.bin_from_pubkey(key);
                             let mut update_pending_stores =
-                                |bin: &RwLockReadGuard<HashMap<Pubkey, CleaningInfo>>| {
+                                |bin: &HashMap<Pubkey, CleaningInfo>| {
                                     for (slot, _account_info) in &bin.get(key).unwrap().slot_list {
                                         if !already_counted.contains(slot) {
                                             pending_stores.insert(*slot);
