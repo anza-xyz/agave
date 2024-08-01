@@ -1,7 +1,5 @@
 //! Vote state
 
-use std::mem;
-
 #[cfg(not(target_os = "solana"))]
 use bincode::deserialize;
 #[cfg(test)]
@@ -22,7 +20,12 @@ use {
     },
     bincode::{serialize_into, ErrorKind},
     serde_derive::{Deserialize, Serialize},
-    std::{collections::VecDeque, fmt::Debug, io::Cursor, mem::MaybeUninit},
+    std::{
+        collections::VecDeque,
+        fmt::Debug,
+        io::Cursor,
+        mem::{self, MaybeUninit},
+    },
 };
 
 mod vote_state_0_23_5;
