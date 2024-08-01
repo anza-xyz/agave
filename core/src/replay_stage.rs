@@ -833,7 +833,7 @@ impl ReplayStage {
                 let mut compute_slot_stats_time = Measure::start("compute_slot_stats_time");
                 for slot in newly_computed_slot_stats {
                     let fork_stats = progress.get_fork_stats(slot).unwrap();
-                    let confirmed_slots = Self::confirm_forks(
+                    let duplicate_confirmed_forks = Self::tower_duplicate_confirmed_forks(
                         &tower,
                         &fork_stats.voted_stakes,
                         fork_stats.total_stake,
@@ -841,8 +841,8 @@ impl ReplayStage {
                         &bank_forks,
                     );
 
-                    Self::mark_slots_confirmed(
-                        &confirmed_slots,
+                    Self::mark_slots_duplicate_confirmed(
+                        &duplicate_confirmed_forks,
                         &blockstore,
                         &bank_forks,
                         &mut progress,
@@ -4086,7 +4086,7 @@ impl ReplayStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn mark_slots_confirmed(
+    fn mark_slots_duplicate_confirmed(
         confirmed_slots: &[(Slot, Hash)],
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
@@ -4134,14 +4134,14 @@ impl ReplayStage {
         }
     }
 
-    fn confirm_forks(
+    fn tower_duplicate_confirmed_forks(
         tower: &Tower,
         voted_stakes: &VotedStakes,
         total_stake: Stake,
         progress: &ProgressMap,
         bank_forks: &RwLock<BankForks>,
     ) -> Vec<(Slot, Hash)> {
-        let mut confirmed_forks = vec![];
+        let mut duplicate_confirmed_forks = vec![];
         for (slot, prog) in progress.iter() {
             if prog.fork_stats.duplicate_confirmed_hash.is_some() {
                 continue;
@@ -4170,7 +4170,7 @@ impl ReplayStage {
                     "validator-duplicate-confirmation",
                     ("duration_ms", duration, i64)
                 );
-                confirmed_forks.push((*slot, bank.hash()));
+                duplicate_confirmed_forks.push((*slot, bank.hash()));
             } else {
                 debug!(
                     "validator fork not confirmed {} {}ms {:?}",
@@ -4180,7 +4180,7 @@ impl ReplayStage {
                 );
             }
         }
-        confirmed_forks
+        duplicate_confirmed_forks
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5492,7 +5492,7 @@ pub(crate) mod tests {
         // bank 1, so no slot should be confirmed.
         {
             let fork_progress = progress.get(&0).unwrap();
-            let confirmed_forks = ReplayStage::confirm_forks(
+            let confirmed_forks = ReplayStage::tower_duplicate_confirmed_forks(
                 &tower,
                 &fork_progress.fork_stats.voted_stakes,
                 fork_progress.fork_stats.total_stake,
@@ -5542,7 +5542,7 @@ pub(crate) mod tests {
         assert_eq!(newly_computed, vec![1]);
         {
             let fork_progress = progress.get(&1).unwrap();
-            let confirmed_forks = ReplayStage::confirm_forks(
+            let confirmed_forks = ReplayStage::tower_duplicate_confirmed_forks(
                 &tower,
                 &fork_progress.fork_stats.voted_stakes,
                 fork_progress.fork_stats.total_stake,
