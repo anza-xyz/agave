@@ -2086,7 +2086,7 @@ mod tests {
         );
         // Check that if prev slot was mine, grace ticks are ignored
         assert_eq!(
-            poh_recorder.reached_leader_slot(&validator_pubkey),
+            poh_recorder.reached_leader_slot(bank1.collector_id()),
             PohLeaderStatus::Reached {
                 poh_slot: 3,
                 parent_slot: 1
