@@ -60,7 +60,7 @@ pub fn say_hello(player: &Keypair, program: &Keypair, connection: &RpcClient) ->
 
     // Submit an instruction to the chain which tells the program to
     // run. We pass the account that we want the results to be stored
-    // in as one of the accounts arguents which the program will
+    // in as one of the account arguments which the program will
     // handle.
 
     let data = [1u8];

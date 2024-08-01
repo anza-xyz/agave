@@ -4,12 +4,11 @@ use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint,
     msg,
-    //  program_error::ProgramError,
     pubkey::Pubkey,
 };
 
 /// The type of state managed by this program. The type defined here
-/// much match the `GreetingAccount` type defined by the client.
+/// must match the `GreetingAccount` type defined by the client.
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct GreetingAccount {
     /// The number of greetings that have been sent to this account.
@@ -17,7 +16,7 @@ pub struct GreetingAccount {
 }
 
 /// Declare the programs entrypoint. The entrypoint is the function
-/// that will get run when the program is executed.
+/// that will run when the program is executed.
 #[cfg(not(feature = "exclude_entrypoint"))]
 entrypoint!(process_instruction);
 
