@@ -1,6 +1,6 @@
 //! Vote state
 
-use std::{mem, ptr};
+use std::mem;
 
 #[cfg(not(target_os = "solana"))]
 use bincode::deserialize;
@@ -494,7 +494,9 @@ impl VoteState {
     ) -> Result<(), InstructionError> {
         // Rebind vote_state to *mut VoteState so that the &mut binding isn't
         // accessible anymore, preventing accidental use after this point.
-        let vote_state = ptr::from_mut(vote_state);
+        //
+        // NOTE: switch to ptr::from_mut() once platform-tools moves to rustc >= 1.56
+        let vote_state = vote_state as *mut VoteState;
 
         // Safety: vote_state is valid to_drop (see drop_in_place() docs). After
         // dropping, the pointer is treated as uninitialized and only accessed
