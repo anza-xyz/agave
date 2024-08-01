@@ -74,6 +74,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-transaction-ffi"
+version = "2.1.0"
+
+[[package]]
 name = "agave-validator"
 version = "2.1.0"
 dependencies = [
@@ -4818,6 +4822,7 @@ dependencies = [
 name = "solana-core"
 version = "2.1.0"
 dependencies = [
+ "agave-transaction-ffi",
  "ahash 0.8.10",
  "anyhow",
  "arrayvec",
@@ -4877,6 +4882,7 @@ dependencies = [
  "solana-short-vec",
  "solana-streamer",
  "solana-svm",
+ "solana-svm-transaction",
  "solana-timings",
  "solana-tpu-client",
  "solana-transaction-status",
@@ -6376,6 +6382,13 @@ dependencies = [
  "solana-type-overrides",
  "solana-vote",
  "thiserror",
+]
+
+[[package]]
+name = "solana-svm-transaction"
+version = "2.1.0"
+dependencies = [
+ "solana-sdk",
 ]
 
 [[package]]

@@ -127,6 +127,7 @@ members = [
     "tps-client",
     "tpu-client",
     "transaction-dos",
+    "transaction-ffi",
     "transaction-metrics-tracker",
     "transaction-status",
     "turbine",
@@ -161,6 +162,7 @@ edition = "2021"
 Inflector = "0.11.4"
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.11.1"
+agave-transaction-ffi = { path = "transaction-ffi", version = "=2.1.0" }
 ahash = "0.8.10"
 anyhow = "1.0.82"
 arbitrary = "1.3.2"
