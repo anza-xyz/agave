@@ -213,6 +213,9 @@ impl VerifiedVotePackets {
         let vote_packets = vote_packets_receiver.recv_timeout(RECV_TIMEOUT)?;
         let vote_packets = std::iter::once(vote_packets).chain(vote_packets_receiver.try_iter());
 
+        // No need to process any votes if we will not be the leader soon. But,
+        // return early only after draining the channel to avoid accumulating
+        // votes that will be stale by the time we do become leader
         if !would_be_leader {
             return Ok(());
         }
