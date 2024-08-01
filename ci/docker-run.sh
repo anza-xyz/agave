@@ -80,6 +80,9 @@ if [[ -n $CI ]]; then
         )
       fi
     fi
+
+    # volume ssh folder
+    ARGS+=(--volume /var/lib/buildkite-agent/.ssh:/var/lib/buildkite-agent/.ssh)
   fi
 fi
 
@@ -111,6 +114,7 @@ ARGS+=(
   --env CI_PULL_REQUEST
   --env CI_REPO_SLUG
   --env CRATES_IO_TOKEN
+  --env GH_TOKEN
 )
 
 # Also propagate environment variables needed for codecov
