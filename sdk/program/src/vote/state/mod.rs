@@ -498,7 +498,7 @@ impl VoteState {
         // Rebind vote_state to *mut VoteState so that the &mut binding isn't
         // accessible anymore, preventing accidental use after this point.
         //
-        // NOTE: switch to ptr::from_mut() once platform-tools moves to rustc >= 1.56
+        // NOTE: switch to ptr::from_mut() once platform-tools moves to rustc >= 1.76
         let vote_state = vote_state as *mut VoteState;
 
         // Safety: vote_state is valid to_drop (see drop_in_place() docs). After

@@ -62,7 +62,7 @@ pub(crate) fn read_pubkey_into(
 ) -> Result<(), InstructionError> {
     match cursor.fill_buf() {
         Ok(buf) if buf.len() >= PUBKEY_BYTES => {
-            // Safety: `buf` is guaranteed to be at least `PUBKEY_SIZE` bytes
+            // Safety: `buf` is guaranteed to be at least `PUBKEY_BYTES` bytes
             // long. Pubkey a #[repr(transparent)] wrapper around a byte array,
             // so this is a byte to byte copy and it's safe.
             unsafe {
