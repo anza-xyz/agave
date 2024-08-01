@@ -558,8 +558,9 @@ impl Accounts {
         tx_account_locks_results
             .into_iter()
             .map(|tx_account_locks_result| match tx_account_locks_result {
-                Ok(tx_account_locks) => account_locks
-                    .lock_accounts_for_transaction(tx_account_locks.accounts_with_is_writable()),
+                Ok(tx_account_locks) => account_locks.try_lock_accounts_for_transaction(
+                    tx_account_locks.accounts_with_is_writable(),
+                ),
                 Err(err) => Err(err),
             })
             .collect()

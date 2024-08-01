@@ -18,7 +18,7 @@ impl AccountLocks {
     /// The bool in the tuple indicates if the account is writable.
     /// Returns an error if any of the accounts are already locked in a way
     /// that conflicts with the requested lock.
-    pub fn lock_accounts_for_transaction<'a>(
+    pub fn try_lock_accounts_for_transaction<'a>(
         &mut self,
         keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
     ) -> Result<(), TransactionError> {
@@ -129,23 +129,23 @@ mod tests {
 
         // Add write and read-lock.
         let result = account_locks
-            .lock_accounts_for_transaction([(&key1, true), (&key2, false)].into_iter());
+            .try_lock_accounts_for_transaction([(&key1, true), (&key2, false)].into_iter());
         assert!(result.is_ok());
 
         // Try to add duplicate write-lock.
-        let result = account_locks.lock_accounts_for_transaction([(&key1, true)].into_iter());
+        let result = account_locks.try_lock_accounts_for_transaction([(&key1, true)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Try to add write lock on read-locked account.
-        let result = account_locks.lock_accounts_for_transaction([(&key2, true)].into_iter());
+        let result = account_locks.try_lock_accounts_for_transaction([(&key2, true)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Try to add read lock on write-locked account.
-        let result = account_locks.lock_accounts_for_transaction([(&key1, false)].into_iter());
+        let result = account_locks.try_lock_accounts_for_transaction([(&key1, false)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Add read lock on read-locked account.
-        let result = account_locks.lock_accounts_for_transaction([(&key2, false)].into_iter());
+        let result = account_locks.try_lock_accounts_for_transaction([(&key2, false)].into_iter());
         assert!(result.is_ok());
 
         // Unlock write and read locks.
