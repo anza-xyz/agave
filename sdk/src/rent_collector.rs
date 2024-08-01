@@ -90,12 +90,9 @@ impl RentCollector {
         if self.rent.is_exempt(lamports, data_len) {
             RentDue::Exempt
         } else {
-            let slots_elapsed: u64 = (account_rent_epoch..=self.epoch)
-                .map(|epoch| {
-                    self.epoch_schedule
-                        .get_slots_in_epoch(epoch.saturating_add(1))
-                })
-                .sum();
+            let slots_elapsed = self
+                .epoch_schedule
+                .calculate_elapsed_slots(account_rent_epoch, self.epoch);
 
             // avoid infinite rent in rust 1.45
             let years_elapsed = if self.slots_per_year != 0.0 {
