@@ -1777,7 +1777,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "slab",
  "tokio",
  "tokio-util 0.7.11",
@@ -2141,9 +2141,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.2.6"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "168fb715dda47215e360912c096649d23d58bf392ac62f73919e831745e40f26"
+checksum = "de3fc2e30ba82dd1b3911c8de1ffc143c74a914a14e99514d7637e3099df5ea0"
 dependencies = [
  "equivalent",
  "hashbrown 0.14.5",
@@ -3153,7 +3153,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
 dependencies = [
  "fixedbitset",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
 ]
 
 [[package]]
@@ -4035,7 +4035,7 @@ version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
 dependencies = [
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "itoa",
  "ryu",
  "serde",
@@ -4254,7 +4254,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "index_list",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "itertools 0.12.1",
  "lazy_static",
  "log",
@@ -4278,6 +4278,7 @@ dependencies = [
  "solana-nohash-hasher",
  "solana-rayon-threadlimit",
  "solana-sdk",
+ "solana-svm-transaction",
  "static_assertions",
  "tar",
  "tempfile",
@@ -4378,6 +4379,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-builtins-default-costs"
+version = "2.1.0"
+dependencies = [
+ "ahash 0.8.11",
+ "lazy_static",
+ "log",
+ "rustc_version",
+ "solana-address-lookup-table-program",
+ "solana-bpf-loader-program",
+ "solana-compute-budget-program",
+ "solana-config-program",
+ "solana-loader-v4-program",
+ "solana-sdk",
+ "solana-stake-program",
+ "solana-system-program",
+ "solana-vote-program",
+]
+
+[[package]]
 name = "solana-clap-utils"
 version = "2.1.0"
 dependencies = [
@@ -4415,7 +4435,7 @@ dependencies = [
  "dashmap",
  "futures 0.3.30",
  "futures-util",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "indicatif",
  "log",
  "quinn",
@@ -4475,7 +4495,7 @@ dependencies = [
  "bincode",
  "crossbeam-channel",
  "futures-util",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "log",
  "rand 0.8.5",
  "rayon",
@@ -4523,6 +4543,7 @@ dependencies = [
  "serde_derive",
  "solana-accounts-db",
  "solana-bloom",
+ "solana-builtins-default-costs",
  "solana-client",
  "solana-compute-budget",
  "solana-connection-cache",
@@ -4542,6 +4563,7 @@ dependencies = [
  "solana-rpc",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sanitize",
  "solana-sdk",
  "solana-send-transaction-service",
@@ -4575,16 +4597,11 @@ dependencies = [
  "lazy_static",
  "log",
  "rustc_version",
- "solana-address-lookup-table-program",
- "solana-bpf-loader-program",
+ "solana-builtins-default-costs",
  "solana-compute-budget",
- "solana-compute-budget-program",
- "solana-config-program",
- "solana-loader-v4-program",
  "solana-metrics",
+ "solana-runtime-transaction",
  "solana-sdk",
- "solana-stake-program",
- "solana-system-program",
  "solana-vote-program",
 ]
 
@@ -4723,7 +4740,7 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "flate2",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "itertools 0.12.1",
  "log",
  "lru",
@@ -5311,6 +5328,7 @@ dependencies = [
  "solana-perf",
  "solana-program-runtime",
  "solana-rayon-threadlimit",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-stake-program",
  "solana-svm",
@@ -5332,6 +5350,17 @@ dependencies = [
  "tempfile",
  "thiserror",
  "zstd",
+]
+
+[[package]]
+name = "solana-runtime-transaction"
+version = "2.1.0"
+dependencies = [
+ "log",
+ "rustc_version",
+ "solana-compute-budget",
+ "solana-sdk",
+ "thiserror",
 ]
 
 [[package]]
@@ -5513,7 +5542,7 @@ dependencies = [
  "futures 0.3.30",
  "futures-util",
  "histogram",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "itertools 0.12.1",
  "libc",
  "log",
@@ -5554,11 +5583,14 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-program-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
+ "solana-svm-transaction",
  "solana-system-program",
  "solana-timings",
  "solana-type-overrides",
  "solana-vote",
+ "thiserror",
 ]
 
 [[package]]
@@ -5700,7 +5732,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "futures-util",
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "indicatif",
  "log",
  "rayon",
@@ -6658,7 +6690,7 @@ version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8534fd7f78b5405e860340ad6575217ce99f38d4d5c8f2442cb5ecb50090e1"
 dependencies = [
- "indexmap 2.2.6",
+ "indexmap 2.3.0",
  "toml_datetime",
  "winnow",
 ]

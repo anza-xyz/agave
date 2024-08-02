@@ -78,7 +78,7 @@ use {
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
-        transaction_results::{TransactionExecutionDetails, TransactionExecutionResult},
+        transaction_execution_result::{TransactionExecutionDetails, TransactionExecutionResult},
     },
     solana_system_program::system_processor,
     solana_transaction_status::{
