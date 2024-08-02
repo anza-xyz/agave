@@ -558,9 +558,9 @@ impl Accounts {
         tx_account_locks_results
             .into_iter()
             .map(|tx_account_locks_result| match tx_account_locks_result {
-                Ok(tx_account_locks) => account_locks.try_lock_accounts_for_transaction(
-                    tx_account_locks.accounts_with_is_writable(),
-                ),
+                Ok(tx_account_locks) => {
+                    account_locks.try_lock_accounts(tx_account_locks.accounts_with_is_writable())
+                }
                 Err(err) => Err(err),
             })
             .collect()
@@ -580,8 +580,7 @@ impl Accounts {
         for (tx, res) in txs_and_results {
             if res.is_ok() {
                 let tx_account_locks = TransactionAccountLocksIterator::new(tx.message());
-                account_locks
-                    .unlock_accounts_for_transaction(tx_account_locks.accounts_with_is_writable());
+                account_locks.unlock_accounts(tx_account_locks.accounts_with_is_writable());
             }
         }
     }

@@ -17,7 +17,7 @@ impl AccountLocks {
     /// The bool in the tuple indicates if the account is writable.
     /// Returns an error if any of the accounts are already locked in a way
     /// that conflicts with the requested lock.
-    pub fn try_lock_accounts_for_transaction<'a>(
+    pub fn try_lock_accounts<'a>(
         &mut self,
         keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
     ) -> Result<(), TransactionError> {
@@ -46,10 +46,7 @@ impl AccountLocks {
     /// The bool in the tuple indicates if the account is writable.
     /// In debug-mode this function will panic if an attempt is made to unlock
     /// an account that wasn't locked in the way requested.
-    pub fn unlock_accounts_for_transaction<'a>(
-        &mut self,
-        keys: impl Iterator<Item = (&'a Pubkey, bool)>,
-    ) {
+    pub fn unlock_accounts<'a>(&mut self, keys: impl Iterator<Item = (&'a Pubkey, bool)>) {
         for (k, writable) in keys {
             if writable {
                 self.unlock_write(k);
@@ -125,35 +122,34 @@ mod tests {
         let key2 = Pubkey::new_unique();
 
         // Add write and read-lock.
-        let result = account_locks
-            .try_lock_accounts_for_transaction([(&key1, true), (&key2, false)].into_iter());
+        let result = account_locks.try_lock_accounts([(&key1, true), (&key2, false)].into_iter());
         assert!(result.is_ok());
 
         // Try to add duplicate write-lock.
-        let result = account_locks.try_lock_accounts_for_transaction([(&key1, true)].into_iter());
+        let result = account_locks.try_lock_accounts([(&key1, true)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Try to add write lock on read-locked account.
-        let result = account_locks.try_lock_accounts_for_transaction([(&key2, true)].into_iter());
+        let result = account_locks.try_lock_accounts([(&key2, true)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Try to add read lock on write-locked account.
-        let result = account_locks.try_lock_accounts_for_transaction([(&key1, false)].into_iter());
+        let result = account_locks.try_lock_accounts([(&key1, false)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Add read lock on read-locked account.
-        let result = account_locks.try_lock_accounts_for_transaction([(&key2, false)].into_iter());
+        let result = account_locks.try_lock_accounts([(&key2, false)].into_iter());
         assert!(result.is_ok());
 
         // Unlock write and read locks.
-        account_locks.unlock_accounts_for_transaction([(&key1, true), (&key2, false)].into_iter());
+        account_locks.unlock_accounts([(&key1, true), (&key2, false)].into_iter());
 
         // No more remaining write-locks. Read-lock remains.
         assert!(!account_locks.is_locked_write(&key1));
         assert!(account_locks.is_locked_readonly(&key2));
 
         // Unlock read lock.
-        account_locks.unlock_accounts_for_transaction([(&key2, false)].into_iter());
+        account_locks.unlock_accounts([(&key2, false)].into_iter());
         assert!(!account_locks.is_locked_readonly(&key2));
     }
 }
