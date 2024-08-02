@@ -2,7 +2,6 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
-    log::debug,
     solana_sdk::{pubkey::Pubkey, transaction::TransactionError},
     std::collections::hash_map,
 };
@@ -25,11 +24,9 @@ impl AccountLocks {
         for (key, writable) in keys.clone() {
             if writable {
                 if !self.can_write_lock(key) {
-                    debug!("Writable account in use: {:?}", key);
                     return Err(TransactionError::AccountInUse);
                 }
             } else if !self.can_read_lock(key) {
-                debug!("Read-only account in use: {:?}", key);
                 return Err(TransactionError::AccountInUse);
             }
         }
