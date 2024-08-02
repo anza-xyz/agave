@@ -9,3 +9,5 @@ mod bytes;
 pub mod result;
 #[allow(dead_code)]
 mod signature_meta;
+#[allow(dead_code)]
+mod static_accounts_meta;
