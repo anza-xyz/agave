@@ -73,12 +73,12 @@ use {
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         account_overrides::AccountOverrides,
         transaction_error_metrics::TransactionErrorMetrics,
+        transaction_execution_result::{TransactionExecutionDetails, TransactionExecutionResult},
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
-        transaction_execution_result::{TransactionExecutionDetails, TransactionExecutionResult},
     },
     solana_system_program::system_processor,
     solana_transaction_status::{
