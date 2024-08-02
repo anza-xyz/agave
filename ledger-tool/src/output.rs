@@ -24,11 +24,12 @@ use {
         hash::Hash,
         native_token::lamports_to_sol,
         pubkey::Pubkey,
+        transaction::VersionedTransaction,
     },
     solana_transaction_status::{
-        BlockEncodingOptions, ConfirmedBlock, EncodeError, EncodedConfirmedBlock,
+        BlockEncodingOptions, ConfirmedBlock, Encodable, EncodeError, EncodedConfirmedBlock,
         EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
-        UiTransactionEncoding, VersionedConfirmedBlockWithEntries,
+        UiTransactionEncoding, VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
     },
     std::{
@@ -480,6 +481,48 @@ pub(crate) fn encode_confirmed_block(
     Ok(encoded_block)
 }
 
+fn encode_versioned_transactions(transactions: Vec<VersionedTransaction>) -> EncodedConfirmedBlock {
+    let transactions = transactions
+        .into_iter()
+        .map(|transaction| EncodedTransactionWithStatusMeta {
+            transaction: transaction.encode(UiTransactionEncoding::Base64),
+            meta: None,
+            version: None,
+        })
+        .collect();
+
+    // TODO: Can probably get blockhash / previous blockhash / slot without much effort
+    EncodedConfirmedBlock {
+        previous_blockhash: String::new(),
+        blockhash: String::new(),
+        parent_slot: 0,
+        transactions,
+        rewards: Rewards::default(),
+        num_partitions: None,
+        block_time: None,
+        block_height: None,
+    }
+}
+
+pub enum BlockContents {
+    VersionedConfirmedBlock(VersionedConfirmedBlock),
+    VersionedTransactions(Vec<VersionedTransaction>),
+}
+
+impl From<BlockContents> for EncodedConfirmedBlock {
+    fn from(block_contents: BlockContents) -> Self {
+        match block_contents {
+            BlockContents::VersionedConfirmedBlock(block) => {
+                // TODO: remove unwrap()
+                encode_confirmed_block(ConfirmedBlock::from(block)).unwrap()
+            }
+            BlockContents::VersionedTransactions(transactions) => {
+                encode_versioned_transactions(transactions)
+            }
+        }
+    }
+}
+
 pub fn output_slot(
     blockstore: &Blockstore,
     slot: Slot,
@@ -501,13 +544,44 @@ pub fn output_slot(
     let Some(meta) = blockstore.meta(slot)? else {
         return Ok(());
     };
-    let VersionedConfirmedBlockWithEntries { block, entries } = blockstore
-        .get_complete_block_with_entries(
-            slot,
-            /*require_previous_blockhash:*/ false,
-            /*populate_entries:*/ true,
-            allow_dead_slots,
-        )?;
+    let (block_contents, entries) = match blockstore.get_complete_block_with_entries(
+        slot,
+        /*require_previous_blockhash:*/ false,
+        /*populate_entries:*/ true,
+        allow_dead_slots,
+    ) {
+        Ok(VersionedConfirmedBlockWithEntries { block, entries }) => {
+            (BlockContents::VersionedConfirmedBlock(block), entries)
+        }
+        Err(_) => {
+            // Transaction metadata could be missing, try to fetch just the
+            // entries and leave the metadata fields empty
+            let entries = blockstore
+                .get_slot_entries(slot, /*shred_start_index:*/ 0)
+                .map_err(|err| LedgerToolError::from(err))?;
+            let mut entry_summaries = Vec::with_capacity(entries.len());
+            let mut starting_transaction_index = 0;
+            let transactions = entries
+                .into_iter()
+                .flat_map(|entry| {
+                    entry_summaries.push(EntrySummary {
+                        num_hashes: entry.num_hashes,
+                        hash: entry.hash,
+                        num_transactions: entry.transactions.len() as u64,
+                        starting_transaction_index,
+                    });
+                    starting_transaction_index += entry.transactions.len();
+
+                    entry.transactions
+                })
+                .collect();
+
+            (
+                BlockContents::VersionedTransactions(transactions),
+                entry_summaries,
+            )
+        }
+    };
 
     if verbose_level == 0 {
         if *output_format == OutputFormat::Display {
@@ -538,17 +612,19 @@ pub fn output_slot(
                 Hash::default()
             };
 
-            let transactions = block.transactions.len();
+            // TODO: reenable below
+            let num_transactions = 0; // = block.transactions.len();
             let mut program_ids = HashMap::new();
+            /*
             for VersionedTransactionWithStatusMeta { transaction, .. } in block.transactions.iter()
             {
                 for program_id in get_program_ids(transaction) {
                     *program_ids.entry(*program_id).or_insert(0) += 1;
                 }
             }
-
+            */
             println!(
-                "  Transactions: {transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
+                "  Transactions: {num_transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
             );
             for (pubkey, count) in program_ids.iter() {
                 *all_program_ids.entry(*pubkey).or_insert(0) += count;
@@ -557,7 +633,7 @@ pub fn output_slot(
             output_sorted_program_ids(program_ids);
         }
     } else {
-        let encoded_block = encode_confirmed_block(ConfirmedBlock::from(block))?;
+        let encoded_block = EncodedConfirmedBlock::from(block_contents);
         let cli_block = CliBlockWithEntries {
             encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
                 encoded_block,
