@@ -1,7 +1,5 @@
 use {
-    crate::{
-        epoch_stakes_cache::EpochStakesCache, solana::wen_restart_proto::LastVotedForkSlotsRecord,
-    },
+    crate::solana::wen_restart_proto::LastVotedForkSlotsRecord,
     anyhow::Result,
     log::*,
     solana_gossip::restart_crds_values::RestartLastVotedForkSlots,
@@ -29,11 +27,10 @@ pub(crate) struct LastVotedForkSlotsEpochInfo {
 pub(crate) struct LastVotedForkSlotsAggregate {
     active_peers: HashSet<Pubkey>,
     epoch_info_vec: Vec<LastVotedForkSlotsEpochInfo>,
-    epoch_stakes_cache: EpochStakesCache,
     last_voted_fork_slots: HashMap<Pubkey, RestartLastVotedForkSlots>,
     my_pubkey: Pubkey,
     repair_threshold: f64,
-    root_slot: Slot,
+    root_bank: Arc<Bank>,
     slots_stake_map: HashMap<Slot, u64>,
     slots_to_repair: BTreeSet<Slot>,
 }
@@ -45,6 +42,27 @@ pub struct LastVotedForkSlotsFinalResult {
 }
 
 impl LastVotedForkSlotsAggregate {
+    fn validator_stake_at_epoch(bank: &Arc<Bank>, epoch: &Epoch, id: &Pubkey) -> Option<u64> {
+        bank.epoch_stakes(*epoch).and_then(|epoch_stakes| {
+            epoch_stakes
+                .node_id_to_vote_accounts()
+                .get(id)
+                .map(|node| node.total_stake)
+        })
+    }
+
+    fn validator_stake_at_slot(bank: &Arc<Bank>, slot: &Slot, id: &Pubkey) -> Option<u64> {
+        let epoch = bank.epoch_schedule().get_epoch(*slot);
+        Self::validator_stake_at_epoch(bank, &epoch, id)
+    }
+
+    fn total_stake_at_slot(bank: &Arc<Bank>, slot: &Slot) -> Option<u64> {
+        let epoch = bank.epoch_schedule().get_epoch(*slot);
+        bank.epoch_stakes_map()
+            .get(&epoch)
+            .map(|epoch_stakes| epoch_stakes.total_stake())
+    }
+
     pub(crate) fn new(
         root_bank: Arc<Bank>,
         repair_threshold: f64,
@@ -56,10 +74,11 @@ impl LastVotedForkSlotsAggregate {
         let mut slots_stake_map = HashMap::new();
         let root_slot = root_bank.slot();
         let root_epoch = root_bank.epoch();
-        let epoch_stakes_cache = EpochStakesCache::new(&root_bank);
         for slot in last_voted_fork_slots {
             if slot >= &root_slot {
-                if let Some(sender_stake) = epoch_stakes_cache.node_stake(slot, my_pubkey) {
+                if let Some(sender_stake) =
+                    Self::validator_stake_at_slot(&root_bank, slot, my_pubkey)
+                {
                     slots_stake_map.insert(*slot, sender_stake);
                 } else {
                     warn!(
@@ -71,17 +90,16 @@ impl LastVotedForkSlotsAggregate {
         }
         let epoch_info_vec = vec![LastVotedForkSlotsEpochInfo {
             epoch: root_epoch,
-            total_stake: epoch_stakes_cache.total_stake(&root_slot).unwrap_or(0),
+            total_stake: Self::total_stake_at_slot(&root_bank, &root_slot).unwrap_or(0),
             total_active_stake: 0,
         }];
         Self {
             active_peers,
             epoch_info_vec,
-            epoch_stakes_cache,
             last_voted_fork_slots: HashMap::new(),
             my_pubkey: *my_pubkey,
             repair_threshold,
-            root_slot,
+            root_bank,
             slots_stake_map,
             slots_to_repair: BTreeSet::new(),
         }
@@ -116,7 +134,8 @@ impl LastVotedForkSlotsAggregate {
             return None;
         }
         self.active_peers.insert(*from);
-        let new_slots_vec = new_slots.to_slots(self.root_slot);
+        let root_slot = self.root_bank.slot();
+        let new_slots_vec = new_slots.to_slots(root_slot);
         let record = LastVotedForkSlotsRecord {
             last_voted_fork_slots: new_slots_vec.clone(),
             last_vote_bankhash: new_slots.last_voted_hash.to_string(),
@@ -129,17 +148,17 @@ impl LastVotedForkSlotsAggregate {
                 if old_slots == new_slots {
                     return None;
                 } else {
-                    HashSet::from_iter(old_slots.to_slots(self.root_slot))
+                    HashSet::from_iter(old_slots.to_slots(root_slot))
                 }
             }
             None => HashSet::new(),
         };
         for slot in old_slots_set.difference(&new_slots_set) {
             let entry = self.slots_stake_map.get_mut(slot).unwrap();
-            if let Some(sender_stake) = self.epoch_stakes_cache.node_stake(slot, from) {
+            if let Some(sender_stake) = Self::validator_stake_at_slot(&self.root_bank, slot, from) {
                 *entry = entry.saturating_sub(sender_stake);
-                let repair_threshold_stake = (self.epoch_stakes_cache.total_stake(slot).unwrap()
-                    as f64
+                let repair_threshold_stake = (Self::total_stake_at_slot(&self.root_bank, slot)
+                    .unwrap() as f64
                     * self.repair_threshold) as u64;
                 if *entry < repair_threshold_stake {
                     self.slots_to_repair.remove(slot);
@@ -148,10 +167,10 @@ impl LastVotedForkSlotsAggregate {
         }
         for slot in new_slots_set.difference(&old_slots_set) {
             let entry = self.slots_stake_map.entry(*slot).or_insert(0);
-            if let Some(sender_stake) = self.epoch_stakes_cache.node_stake(slot, from) {
+            if let Some(sender_stake) = Self::validator_stake_at_slot(&self.root_bank, slot, from) {
                 *entry = entry.saturating_add(sender_stake);
-                let repair_threshold_stake = (self.epoch_stakes_cache.total_stake(slot).unwrap()
-                    as f64
+                let repair_threshold_stake = (Self::total_stake_at_slot(&self.root_bank, slot)
+                    .unwrap() as f64
                     * self.repair_threshold) as u64;
                 if *entry >= repair_threshold_stake {
                     self.slots_to_repair.insert(*slot);
@@ -161,14 +180,14 @@ impl LastVotedForkSlotsAggregate {
         let highest_repair_slot = self.slots_to_repair.last();
         match highest_repair_slot {
             Some(slot) => {
-                let current_epoch = self.epoch_stakes_cache.epoch(slot);
+                let current_epoch = self.root_bank.epoch_schedule().get_epoch(*slot);
                 let last_entry_epoch = self.epoch_info_vec.last().unwrap().epoch;
                 match last_entry_epoch.cmp(&current_epoch) {
                     Ordering::Less => {
                         // wandering into new epoch, add to the end of state vec, we should have at most 2 entries.
                         self.epoch_info_vec.push(LastVotedForkSlotsEpochInfo {
                             epoch: current_epoch,
-                            total_stake: self.epoch_stakes_cache.total_stake(slot).unwrap(),
+                            total_stake: Self::total_stake_at_slot(&self.root_bank, slot).unwrap(),
                             total_active_stake: 0,
                         });
                     }
@@ -184,9 +203,12 @@ impl LastVotedForkSlotsAggregate {
                     entry.total_active_stake =
                         self.active_peers.iter().fold(0, |sum: u64, pubkey| {
                             sum.saturating_add(
-                                self.epoch_stakes_cache
-                                    .node_stake_at_epoch(&entry.epoch, pubkey)
-                                    .unwrap_or(0),
+                                Self::validator_stake_at_epoch(
+                                    &self.root_bank,
+                                    &entry.epoch,
+                                    pubkey,
+                                )
+                                .unwrap_or(0),
                             )
                         });
                 }

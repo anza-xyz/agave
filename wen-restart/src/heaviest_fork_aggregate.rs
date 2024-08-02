@@ -15,7 +15,8 @@ pub(crate) struct HeaviestForkAggregate {
     supermajority_threshold: f64,
     my_shred_version: u16,
     my_pubkey: Pubkey,
-    // TODO(wen): using local root's EpochStakes, need to fix if crossing Epoch boundary.
+    // We use the epoch_stakes of the Epoch our heaviest bank is in. Proceed and exit only if
+    // enough validator agree with me.
     epoch_stakes: EpochStakes,
     heaviest_forks: HashMap<Pubkey, RestartHeaviestFork>,
     block_stake_map: HashMap<(Slot, Hash), u64>,
@@ -58,7 +59,6 @@ impl HeaviestForkAggregate {
         }
     }
 
-    // TODO(wen): this will a function in separate EpochStakesMap class later.
     fn validator_stake(epoch_stakes: &EpochStakes, pubkey: &Pubkey) -> u64 {
         epoch_stakes
             .node_id_to_vote_accounts()
@@ -180,7 +180,6 @@ impl HeaviestForkAggregate {
         Some(record)
     }
 
-    // TODO(wen): use better epoch stake and add a test later.
     pub(crate) fn total_active_stake(&self) -> u64 {
         self.active_peers.iter().fold(0, |sum: u64, pubkey| {
             sum.saturating_add(Self::validator_stake(&self.epoch_stakes, pubkey))
