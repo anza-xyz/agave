@@ -1993,7 +1993,8 @@ impl ReplayStage {
     }
 
     /// Checks if it is time for us to start producing a leader block.
-    /// Additionally fails if:
+    /// Fails if:
+    /// - Current PoH has not satisfied criteria to start my leader block
     /// - Startup verification is not complete,
     /// - Bank forks already contains a bank for this leader slot
     /// - We have not landed a vote yet and the `wait_for_vote_to_start_leader` flag is set

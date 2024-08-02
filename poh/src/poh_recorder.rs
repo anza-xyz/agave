@@ -571,7 +571,7 @@ impl PohRecorder {
             return PohLeaderStatus::NotReached;
         };
 
-        if self.has_existing_shreds_for_slot(next_poh_slot) {
+        if self.blockstore.has_existing_shreds_for_slot(next_poh_slot) {
             // We already have existing shreds for this slot. This can happen when this block was previously
             // created and added to BankForks, however a recent PoH reset caused this bank to be removed
             // as it was not part of the rooted fork. If this slot is not the first slot for this leader,
@@ -591,13 +591,6 @@ impl PohRecorder {
         PohLeaderStatus::Reached {
             poh_slot,
             parent_slot,
-        }
-    }
-
-    fn has_existing_shreds_for_slot(&self, slot: Slot) -> bool {
-        match self.blockstore.meta(slot).unwrap() {
-            Some(meta) => meta.received > 0,
-            None => false,
         }
     }
 
