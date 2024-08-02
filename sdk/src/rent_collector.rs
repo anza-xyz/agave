@@ -1,14 +1,17 @@
 #![cfg(feature = "full")]
 
 //! calculate and collect rent from Accounts
-use solana_sdk::{
-    account::{AccountSharedData, ReadableAccount, WritableAccount},
-    clock::Epoch,
-    epoch_schedule::EpochSchedule,
-    genesis_config::GenesisConfig,
-    incinerator,
-    pubkey::Pubkey,
-    rent::{Rent, RentDue},
+use {
+    logger::debug,
+    solana_sdk::{
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        clock::Epoch,
+        epoch_schedule::EpochSchedule,
+        genesis_config::GenesisConfig,
+        incinerator,
+        pubkey::Pubkey,
+        rent::{Rent, RentDue},
+    },
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -90,12 +93,29 @@ impl RentCollector {
         if self.rent.is_exempt(lamports, data_len) {
             RentDue::Exempt
         } else {
-            let slots_elapsed: u64 = (account_rent_epoch..=self.epoch)
-                .map(|epoch| {
-                    self.epoch_schedule
-                        .get_slots_in_epoch(epoch.saturating_add(1))
-                })
-                .sum();
+            #[cfg(feature = "dev-context-only-utils")]
+            let mut run_loop = true;
+            #[cfg(not(feature = "dev-context-only-utils"))]
+            let run_loop = true;
+
+            if self.epoch.saturating_sub(account_rent_epoch) > 2u64.saturating_pow(30) {
+                debug!("Calculating slots_elapsed is going to consume a long time");
+                #[cfg(feature = "dev-context-only-utils")]
+                {
+                    run_loop = false;
+                }
+            }
+
+            let slots_elapsed: u64 = if run_loop {
+                (account_rent_epoch..=self.epoch)
+                    .map(|epoch| {
+                        self.epoch_schedule
+                            .get_slots_in_epoch(epoch.saturating_add(1))
+                    })
+                    .sum()
+            } else {
+                0
+            };
 
             // avoid infinite rent in rust 1.45
             let years_elapsed = if self.slots_per_year != 0.0 {
@@ -479,5 +499,18 @@ mod tests {
             account_data_len as u64
         );
         assert_eq!(account, AccountSharedData::default());
+    }
+
+    #[test]
+    fn my_test() {
+        let collector = RentCollector {
+            epoch: 2u64.saturating_pow(35),
+            epoch_schedule: EpochSchedule::default(),
+            slots_per_year: 0.0,
+            rent: Rent::default(),
+        };
+
+        let rent = collector.get_rent_due(20, 50, 0);
+        assert_eq!(rent, RentDue::Paying(0));
     }
 }
