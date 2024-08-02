@@ -142,13 +142,26 @@ impl LastVotedForkSlotsAggregate {
             shred_version: new_slots.shred_version as u32,
             wallclock: new_slots.wallclock,
         };
+        if !self.update_slots_stakes_map_and_slots_to_repair(new_slots, new_slots_vec) {
+            return None;
+        }
+        self.update_epoch_info_vec();
+        Some(record)
+    }
+
+    fn update_slots_stakes_map_and_slots_to_repair(
+        &mut self,
+        new_slots: RestartLastVotedForkSlots,
+        new_slots_vec: Vec<Slot>,
+    ) -> bool {
+        let from = &new_slots.from;
         let new_slots_set: HashSet<Slot> = HashSet::from_iter(new_slots_vec);
         let old_slots_set = match self.last_voted_fork_slots.insert(*from, new_slots.clone()) {
             Some(old_slots) => {
                 if old_slots == new_slots {
-                    return None;
+                    return false;
                 } else {
-                    HashSet::from_iter(old_slots.to_slots(root_slot))
+                    HashSet::from_iter(old_slots.to_slots(self.root_bank.slot()))
                 }
             }
             None => HashSet::new(),
@@ -177,6 +190,10 @@ impl LastVotedForkSlotsAggregate {
                 }
             }
         }
+        true
+    }
+
+    fn update_epoch_info_vec(&mut self) {
         let highest_repair_slot = self.slots_to_repair.last();
         match highest_repair_slot {
             Some(slot) => {
@@ -219,7 +236,6 @@ impl LastVotedForkSlotsAggregate {
                 first_entry.total_active_stake = 0;
             }
         }
-        Some(record)
     }
 
     pub(crate) fn min_active_percent(&self) -> f64 {
