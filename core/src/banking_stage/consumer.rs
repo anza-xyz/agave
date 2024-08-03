@@ -9,22 +9,21 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
-    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
         BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
-    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         bank::{Bank, LoadAndExecuteTransactionsOutput},
-        compute_budget_details::GetComputeBudgetDetails,
         transaction_batch::TransactionBatch,
     },
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         feature_set,
+        fee::FeeBudgetLimits,
         message::SanitizedMessage,
         saturating_add_assign,
         timing::timestamp,
@@ -35,6 +34,7 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
+    solana_timings::ExecuteTimings,
     std::{
         sync::{atomic::Ordering, Arc},
         time::Instant,
@@ -577,20 +577,59 @@ impl Consumer {
             .sanitized_transactions()
             .iter()
             .filter_map(|transaction| {
-                let round_compute_unit_price_enabled = false; // TODO get from working_bank.feature_set
-                transaction
-                    .get_compute_budget_details(round_compute_unit_price_enabled)
-                    .map(|details| details.compute_unit_price)
+                process_compute_budget_instructions(
+                    transaction.message().program_instructions_iter(),
+                )
+                .ok()
+                .map(|limits| limits.compute_unit_price)
             })
             .minmax();
         let (min_prioritization_fees, max_prioritization_fees) =
             min_max.into_option().unwrap_or_default();
+
+        let mut error_counters = TransactionErrorMetrics::default();
+        let mut retryable_transaction_indexes: Vec<_> = batch
+            .lock_results()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, res)| match res {
+                // following are retryable errors
+                Err(TransactionError::AccountInUse) => {
+                    error_counters.account_in_use += 1;
+                    Some(index)
+                }
+                Err(TransactionError::WouldExceedMaxBlockCostLimit) => {
+                    error_counters.would_exceed_max_block_cost_limit += 1;
+                    Some(index)
+                }
+                Err(TransactionError::WouldExceedMaxVoteCostLimit) => {
+                    error_counters.would_exceed_max_vote_cost_limit += 1;
+                    Some(index)
+                }
+                Err(TransactionError::WouldExceedMaxAccountCostLimit) => {
+                    error_counters.would_exceed_max_account_cost_limit += 1;
+                    Some(index)
+                }
+                Err(TransactionError::WouldExceedAccountDataBlockLimit) => {
+                    error_counters.would_exceed_account_data_block_limit += 1;
+                    Some(index)
+                }
+                // following are non-retryable errors
+                Err(TransactionError::TooManyAccountLocks) => {
+                    error_counters.too_many_account_locks += 1;
+                    None
+                }
+                Err(_) => None,
+                Ok(_) => None,
+            })
+            .collect();
 
         let (load_and_execute_transactions_output, load_execute_us) = measure_us!(bank
             .load_and_execute_transactions(
                 batch,
                 MAX_PROCESSING_AGE,
                 &mut execute_and_commit_timings.execute_timings,
+                &mut error_counters,
                 TransactionProcessingConfig {
                     account_overrides: None,
                     check_program_modification_slot: bank.check_program_modification_slot(),
@@ -606,15 +645,11 @@ impl Consumer {
         execute_and_commit_timings.load_execute_us = load_execute_us;
 
         let LoadAndExecuteTransactionsOutput {
-            mut loaded_transactions,
             execution_results,
-            mut retryable_transaction_indexes,
             executed_transactions_count,
             executed_non_vote_transactions_count,
             executed_with_successful_result_count,
             signature_count,
-            error_counters,
-            ..
         } = load_and_execute_transactions_output;
 
         let transactions_attempted_execution_count = execution_results.len();
@@ -681,7 +716,6 @@ impl Consumer {
         let (commit_time_us, commit_transaction_statuses) = if executed_transactions_count != 0 {
             self.committer.commit_transactions(
                 batch,
-                &mut loaded_transactions,
                 execution_results,
                 last_blockhash,
                 lamports_per_signature,
@@ -741,15 +775,14 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = message.fee_payer();
-        let budget_limits =
-            process_compute_budget_instructions(message.program_instructions_iter())?.into();
-        let fee = bank.fee_structure().calculate_fee(
+        let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
+            message.program_instructions_iter(),
+        )?);
+        let fee = solana_fee::calculate_fee(
             message,
-            bank.get_lamports_per_signature(),
-            &budget_limits,
-            bank.feature_set.is_active(
-                &feature_set::include_loaded_accounts_data_size_in_fee_calculation::id(),
-            ),
+            bank.get_lamports_per_signature() == 0,
+            bank.fee_structure().lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
             bank.feature_set
                 .is_active(&feature_set::remove_rounding_in_fee_calculation::id()),
         );
@@ -849,9 +882,8 @@ mod tests {
         },
         solana_perf::packet::Packet,
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
-        solana_program_runtime::timings::ProgramTiming,
         solana_rpc::transaction_status_service::TransactionStatusService,
-        solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
+        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
         solana_sdk::{
             account::AccountSharedData,
             account_utils::StateMut,
@@ -878,6 +910,7 @@ mod tests {
             transaction::{MessageHash, Transaction, VersionedTransaction},
         },
         solana_svm::account_loader::CheckedTransactionDetails,
+        solana_timings::ProgramTiming,
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
@@ -989,6 +1022,7 @@ mod tests {
     ) -> (
         Vec<Transaction>,
         Arc<Bank>,
+        Arc<RwLock<BankForks>>,
         Arc<RwLock<PohRecorder>>,
         Receiver<WorkingBankEntry>,
         GenesisConfigInfo,
@@ -1003,7 +1037,7 @@ mod tests {
         } = &genesis_config_info;
         let blockstore =
             Blockstore::open(ledger_path).expect("Expected to be able to open database ledger");
-        let bank = Bank::new_no_wallclock_throttle_for_tests(genesis_config).0;
+        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(genesis_config);
         let exit = Arc::new(AtomicBool::default());
         let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
             bank.tick_height(),
@@ -1032,6 +1066,7 @@ mod tests {
         (
             transactions,
             bank,
+            bank_forks,
             poh_recorder,
             entry_receiver,
             genesis_config_info,
@@ -1059,7 +1094,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_sdk::pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
@@ -1187,7 +1222,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = Pubkey::new_unique();
 
         // setup nonce account with a durable nonce different from the current
@@ -1343,7 +1378,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_sdk::pubkey::new_rand();
 
         let transactions = {
@@ -1427,7 +1462,7 @@ mod tests {
         } = create_slow_genesis_config(10_000);
         let mut bank = Bank::new_for_tests(&genesis_config);
         bank.ns_per_slot = u128::MAX;
-        let bank = bank.wrap_with_bank_forks_for_tests().0;
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let pubkey = solana_sdk::pubkey::new_rand();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -1583,7 +1618,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_sdk::pubkey::new_rand();
         let pubkey1 = solana_sdk::pubkey::new_rand();
 
@@ -1660,7 +1695,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(lamports);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         // set cost tracker limits to MAX so it will not filter out TXs
         bank.write_cost_tracker()
             .unwrap()
@@ -1721,7 +1756,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         // set cost tracker limits to MAX so it will not filter out TXs
         bank.write_cost_tracker()
             .unwrap()
@@ -1780,7 +1815,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
         let pubkey = solana_sdk::pubkey::new_rand();
 
@@ -1861,7 +1896,7 @@ mod tests {
         } = create_slow_genesis_config(solana_sdk::native_token::sol_to_lamports(1000.0));
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_sdk::pubkey::new_rand();
         let pubkey1 = solana_sdk::pubkey::new_rand();
         let keypair1 = Keypair::new();
@@ -2130,7 +2165,7 @@ mod tests {
     fn test_consume_buffered_packets() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
-            let (transactions, bank, poh_recorder, _entry_receiver, _, poh_simulator) =
+            let (transactions, bank, _bank_forks, poh_recorder, _entry_receiver, _, poh_simulator) =
                 setup_conflicting_transactions(ledger_path.path());
             let recorder: TransactionRecorder = poh_recorder.read().unwrap().new_recorder();
             let num_conflicting_transactions = transactions.len();
@@ -2203,8 +2238,15 @@ mod tests {
     fn test_consume_buffered_packets_sanitization_error() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
-            let (mut transactions, bank, poh_recorder, _entry_receiver, _, poh_simulator) =
-                setup_conflicting_transactions(ledger_path.path());
+            let (
+                mut transactions,
+                bank,
+                _bank_forks,
+                poh_recorder,
+                _entry_receiver,
+                _,
+                poh_simulator,
+            ) = setup_conflicting_transactions(ledger_path.path());
             let duplicate_account_key = transactions[0].message.account_keys[0];
             transactions[0]
                 .message
@@ -2259,7 +2301,7 @@ mod tests {
     fn test_consume_buffered_packets_retryable() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
-            let (transactions, bank, poh_recorder, _entry_receiver, _, poh_simulator) =
+            let (transactions, bank, _bank_forks, poh_recorder, _entry_receiver, _, poh_simulator) =
                 setup_conflicting_transactions(ledger_path.path());
             let recorder = poh_recorder.read().unwrap().new_recorder();
             let num_conflicting_transactions = transactions.len();
@@ -2355,8 +2397,15 @@ mod tests {
     fn test_consume_buffered_packets_batch_priority_guard() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
-            let (_, bank, poh_recorder, _entry_receiver, genesis_config_info, poh_simulator) =
-                setup_conflicting_transactions(ledger_path.path());
+            let (
+                _,
+                bank,
+                _bank_forks,
+                poh_recorder,
+                _entry_receiver,
+                genesis_config_info,
+                poh_simulator,
+            ) = setup_conflicting_transactions(ledger_path.path());
             let recorder = poh_recorder.read().unwrap().new_recorder();
 
             // Setup transactions:

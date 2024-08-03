@@ -5,7 +5,7 @@ use {
     crossbeam_channel::Receiver,
     log::*,
     solana_entry::poh::Poh,
-    solana_measure::{measure, measure::Measure},
+    solana_measure::{measure::Measure, measure_us},
     solana_sdk::poh_config::PohConfig,
     std::{
         sync::{
@@ -260,21 +260,16 @@ impl PohService {
                         record.mixin,
                         std::mem::take(&mut record.transactions),
                     );
-                    // what do we do on failure here? Ignore for now.
-                    let (_send_res, send_record_result_time) =
-                        measure!(record.sender.send(res), "send_record_result");
-                    timing.total_send_record_result_us += send_record_result_time.as_us();
-                    timing.num_hashes += 1; // note: may have also ticked inside record
+                    let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
+                    debug_assert!(send_res.is_ok(), "Record wasn't sent.");
 
-                    let new_record_result = record_receiver.try_recv();
-                    match new_record_result {
-                        Ok(new_record) => {
-                            // we already have second request to record, so record again while we still have the mutex
-                            record = new_record;
-                        }
-                        Err(_) => {
-                            break;
-                        }
+                    timing.total_send_record_result_us += send_record_result_us;
+                    timing.num_hashes += 1; // note: may have also ticked inside record
+                    if let Ok(new_record) = record_receiver.try_recv() {
+                        // we already have second request to record, so record again while we still have the mutex
+                        record = new_record;
+                    } else {
+                        break;
                     }
                 }
                 record_time.stop();
@@ -400,7 +395,7 @@ mod tests {
     fn test_poh_service() {
         solana_logger::setup();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
-        let bank = Bank::new_no_wallclock_throttle_for_tests(&genesis_config).0;
+        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())

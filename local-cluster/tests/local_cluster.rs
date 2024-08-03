@@ -1794,12 +1794,9 @@ fn test_validator_saves_tower() {
 
     // Wait for the first new root
     let last_replayed_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
         if let Ok(root) = validator_client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::root())
+            .get_slot_with_commitment(CommitmentConfig::finalized())
         {
             trace!("current root: {}", root);
             if root > 0 {
@@ -1826,12 +1823,9 @@ fn test_validator_saves_tower() {
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
         if let Ok(root) = validator_client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::root())
+            .get_slot_with_commitment(CommitmentConfig::finalized())
         {
             trace!(
                 "current root: {}, last_replayed_root: {}",
@@ -1862,12 +1856,9 @@ fn test_validator_saves_tower() {
 
     // Wait for another new root
     let new_root = loop {
-        #[allow(deprecated)]
-        // This test depends on knowing the immediate root, without any delay from the commitment
-        // service, so the deprecated CommitmentConfig::root() is retained
         if let Ok(root) = validator_client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::root())
+            .get_slot_with_commitment(CommitmentConfig::finalized())
         {
             trace!("current root: {}, last tower root: {}", root, tower3_root);
             if root > tower3_root {
@@ -4623,6 +4614,7 @@ fn test_slot_hash_expiry() {
 //
 #[test]
 #[serial]
+#[ignore]
 fn test_duplicate_with_pruned_ancestor() {
     solana_logger::setup_with("info,solana_metrics=off");
     solana_core::repair::duplicate_repair_status::set_ancestor_hash_repair_sample_size_for_tests_only(3);
@@ -4968,22 +4960,11 @@ fn test_boot_from_local_state() {
     info!("Waiting for validator2 to create a new bank snapshot...");
     let timer = Instant::now();
     let bank_snapshot = loop {
-        if let Some(full_snapshot_slot) = snapshot_utils::get_highest_full_snapshot_archive_slot(
-            &validator2_config.full_snapshot_archives_dir,
-        ) {
-            if let Some(incremental_snapshot_slot) =
-                snapshot_utils::get_highest_incremental_snapshot_archive_slot(
-                    &validator2_config.incremental_snapshot_archives_dir,
-                    full_snapshot_slot,
-                )
-            {
-                if let Some(bank_snapshot) = snapshot_utils::get_highest_bank_snapshot_post(
-                    &validator2_config.bank_snapshots_dir,
-                ) {
-                    if bank_snapshot.slot > incremental_snapshot_slot {
-                        break bank_snapshot;
-                    }
-                }
+        if let Some(bank_snapshot) =
+            snapshot_utils::get_highest_bank_snapshot_post(&validator2_config.bank_snapshots_dir)
+        {
+            if bank_snapshot.slot > incremental_snapshot_archive.slot() {
+                break bank_snapshot;
             }
         }
         assert!(

@@ -16,9 +16,9 @@ use {
     solana_banks_server::banks_server::start_local_server,
     solana_bpf_loader_program::serialization::serialize_parameters,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_log_collector::ic_msg,
     solana_program_runtime::{
-        ic_msg, invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
-        stable_log, timings::ExecuteTimings,
+        invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry, stable_log,
     },
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
@@ -47,6 +47,7 @@ use {
         stable_layout::stable_instruction::StableInstruction,
         sysvar::{Sysvar, SysvarId},
     },
+    solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::{
         cell::RefCell,
@@ -543,13 +544,6 @@ impl ProgramTest {
     /// Override the default transaction account lock limit
     pub fn set_transaction_account_lock_limit(&mut self, transaction_account_lock_limit: usize) {
         self.transaction_account_lock_limit = Some(transaction_account_lock_limit);
-    }
-
-    /// Override the SBF compute budget
-    #[allow(deprecated)]
-    #[deprecated(since = "1.8.0", note = "please use `set_compute_max_units` instead")]
-    pub fn set_bpf_compute_max_units(&mut self, bpf_compute_max_units: u64) {
-        self.set_compute_max_units(bpf_compute_max_units);
     }
 
     /// Add an account to the test environment's genesis config.

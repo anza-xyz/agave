@@ -15,7 +15,6 @@ use {
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     solana_ledger::genesis_utils::create_genesis_config,
-    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
         genesis_utils::GenesisConfigInfo, prioritization_fee_cache::PrioritizationFeeCache,
@@ -26,6 +25,7 @@ use {
         system_transaction,
         transaction::{Result, SanitizedTransaction},
     },
+    solana_timings::ExecuteTimings,
     solana_unified_scheduler_pool::{
         DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
     },
@@ -83,7 +83,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     bank_forks.write().unwrap().install_scheduler_pool(pool);
     let genesis = 0;
     let genesis_bank = &bank_forks.read().unwrap().get(genesis).unwrap();
-    genesis_bank.set_fork_graph_in_program_cache(bank_forks.clone());
+    genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
 
     // Create bank, which is pruned later
     let pruned = 2;

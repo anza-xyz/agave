@@ -237,7 +237,7 @@ pub(crate) enum BlockhashStatus {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "679XkZ4upGc389SwqAsjs5tr2qB4wisqjbwtei7fGhxC")
+    frozen_abi(digest = "H6T5A66kgJYANFXVrUprxV76WD5ce7Gf62q9SiBC2uYk")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower {
@@ -508,7 +508,8 @@ impl Tower {
         }
     }
 
-    pub(crate) fn is_slot_confirmed(
+    #[cfg(test)]
+    fn is_slot_confirmed(
         &self,
         slot: Slot,
         voted_stakes: &VotedStakes,

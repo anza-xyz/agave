@@ -35,7 +35,7 @@ use {
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-            Arc, Mutex, OnceLock, RwLock, RwLockWriteGuard,
+            Arc, Mutex, OnceLock, RwLock,
         },
     },
     thiserror::Error,
@@ -666,6 +666,8 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     /// when a scan's accumulated data exceeds this limit, abort the scan
     pub scan_results_limit_bytes: Option<usize>,
 
+    pub purge_older_root_entries_one_slot_list: AtomicUsize,
+
     /// # roots added since last check
     pub roots_added: AtomicUsize,
     /// # roots removed since last check
@@ -690,6 +692,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .and_then(|config| config.scan_results_limit_bytes);
         let (account_maps, bin_calculator, storage) = Self::allocate_accounts_index(config, exit);
         Self {
+            purge_older_root_entries_one_slot_list: AtomicUsize::default(),
             account_maps,
             bin_calculator,
             program_id_index: SecondaryIndex::<RwLockSecondaryIndexEntry>::new(
@@ -1160,10 +1163,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     fn slot_list_mut<RT>(
         &self,
         pubkey: &Pubkey,
-        user: impl for<'a> FnOnce(&mut RwLockWriteGuard<'a, SlotList<T>>) -> RT,
+        user_fn: impl FnOnce(&mut SlotList<T>) -> RT,
     ) -> Option<RT> {
         let read_lock = self.get_bin(pubkey);
-        read_lock.slot_list_mut(pubkey, user)
+        read_lock.slot_list_mut(pubkey, user_fn)
     }
 
     /// Remove keys from the account index if the key's slot list is empty.
@@ -1817,6 +1820,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         reclaims: &mut SlotList<T>,
         max_clean_root_inclusive: Option<Slot>,
     ) {
+        if slot_list.len() <= 1 {
+            self.purge_older_root_entries_one_slot_list
+                .fetch_add(1, Ordering::Relaxed);
+        }
         let newest_root_in_slot_list;
         let max_clean_root_inclusive = {
             let roots_tracker = &self.roots_tracker.read().unwrap();
@@ -1920,7 +1927,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.roots_added.fetch_add(1, Ordering::Relaxed);
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
         // `AccountsDb::flush_accounts_cache()` relies on roots being added in order
-        assert!(slot >= w_roots_tracker.alive_roots.max_inclusive());
+        assert!(
+            slot >= w_roots_tracker.alive_roots.max_inclusive(),
+            "Roots must be added in order: {} < {}",
+            slot,
+            w_roots_tracker.alive_roots.max_inclusive()
+        );
         // 'slot' is a root, so it is both 'root' and 'original'
         w_roots_tracker.alive_roots.insert(slot);
     }

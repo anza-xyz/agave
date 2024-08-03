@@ -1,9 +1,11 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
             collect_rent_from_account, load_accounts, validate_fee_payer,
             CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
-            TransactionLoadResult, TransactionValidationResult, ValidatedTransactionDetails,
+            TransactionValidationResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
@@ -11,35 +13,31 @@ use {
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_error_metrics::TransactionErrorMetrics,
+        transaction_execution_result::{
+            ExecutedTransaction, TransactionExecutionDetails, TransactionExecutionResult,
+        },
         transaction_processing_callback::TransactionProcessingCallback,
-        transaction_results::{TransactionExecutionDetails, TransactionExecutionResult},
     },
     log::debug,
     percentage::Percentage,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::{
-        compute_budget::ComputeBudget,
-        compute_budget_processor::process_compute_budget_instructions,
-    },
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_loader_v4_program::create_program_runtime_environment_v2,
-    solana_measure::{measure, measure::Measure},
+    solana_log_collector::LogCollector,
+    solana_measure::{measure::Measure, measure_us},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria,
         },
-        log_collector::LogCollector,
         sysvar_cache::SysvarCache,
-        timings::{ExecuteTimingType, ExecuteTimings},
     },
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
-        feature_set::{
-            include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
-        },
+        feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
         fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -51,10 +49,10 @@ use {
         transaction::{self, SanitizedTransaction, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
+    solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
-        cell::RefCell,
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
@@ -74,8 +72,6 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     // Vector of results indicating whether a transaction was executed or could not
     // be executed. Note executed transactions can still have failed!
     pub execution_results: Vec<TransactionExecutionResult>,
-    // Vector of loaded transactions from transactions that were processed.
-    pub loaded_transactions: Vec<TransactionLoadResult>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -138,6 +134,10 @@ pub struct TransactionProcessingEnvironment<'a> {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(slot(pub), epoch(pub))
+)]
 pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Bank slot (i.e. block)
     slot: Slot,
@@ -234,7 +234,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
 
-        let (validation_results, validate_fees_time) = measure!(self.validate_fees(
+        let (validation_results, validate_fees_us) = measure_us!(self.validate_fees(
             callbacks,
             sanitized_txs,
             check_results,
@@ -248,40 +248,39 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut error_metrics
         ));
 
-        let mut program_cache_time = Measure::start("program_cache");
-        let mut program_accounts_map = Self::filter_executable_program_accounts(
-            callbacks,
-            sanitized_txs,
-            &validation_results,
-            PROGRAM_OWNERS,
-        );
-        for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-            program_accounts_map.insert(*builtin_program, 0);
-        }
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
+            let mut program_accounts_map = Self::filter_executable_program_accounts(
+                callbacks,
+                sanitized_txs,
+                &validation_results,
+                PROGRAM_OWNERS,
+            );
+            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
+                program_accounts_map.insert(*builtin_program, 0);
+            }
 
-        let program_cache_for_tx_batch = Rc::new(RefCell::new(self.replenish_program_cache(
-            callbacks,
-            &program_accounts_map,
-            config.check_program_modification_slot,
-            config.limit_to_load_programs,
-        )));
+            let program_cache_for_tx_batch = self.replenish_program_cache(
+                callbacks,
+                &program_accounts_map,
+                config.check_program_modification_slot,
+                config.limit_to_load_programs,
+            );
 
-        if program_cache_for_tx_batch.borrow().hit_max_limit {
-            const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
-            let loaded_transactions = vec![Err(ERROR); sanitized_txs.len()];
-            let execution_results =
-                vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
-            return LoadAndExecuteSanitizedTransactionsOutput {
-                error_metrics,
-                execute_timings,
-                execution_results,
-                loaded_transactions,
-            };
-        }
-        program_cache_time.stop();
+            if program_cache_for_tx_batch.hit_max_limit {
+                const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
+                let execution_results =
+                    vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
+                return LoadAndExecuteSanitizedTransactionsOutput {
+                    error_metrics,
+                    execute_timings,
+                    execution_results,
+                };
+            }
 
-        let mut load_time = Measure::start("accounts_load");
-        let mut loaded_transactions = load_accounts(
+            program_cache_for_tx_batch
+        });
+
+        let (loaded_transactions, load_accounts_us) = measure_us!(load_accounts(
             callbacks,
             sanitized_txs,
             validation_results,
@@ -291,56 +290,42 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
-            &program_cache_for_tx_batch.borrow(),
-        );
-        load_time.stop();
+            &program_cache_for_tx_batch,
+        ));
 
-        let mut execution_time = Measure::start("execution_time");
+        let (execution_results, execution_us): (Vec<TransactionExecutionResult>, u64) =
+            measure_us!(loaded_transactions
+                .into_iter()
+                .zip(sanitized_txs.iter())
+                .map(|(load_result, tx)| match load_result {
+                    Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
+                    Ok(loaded_transaction) => {
+                        let executed_tx = self.execute_loaded_transaction(
+                            tx,
+                            loaded_transaction,
+                            &mut execute_timings,
+                            &mut error_metrics,
+                            &mut program_cache_for_tx_batch,
+                            environment,
+                            config,
+                        );
 
-        let execution_results: Vec<TransactionExecutionResult> = loaded_transactions
-            .iter_mut()
-            .zip(sanitized_txs.iter())
-            .map(|(load_result, tx)| match load_result {
-                Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
-                Ok(loaded_transaction) => {
-                    let result = self.execute_loaded_transaction(
-                        tx,
-                        loaded_transaction,
-                        &mut execute_timings,
-                        &mut error_metrics,
-                        &mut program_cache_for_tx_batch.borrow_mut(),
-                        environment,
-                        config,
-                    );
-
-                    if let TransactionExecutionResult::Executed {
-                        details,
-                        programs_modified_by_tx,
-                    } = &result
-                    {
                         // Update batch specific cache of the loaded programs with the modifications
                         // made by the transaction, if it executed successfully.
-                        if details.status.is_ok() {
-                            program_cache_for_tx_batch
-                                .borrow_mut()
-                                .merge(programs_modified_by_tx);
+                        if executed_tx.was_successful() {
+                            program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
                         }
+
+                        TransactionExecutionResult::Executed(Box::new(executed_tx))
                     }
-
-                    result
-                }
-            })
-            .collect();
-
-        execution_time.stop();
+                })
+                .collect());
 
         // Skip eviction when there's no chance this particular tx batch has increased the size of
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if program_cache_for_tx_batch.borrow().loaded_missing
-            || program_cache_for_tx_batch.borrow().merged_modified
-        {
+        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -353,28 +338,22 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         debug!(
             "load: {}us execute: {}us txs_len={}",
-            load_time.as_us(),
-            execution_time.as_us(),
+            load_accounts_us,
+            execution_us,
             sanitized_txs.len(),
         );
 
-        execute_timings.saturating_add_in_place(
-            ExecuteTimingType::ValidateFeesUs,
-            validate_fees_time.as_us(),
-        );
-        execute_timings.saturating_add_in_place(
-            ExecuteTimingType::ProgramCacheUs,
-            program_cache_time.as_us(),
-        );
-        execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_time.as_us());
         execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_time.as_us());
+            .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
+        execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_accounts_us);
+        execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,
             execute_timings,
             execution_results,
-            loaded_transactions,
         }
     }
 
@@ -451,11 +430,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = checked_details;
 
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let fee_details = fee_structure.calculate_fee_details(
+        let fee_details = solana_fee::calculate_fee_details(
             message,
-            lamports_per_signature,
-            &fee_budget_limits,
-            feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
+            lamports_per_signature == 0,
+            fee_structure.lamports_per_signature,
+            fee_budget_limits.prioritization_fee,
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
         );
 
@@ -521,6 +500,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         result
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,
@@ -544,7 +524,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 })
                 .collect();
 
-        let mut loaded_programs_for_txs = None;
+        let mut loaded_programs_for_txs: Option<ProgramCacheForTxBatch> = None;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
                 // Lock the global cache.
@@ -585,6 +565,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             };
 
             if let Some((key, program)) = program_to_store {
+                loaded_programs_for_txs.as_mut().unwrap().loaded_missing = true;
                 let mut program_cache = self.program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if program_cache.finish_cooperative_loading_task(self.slot, key, program)
@@ -705,13 +686,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn execute_loaded_transaction(
         &self,
         tx: &SanitizedTransaction,
-        loaded_transaction: &mut LoadedTransaction,
+        mut loaded_transaction: LoadedTransaction,
         execute_timings: &mut ExecuteTimings,
         error_metrics: &mut TransactionErrorMetrics,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
-    ) -> TransactionExecutionResult {
+    ) -> ExecutedTransaction {
         let transaction_accounts = std::mem::take(&mut loaded_transaction.accounts);
 
         fn transaction_accounts_lamports_sum(
@@ -875,16 +856,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             None
         };
 
-        TransactionExecutionResult::Executed {
-            details: TransactionExecutionDetails {
+        ExecutedTransaction {
+            execution_details: TransactionExecutionDetails {
                 status,
                 log_messages,
                 inner_instructions,
-                fee_details: loaded_transaction.fee_details,
                 return_data,
                 executed_units,
                 accounts_data_len_delta,
             },
+            loaded_transaction,
             programs_modified_by_tx: program_cache_for_tx_batch.drain_modified_entries(),
         }
     }
@@ -986,15 +967,14 @@ mod tests {
     use {
         super::*,
         crate::{
-            account_loader::ValidatedTransactionDetails, nonce_info::NoncePartial,
+            account_loader::ValidatedTransactionDetails, nonce_info::NonceInfo,
             rollback_accounts::RollbackAccounts,
         },
-        solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
+        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
         solana_sdk::{
             account::{create_account_shared_data_for_test, WritableAccount},
             bpf_loader,
-            bpf_loader_upgradeable::{self, UpgradeableLoaderState},
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
             feature_set::FeatureSet,
@@ -1011,12 +991,6 @@ mod tests {
             sysvar::{self, rent::Rent},
             transaction::{SanitizedTransaction, Transaction, TransactionError},
             transaction_context::TransactionContext,
-        },
-        std::{
-            env,
-            fs::{self, File},
-            io::Read,
-            thread,
         },
     };
 
@@ -1145,7 +1119,7 @@ mod tests {
             false,
         );
 
-        let mut loaded_transaction = LoadedTransaction {
+        let loaded_transaction = LoadedTransaction {
             accounts: vec![(Pubkey::new_unique(), AccountSharedData::default())],
             program_indices: vec![vec![0]],
             fee_details: FeeDetails::default(),
@@ -1161,59 +1135,38 @@ mod tests {
         let mut processing_config = TransactionProcessingConfig::default();
         processing_config.recording_config.enable_log_recording = true;
 
-        let result = batch_processor.execute_loaded_transaction(
+        let executed_tx = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
             &processing_environment,
             &processing_config,
         );
-
-        let TransactionExecutionResult::Executed {
-            details: TransactionExecutionDetails { log_messages, .. },
-            ..
-        } = result
-        else {
-            panic!("Unexpected result")
-        };
-        assert!(log_messages.is_some());
+        assert!(executed_tx.execution_details.log_messages.is_some());
 
         processing_config.log_messages_bytes_limit = Some(2);
 
-        let result = batch_processor.execute_loaded_transaction(
+        let executed_tx = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction.clone(),
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
             &processing_environment,
             &processing_config,
         );
-
-        let TransactionExecutionResult::Executed {
-            details:
-                TransactionExecutionDetails {
-                    log_messages,
-                    inner_instructions,
-                    ..
-                },
-            ..
-        } = result
-        else {
-            panic!("Unexpected result")
-        };
-        assert!(log_messages.is_some());
-        assert!(inner_instructions.is_none());
+        assert!(executed_tx.execution_details.log_messages.is_some());
+        assert!(executed_tx.execution_details.inner_instructions.is_none());
 
         processing_config.recording_config.enable_log_recording = false;
         processing_config.recording_config.enable_cpi_recording = true;
         processing_config.log_messages_bytes_limit = None;
 
-        let result = batch_processor.execute_loaded_transaction(
+        let executed_tx = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction,
             &mut ExecuteTimings::default(),
             &mut TransactionErrorMetrics::default(),
             &mut program_cache_for_tx_batch,
@@ -1221,20 +1174,8 @@ mod tests {
             &processing_config,
         );
 
-        let TransactionExecutionResult::Executed {
-            details:
-                TransactionExecutionDetails {
-                    log_messages,
-                    inner_instructions,
-                    ..
-                },
-            ..
-        } = result
-        else {
-            panic!("Unexpected result")
-        };
-        assert!(log_messages.is_none());
-        assert!(inner_instructions.is_some());
+        assert!(executed_tx.execution_details.log_messages.is_none());
+        assert!(executed_tx.execution_details.inner_instructions.is_some());
     }
 
     #[test]
@@ -1267,7 +1208,7 @@ mod tests {
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
-        let mut loaded_transaction = LoadedTransaction {
+        let loaded_transaction = LoadedTransaction {
             accounts: vec![
                 (key1, AccountSharedData::default()),
                 (key2, AccountSharedData::default()),
@@ -1289,7 +1230,7 @@ mod tests {
 
         let _ = batch_processor.execute_loaded_transaction(
             &sanitized_transaction,
-            &mut loaded_transaction,
+            loaded_transaction,
             &mut ExecuteTimings::default(),
             &mut error_metrics,
             &mut program_cache_for_tx_batch,
@@ -1305,8 +1246,9 @@ mod tests {
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::new(RwLock::new(TestForkGraph {})));
+            Some(Arc::downgrade(&fork_graph));
         let key = Pubkey::new_unique();
 
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
@@ -1319,8 +1261,9 @@ mod tests {
     fn test_replenish_program_cache() {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::new(RwLock::new(TestForkGraph {})));
+            Some(Arc::downgrade(&fork_graph));
         let key = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
@@ -1333,6 +1276,7 @@ mod tests {
 
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
         account_maps.insert(key, 4);
+        let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
             let result = batch_processor.replenish_program_cache(
@@ -1342,12 +1286,17 @@ mod tests {
                 limit_to_load_programs,
             );
             assert!(!result.hit_max_limit);
+            if result.loaded_missing {
+                loaded_missing += 1;
+            }
+
             let program = result.find(&key).unwrap();
             assert!(matches!(
                 program.program,
                 ProgramCacheEntryType::FailedVerification(_)
             ));
         }
+        assert!(loaded_missing > 0);
     }
 
     #[test]
@@ -1800,8 +1749,9 @@ mod tests {
     fn test_add_builtin() {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
         batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::new(RwLock::new(TestForkGraph {})));
+            Some(Arc::downgrade(&fork_graph));
 
         let key = Pubkey::new_unique();
         let name = "a_builtin_name";
@@ -1837,111 +1787,6 @@ mod tests {
             |_invoke_context, _param0, _param1, _param2, _param3, _param4| {},
         );
         assert_eq!(entry, Arc::new(program));
-    }
-
-    #[test]
-    fn fast_concur_test() {
-        let mut mock_bank = MockBankCallback::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::new(5, 5, HashSet::new());
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::new(RwLock::new(TestForkGraph {})));
-
-        let programs = vec![
-            deploy_program("hello-solana".to_string(), &mut mock_bank),
-            deploy_program("simple-transfer".to_string(), &mut mock_bank),
-            deploy_program("clock-sysvar".to_string(), &mut mock_bank),
-        ];
-
-        let account_maps: HashMap<Pubkey, u64> = programs
-            .iter()
-            .enumerate()
-            .map(|(idx, key)| (*key, idx as u64))
-            .collect();
-
-        for _ in 0..10 {
-            let ths: Vec<_> = (0..4)
-                .map(|_| {
-                    let local_bank = mock_bank.clone();
-                    let processor = TransactionBatchProcessor::new_from(
-                        &batch_processor,
-                        batch_processor.slot,
-                        batch_processor.epoch,
-                    );
-                    let maps = account_maps.clone();
-                    let programs = programs.clone();
-                    thread::spawn(move || {
-                        let result =
-                            processor.replenish_program_cache(&local_bank, &maps, false, true);
-                        for key in &programs {
-                            let cache_entry = result.find(key);
-                            assert!(matches!(
-                                cache_entry.unwrap().program,
-                                ProgramCacheEntryType::Loaded(_)
-                            ));
-                        }
-                    })
-                })
-                .collect();
-
-            for th in ths {
-                th.join().unwrap();
-            }
-        }
-    }
-
-    fn deploy_program(name: String, mock_bank: &mut MockBankCallback) -> Pubkey {
-        let program_account = Pubkey::new_unique();
-        let program_data_account = Pubkey::new_unique();
-        let state = UpgradeableLoaderState::Program {
-            programdata_address: program_data_account,
-        };
-
-        // The program account must have funds and hold the executable binary
-        let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&state).unwrap());
-        account_data.set_lamports(25);
-        account_data.set_owner(bpf_loader_upgradeable::id());
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(program_account, account_data);
-
-        let mut account_data = AccountSharedData::default();
-        let state = UpgradeableLoaderState::ProgramData {
-            slot: 0,
-            upgrade_authority_address: None,
-        };
-        let mut header = bincode::serialize(&state).unwrap();
-        let mut complement = vec![
-            0;
-            std::cmp::max(
-                0,
-                UpgradeableLoaderState::size_of_programdata_metadata().saturating_sub(header.len())
-            )
-        ];
-
-        let mut dir = env::current_dir().unwrap();
-        dir.push("tests");
-        dir.push("example-programs");
-        dir.push(name.as_str());
-        let name = name.replace('-', "_");
-        dir.push(name + "_program.so");
-        let mut file = File::open(dir.clone()).expect("file not found");
-        let metadata = fs::metadata(dir).expect("Unable to read metadata");
-        let mut buffer = vec![0; metadata.len() as usize];
-        file.read_exact(&mut buffer).expect("Buffer overflow");
-
-        header.append(&mut complement);
-        header.append(&mut buffer);
-        account_data.set_data(header);
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(program_data_account, account_data);
-
-        program_account
     }
 
     #[test]
@@ -2020,7 +1865,7 @@ mod tests {
                     fee_payer_rent_epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
             })
@@ -2092,7 +1937,7 @@ mod tests {
                     0, // rent epoch
                 ),
                 compute_budget_limits,
-                fee_details: FeeDetails::new_for_tests(transaction_fee, 0, false),
+                fee_details: FeeDetails::new(transaction_fee, 0, false),
                 fee_payer_rent_debit,
                 fee_payer_account: post_validation_fee_payer_account,
             })
@@ -2298,7 +2143,7 @@ mod tests {
 
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-            let nonce = Some(NoncePartial::new(
+            let nonce = Some(NonceInfo::new(
                 *fee_payer_address,
                 fee_payer_account.clone(),
             ));
@@ -2333,7 +2178,7 @@ mod tests {
                         0, // fee_payer_rent_epoch
                     ),
                     compute_budget_limits,
-                    fee_details: FeeDetails::new_for_tests(transaction_fee, priority_fee, false),
+                    fee_details: FeeDetails::new(transaction_fee, priority_fee, false),
                     fee_payer_rent_debit: 0, // rent due
                     fee_payer_account: post_validation_fee_payer_account,
                 })

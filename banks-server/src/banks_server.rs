@@ -28,7 +28,6 @@ use {
         send_transaction_service::{SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
     },
-    solana_svm::transaction_results::TransactionExecutionResult,
     std::{
         io,
         net::{Ipv4Addr, SocketAddr},
@@ -350,20 +349,18 @@ impl Banks for BanksServer {
     ) -> BanksTransactionResultWithMetadata {
         let bank = self.bank_forks.read().unwrap().working_bank();
         match bank.process_transaction_with_metadata(transaction) {
-            TransactionExecutionResult::NotExecuted(error) => BanksTransactionResultWithMetadata {
+            Err(error) => BanksTransactionResultWithMetadata {
                 result: Err(error),
                 metadata: None,
             },
-            TransactionExecutionResult::Executed { details, .. } => {
-                BanksTransactionResultWithMetadata {
-                    result: details.status,
-                    metadata: Some(TransactionMetadata {
-                        compute_units_consumed: details.executed_units,
-                        log_messages: details.log_messages.unwrap_or_default(),
-                        return_data: details.return_data,
-                    }),
-                }
-            }
+            Ok(details) => BanksTransactionResultWithMetadata {
+                result: details.status,
+                metadata: Some(TransactionMetadata {
+                    compute_units_consumed: details.executed_units,
+                    log_messages: details.log_messages.unwrap_or_default(),
+                    return_data: details.return_data,
+                }),
+            },
         }
     }
 

@@ -303,6 +303,7 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
         Arc::new(ConnectionCache::new("connection_cache_test")),
         bank_forks,
         &Arc::new(PrioritizationFeeCache::new(0u64)),
+        false,
     );
 
     let chunk_len = verified.len() / CHUNKS;
@@ -398,7 +399,7 @@ fn simulate_process_entries(
     let bank_fork = BankForks::new_rw_arc(bank);
     let bank = bank_fork.read().unwrap().get_with_scheduler(slot).unwrap();
     bank.clone_without_scheduler()
-        .set_fork_graph_in_program_cache(bank_fork.clone());
+        .set_fork_graph_in_program_cache(Arc::downgrade(&bank_fork));
 
     for i in 0..(num_accounts / 2) {
         bank.transfer(initial_lamports, mint_keypair, &keypairs[i * 2].pubkey())

@@ -1,8 +1,9 @@
 use {
+    log::*,
     solana_sdk::{
         account::{Account, AccountSharedData},
         feature::{self, Feature},
-        feature_set::FeatureSet,
+        feature_set::{FeatureSet, FEATURE_NAMES},
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         native_token::sol_to_lamports,
@@ -29,15 +30,13 @@ pub fn bootstrap_validator_stake_lamports() -> u64 {
 pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
     const NUM_BUILTIN_PROGRAMS: u64 = 9;
     const NUM_PRECOMPILES: u64 = 2;
-    const FEES_SYSVAR_MIN_BALANCE: u64 = 946_560;
     const STAKE_HISTORY_MIN_BALANCE: u64 = 114_979_200;
     const CLOCK_SYSVAR_MIN_BALANCE: u64 = 1_169_280;
     const RENT_SYSVAR_MIN_BALANCE: u64 = 1_009_200;
     const EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE: u64 = 1_120_560;
     const RECENT_BLOCKHASHES_SYSVAR_MIN_BALANCE: u64 = 42_706_560;
 
-    FEES_SYSVAR_MIN_BALANCE
-        + STAKE_HISTORY_MIN_BALANCE
+    STAKE_HISTORY_MIN_BALANCE
         + CLOCK_SYSVAR_MIN_BALANCE
         + RENT_SYSVAR_MIN_BALANCE
         + EPOCH_SCHEDULE_SYSVAR_MIN_BALANCE
@@ -199,6 +198,23 @@ pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive {
         activate_feature(genesis_config, feature_id);
+    }
+}
+
+pub fn deactivate_features(
+    genesis_config: &mut GenesisConfig,
+    features_to_deactivate: &Vec<Pubkey>,
+) {
+    // Remove all features in `features_to_skip` from genesis
+    for deactivate_feature_pk in features_to_deactivate {
+        if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
+            genesis_config.accounts.remove(deactivate_feature_pk);
+        } else {
+            warn!(
+                "Feature {:?} set for deactivation is not a known Feature public key",
+                deactivate_feature_pk
+            );
+        }
     }
 }
 

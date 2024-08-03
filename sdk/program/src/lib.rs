@@ -471,8 +471,6 @@ extern crate self as solana_program;
 
 pub mod account_info;
 pub mod address_lookup_table;
-pub mod alt_bn128;
-pub(crate) mod atomic_u64;
 pub mod big_mod_exp;
 pub mod blake3;
 #[cfg(feature = "borsh")]
@@ -487,7 +485,6 @@ pub mod bpf_loader_upgradeable;
 pub mod clock;
 pub mod compute_units;
 pub mod debug_account_data;
-pub mod decode_error;
 pub mod ed25519_program;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
@@ -512,7 +509,6 @@ pub mod native_token;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
-pub mod program_memory;
 pub mod program_option;
 pub mod program_pack;
 pub mod program_stubs;
@@ -520,10 +516,8 @@ pub mod program_utils;
 pub mod pubkey;
 pub mod rent;
 pub mod secp256k1_program;
-pub mod secp256k1_recover;
 pub mod serde_varint;
 pub mod serialize_utils;
-pub mod short_vec;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stable_layout;
@@ -536,16 +530,15 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
-#[deprecated(
-    since = "1.17.0",
-    note = "Please use `solana_sdk::address_lookup_table::AddressLookupTableAccount` instead"
-)]
-pub mod address_lookup_table_account {
-    pub use crate::address_lookup_table::AddressLookupTableAccount;
-}
-
+pub use solana_msg::msg;
+#[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
+pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
+#[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
+pub use solana_secp256k1_recover as secp256k1_recover;
+#[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
+pub use solana_short_vec as short_vec;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -600,6 +593,8 @@ pub mod sdk_ids {
     }
 }
 
+#[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
+pub use solana_decode_error as decode_error;
 /// Same as [`declare_id`] except that it reports that this ID has been deprecated.
 pub use solana_sdk_macro::program_declare_deprecated_id as declare_deprecated_id;
 /// Convenience macro to declare a static public key and functions to interact with it.

@@ -282,10 +282,6 @@ pub mod stake_deactivate_delinquent_instruction {
     solana_sdk::declare_id!("437r62HoAdUb63amq3D7ENnBLDhHT2xY8eFkLJYVKK4x");
 }
 
-pub mod stake_redelegate_instruction {
-    solana_sdk::declare_id!("2KKG3C6RBnxQo9jVVrbzsoSh41TDXLK7gBc9gduyxSzW");
-}
-
 pub mod vote_withdraw_authority_may_change_authorized_voter {
     solana_sdk::declare_id!("AVZS3ZsN4gi6Rkx2QUibYuSJG3S6QHib7xCYhG6vGJxU");
 }
@@ -837,6 +833,14 @@ pub mod move_stake_and_move_lamports_ixs {
     solana_sdk::declare_id!("7bTK6Jis8Xpfrs8ZoUfiMDPazTcdPcTWheZFJTA5Z6X4");
 }
 
+pub mod ed25519_precompile_verify_strict {
+    solana_sdk::declare_id!("ed9tNscbWLYBooxWA7FE2B5KHWs8A6sxfY8EzezEcoo");
+}
+
+pub mod vote_only_retransmitter_signed_fec_sets {
+    solana_sdk::declare_id!("RfEcA95xnhuwooVAhUUksEJLZBF7xKCLuqrJoqk4Zph");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -942,7 +946,6 @@ lazy_static! {
         (nonce_must_be_authorized::id(), "nonce must be authorized"),
         (nonce_must_be_advanceable::id(), "durable nonces must be advanceable"),
         (vote_authorize_with_seed::id(), "An instruction you can use to change a vote accounts authority when the current authority is a derived key #25860"),
-        (stake_redelegate_instruction::id(), "enable the redelegate stake instruction #26294"),
         (preserve_rent_epoch_for_rent_exempt_accounts::id(), "preserve rent epoch for rent exempt accounts #26479"),
         (enable_bpf_loader_extend_program_ix::id(), "enable bpf upgradeable loader ExtendProgram instruction #25234"),
         (skip_rent_rewrites::id(), "skip rewriting rent exempt accounts during rent collection #26491"),
@@ -1041,6 +1044,8 @@ lazy_static! {
         (zk_elgamal_proof_program_enabled::id(), "Enable ZkElGamalProof program SIMD-0153"),
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
+        (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
+        (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

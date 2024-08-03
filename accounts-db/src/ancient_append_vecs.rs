@@ -168,8 +168,15 @@ impl AncientSlotInfos {
         // shrink enough slots to write 'percent_of_alive_shrunk_data'% of the total alive data
         // from slots that exceeded the shrink threshold.
         // The goal is to limit overall i/o in this pass while making progress.
+        // Simultaneously, we cannot allow the overall budget to be dominated by ancient storages that need to be shrunk.
+        // So, we have to limit how much of the total resulting budget can be allocated to re-packing/shrinking ancient storages.
         let threshold_bytes =
-            self.total_alive_bytes_shrink.0 * tuning.percent_of_alive_shrunk_data / 100;
+            (self.total_alive_bytes_shrink.0 * tuning.percent_of_alive_shrunk_data / 100).min(
+                u64::from(tuning.max_resulting_storages)
+                    * u64::from(tuning.ideal_storage_size)
+                    * tuning.percent_of_alive_shrunk_data
+                    / 100,
+            );
         for info_index in &self.shrink_indexes {
             let info = &mut self.all_infos[*info_index];
             if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
@@ -437,6 +444,16 @@ impl AccountsDb {
             return;
         }
 
+        // for the accounts which are one ref and can be put anywhere, we want to put the accounts from the LARGEST storages at the end.
+        // This causes us to keep the accounts we're re-packing from already existing ancient storages together with other normal one ref accounts.
+        // The alternative could cause us to mix newly ancient slots produced by flush (containing accounts touched more recently) with previously
+        // packed ancient storages which over time contained enough dead accounts that the storage needed to be shrunk by being re-packed.
+        // The end result of this sort should cause older, colder accounts (previously packed into large storages and then re-packed/shrunk) to
+        // be re-packed together with other older/colder accounts.
+        accounts_to_combine
+            .accounts_to_combine
+            .sort_unstable_by(|a, b| a.capacity.cmp(&b.capacity));
+
         // pack the accounts with 1 ref or refs > 1 but the slot we're packing is the highest alive slot for the pubkey.
         // Note the `chain` below combining the 2 types of refs.
         let pack = PackedAncientStorage::pack(
@@ -565,6 +582,20 @@ impl AccountsDb {
                 }
             }
         }
+        let mut total_dead_bytes = 0;
+        let should_shrink_count = infos
+            .all_infos
+            .iter()
+            .filter(|info| info.should_shrink)
+            .map(|info| total_dead_bytes += info.capacity.saturating_sub(info.alive_bytes))
+            .count()
+            .saturating_sub(randoms as usize);
+        self.shrink_ancient_stats
+            .slots_eligible_to_shrink
+            .fetch_add(should_shrink_count as u64, Ordering::Relaxed);
+        self.shrink_ancient_stats
+            .total_dead_bytes
+            .fetch_add(total_dead_bytes, Ordering::Relaxed);
         if randoms > 0 {
             self.shrink_ancient_stats
                 .random_shrink
@@ -2073,11 +2104,11 @@ pub mod tests {
             assert_eq!(
                 shrinks_in_progress
                     .iter()
-                    .map(|(_, shrink_in_progress)| shrink_in_progress.old_storage().append_vec_id())
+                    .map(|(_, shrink_in_progress)| shrink_in_progress.old_storage().id())
                     .collect::<Vec<_>>(),
                 storages
                     .iter()
-                    .map(|storage| storage.append_vec_id())
+                    .map(|storage| storage.id())
                     .collect::<Vec<_>>()
             );
             // assert that we wrote the 2_ref account to the newly shrunk append vec
@@ -2294,7 +2325,7 @@ pub mod tests {
 
                 let map = |info: &SlotInfo| {
                     (
-                        info.storage.append_vec_id(),
+                        info.storage.id(),
                         info.slot,
                         info.capacity,
                         info.alive_bytes,
@@ -2435,7 +2466,7 @@ pub mod tests {
     }
 
     fn assert_storage_info(info: &SlotInfo, storage: &AccountStorageEntry, should_shrink: bool) {
-        assert_eq!(storage.append_vec_id(), info.storage.append_vec_id());
+        assert_eq!(storage.id(), info.storage.id());
         assert_eq!(storage.slot(), info.slot);
         assert_eq!(storage.capacity(), info.capacity);
         assert_eq!(storage.alive_bytes(), info.alive_bytes as usize);
@@ -3267,8 +3298,8 @@ pub mod tests {
                             assert_eq!(1, one.len());
                             assert_eq!(target_slot, one.first().unwrap().0);
                             assert_eq!(
-                                one.first().unwrap().1.old_storage().append_vec_id(),
-                                storages[combine_into].append_vec_id()
+                                one.first().unwrap().1.old_storage().id(),
+                                storages[combine_into].id()
                             );
                             // make sure the single new append vec contains all the same accounts
                             let mut two = Vec::default();

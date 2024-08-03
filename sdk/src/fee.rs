@@ -1,8 +1,8 @@
 //! Fee structures.
 
-use crate::native_token::sol_to_lamports;
 #[cfg(not(target_os = "solana"))]
 use solana_program::message::SanitizedMessage;
+use {crate::native_token::sol_to_lamports, std::num::NonZeroU32};
 
 /// A fee and its associated compute unit limit
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -14,7 +14,7 @@ pub struct FeeBin {
 }
 
 pub struct FeeBudgetLimits {
-    pub loaded_accounts_data_size_limit: usize,
+    pub loaded_accounts_data_size_limit: NonZeroU32,
     pub heap_cost: u64,
     pub compute_unit_limit: u64,
     pub prioritization_fee: u64,
@@ -39,8 +39,7 @@ pub struct FeeDetails {
 }
 
 impl FeeDetails {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_for_tests(
+    pub fn new(
         transaction_fee: u64,
         prioritization_fee: u64,
         remove_rounding_in_fee_calculation: bool,
@@ -115,7 +114,7 @@ impl FeeStructure {
     }
 
     pub fn calculate_memory_usage_cost(
-        loaded_accounts_data_size_limit: usize,
+        loaded_accounts_data_size_limit: u32,
         heap_cost: u64,
     ) -> u64 {
         (loaded_accounts_data_size_limit as u64)
@@ -126,6 +125,10 @@ impl FeeStructure {
 
     /// Calculate fee for `SanitizedMessage`
     #[cfg(not(target_os = "solana"))]
+    #[deprecated(
+        since = "2.1.0",
+        note = "Please use `solana_fee::calculate_fee` instead."
+    )]
     pub fn calculate_fee(
         &self,
         message: &SanitizedMessage,
@@ -134,6 +137,7 @@ impl FeeStructure {
         include_loaded_account_data_size_in_fee: bool,
         remove_rounding_in_fee_calculation: bool,
     ) -> u64 {
+        #[allow(deprecated)]
         self.calculate_fee_details(
             message,
             lamports_per_signature,
@@ -146,6 +150,10 @@ impl FeeStructure {
 
     /// Calculate fee details for `SanitizedMessage`
     #[cfg(not(target_os = "solana"))]
+    #[deprecated(
+        since = "2.1.0",
+        note = "Please use `solana_fee::calculate_fee_details` instead."
+    )]
     pub fn calculate_fee_details(
         &self,
         message: &SanitizedMessage,
@@ -161,7 +169,7 @@ impl FeeStructure {
         }
 
         let signature_fee = message
-            .num_signatures()
+            .num_total_signatures()
             .saturating_mul(self.lamports_per_signature);
         let write_lock_fee = message
             .num_write_locks()
@@ -171,7 +179,7 @@ impl FeeStructure {
         // requested_loaded_account_data_size
         let loaded_accounts_data_size_cost = if include_loaded_account_data_size_in_fee {
             FeeStructure::calculate_memory_usage_cost(
-                budget_limits.loaded_accounts_data_size_limit,
+                budget_limits.loaded_accounts_data_size_limit.get(),
                 budget_limits.heap_cost,
             )
         } else {
@@ -221,7 +229,7 @@ mod tests {
     #[test]
     fn test_calculate_memory_usage_cost() {
         let heap_cost = 99;
-        const K: usize = 1024;
+        const K: u32 = 1024;
 
         // accounts data size are priced in block of 32K, ...
 

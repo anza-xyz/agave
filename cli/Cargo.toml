@@ -36,7 +36,8 @@ solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-config-program = { workspace = true }
-solana-faucet = { workspace = true }
+solana-connection-cache = { workspace = true }
+solana-decode-error = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -45,7 +46,7 @@ solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
-solana-rpc-client-nonce-utils = { workspace = true }
+solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tps-client = { workspace = true }
@@ -61,6 +62,7 @@ tiny-bip39 = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-faucet = { workspace = true }
 solana-rpc = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }

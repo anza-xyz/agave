@@ -18,9 +18,14 @@ use {
         sysvar::clock::Clock,
         vote::{authorized_voters::AuthorizedVoters, error::VoteError},
     },
-    bincode::{serialize_into, serialized_size, ErrorKind},
+    bincode::{serialize_into, ErrorKind},
     serde_derive::{Deserialize, Serialize},
-    std::{collections::VecDeque, fmt::Debug, io::Cursor},
+    std::{
+        collections::VecDeque,
+        fmt::Debug,
+        io::Cursor,
+        mem::{self, MaybeUninit},
+    },
 };
 
 mod vote_state_0_23_5;
@@ -323,6 +328,7 @@ const MAX_ITEMS: usize = 32;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[cfg_attr(test, derive(Arbitrary))]
 pub struct CircBuf<I> {
     buf: [I; MAX_ITEMS],
     /// next pointer
@@ -365,23 +371,6 @@ impl<I> CircBuf<I> {
         } else {
             None
         }
-    }
-}
-
-#[cfg(test)]
-impl<'a, I: Default + Copy> Arbitrary<'a> for CircBuf<I>
-where
-    I: Arbitrary<'a>,
-{
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut circbuf = Self::default();
-
-        let len = u.arbitrary_len::<I>()?;
-        for _ in 0..len {
-            circbuf.append(I::arbitrary(u)?);
-        }
-
-        Ok(circbuf)
     }
 }
 
@@ -475,8 +464,11 @@ impl VoteState {
         3762 // see test_vote_state_size_of.
     }
 
-    // we retain bincode deserialize for not(target_os = "solana")
-    // because the hand-written parser does not support V0_23_5
+    // NOTE we retain `bincode::deserialize` for `not(target_os = "solana")` pending testing on mainnet-beta
+    // once that testing is done, `VoteState::deserialize_into` may be used for all targets
+    // conversion of V0_23_5 to current must be handled specially, however
+    // because it inserts a null voter into `authorized_voters`
+    // which `VoteStateVersions::is_uninitialized` erroneously reports as initialized
     pub fn deserialize(input: &[u8]) -> Result<Self, InstructionError> {
         #[cfg(not(target_os = "solana"))]
         {
@@ -492,36 +484,114 @@ impl VoteState {
         }
     }
 
-    /// Deserializes the input buffer into the provided `VoteState`
+    /// Deserializes the input `VoteStateVersions` buffer directly into the provided `VoteState`.
     ///
-    /// This function exists to deserialize `VoteState` in a BPF context without going above
-    /// the compute limit, and must be kept up to date with `bincode::deserialize`.
+    /// In a SBPF context, V0_23_5 is not supported, but in non-SBPF, all versions are supported for
+    /// compatibility with `bincode::deserialize`.
+    ///
+    /// On success, `vote_state` reflects the state of the input data. On failure, `vote_state` is
+    /// reset to `VoteState::default()`.
     pub fn deserialize_into(
         input: &[u8],
         vote_state: &mut VoteState,
     ) -> Result<(), InstructionError> {
-        let minimum_size =
-            serialized_size(vote_state).map_err(|_| InstructionError::InvalidAccountData)?;
-        if (input.len() as u64) < minimum_size {
-            return Err(InstructionError::InvalidAccountData);
+        // Rebind vote_state to *mut VoteState so that the &mut binding isn't
+        // accessible anymore, preventing accidental use after this point.
+        //
+        // NOTE: switch to ptr::from_mut() once platform-tools moves to rustc >= 1.76
+        let vote_state = vote_state as *mut VoteState;
+
+        // Safety: vote_state is valid to_drop (see drop_in_place() docs). After
+        // dropping, the pointer is treated as uninitialized and only accessed
+        // through ptr::write, which is safe as per drop_in_place docs.
+        unsafe {
+            std::ptr::drop_in_place(vote_state);
         }
 
+        // This is to reset vote_state to VoteState::default() if deserialize fails or panics.
+        struct DropGuard {
+            vote_state: *mut VoteState,
+        }
+
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                // Safety:
+                //
+                // Deserialize failed or panicked so at this point vote_state is uninitialized. We
+                // must write a new _valid_ value into it or after returning (or unwinding) from
+                // this function the caller is left with an uninitialized `&mut VoteState`, which is
+                // UB (references must always be valid).
+                //
+                // This is always safe and doesn't leak memory because deserialize_into_ptr() writes
+                // into the fields that heap alloc only when it returns Ok().
+                unsafe {
+                    self.vote_state.write(VoteState::default());
+                }
+            }
+        }
+
+        let guard = DropGuard { vote_state };
+
+        let res = VoteState::deserialize_into_ptr(input, vote_state);
+        if res.is_ok() {
+            mem::forget(guard);
+        }
+
+        res
+    }
+
+    /// Deserializes the input `VoteStateVersions` buffer directly into the provided
+    /// `MaybeUninit<VoteState>`.
+    ///
+    /// In a SBPF context, V0_23_5 is not supported, but in non-SBPF, all versions are supported for
+    /// compatibility with `bincode::deserialize`.
+    ///
+    /// On success, `vote_state` is fully initialized and can be converted to `VoteState` using
+    /// [MaybeUninit::assume_init]. On failure, `vote_state` may still be uninitialized and must not
+    /// be converted to `VoteState`.
+    pub fn deserialize_into_uninit(
+        input: &[u8],
+        vote_state: &mut MaybeUninit<VoteState>,
+    ) -> Result<(), InstructionError> {
+        VoteState::deserialize_into_ptr(input, vote_state.as_mut_ptr())
+    }
+
+    fn deserialize_into_ptr(
+        input: &[u8],
+        vote_state: *mut VoteState,
+    ) -> Result<(), InstructionError> {
         let mut cursor = Cursor::new(input);
 
         let variant = read_u32(&mut cursor)?;
         match variant {
-            // V0_23_5. not supported; these should not exist on mainnet
-            0 => Err(InstructionError::InvalidAccountData),
+            // V0_23_5. not supported for bpf targets; these should not exist on mainnet
+            // supported for non-bpf targets for backwards compatibility
+            0 => {
+                #[cfg(not(target_os = "solana"))]
+                {
+                    // Safety: vote_state is valid as it comes from `&mut MaybeUninit<VoteState>` or
+                    // `&mut VoteState`. In the first case, the value is uninitialized so we write()
+                    // to avoid dropping invalid data; in the latter case, we `drop_in_place()`
+                    // before writing so the value has already been dropped and we just write a new
+                    // one in place.
+                    unsafe {
+                        vote_state.write(
+                            bincode::deserialize::<VoteStateVersions>(input)
+                                .map(|versioned| versioned.convert_to_current())
+                                .map_err(|_| InstructionError::InvalidAccountData)?,
+                        );
+                    }
+                    Ok(())
+                }
+                #[cfg(target_os = "solana")]
+                Err(InstructionError::InvalidAccountData)
+            }
             // V1_14_11. substantially different layout and data from V0_23_5
             1 => deserialize_vote_state_into(&mut cursor, vote_state, false),
             // Current. the only difference from V1_14_11 is the addition of a slot-latency to each vote
             2 => deserialize_vote_state_into(&mut cursor, vote_state, true),
             _ => Err(InstructionError::InvalidAccountData),
         }?;
-
-        if cursor.position() > input.len() as u64 {
-            return Err(InstructionError::InvalidAccountData);
-        }
 
         Ok(())
     }
@@ -895,10 +965,11 @@ pub mod serde_compact_vote_state_update {
         super::*,
         crate::{
             clock::{Slot, UnixTimestamp},
-            serde_varint, short_vec,
+            serde_varint,
             vote::state::Lockout,
         },
         serde::{Deserialize, Deserializer, Serialize, Serializer},
+        solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -992,10 +1063,11 @@ pub mod serde_tower_sync {
         super::*,
         crate::{
             clock::{Slot, UnixTimestamp},
-            serde_varint, short_vec,
+            serde_varint,
             vote::state::Lockout,
         },
         serde::{Deserialize, Deserializer, Serialize, Serializer},
+        solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -1087,7 +1159,7 @@ pub mod serde_tower_sync {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, itertools::Itertools, rand::Rng};
+    use {super::*, bincode::serialized_size, itertools::Itertools, rand::Rng};
 
     #[test]
     fn test_vote_serialize() {
@@ -1138,23 +1210,125 @@ mod tests {
     }
 
     #[test]
-    fn test_vote_deserialize_into_nopanic() {
-        // base case
+    fn test_vote_deserialize_into_error() {
+        let target_vote_state = VoteState::new_rand_for_tests(Pubkey::new_unique(), 42);
+        let mut vote_state_buf =
+            bincode::serialize(&VoteStateVersions::new_current(target_vote_state.clone())).unwrap();
+        let len = vote_state_buf.len();
+        vote_state_buf.truncate(len - 1);
+
         let mut test_vote_state = VoteState::default();
-        let e = VoteState::deserialize_into(&[], &mut test_vote_state).unwrap_err();
+        VoteState::deserialize_into(&vote_state_buf, &mut test_vote_state).unwrap_err();
+        assert_eq!(test_vote_state, VoteState::default());
+    }
+
+    #[test]
+    fn test_vote_deserialize_into_uninit() {
+        // base case
+        let target_vote_state = VoteState::default();
+        let vote_state_buf =
+            bincode::serialize(&VoteStateVersions::new_current(target_vote_state.clone())).unwrap();
+
+        let mut test_vote_state = MaybeUninit::uninit();
+        VoteState::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state).unwrap();
+        let test_vote_state = unsafe { test_vote_state.assume_init() };
+
+        assert_eq!(target_vote_state, test_vote_state);
+
+        // variant
+        // provide 4x the minimum struct size in bytes to ensure we typically touch every field
+        let struct_bytes_x4 = std::mem::size_of::<VoteState>() * 4;
+        for _ in 0..1000 {
+            let raw_data: Vec<u8> = (0..struct_bytes_x4).map(|_| rand::random::<u8>()).collect();
+            let mut unstructured = Unstructured::new(&raw_data);
+
+            let target_vote_state_versions =
+                VoteStateVersions::arbitrary(&mut unstructured).unwrap();
+            let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
+            let target_vote_state = target_vote_state_versions.convert_to_current();
+
+            let mut test_vote_state = MaybeUninit::uninit();
+            VoteState::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state).unwrap();
+            let test_vote_state = unsafe { test_vote_state.assume_init() };
+
+            assert_eq!(target_vote_state, test_vote_state);
+        }
+    }
+
+    #[test]
+    fn test_vote_deserialize_into_uninit_nopanic() {
+        // base case
+        let mut test_vote_state = MaybeUninit::uninit();
+        let e = VoteState::deserialize_into_uninit(&[], &mut test_vote_state).unwrap_err();
         assert_eq!(e, InstructionError::InvalidAccountData);
 
         // variant
-        let serialized_len_x4 = serialized_size(&test_vote_state).unwrap() * 4;
+        let serialized_len_x4 = serialized_size(&VoteState::default()).unwrap() * 4;
         let mut rng = rand::thread_rng();
         for _ in 0..1000 {
             let raw_data_length = rng.gen_range(1..serialized_len_x4);
-            let raw_data: Vec<u8> = (0..raw_data_length).map(|_| rng.gen::<u8>()).collect();
+            let mut raw_data: Vec<u8> = (0..raw_data_length).map(|_| rng.gen::<u8>()).collect();
+
+            // pure random data will ~never have a valid enum tag, so lets help it out
+            if raw_data_length >= 4 && rng.gen::<bool>() {
+                let tag = rng.gen::<u8>() % 3;
+                raw_data[0] = tag;
+                raw_data[1] = 0;
+                raw_data[2] = 0;
+                raw_data[3] = 0;
+            }
 
             // it is extremely improbable, though theoretically possible, for random bytes to be syntactically valid
-            // so we only check that the deserialize function does not panic
-            let mut test_vote_state = VoteState::default();
-            let _ = VoteState::deserialize_into(&raw_data, &mut test_vote_state);
+            // so we only check that the parser does not panic and that it succeeds or fails exactly in line with bincode
+            let mut test_vote_state = MaybeUninit::uninit();
+            let test_res = VoteState::deserialize_into_uninit(&raw_data, &mut test_vote_state);
+            let bincode_res = bincode::deserialize::<VoteStateVersions>(&raw_data)
+                .map(|versioned| versioned.convert_to_current());
+
+            if test_res.is_err() {
+                assert!(bincode_res.is_err());
+            } else {
+                let test_vote_state = unsafe { test_vote_state.assume_init() };
+                assert_eq!(test_vote_state, bincode_res.unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn test_vote_deserialize_into_uninit_ill_sized() {
+        // provide 4x the minimum struct size in bytes to ensure we typically touch every field
+        let struct_bytes_x4 = std::mem::size_of::<VoteState>() * 4;
+        for _ in 0..1000 {
+            let raw_data: Vec<u8> = (0..struct_bytes_x4).map(|_| rand::random::<u8>()).collect();
+            let mut unstructured = Unstructured::new(&raw_data);
+
+            let original_vote_state_versions =
+                VoteStateVersions::arbitrary(&mut unstructured).unwrap();
+            let original_buf = bincode::serialize(&original_vote_state_versions).unwrap();
+
+            let mut truncated_buf = original_buf.clone();
+            let mut expanded_buf = original_buf.clone();
+
+            truncated_buf.resize(original_buf.len() - 8, 0);
+            expanded_buf.resize(original_buf.len() + 8, 0);
+
+            // truncated fails
+            let mut test_vote_state = MaybeUninit::uninit();
+            let test_res = VoteState::deserialize_into_uninit(&truncated_buf, &mut test_vote_state);
+            let bincode_res = bincode::deserialize::<VoteStateVersions>(&truncated_buf)
+                .map(|versioned| versioned.convert_to_current());
+
+            assert!(test_res.is_err());
+            assert!(bincode_res.is_err());
+
+            // expanded succeeds
+            let mut test_vote_state = MaybeUninit::uninit();
+            VoteState::deserialize_into_uninit(&expanded_buf, &mut test_vote_state).unwrap();
+            let bincode_res = bincode::deserialize::<VoteStateVersions>(&expanded_buf)
+                .map(|versioned| versioned.convert_to_current());
+
+            let test_vote_state = unsafe { test_vote_state.assume_init() };
+            assert_eq!(test_vote_state, bincode_res.unwrap());
         }
     }
 
