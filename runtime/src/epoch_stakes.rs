@@ -511,7 +511,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_epoch_stakes() {
+    fn test_node_id_to_stake() {
         let num_nodes = 10;
         let num_vote_accounts_per_node = 2;
 
