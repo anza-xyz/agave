@@ -23,27 +23,29 @@ use {
 /// 3) Were executed and committed, captured by `transaction_counts` below.
 /// 4) Were executed and failed commit, captured by `transaction_counts` below.
 pub(crate) struct ProcessTransactionsSummary {
-    // Returns true if we hit the end of the block/max PoH height for the block before
-    // processing all the transactions in the batch.
+    /// Returns true if we hit the end of the block/max PoH height for the block
+    /// before processing all the transactions in the batch.
     pub reached_max_poh_height: bool,
 
-    // Total transaction counts tracked for reporting `LeaderSlotMetrics`. See
-    // description of struct above for possible outcomes for these transactions
+    /// Total transaction counts tracked for reporting `LeaderSlotMetrics`. See
+    /// description of struct above for possible outcomes for these transactions
     pub transaction_counts: ProcessTransactionsCounts,
 
-    // Indexes of transactions in the transactions slice that were not committed but are retryable
+    /// Indexes of transactions in the transactions slice that were not
+    /// committed but are retryable
     pub retryable_transaction_indexes: Vec<usize>,
 
-    // The number of transactions filtered out by the cost model
+    /// The number of transactions filtered out by the cost model
     pub cost_model_throttled_transactions_count: u64,
 
-    // Total amount of time spent running the cost model
+    /// Total amount of time spent running the cost model
     pub cost_model_us: u64,
 
-    // Breakdown of time spent executing and committing transactions
+    /// Breakdown of time spent executing and committing transactions
     pub execute_and_commit_timings: LeaderExecuteAndCommitTimings,
 
-    // Breakdown of all the transaction errors from transactions passed for execution
+    /// Breakdown of all the transaction errors from transactions passed for
+    /// execution
     pub error_counters: TransactionErrorMetrics,
 
     pub min_prioritization_fees: u64,
@@ -52,15 +54,15 @@ pub(crate) struct ProcessTransactionsSummary {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct ProcessTransactionsCounts {
-    // Total number of transactions that were passed as candidates for execution
+    /// Total number of transactions that were passed as candidates for execution
     pub attempted_execution_count: u64,
-    // Total number of transactions that made it into the block
+    /// Total number of transactions that made it into the block
     pub committed_transactions_count: u64,
-    // Total number of transactions that made it into the block where the transactions
-    // output from execution was success/no error.
+    /// Total number of transactions that made it into the block where the
+    /// transactions output from execution was success/no error.
     pub committed_transactions_with_successful_result_count: u64,
-    // All transactions that were executed but then failed record because the
-    // slot ended
+    /// All transactions that were executed but then failed record because the
+    /// slot ended
     pub executed_but_failed_commit: u64,
 }
 
