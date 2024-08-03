@@ -540,5 +540,5 @@ pub(crate) mod tests {
                 Some(*stake * num_vote_accounts_per_node as u64)
             );
         }
-  }
+    }
 }
