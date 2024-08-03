@@ -43,12 +43,8 @@ pub struct LastVotedForkSlotsFinalResult {
 
 impl LastVotedForkSlotsAggregate {
     fn validator_stake_at_epoch(bank: &Arc<Bank>, epoch: &Epoch, id: &Pubkey) -> Option<u64> {
-        bank.epoch_stakes(*epoch).and_then(|epoch_stakes| {
-            epoch_stakes
-                .node_id_to_vote_accounts()
-                .get(id)
-                .map(|node| node.total_stake)
-        })
+        bank.epoch_stakes(*epoch)
+            .and_then(|epoch_stakes| epoch_stakes.node_id_to_stake(id))
     }
 
     fn validator_stake_at_slot(bank: &Arc<Bank>, slot: &Slot, id: &Pubkey) -> Option<u64> {
