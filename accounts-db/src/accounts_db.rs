@@ -3489,17 +3489,13 @@ impl AccountsDb {
                         slot_list,
                         ref_count: _,
                     } = cleaning_info;
-                    if slot_list.is_empty() {
-                        None
-                    } else {
-                        Some((
-                            *pubkey,
-                            slot_list
-                                .iter()
-                                .map(|(slot, _)| *slot)
-                                .collect::<HashSet<Slot>>(),
-                        ))
-                    }
+                    (!slot_list.is_empty()).then_some((
+                        *pubkey,
+                        slot_list
+                            .iter()
+                            .map(|(slot, _)| *slot)
+                            .collect::<HashSet<Slot>>(),
+                    ))
                 })
                 .collect::<Vec<_>>();
             pubkey_to_slot_set.append(&mut bin_set);
