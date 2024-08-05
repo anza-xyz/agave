@@ -4100,7 +4100,7 @@ impl AccountsDb {
     ) {
         let mut time = Measure::start("remove_old_stores_shrink");
 
-        // handle the zero lamport alive accounts before calling c.
+        // handle the zero lamport alive accounts before calling clean
         // We have to update the index entries for these zero lamport pubkeys before we remove the storage in `mark_dirty_dead_stores`
         // that contained the accounts.
         self.remove_zero_lamport_single_ref_accounts_after_shrink(
