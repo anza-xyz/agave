@@ -2,7 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
-    solana_sdk::{pubkey::Pubkey, transaction::TransactionError},
+    solana_sdk::{message::AccountKeys, pubkey::Pubkey, transaction::TransactionError},
     std::collections::hash_map,
 };
 
@@ -108,6 +108,27 @@ impl AccountLocks {
             "Attempted to remove a write-lock for a key that wasn't write-locked"
         );
     }
+}
+
+/// Validate account locks before locking.
+pub fn validate_account_locks(
+    account_keys: AccountKeys,
+    tx_account_lock_limit: usize,
+) -> Result<(), TransactionError> {
+    if account_keys.len() > tx_account_lock_limit {
+        return Err(TransactionError::TooManyAccountLocks);
+    }
+    if has_duplicates(account_keys) {
+        return Err(TransactionError::AccountLoadedTwice);
+    }
+
+    Ok(())
+}
+
+/// Check for duplicate account keys.
+fn has_duplicates(account_keys: AccountKeys) -> bool {
+    let mut keys = AHashSet::new();
+    account_keys.iter().any(|key| !keys.insert(key))
 }
 
 #[cfg(test)]
