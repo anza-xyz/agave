@@ -176,7 +176,14 @@ fn hana_validate_transaction_fee_payer(
 
     // XXX i believe i can remove this stuff from the validation struct
     let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
-    let fee_payer_rent_debit = 0;
+    println!("HANA modified validate rent epoch: {}", fee_payer_loaded_rent_epoch);
+    let fee_payer_rent_debit = collect_rent_from_account(
+        feature_set,
+        rent_collector,
+        fee_payer_address,
+        fee_payer_account,
+    )
+    .rent_amount;
 
     let CheckedTransactionDetails {
         nonce,
@@ -251,6 +258,7 @@ pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
         {
             accounts_cache.insert(*key, account_override.clone());
         } else if let Some(account) = callbacks.get_account_shared_data(key) {
+            println!("HANA account {} rent epoch at fetch: {}", key, account.rent_epoch());
             accounts_cache.insert(*key, account);
         }
         // XXX we do not insert the default account here because we need to know if its not found later
@@ -265,14 +273,11 @@ pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
             let program_index = instruction.program_id_index as usize;
             let program_id = message.account_keys()[program_index];
 
-            println!("\nHANA checking program_id {}", program_id);
             if native_loader::check_id(&program_id) {
                 continue;
             }
 
-            println!("HANA getting program_id from cache...");
             let Some(program_account) = accounts_cache.get(&program_id) else {
-                println!("HANA program not in cache!");
                 continue;
             };
 
@@ -286,20 +291,15 @@ pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
             }
             */
 
-            println!("HANA getting owner");
             let owner_id = program_account.owner();
             if native_loader::check_id(owner_id) {
                 continue;
             }
 
-            println!("HANA checking owner_id {}", owner_id);
             if !accounts_cache.contains_key(owner_id) {
-                println!("HANA not in cache...");
                 if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
-                    println!("HANA got from callback...");
                     if native_loader::check_id(owner_account.owner()) && owner_account.executable()
                     {
-                        println!("HANA inserting!");
                         accounts_cache.insert(*owner_id, owner_account);
                     }
                 }
@@ -310,6 +310,8 @@ pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
     accounts_cache
 }
 
+// XXX this has a bug which breaks ledger test blockstore_processor::tests::test_transaction_result_does_not_affect_bankhash
+// something with my validation logic gives feepayer a max rent epoch instead of 0 in rollback accounts
 pub(crate) fn hana_load_transaction_accounts(
     accounts_cache: &HashMap<Pubkey, AccountSharedData>,
     message: &SanitizedMessage,
@@ -373,6 +375,7 @@ pub(crate) fn hana_load_transaction_accounts(
                         .get(key)
                         .cloned() // XXX another one
                         .map(|mut account| {
+            println!("HANA account {} rent epoch from cache: {}", key, account.rent_epoch());
                             if message.is_writable(i) {
                                 let rent_due = collect_rent_from_account(
                                     feature_set,
@@ -381,6 +384,7 @@ pub(crate) fn hana_load_transaction_accounts(
                                     &mut account,
                                 )
                                 .rent_amount;
+            println!("HANA account {} rent epoch after collection: {}", key, account.rent_epoch());
 
                                 (account.data().len(), account, rent_due)
                             } else {
@@ -429,18 +433,15 @@ pub(crate) fn hana_load_transaction_accounts(
             let mut account_indices = Vec::with_capacity(2);
             let program_index = instruction.program_id_index as usize;
             // This command may never return error, because the transaction is sanitized
-            println!("\nHANA ixn looking up id...");
             let (program_id, program_account) = accounts
                 .get(program_index)
                 .ok_or(TransactionError::ProgramAccountNotFound)?;
-            println!("HANA ok need program {}", program_id);
             if native_loader::check_id(program_id) {
                 return Ok(account_indices);
             }
 
             let account_found = accounts_found.get(program_index).unwrap_or(&true);
             if !account_found {
-                println!("HANA failed in accounts_found");
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
             }
@@ -454,14 +455,12 @@ pub(crate) fn hana_load_transaction_accounts(
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
             }
-            println!("HANA continuing to get owner");
             if !accounts
                 .get(builtins_start_index..)
                 .ok_or(TransactionError::ProgramAccountNotFound)?
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                println!("HANA getting owner {} from cache", owner_id);
                 if let Some(owner_account) = accounts_cache.get(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
@@ -477,16 +476,13 @@ pub(crate) fn hana_load_transaction_accounts(
                     )?;
                     accounts.push((*owner_id, owner_account.clone()));
                 } else {
-                    println!("HANA failed to get owner from cache");
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
                 }
             }
-            println!("HANA account indicies successfully assembled from ix");
             Ok(account_indices)
         })
         .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
-    println!("HANA collected ALL account indicies for tx");
 
     let validated_tx_details = hana_validate_transaction_fee_payer(
         message,
@@ -679,12 +675,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             }
             account_indices.insert(0, program_index as IndexOfAccount);
 
-            // XXX HANA i believe loading the loader and adding to accounts is pointless but i havent proved it yet
-            // removing this stuff breaks some tests but it is likely the tests are outdated and pedantic
-            // as far as i can tell, process_executable_chain in InvokeContext gets all loaders from the batch program cache
-            // and it *looks* like the loaders are forced into the cache in load_and_execute_sanitized_transactions setup
-            // svm tests only put system and loaderv3 in there... but bank tests put all builtins, which is a good omen
-            // ok yea im pretty sure the tests are wrong and this is logic that is not needed in a world with program cache
             let owner_id = program_account.owner();
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
@@ -708,6 +698,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                         tx_details.compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
+                    // XXX HANA i believe we dont need to do this, removing it breaks some tests but i think its vestigal
+                    // afaict process_executable_chain in InvokeContext gets all loaders from the batch program cache
+                    // going through the work of caching valid loader ids/sizes gives us no perf benefit tho
+                    // theyre builtins so the data fetched by callback is measured in bytes
                     accounts.push((*owner_id, owner_account));
                 } else {
                     error_metrics.account_not_found += 1;

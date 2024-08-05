@@ -193,6 +193,7 @@ use {
         thread::Builder,
         time::{Duration, Instant},
     },
+    itertools::Itertools,
 };
 pub use {
     partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_sdk::reward_type::RewardType,
@@ -3429,6 +3430,7 @@ impl Bank {
 
         sanitized_txs
             .iter()
+            .unique_by(|tx| tx.borrow().message_hash())
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => self.check_transaction_age(

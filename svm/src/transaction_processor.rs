@@ -300,6 +300,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     )
                 });
 
+                println!("HANA load_result: {:#?}", load_result);
+
                 match load_result {
                     Err(e) => {
                         execution_results.push(TransactionExecutionResult::NotExecuted(e.clone()))
@@ -392,7 +394,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execution_results = loaded_transactions
                 .into_iter()
                 .zip(sanitized_txs.iter())
-                .map(|(load_result, tx)| match load_result {
+                .map(|(load_result, tx)| {
+                println!("HANA load_result: {:#?}", load_result);
+                match load_result {
                     Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
                     Ok(loaded_transaction) => {
                         let executed_tx = self.execute_loaded_transaction(
@@ -415,9 +419,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                         TransactionExecutionResult::Executed(Box::new(executed_tx))
                     }
-                })
+                }})
                 .collect();
         }
+
+        println!("HANA {} results: {:#?}", execution_results.len(), execution_results.iter().map(|ex| format!("executed: {}, successful: {}", ex.was_executed(), ex.was_executed_successfully())).collect::<Vec<_>>());
 
         // Skip eviction when there's no chance this particular tx batch has increased the size of
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
@@ -520,6 +526,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
+        println!("HANA original validate rent epoch: {}", fee_payer_loaded_rent_epoch);
         let fee_payer_rent_debit = collect_rent_from_account(
             feature_set,
             rent_collector,
