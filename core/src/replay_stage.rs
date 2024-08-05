@@ -644,7 +644,6 @@ impl ReplayStage {
 
             Self::reset_poh_recorder(
                 &my_pubkey,
-                &blockstore,
                 working_bank,
                 &poh_recorder,
                 &leader_schedule_cache,
@@ -1046,7 +1045,6 @@ impl ReplayStage {
 
                         Self::reset_poh_recorder(
                             &my_pubkey,
-                            &blockstore,
                             reset_bank.clone(),
                             &poh_recorder,
                             &leader_schedule_cache,
@@ -2020,7 +2018,7 @@ impl ReplayStage {
         assert!(!poh_recorder.read().unwrap().has_bank());
 
         let (poh_slot, parent_slot) =
-            match poh_recorder.read().unwrap().reached_leader_slot(my_pubkey) {
+            match poh_recorder.write().unwrap().reached_leader_slot(my_pubkey) {
                 PohLeaderStatus::Reached {
                     poh_slot,
                     parent_slot,
@@ -2717,7 +2715,6 @@ impl ReplayStage {
 
     fn reset_poh_recorder(
         my_pubkey: &Pubkey,
-        blockstore: &Blockstore,
         bank: Arc<Bank>,
         poh_recorder: &RwLock<PohRecorder>,
         leader_schedule_cache: &LeaderScheduleCache,
@@ -2729,7 +2726,6 @@ impl ReplayStage {
             my_pubkey,
             slot,
             &bank,
-            Some(blockstore),
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
@@ -9148,7 +9144,6 @@ pub(crate) mod tests {
         // Reset PoH recorder to the completed bank to ensure consistent state
         ReplayStage::reset_poh_recorder(
             &my_pubkey,
-            &blockstore,
             working_bank.clone(),
             &poh_recorder,
             &leader_schedule_cache,
@@ -9176,7 +9171,10 @@ pub(crate) mod tests {
 
         // We should not attempt to start leader for the dummy_slot
         assert_matches!(
-            poh_recorder.read().unwrap().reached_leader_slot(&my_pubkey),
+            poh_recorder
+                .write()
+                .unwrap()
+                .reached_leader_slot(&my_pubkey),
             PohLeaderStatus::NotReached
         );
         assert!(!ReplayStage::maybe_start_leader(

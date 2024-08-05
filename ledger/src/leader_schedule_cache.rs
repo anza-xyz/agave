@@ -1,6 +1,5 @@
 use {
     crate::{
-        blockstore::Blockstore,
         leader_schedule::{FixedSchedule, LeaderSchedule},
         leader_schedule_utils,
     },
@@ -111,7 +110,6 @@ impl LeaderScheduleCache {
         pubkey: &Pubkey,
         current_slot: Slot,
         bank: &Bank,
-        blockstore: Option<&Blockstore>,
         max_slot_range: u64,
     ) -> Option<(Slot, Slot)> {
         let (epoch, start_index) = bank.get_epoch_and_slot_index(current_slot + 1);
@@ -137,12 +135,6 @@ impl LeaderScheduleCache {
                     .get_indices(pubkey, offset)
                     .take_while(move |i| *i < num_slots)
                     .map(move |i| i as Slot + first_slot)
-            })
-            .skip_while(|slot| {
-                // Skip slots we already have shreds for
-                blockstore
-                    .map(|bs| bs.has_existing_shreds_for_slot(*slot))
-                    .unwrap_or(false)
             });
         let first_slot = schedule.next()?;
         let max_slot = first_slot.saturating_add(max_slot_range);
@@ -247,12 +239,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            blockstore::make_slot_entries,
             genesis_utils::{
                 bootstrap_validator_stake_lamports, create_genesis_config,
                 create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            get_tmp_ledger_path_auto_delete,
             staking_utils::tests::setup_vote_and_stake_accounts,
         },
         crossbeam_channel::unbounded,
@@ -389,11 +379,11 @@ mod tests {
             pubkey
         );
         assert_eq!(
-            cache.next_leader_slot(&pubkey, 0, &bank, None, u64::MAX),
+            cache.next_leader_slot(&pubkey, 0, &bank, u64::MAX),
             Some((1, 863_999))
         );
         assert_eq!(
-            cache.next_leader_slot(&pubkey, 1, &bank, None, u64::MAX),
+            cache.next_leader_slot(&pubkey, 1, &bank, u64::MAX),
             Some((2, 863_999))
         );
         assert_eq!(
@@ -401,7 +391,6 @@ mod tests {
                 &pubkey,
                 2 * genesis_config.epoch_schedule.slots_per_epoch - 1, // no schedule generated for epoch 2
                 &bank,
-                None,
                 u64::MAX
             ),
             None
@@ -412,84 +401,6 @@ mod tests {
                 &solana_sdk::pubkey::new_rand(), // not in leader_schedule
                 0,
                 &bank,
-                None,
-                u64::MAX
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn test_next_leader_slot_blockstore() {
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let mut genesis_config =
-            create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
-                .genesis_config;
-        genesis_config.epoch_schedule.warmup = false;
-
-        let bank = Bank::new_for_tests(&genesis_config);
-        let cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-
-        let blockstore = Blockstore::open(ledger_path.path())
-            .expect("Expected to be able to open database ledger");
-
-        assert_eq!(
-            cache.slot_leader_at(bank.slot(), Some(&bank)).unwrap(),
-            pubkey
-        );
-        // Check that the next leader slot after 0 is slot 1
-        assert_eq!(
-            cache
-                .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)
-                .unwrap()
-                .0,
-            1
-        );
-
-        // Write a shred into slot 2 that chains to slot 1,
-        // but slot 1 is empty so should not be skipped
-        let (shreds, _) = make_slot_entries(2, 1, 1, /*merkle_variant:*/ true);
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-        assert_eq!(
-            cache
-                .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)
-                .unwrap()
-                .0,
-            1
-        );
-
-        // Write a shred into slot 1
-        let (shreds, _) = make_slot_entries(1, 0, 1, /*merkle_variant:*/ true);
-
-        // Check that slot 1 and 2 are skipped
-        blockstore.insert_shreds(shreds, None, false).unwrap();
-        assert_eq!(
-            cache
-                .next_leader_slot(&pubkey, 0, &bank, Some(&blockstore), u64::MAX)
-                .unwrap()
-                .0,
-            3
-        );
-
-        // Integrity checks
-        assert_eq!(
-            cache.next_leader_slot(
-                &pubkey,
-                2 * genesis_config.epoch_schedule.slots_per_epoch - 1, // no schedule generated for epoch 2
-                &bank,
-                Some(&blockstore),
-                u64::MAX
-            ),
-            None
-        );
-
-        assert_eq!(
-            cache.next_leader_slot(
-                &solana_sdk::pubkey::new_rand(), // not in leader_schedule
-                0,
-                &bank,
-                Some(&blockstore),
                 u64::MAX
             ),
             None
@@ -550,25 +461,19 @@ mod tests {
 
         // If the max root isn't set, we'll get None
         assert!(cache
-            .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
+            .next_leader_slot(&node_pubkey, 0, &bank, u64::MAX)
             .is_none());
 
         cache.set_root(&bank);
         let res = cache
-            .next_leader_slot(&node_pubkey, 0, &bank, None, u64::MAX)
+            .next_leader_slot(&node_pubkey, 0, &bank, u64::MAX)
             .unwrap();
 
         assert_eq!(res.0, expected_slot);
         assert!(res.1 >= expected_slot + NUM_CONSECUTIVE_LEADER_SLOTS - 1);
 
         let res = cache
-            .next_leader_slot(
-                &node_pubkey,
-                0,
-                &bank,
-                None,
-                NUM_CONSECUTIVE_LEADER_SLOTS - 1,
-            )
+            .next_leader_slot(&node_pubkey, 0, &bank, NUM_CONSECUTIVE_LEADER_SLOTS - 1)
             .unwrap();
 
         assert_eq!(res.0, expected_slot);

@@ -315,23 +315,7 @@ impl PohRecorder {
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             self.leader_bank_notifier.set_completed(bank.slot());
-            let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
-                bank.collector_id(),
-                bank.slot(),
-                &bank,
-                Some(&self.blockstore),
-                GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
-            );
-            assert_eq!(self.ticks_per_slot, bank.ticks_per_slot());
-            let (
-                leader_first_tick_height_including_grace_ticks,
-                leader_last_tick_height,
-                grace_ticks,
-            ) = Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
-            self.grace_ticks = grace_ticks;
-            self.leader_first_tick_height_including_grace_ticks =
-                leader_first_tick_height_including_grace_ticks;
-            self.leader_last_tick_height = leader_last_tick_height;
+            self.set_next_leader_tick_height_from_cache(bank.collector_id(), bank.slot(), &bank);
 
             datapoint_info!(
                 "leader-slot-start-to-cleared-elapsed-ms",
@@ -351,6 +335,22 @@ impl PohRecorder {
                 }
             }
         }
+    }
+
+    fn set_next_leader_tick_height_from_cache(&mut self, pubkey: &Pubkey, slot: Slot, bank: &Bank) {
+        let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
+            pubkey,
+            slot,
+            bank,
+            GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
+        );
+        assert_eq!(self.ticks_per_slot, bank.ticks_per_slot());
+        let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
+            Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
+        self.grace_ticks = grace_ticks;
+        self.leader_first_tick_height_including_grace_ticks =
+            leader_first_tick_height_including_grace_ticks;
+        self.leader_last_tick_height = leader_last_tick_height;
     }
 
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
@@ -552,7 +552,7 @@ impl PohRecorder {
     /// Returns if the leader slot has been reached along with the current poh
     /// slot and the parent slot (could be a few slots ago if any previous
     /// leaders needed to be skipped).
-    pub fn reached_leader_slot(&self, my_pubkey: &Pubkey) -> PohLeaderStatus {
+    pub fn reached_leader_slot(&mut self, my_pubkey: &Pubkey) -> PohLeaderStatus {
         trace!(
             "tick_height {}, start_tick_height {}, leader_first_tick_height_including_grace_ticks {:?}, grace_ticks {}, has_bank {}",
             self.tick_height,
@@ -564,6 +564,18 @@ impl PohRecorder {
 
         let next_tick_height = self.tick_height + 1;
         let next_poh_slot = self.slot_for_tick_height(next_tick_height);
+
+        if next_tick_height > self.leader_last_tick_height {
+            // We have ticked through all our leader slots. We need to update to our
+            // next leader slots.
+            let last_slot = self.slot_for_tick_height(self.leader_last_tick_height);
+            self.set_next_leader_tick_height_from_cache(
+                my_pubkey,
+                last_slot,
+                &self.start_bank.clone(),
+            );
+        }
+
         let Some(leader_first_tick_height_including_grace_ticks) =
             self.leader_first_tick_height_including_grace_ticks
         else {
@@ -579,9 +591,7 @@ impl PohRecorder {
         if self.blockstore.has_existing_shreds_for_slot(next_poh_slot) {
             // We already have existing shreds for this slot. This can happen when this block was previously
             // created and added to BankForks, however a recent PoH reset caused this bank to be removed
-            // as it was not part of the rooted fork. If this slot is not the first slot for this leader,
-            // and the first slot was previously ticked over, the check in `leader_schedule_cache::next_leader_slot`
-            // will not suffice, as it only checks if there are shreds for the first slot.
+            // as it was not part of the rooted fork.
             return PohLeaderStatus::NotReached;
         }
 
@@ -619,7 +629,7 @@ impl PohRecorder {
             })
             .unwrap_or((
                 None,
-                0,
+                u64::MAX,
                 cmp::min(
                     ticks_per_slot * MAX_GRACE_SLOTS,
                     ticks_per_slot * NUM_CONSECUTIVE_LEADER_SLOTS / GRACE_TICKS_FACTOR,
@@ -2146,7 +2156,8 @@ mod tests {
         );
 
         // Let's test that if a node overshoots the ticks for its target
-        // leader slot, reached_leader_slot() will return true, because it's overdue
+        // leader slot, reached_leader_slot() will return false, because we do not
+        // attempt to produce a slot for which we are not the leader for.
         // Set the leader slot one slot down
         let bank4 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 4));
         poh_recorder.reset(bank4.clone(), Some((5, 5)));
@@ -2157,13 +2168,11 @@ mod tests {
             poh_recorder.tick();
         }
 
-        // We are overdue to lead
+        // We are overdue to lead, however we have ticked into another leader.
+        // Skip the slot and target our next leader schedule slot
         assert_eq!(
             poh_recorder.reached_leader_slot(&test_validator_pubkey),
-            PohLeaderStatus::Reached {
-                poh_slot: 9,
-                parent_slot: 4,
-            }
+            PohLeaderStatus::NotReached
         );
 
         // Test that grace ticks are not required if the previous leader's 4
@@ -2305,7 +2314,7 @@ mod tests {
     fn test_compute_leader_slot_tick_heights() {
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(None, 0),
-            (None, 0, 0)
+            (None, u64::MAX, 0)
         );
 
         assert_eq!(
