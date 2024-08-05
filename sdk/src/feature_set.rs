@@ -849,6 +849,10 @@ pub mod vote_only_retransmitter_signed_fec_sets {
     solana_sdk::declare_id!("RfEcA95xnhuwooVAhUUksEJLZBF7xKCLuqrJoqk4Zph");
 }
 
+pub mod enable_turbine_extended_fanout_experiments {
+    solana_sdk::declare_id!("BZn14Liea52wtBwrXUxTv6vojuTTmfc7XGEDTXrvMD7b");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1056,6 +1060,7 @@ lazy_static! {
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
+        (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #2373"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
