@@ -4056,7 +4056,7 @@ impl AccountsDb {
 
     /// These accounts were found during shrink of `slot` to be slot_list=[slot] and ref_count == 1 and lamports = 0.
     /// This means this slot contained the only account data for this pubkey and it is zero lamport.
-    /// Thus, we did NOT treat this as an alive account, so we did NOT copy the zero lamport accoutn to the new
+    /// Thus, we did NOT treat this as an alive account, so we did NOT copy the zero lamport account to the new
     /// storage. So, the account will no longer be alive or exist at `slot`.
     /// So, first, remove the ref count since this newly shrunk storage will no longer access it.
     /// Second, remove `slot` from the index entry's slot list. If the slot list is now empty, then the
