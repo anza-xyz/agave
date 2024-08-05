@@ -80,6 +80,17 @@ mod tests {
     }
 
     #[test]
+    fn test_non_zero_offset() {
+        let mut bytes = bincode::serialize(&ShortVec(vec![Signature::default()])).unwrap();
+        bytes.insert(0, 0); // Insert a byte at the beginning of the packet.
+        let mut offset = 1; // Start at the second byte.
+        let meta = SignatureMeta::try_new(&bytes, &mut offset).unwrap();
+        assert_eq!(meta.num_signatures, 1);
+        assert_eq!(meta.offset, 2);
+        assert_eq!(offset, 2 + core::mem::size_of::<Signature>());
+    }
+
+    #[test]
     fn test_too_many_signatures() {
         let signatures = vec![Signature::default(); 13];
         let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
