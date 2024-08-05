@@ -286,7 +286,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             // XXX maybe make a struct that combines tx with check result since they need to go like three places together now
             for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-                let load_result = check_result.and_then(|tx_details| {
+                let validate_result = check_result.and_then(|tx_details| {
+                    self.validate_transaction_fee_payer(
+                        callbacks,
+                        tx.message(),
+                        tx_details,
+                        &environment.feature_set,
+                        environment
+                            .fee_structure
+                            .unwrap_or(&FeeStructure::default()),
+                        environment
+                            .rent_collector
+                            .unwrap_or(&RentCollector::default()),
+                        &mut error_metrics,
+                    )
+                });
+
+                let load_result = validate_result.and_then(|tx_details| {
                     hana_load_transaction_accounts(
                         &accounts_cache,
                         tx.message(),
@@ -299,8 +315,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &program_cache_for_tx_batch.borrow(),
                     )
                 });
-
-                println!("HANA load_result: {:#?}", load_result);
 
                 match load_result {
                     Err(e) => {
@@ -395,35 +409,46 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .into_iter()
                 .zip(sanitized_txs.iter())
                 .map(|(load_result, tx)| {
-                println!("HANA load_result: {:#?}", load_result);
-                match load_result {
-                    Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
-                    Ok(loaded_transaction) => {
-                        let executed_tx = self.execute_loaded_transaction(
-                            tx,
-                            loaded_transaction,
-                            &mut execute_timings,
-                            &mut error_metrics,
-                            &mut program_cache_for_tx_batch.borrow_mut(),
-                            environment,
-                            config,
-                        );
+                    match load_result {
+                        Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
+                        Ok(loaded_transaction) => {
+                            let executed_tx = self.execute_loaded_transaction(
+                                tx,
+                                loaded_transaction,
+                                &mut execute_timings,
+                                &mut error_metrics,
+                                &mut program_cache_for_tx_batch.borrow_mut(),
+                                environment,
+                                config,
+                            );
 
-                        // Update batch specific cache of the loaded programs with the modifications
-                        // made by the transaction, if it executed successfully.
-                        if executed_tx.was_successful() {
-                            program_cache_for_tx_batch
-                                .borrow_mut()
-                                .merge(&executed_tx.programs_modified_by_tx);
+                            // Update batch specific cache of the loaded programs with the modifications
+                            // made by the transaction, if it executed successfully.
+                            if executed_tx.was_successful() {
+                                program_cache_for_tx_batch
+                                    .borrow_mut()
+                                    .merge(&executed_tx.programs_modified_by_tx);
+                            }
+
+                            TransactionExecutionResult::Executed(Box::new(executed_tx))
                         }
-
-                        TransactionExecutionResult::Executed(Box::new(executed_tx))
                     }
-                }})
+                })
                 .collect();
         }
 
-        println!("HANA {} results: {:#?}", execution_results.len(), execution_results.iter().map(|ex| format!("executed: {}, successful: {}", ex.was_executed(), ex.was_executed_successfully())).collect::<Vec<_>>());
+        println!(
+            "HANA {} results: {:#?}",
+            execution_results.len(),
+            execution_results
+                .iter()
+                .map(|ex| format!(
+                    "executed: {}, successful: {}",
+                    ex.was_executed(),
+                    ex.was_executed_successfully()
+                ))
+                .collect::<Vec<_>>()
+        );
 
         // Skip eviction when there's no chance this particular tx batch has increased the size of
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
@@ -526,7 +551,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
-        println!("HANA original validate rent epoch: {}", fee_payer_loaded_rent_epoch);
         let fee_payer_rent_debit = collect_rent_from_account(
             feature_set,
             rent_collector,

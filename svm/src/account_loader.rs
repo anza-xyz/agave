@@ -6,18 +6,12 @@ use {
         transaction_processing_callback::TransactionProcessingCallback,
     },
     itertools::Itertools,
-    solana_compute_budget::{
-        //compute_budget::ComputeBudget,
-        compute_budget_processor::{process_compute_budget_instructions, ComputeBudgetLimits},
-    },
+    solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        feature_set::{
-            self, include_loaded_accounts_data_size_in_fee_calculation,
-            remove_rounding_in_fee_calculation, FeatureSet,
-        },
-        fee::{FeeBudgetLimits, FeeDetails, FeeStructure},
+        feature_set::{self, FeatureSet},
+        fee::FeeDetails,
         message::SanitizedMessage,
         native_loader,
         nonce::State as NonceState,
@@ -154,81 +148,6 @@ pub fn validate_fee_payer(
     )
 }
 
-// XXX mostly taken from the thing in account loader, most of this will be disassembled tho
-fn hana_validate_transaction_fee_payer(
-    message: &SanitizedMessage,
-    // XXX combine in one arg
-    fee_payer_address: &Pubkey,
-    fee_payer_account: &mut AccountSharedData,
-    checked_details: CheckedTransactionDetails,
-    feature_set: &FeatureSet,
-    fee_structure: &FeeStructure,
-    rent_collector: &RentCollector,
-    error_counters: &mut TransactionErrorMetrics,
-) -> Result<ValidatedTransactionDetails> {
-    let compute_budget_limits = process_compute_budget_instructions(
-        message.program_instructions_iter(),
-    )
-    .map_err(|err| {
-        error_counters.invalid_compute_budget += 1;
-        err
-    })?;
-
-    // XXX i believe i can remove this stuff from the validation struct
-    let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
-    println!("HANA modified validate rent epoch: {}", fee_payer_loaded_rent_epoch);
-    let fee_payer_rent_debit = collect_rent_from_account(
-        feature_set,
-        rent_collector,
-        fee_payer_address,
-        fee_payer_account,
-    )
-    .rent_amount;
-
-    let CheckedTransactionDetails {
-        nonce,
-        lamports_per_signature,
-    } = checked_details;
-
-    let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-    let fee_details = fee_structure.calculate_fee_details(
-        message,
-        lamports_per_signature,
-        &fee_budget_limits,
-        feature_set.is_active(&include_loaded_accounts_data_size_in_fee_calculation::id()),
-        feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
-    );
-
-    let fee_payer_index = 0;
-    validate_fee_payer(
-        fee_payer_address,
-        fee_payer_account,
-        fee_payer_index,
-        error_counters,
-        rent_collector,
-        fee_details.total_fee(),
-    )?;
-
-    // XXX i believe i can get rid of rollback data, if i do fee payer validation *after* program checks
-    // well. actually maybe not. execute_transaction does checks simd82 removes that also can result in non-executing?
-    // look over the state of things in b15080 more closely, this definitely didnt used to exist
-    let rollback_accounts = RollbackAccounts::new(
-        nonce,
-        *fee_payer_address,
-        fee_payer_account.clone(),
-        fee_payer_rent_debit,
-        fee_payer_loaded_rent_epoch,
-    );
-
-    Ok(ValidatedTransactionDetails {
-        fee_details,
-        fee_payer_account: fee_payer_account.clone(), // XXX stupid
-        fee_payer_rent_debit,
-        rollback_accounts,
-        compute_budget_limits,
-    })
-}
-
 pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[SanitizedTransaction],
@@ -258,7 +177,6 @@ pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
         {
             accounts_cache.insert(*key, account_override.clone());
         } else if let Some(account) = callbacks.get_account_shared_data(key) {
-            println!("HANA account {} rent epoch at fetch: {}", key, account.rent_epoch());
             accounts_cache.insert(*key, account);
         }
         // XXX we do not insert the default account here because we need to know if its not found later
@@ -315,7 +233,7 @@ pub(crate) fn hana_load_accounts<CB: TransactionProcessingCallback>(
 pub(crate) fn hana_load_transaction_accounts(
     accounts_cache: &HashMap<Pubkey, AccountSharedData>,
     message: &SanitizedMessage,
-    tx_details: CheckedTransactionDetails,
+    tx_details: ValidatedTransactionDetails,
     error_metrics: &mut TransactionErrorMetrics,
     feature_set: &FeatureSet,
     rent_collector: &RentCollector,
@@ -326,15 +244,6 @@ pub(crate) fn hana_load_transaction_accounts(
     let mut accounts_found = Vec::with_capacity(account_keys.len());
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
-
-    // XXX remove this from tx validation, i need it before
-    let compute_budget_limits = process_compute_budget_instructions(
-        message.program_instructions_iter(),
-    )
-    .map_err(|err| {
-        error_metrics.invalid_compute_budget += 1;
-        err
-    })?;
 
     let instruction_accounts = message
         .instructions()
@@ -353,14 +262,20 @@ pub(crate) fn hana_load_transaction_accounts(
             let account = if solana_sdk::sysvar::instructions::check_id(key) {
                 construct_instructions_account(message)
             } else {
+                let is_fee_payer = i == 0;
                 let instruction_account = u8::try_from(i)
                     .map(|i| instruction_accounts.contains(&&i))
                     .unwrap_or(false);
 
-                let (account_size, account, rent) = if let Some(program) = (!instruction_account
-                    && !message.is_writable(i))
-                .then_some(())
-                .and_then(|_| loaded_programs.find(key))
+                let (account_size, account, rent) = if is_fee_payer {
+                    (
+                        tx_details.fee_payer_account.data().len(),
+                        tx_details.fee_payer_account.clone(),
+                        tx_details.fee_payer_rent_debit,
+                    )
+                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
+                    .then_some(())
+                    .and_then(|_| loaded_programs.find(key))
                 {
                     if !accounts_cache.contains_key(key) {
                         return Err(TransactionError::AccountNotFound);
@@ -375,7 +290,6 @@ pub(crate) fn hana_load_transaction_accounts(
                         .get(key)
                         .cloned() // XXX another one
                         .map(|mut account| {
-            println!("HANA account {} rent epoch from cache: {}", key, account.rent_epoch());
                             if message.is_writable(i) {
                                 let rent_due = collect_rent_from_account(
                                     feature_set,
@@ -384,7 +298,6 @@ pub(crate) fn hana_load_transaction_accounts(
                                     &mut account,
                                 )
                                 .rent_amount;
-            println!("HANA account {} rent epoch after collection: {}", key, account.rent_epoch());
 
                                 (account.data().len(), account, rent_due)
                             } else {
@@ -410,7 +323,7 @@ pub(crate) fn hana_load_transaction_accounts(
                 accumulate_and_check_loaded_account_data_size(
                     &mut accumulated_accounts_data_size,
                     account_size,
-                    compute_budget_limits.loaded_accounts_bytes,
+                    tx_details.compute_budget_limits.loaded_accounts_bytes,
                     error_metrics,
                 )?;
 
@@ -471,7 +384,7 @@ pub(crate) fn hana_load_transaction_accounts(
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
                         owner_account.data().len(),
-                        compute_budget_limits.loaded_accounts_bytes,
+                        tx_details.compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
                     accounts.push((*owner_id, owner_account.clone()));
@@ -484,23 +397,12 @@ pub(crate) fn hana_load_transaction_accounts(
         })
         .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
 
-    let validated_tx_details = hana_validate_transaction_fee_payer(
-        message,
-        message.fee_payer(),
-        &mut accounts[0].1,
-        tx_details,
-        feature_set,
-        &FeeStructure::default(), // XXX pass this in...
-        rent_collector,
-        error_metrics,
-    )?;
-
     Ok(LoadedTransaction {
         accounts,
         program_indices,
-        fee_details: validated_tx_details.fee_details,
-        rollback_accounts: validated_tx_details.rollback_accounts,
-        compute_budget_limits: validated_tx_details.compute_budget_limits,
+        fee_details: tx_details.fee_details,
+        rollback_accounts: tx_details.rollback_accounts,
+        compute_budget_limits: tx_details.compute_budget_limits,
         rent: tx_rent,
         rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size,

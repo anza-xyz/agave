@@ -3349,7 +3349,6 @@ pub mod tests {
         }
     }
 
-    // XXX HANA this test fails in hanamode... why
     #[test]
     fn test_transaction_result_does_not_affect_bankhash() {
         solana_logger::setup();
@@ -3442,17 +3441,12 @@ pub mod tests {
             bank.last_blockhash(),
         );
 
-        println!("HANA model before execution blockhash: {}, bankhash: {}", bank.last_blockhash(), bank.hash());
-
         let entry = next_entry(&bank.last_blockhash(), 1, vec![tx]);
         let result = process_entries_for_tests_without_scheduler(&bank, vec![entry]);
-        println!("HANA model before freeze blockhash: {}, bankhash: {}", bank.last_blockhash(), bank.hash());
         bank.freeze();
         let blockhash_ok = bank.last_blockhash();
         let bankhash_ok = bank.hash();
         assert!(result.is_ok());
-
-        println!("HANA will EXPECT blockhash: {}, any bankhash but: {}", blockhash_ok, bankhash_ok);
 
         declare_process_instruction!(MockBuiltinErr, 1, |invoke_context| {
             let instruction_errors = get_instruction_errors();
@@ -3472,7 +3466,7 @@ pub mod tests {
 
         let mut bankhash_err = None;
 
-        (0..1 /*XXX get_instruction_errors().len()*/).for_each(|err| {
+        (0..get_instruction_errors().len()).for_each(|err| {
             let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
                 &genesis_config,
                 mock_program_id,
@@ -3492,11 +3486,8 @@ pub mod tests {
 
             let entry = next_entry(&bank.last_blockhash(), 1, vec![tx]);
             let bank = Arc::new(bank);
-        println!("HANA test before execution blockhash: {}, bankhash: {}", bank.last_blockhash(), bank.hash());
             let _result = process_entries_for_tests_without_scheduler(&bank, vec![entry]);
             bank.freeze();
-
-            println!("HANA test got blockhash: {}, bankhash: {}", bank.last_blockhash(), bank.hash());
 
             assert_eq!(blockhash_ok, bank.last_blockhash());
             assert!(bankhash_ok != bank.hash());

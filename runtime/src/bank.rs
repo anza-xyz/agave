@@ -58,6 +58,7 @@ use {
     },
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
+    itertools::Itertools,
     log::*,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -193,7 +194,6 @@ use {
         thread::Builder,
         time::{Duration, Instant},
     },
-    itertools::Itertools,
 };
 pub use {
     partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_sdk::reward_type::RewardType,
