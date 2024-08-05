@@ -134,13 +134,26 @@ thread_local! {
 }
 
 /// Check for duplicate account keys.
+#[inline]
 fn has_duplicates(account_keys: AccountKeys) -> bool {
-    HAS_DUPLICATES_SET.with(|set| {
-        let mut set = set.borrow_mut();
-        let has_duplicates = account_keys.iter().any(|key| !set.insert(*key));
-        set.clear();
-        has_duplicates
-    })
+    const USE_ACCOUNT_LOCK_SET_SIZE: usize = 32;
+    if account_keys.len() >= USE_ACCOUNT_LOCK_SET_SIZE {
+        HAS_DUPLICATES_SET.with(|set| {
+            let mut set = set.borrow_mut();
+            let has_duplicates = account_keys.iter().any(|key| !set.insert(*key));
+            set.clear();
+            has_duplicates
+        })
+    } else {
+        for (idx, key) in account_keys.iter().enumerate() {
+            for jdx in idx + 1..account_keys.len() {
+                if key == &account_keys[jdx] {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]
