@@ -22,7 +22,7 @@ use {
         bpf_loader_deprecated,
         clock::Slot,
         epoch_schedule::EpochSchedule,
-        feature_set::FeatureSet,
+        feature_set::{remove_accounts_executable_flag_checks, FeatureSet},
         hash::Hash,
         instruction::{AccountMeta, InstructionError},
         native_loader,
@@ -434,7 +434,12 @@ impl<'a> InvokeContext<'a> {
             })?;
         let borrowed_program_account = instruction_context
             .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
-        if !borrowed_program_account.is_executable() {
+        #[allow(deprecated)]
+        if !self
+            .get_feature_set()
+            .is_active(&remove_accounts_executable_flag_checks::id())
+            && !borrowed_program_account.is_executable()
+        {
             ic_msg!(self, "Account {} is not executable", callee_program_id);
             return Err(InstructionError::AccountNotExecutable);
         }
