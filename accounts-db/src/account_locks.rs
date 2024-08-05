@@ -2,8 +2,12 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
-    solana_sdk::{message::AccountKeys, pubkey::Pubkey, transaction::TransactionError},
-    std::collections::hash_map,
+    solana_sdk::{
+        message::AccountKeys,
+        pubkey::Pubkey,
+        transaction::{TransactionError, MAX_TX_ACCOUNT_LOCKS},
+    },
+    std::{cell::RefCell, collections::hash_map},
 };
 
 #[derive(Debug, Default)]
@@ -125,10 +129,18 @@ pub fn validate_account_locks(
     Ok(())
 }
 
+thread_local! {
+    static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(MAX_TX_ACCOUNT_LOCKS));
+}
+
 /// Check for duplicate account keys.
 fn has_duplicates(account_keys: AccountKeys) -> bool {
-    let mut keys = AHashSet::new();
-    account_keys.iter().any(|key| !keys.insert(key))
+    HAS_DUPLICATES_SET.with(|set| {
+        let mut set = set.borrow_mut();
+        let has_duplicates = account_keys.iter().any(|key| !set.insert(*key));
+        set.clear();
+        has_duplicates
+    })
 }
 
 #[cfg(test)]
