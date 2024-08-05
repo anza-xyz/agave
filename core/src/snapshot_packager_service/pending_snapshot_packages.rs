@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(snapshot_package.slot, incr_slot);
 
         // but, if there's a full and *older* incremental, pop should return
-        // the full and *not* re-enque the incremental
+        // the full and *not* re-enqueue the incremental
         let full_slot = 200;
         let incr_slot = full_slot - 10;
         pending_snapshot_packages.full = Some(new_full(full_slot));
