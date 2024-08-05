@@ -152,6 +152,7 @@ impl FeatureSet {
             loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
             disable_rent_fees_collection: self.is_active(&disable_rent_fees_collection::id()),
+            enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
         }
     }
 }
@@ -1090,6 +1091,10 @@ pub mod enshrine_slashing_program {
     solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
 }
 
+pub mod enable_extend_program_checked {
+    solana_pubkey::declare_id!("97QCmR4QtfeQsAti9srfHFk5uMRFP95CvXG8EGr615HM");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1324,6 +1329,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
+        (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
