@@ -160,4 +160,23 @@ pub enum UpgradeableLoaderInstruction {
     ///   1. `[signer]` The current authority.
     ///   2. `[signer]` The new authority.
     SetAuthorityChecked,
+
+    /// Extend a program's ProgramData account by the specified number of bytes.
+    /// Only upgradeable program's can be extended.
+    ///
+    /// This instruction differs from ExtendProgram in that the authority is a
+    /// required signer.
+    ///
+    /// # Account references
+    ///   0. `[writable]` The ProgramData account.
+    ///   1. `[writable]` The ProgramData account's associated Program account.
+    ///   2. `[signer]` The authority.
+    ///   3. `[]` System program (`solana_sdk::system_program::id()`), optional, used to transfer
+    ///      lamports from the payer to the ProgramData account.
+    ///   4. `[signer]` The payer account, optional, that will pay necessary rent exemption costs
+    ///      for the increased storage size.
+    ExtendProgramChecked {
+        /// Number of bytes to extend the program data.
+        additional_bytes: u32,
+    },
 }

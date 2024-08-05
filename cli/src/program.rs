@@ -58,7 +58,7 @@ use {
         bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
         commitment_config::CommitmentConfig,
         compute_budget,
-        feature_set::{FeatureSet, FEATURE_NAMES},
+        feature_set::{enable_extend_program_checked, FeatureSet, FEATURE_NAMES},
         instruction::{Instruction, InstructionError},
         message::Message,
         packet::PACKET_DATA_SIZE,
@@ -166,7 +166,7 @@ pub enum ProgramCliCommand {
         use_lamports_unit: bool,
         bypass_warning: bool,
     },
-    ExtendProgram {
+    ExtendProgramChecked {
         program_pubkey: Pubkey,
         additional_bytes: u32,
     },
@@ -983,7 +983,7 @@ pub fn parse_program_subcommand(
             )?;
 
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::ExtendProgram {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
                     additional_bytes,
                 }),
@@ -1170,7 +1170,7 @@ pub fn process_program_subcommand(
             *use_lamports_unit,
             *bypass_warning,
         ),
-        ProgramCliCommand::ExtendProgram {
+        ProgramCliCommand::ExtendProgramChecked {
             program_pubkey,
             additional_bytes,
         } => process_extend_program(&rpc_client, config, *program_pubkey, *additional_bytes),
@@ -2338,21 +2338,27 @@ fn process_extend_program(
         _ => Err(format!("Program {program_pubkey} is closed")),
     }?;
 
-    match upgrade_authority_address {
-        None => Err(format!("Program {program_pubkey} is not upgradeable")),
-        _ => Ok(()),
-    }?;
+    let upgrade_authority_address = upgrade_authority_address
+        .ok_or_else(|| format!("Program {program_pubkey} is not upgradeable"))?;
 
     let blockhash = rpc_client.get_latest_blockhash()?;
+    let feature_set = fetch_feature_set(rpc_client)?;
 
-    let mut tx = Transaction::new_unsigned(Message::new(
-        &[bpf_loader_upgradeable::extend_program(
+    let instruction = if feature_set.is_active(&enable_extend_program_checked::id()) {
+        bpf_loader_upgradeable::extend_program_checked(
+            &program_pubkey,
+            &upgrade_authority_address,
+            Some(&payer_pubkey),
+            additional_bytes,
+        )
+    } else {
+        bpf_loader_upgradeable::extend_program(
             &program_pubkey,
             Some(&payer_pubkey),
             additional_bytes,
-        )],
-        Some(&payer_pubkey),
-    ));
+        )
+    };
+    let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&payer_pubkey)));
 
     tx.try_sign(&[config.signers[0]], blockhash)?;
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
@@ -4227,7 +4233,7 @@ mod tests {
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::ExtendProgram {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
                     additional_bytes
                 }),
