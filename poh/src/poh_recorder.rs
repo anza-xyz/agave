@@ -571,17 +571,17 @@ impl PohRecorder {
             return PohLeaderStatus::NotReached;
         };
 
+        if !self.reached_leader_tick(my_pubkey, leader_first_tick_height_including_grace_ticks) {
+            // PoH hasn't ticked far enough yet.
+            return PohLeaderStatus::NotReached;
+        }
+
         if self.blockstore.has_existing_shreds_for_slot(next_poh_slot) {
             // We already have existing shreds for this slot. This can happen when this block was previously
             // created and added to BankForks, however a recent PoH reset caused this bank to be removed
             // as it was not part of the rooted fork. If this slot is not the first slot for this leader,
             // and the first slot was previously ticked over, the check in `leader_schedule_cache::next_leader_slot`
             // will not suffice, as it only checks if there are shreds for the first slot.
-            return PohLeaderStatus::NotReached;
-        }
-
-        if !self.reached_leader_tick(my_pubkey, leader_first_tick_height_including_grace_ticks) {
-            // PoH hasn't ticked far enough yet.
             return PohLeaderStatus::NotReached;
         }
 
