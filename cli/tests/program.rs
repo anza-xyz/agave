@@ -1444,7 +1444,7 @@ fn test_cli_program_extend_program() {
     let new_max_len = new_program_data.len();
     let additional_bytes = (new_max_len - max_len) as u32;
     config.signers = vec![&keypair];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
         program_pubkey: program_keypair.pubkey(),
         additional_bytes: additional_bytes - 1,
     });
@@ -1492,7 +1492,7 @@ fn test_cli_program_extend_program() {
 
     // Extend 1 last byte
     config.signers = vec![&keypair];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
         program_pubkey: program_keypair.pubkey(),
         additional_bytes: 1,
     });
