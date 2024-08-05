@@ -3839,7 +3839,7 @@ impl AccountsDb {
                         && ref_count == 1
                         && latest_full_snapshot_slot
                             .map(|latest_full_snapshot_slot| {
-                                latest_full_snapshot_slot > slot_to_shrink
+                                latest_full_snapshot_slot >= slot_to_shrink
                             })
                             .unwrap_or(true)
                     {
