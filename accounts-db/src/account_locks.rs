@@ -120,13 +120,12 @@ pub fn validate_account_locks(
     tx_account_lock_limit: usize,
 ) -> Result<(), TransactionError> {
     if account_keys.len() > tx_account_lock_limit {
-        return Err(TransactionError::TooManyAccountLocks);
+        Err(TransactionError::TooManyAccountLocks)
+    } else if has_duplicates(account_keys) {
+        Err(TransactionError::AccountLoadedTwice)
+    } else {
+        Ok(())
     }
-    if has_duplicates(account_keys) {
-        return Err(TransactionError::AccountLoadedTwice);
-    }
-
-    Ok(())
 }
 
 thread_local! {
@@ -134,7 +133,6 @@ thread_local! {
 }
 
 /// Check for duplicate account keys.
-#[inline]
 fn has_duplicates(account_keys: AccountKeys) -> bool {
     const USE_ACCOUNT_LOCK_SET_SIZE: usize = 32;
     if account_keys.len() >= USE_ACCOUNT_LOCK_SET_SIZE {
