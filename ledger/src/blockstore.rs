@@ -110,7 +110,13 @@ pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
-type CompletedRanges = Vec<(u32, u32)>;
+// Each two consecutive entries define a range of indices:
+//   completed_ranges[i]..completed_ranges[i + 1]
+// with complete data; that is all data shreds in the range are already
+// received and the data shred with index
+//   completed_ranges[i + 1] - 1
+// has DATA_COMPLETE_SHRED flag.
+type CompletedRanges = Vec<u32>;
 
 #[derive(Default)]
 pub struct SignatureInfosForAddress {
@@ -3484,14 +3490,15 @@ impl Blockstore {
         // this can only happen during entry processing during replay stage.
         if self.is_dead(slot) && !allow_dead_slots {
             return Err(BlockstoreError::DeadSlot);
-        } else if completed_ranges.is_empty() {
+        } else if completed_ranges.len() < 2 {
+            // Need at least 2 entries to define a range.
             return Ok((vec![], 0, false));
         }
 
         let slot_meta = slot_meta.unwrap();
         let num_shreds = completed_ranges
             .last()
-            .map(|(_, end_index)| u64::from(*end_index) - start_index + 1)
+            .map(|&end_index| u64::from(end_index) - start_index)
             .unwrap_or(0);
 
         let entries = self.get_slot_entries_in_block(slot, completed_ranges, Some(&slot_meta))?;
@@ -3569,12 +3576,9 @@ impl Blockstore {
         slot: Slot,
         start_index: u64,
     ) -> Result<(CompletedRanges, Option<SlotMeta>)> {
-        let slot_meta = self.meta_cf.get(slot)?;
-        if slot_meta.is_none() {
-            return Ok((vec![], slot_meta));
-        }
-
-        let slot_meta = slot_meta.unwrap();
+        let Some(slot_meta) = self.meta_cf.get(slot)? else {
+            return Ok((vec![], None));
+        };
         // Find all the ranges for the completed data blocks
         let completed_ranges = Self::get_completed_data_ranges(
             start_index as u32,
@@ -3594,37 +3598,35 @@ impl Blockstore {
         // `consumed` is the next missing shred index, but shred `i` existing in
         // completed_data_end_indexes implies it's not missing
         assert!(!completed_data_indexes.contains(&consumed));
-        completed_data_indexes
-            .range(start_index..consumed)
-            .scan(start_index, |begin, index| {
-                let out = (*begin, *index);
-                *begin = index + 1;
-                Some(out)
-            })
+        std::iter::once(start_index)
+            .chain(
+                completed_data_indexes
+                    .range(start_index..consumed)
+                    .map(|index| index + 1),
+            )
             .collect()
     }
 
     /// Fetch the entries corresponding to all of the shred indices in `completed_ranges`
-    /// This function takes advantage of the fact that `completed_ranges` are both
-    /// contiguous and in sorted order. To clarify, suppose completed_ranges is as follows:
-    ///   completed_ranges = [..., (s_i, e_i), (s_i+1, e_i+1), ...]
-    /// Then, the following statements are true:
-    ///   s_i < e_i < s_i+1 < e_i+1
-    ///   e_i == s_i+1 + 1
+    /// This function takes advantage of the fact that `completed_ranges` is
+    /// in sorted order.
     fn get_slot_entries_in_block(
         &self,
         slot: Slot,
         completed_ranges: CompletedRanges,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        let Some((all_ranges_start_index, _)) = completed_ranges.first().copied() else {
+        let Some(&all_ranges_start_index) = completed_ranges.first() else {
             return Ok(vec![]);
         };
-        let Some((_, all_ranges_end_index)) = completed_ranges.last().copied() else {
+        let Some(&all_ranges_end_index) = completed_ranges.last() else {
             return Ok(vec![]);
         };
+        if all_ranges_start_index >= all_ranges_end_index {
+            return Ok(vec![]);
+        }
         let keys =
-            (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index)));
+            (all_ranges_start_index..all_ranges_end_index).map(|index| (slot, u64::from(index)));
 
         let data_shreds: Result<Vec<Option<Vec<u8>>>> = self
             .data_shred_cf
@@ -3668,12 +3670,13 @@ impl Blockstore {
 
         completed_ranges
             .into_iter()
+            .tuple_windows()
             .map(|(start_index, end_index)| {
                 // The indices from completed_ranges refer to shred indices in the
                 // entire block; map those indices to indices within data_shreds
                 let range_start_index = (start_index - all_ranges_start_index) as usize;
                 let range_end_index = (end_index - all_ranges_start_index) as usize;
-                let range_shreds = &data_shreds[range_start_index..=range_end_index];
+                let range_shreds = &data_shreds[range_start_index..range_end_index];
 
                 let last_shred = range_shreds.last().unwrap();
                 assert!(last_shred.data_complete() || last_shred.last_in_slot());
@@ -3704,7 +3707,7 @@ impl Blockstore {
         end_index: u32,
         slot_meta: Option<&SlotMeta>,
     ) -> Result<Vec<Entry>> {
-        self.get_slot_entries_in_block(slot, vec![(start_index, end_index)], slot_meta)
+        self.get_slot_entries_in_block(slot, vec![start_index, end_index + 1], slot_meta)
     }
 
     /// Performs checks on the last fec set of a replayed slot, and returns the block_id.
@@ -8060,7 +8063,7 @@ pub mod tests {
                 &completed_data_end_indexes,
                 consumed
             ),
-            vec![]
+            &[0]
         );
 
         let start_index = 0;
@@ -8071,7 +8074,7 @@ pub mod tests {
                 &completed_data_end_indexes,
                 consumed
             ),
-            vec![(0, 2)]
+            &[0, 3]
         );
 
         // Test all possible ranges:
@@ -8089,11 +8092,11 @@ pub mod tests {
                 // When start_index == completed_data_end_indexes[i], then that means
                 // the shred with index == start_index is a single-shred data block,
                 // so the start index is the end index for that data block.
-                let mut expected = vec![(start_index, start_index)];
+                let mut expected = vec![start_index];
                 expected.extend(
                     completed_data_end_indexes[i..=j]
-                        .windows(2)
-                        .map(|end_indexes| (end_indexes[0] + 1, end_indexes[1])),
+                        .iter()
+                        .map(|index| index + 1),
                 );
 
                 let completed_data_end_indexes =
