@@ -6,6 +6,7 @@ use {
         account::AccountSharedData,
         account_utils::StateMut,
         bpf_loader_upgradeable::{id, UpgradeableLoaderState},
+        feature_set::enable_extend_program_checked,
         instruction::{Instruction, InstructionError},
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -14,7 +15,9 @@ use {
 };
 
 pub async fn setup_test_context() -> ProgramTestContext {
-    let program_test = ProgramTest::new("", id(), Some(solana_bpf_loader_program::Entrypoint::vm));
+    let mut program_test =
+        ProgramTest::new("", id(), Some(solana_bpf_loader_program::Entrypoint::vm));
+    program_test.deactivate_feature(enable_extend_program_checked::id());
     program_test.start_with_context().await
 }
 
