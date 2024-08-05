@@ -37,7 +37,9 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         clock::{Epoch, Slot},
-        feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
+        feature_set::{
+            remove_accounts_executable_flag_checks, remove_rounding_in_fee_calculation, FeatureSet,
+        },
         fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
@@ -724,6 +726,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
+        );
+        transaction_context.set_remove_accounts_executable_flag_checks(
+            environment
+                .feature_set
+                .is_active(&remove_accounts_executable_flag_checks::id()),
         );
         #[cfg(debug_assertions)]
         transaction_context.set_signature(tx.signature());
