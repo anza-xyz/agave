@@ -44,23 +44,18 @@ impl MessageHeaderMeta {
         // The message header begins immediately after the message prefix byte
         // if present.
         let message_prefix = read_byte(bytes, offset)?;
-        let (version, message_header_offset) = if message_prefix & MESSAGE_VERSION_PREFIX != 0 {
+        let (version, num_required_signatures) = if message_prefix & MESSAGE_VERSION_PREFIX != 0 {
             let version = message_prefix & !MESSAGE_VERSION_PREFIX;
             match version {
-                // add one byte for prefix byte. Do not need to check for
-                // overflow here, because we have already checked.
-                0 => (TransactionVersion::V0, message_offset.wrapping_add(1)),
+                0 => (TransactionVersion::V0, read_byte(bytes, offset)?),
                 _ => return Err(TransactionParsingError),
             }
         } else {
-            (TransactionVersion::Legacy, message_offset)
+            // Legacy transaction. The `message_prefix` that was just read is
+            // actually the number of required signatures.
+            (TransactionVersion::Legacy, message_prefix)
         };
 
-        // Offset should get reset to header offset - the byte we read may have
-        // actually been part of the header instead of the prefix (Legacy).
-        *offset = usize::from(message_header_offset);
-
-        let num_required_signatures = read_byte(bytes, offset)?;
         let num_readonly_signed_accounts = read_byte(bytes, offset)?;
         let num_readonly_unsigned_accounts = read_byte(bytes, offset)?;
 
