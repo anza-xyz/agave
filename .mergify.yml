@@ -195,6 +195,8 @@ pull_request_rules:
         - files~=^programs/system/src/.*\.rs$
         - files~=^programs/vote/src/.*\.rs$
         - files~=^programs/zk-elgamal-proof/src/.*\.rs$
+        - files~=^sdk/program/src/stake.*\.rs$  # includes stake_history.rs
+        - files~=^sdk/program/src/vote/.*\.rs$
     actions:
       comment:
         message: |
