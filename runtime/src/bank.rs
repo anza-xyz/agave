@@ -562,6 +562,7 @@ impl PartialEq for Bank {
             compute_budget: _,
             transaction_account_lock_limit: _,
             fee_structure: _,
+            blockhash_override: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -839,6 +840,8 @@ pub struct Bank {
 
     /// Fee structure to use for assessing transaction fees.
     fee_structure: FeeStructure,
+
+    pub blockhash_override: Option<Hash>,
 }
 
 struct VoteWithStakeDelegations {
@@ -870,6 +873,7 @@ type VoteRewards = DashMap<Pubkey, VoteReward>;
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
     pub vote_only_bank: bool,
+    pub blockhash_override: Option<Hash>,
 }
 
 #[derive(Debug, Default)]
@@ -957,6 +961,7 @@ impl Bank {
             compute_budget: None,
             transaction_account_lock_limit: None,
             fee_structure: FeeStructure::default(),
+            blockhash_override: None,
         };
 
         bank.transaction_processor =
@@ -1080,7 +1085,10 @@ impl Bank {
         new_bank_options: NewBankOptions,
     ) -> Self {
         let mut time = Measure::start("bank::new_from_parent");
-        let NewBankOptions { vote_only_bank } = new_bank_options;
+        let NewBankOptions {
+            vote_only_bank,
+            blockhash_override,
+        } = new_bank_options;
 
         parent.freeze();
         assert_ne!(slot, parent.slot());
@@ -1203,6 +1211,7 @@ impl Bank {
             compute_budget: parent.compute_budget,
             transaction_account_lock_limit: parent.transaction_account_lock_limit,
             fee_structure: parent.fee_structure.clone(),
+            blockhash_override,
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1579,6 +1588,7 @@ impl Bank {
             compute_budget: runtime_config.compute_budget,
             transaction_account_lock_limit: runtime_config.transaction_account_lock_limit,
             fee_structure: FeeStructure::default(),
+            blockhash_override: None,
         };
 
         bank.transaction_processor =
@@ -2743,7 +2753,7 @@ impl Bank {
         }
     }
 
-    pub fn freeze(&self) {
+    pub fn _freeze(&self, bank_hash_override: Option<Hash>) {
         // This lock prevents any new commits from BankingStage
         // `Consumer::execute_and_commit_transactions_locked()` from
         // coming in after the last tick is observed. This is because in
@@ -2770,9 +2780,17 @@ impl Bank {
 
             // freeze is a one-way trip, idempotent
             self.freeze_started.store(true, Relaxed);
-            *hash = self.hash_internal_state();
+            *hash = self._hash_internal_state(bank_hash_override);
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
+    }
+
+    pub fn freeze(&self) {
+        self._freeze(None);
+    }
+
+    pub fn freeze_with_bank_hash_override(&self, bank_hash_override: Option<Hash>) {
+        self._freeze(bank_hash_override);
     }
 
     // dangerous; don't use this; this is only needed for ledger-tool's special command
@@ -3424,6 +3442,25 @@ impl Bank {
 
     pub fn remove_unrooted_slots(&self, slots: &[(Slot, BankId)]) {
         self.rc.accounts.accounts_db.remove_unrooted_slots(slots)
+    }
+
+    // danger
+    pub fn skip_check_age(&self) {
+        //self.runtime_config.skip_check_age();
+    }
+
+    pub fn check_age_tx(&self, tx: &SanitizedTransaction) -> TransactionCheckResult {
+        let max_age = MAX_PROCESSING_AGE;
+        let hash_queue = self.blockhash_queue.read().unwrap();
+        let last_blockhash = hash_queue.last_hash();
+        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        self.check_transaction_age(
+            tx,
+            max_age,
+            &next_durable_nonce,
+            &hash_queue,
+            &mut TransactionErrorMetrics::default(),
+        )
     }
 
     fn check_age(
@@ -5311,6 +5348,10 @@ impl Bank {
     /// Hash the `accounts` HashMap. This represents a validator's interpretation
     ///  of the delta of the ledger since the last vote and up to now
     fn hash_internal_state(&self) -> Hash {
+        self._hash_internal_state(None)
+    }
+
+    fn _hash_internal_state(&self, bank_hash_override: Option<Hash>) -> Hash {
         let slot = self.slot();
         let ignore = (!self.is_partitioned_rewards_feature_enabled()
             && self.force_partition_rewards_in_first_block_of_epoch())
@@ -5359,7 +5400,8 @@ impl Bank {
             .get_bank_hash_stats(slot)
             .expect("No bank hash stats were found for this bank, that should not be possible");
         info!(
-            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            "bank frozen: {slot} hash: {} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            bank_hash_override.map(|ho| format!("{ho} (overrode: {hash})")).unwrap_or_else(|| format!("{hash}")),
             accounts_delta_hash.0,
             self.signature_count(),
             self.last_blockhash(),
@@ -5370,7 +5412,17 @@ impl Bank {
                 "".to_string()
             }
         );
-        hash
+
+        if let Some(bank_hash_override) = bank_hash_override {
+            // Avoid to optimize out hash along with the whole computation by super smart rustc.
+            // bank_hash_override is used by ledger-tool's simulate-block-production, which prefers
+            // the actual bank freezing processing for accurate simulation.
+            std::hint::black_box(hash);
+
+            bank_hash_override
+        } else {
+            hash
+        }
     }
 
     /// The epoch accounts hash is hashed into the bank's hash once per epoch at a predefined slot.

@@ -1,18 +1,44 @@
 use {
-    crate::sigverify::SigverifyTracerPacketStats,
+    crate::banking_stage::{BankingStage, NUM_THREADS},
+    log::*,
+    solana_client::connection_cache::ConnectionCache,
+    solana_gossip::cluster_info::Node,
+    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
+    solana_poh::poh_recorder::create_test_recorder,
+    solana_sdk::signature::Keypair,
+    solana_streamer::socket::SocketAddrSpace,
+    //solana_tpu_client::tpu_connection_cache::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+};
+use {
+    crate::{sigverify::SigverifyTracerPacketStats, validator::BlockProductionMethod},
     bincode::serialize_into,
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
+    solana_gossip::cluster_info::ClusterInfo,
+    solana_ledger::blockstore::Blockstore,
     solana_perf::packet::PacketBatch,
-    solana_sdk::{hash::Hash, slot_history::Slot},
+    solana_poh::{poh_recorder::PohRecorder, poh_service::PohService},
+    solana_runtime::{
+        bank::{Bank, NewBankOptions},
+        bank_forks::BankForks,
+        prioritization_fee_cache::PrioritizationFeeCache,
+    },
+    solana_sdk::{
+        genesis_config::GenesisConfig, hash::Hash, shred_version::compute_shred_version,
+        slot_history::Slot,
+    },
+    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_turbine::broadcast_stage::BroadcastStageType,
     std::{
-        fs::{create_dir_all, remove_dir_all},
-        io::{self, Write},
+        collections::{BTreeMap, HashMap},
+        fs::{create_dir_all, remove_dir_all, File},
+        io::{self, BufReader, Write},
+        net::UdpSocket,
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc,
+            Arc, RwLock,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, SystemTime},
@@ -184,7 +210,7 @@ impl BankingTracer {
     ) -> Result<(Arc<Self>, TracerThread), TraceError> {
         match maybe_config {
             None => Ok((Self::new_disabled(), None)),
-            Some((path, exit, dir_byte_limit)) => {
+            Some((events_dir_path, exit, dir_byte_limit)) => {
                 let rotate_threshold_size = dir_byte_limit / TRACE_FILE_ROTATE_COUNT;
                 if rotate_threshold_size == 0 {
                     return Err(TraceError::TooSmallDirByteLimit(
@@ -195,7 +221,8 @@ impl BankingTracer {
 
                 let (trace_sender, trace_receiver) = unbounded();
 
-                let file_appender = Self::create_file_appender(path, rotate_threshold_size)?;
+                let file_appender =
+                    Self::create_file_appender(events_dir_path, rotate_threshold_size)?;
 
                 let tracer_thread =
                     Self::spawn_background_thread(trace_receiver, file_appender, exit.clone())?;
@@ -394,6 +421,455 @@ pub mod for_test {
         main_thread.join().unwrap().unwrap();
         if let Some(tracer_thread) = tracer_thread {
             tracer_thread.join().unwrap().unwrap();
+        }
+    }
+}
+
+// This creates a simulated environment around the banking stage to reproduce leader's blocks based
+// on recorded banking trace events (`TimedTracedEvent`).
+//
+// The task of banking stage at the highest level is to pack transactions into their blocks as much
+// as possible for scheduled fixed duration. So, there's 3 abstract inputs to simulate: blocks,
+// time, and transactions.
+//
+// In the context of simulation, the first two are simple; both are well defined.
+//
+// For ancestor blocks, we firstly replay certain number of blocks immediately up to target
+// simulation leader's slot with halt_at_slot mechanism, possibly priming various caches,
+// ultimately freezing the ancestor block with expected and deterministic hashes.
+//
+// After replay, a minor tweak is applied during simulation: we forcibly override leader's hashes
+// as simulated banking stage creates them, using recorded `BlockAndBankHash` events. This is to
+// provide undistinguishable sysvars to TX execution and identical TX age resolution as the
+// simulation goes on. Otherwise, vast majority of tx processing would differ because simulated
+// block's hashes would definitely differ than the recorded ones as slight block composition
+// difference is inevitable.
+//
+// For poh time, we just use PohRecorder as same as the real environment, which is just 400ms
+// timer, external to banking stage and thus mostly irrelevant to banking stage performance. For
+// wall time, we use the first BankStatus::BlockAndBankHash and `SystemTime::now()` to define T=0
+// for simulation. Then, simulation progress is timed accordingly. As a context, this syncing is
+// needed because all trace events are recorded in UTC, not relative to poh nor to leader schedule
+// for simplicity at recording.
+//
+// Lastly, here's the last and most complicated input to simulate: transactions.
+//
+// A bit closer look of transaction load profile is like below, regardless of internal banking
+// implementation and simulation:
+//
+// There's ever `BufferedPacketsDecision::Hold`-ed transactions to be processed as the first leader
+// slot nears. This is due to solana's general tx broadcast strategy of node's forwarding and
+// client's submission, which are unlikely to chabge soon. So, we take this as granted. Then, any
+// initial leader block creation starts with rather large number of schedule-able transactions.
+// Also, note that additional transactions arrive for the 4 leader slot window (roughly ~1.6
+// seconds).
+//
+// Simulation have to mimic this load pattern while being agnostic to internal bnaking impl as much
+// as possible. For that agnostic objective, `TracedSender`s are sneaked into the SigVerify stage
+// and gossip subsystem by `BankingTracer` to trace **all** of `BankingPacketBatch`s' exact payload
+// and _sender_'s timing with `SystemTime::now()` for all `ChannelLabel`s. This deliberate tracing
+// placement is not to be affected by any banking-tage's capping (if any) and its channel
+// consumption pattern.
+//
+// BankingSimulator consists of 2 phases chronologically: warm-up and on-the-fly. The 2 phases are
+// segregated by the aforementioned T=0.
+//
+// Both phases just sends BankingPacketBatch in the same fashion, pretending to be sigveirfy
+// stage/gossip while burning 1 thread to busy loop for precise T=N at ~1us granularity.
+//
+// Warm up is defined as T=-N secs using slot distance between immediate ancestor of first
+// simulated block and root block. As soon as warm up is initiated, we invoke
+// `BankingStage::new_num_threads()` as well to simulate the pre-leader slot's tx-buffering time.
+pub struct BankingSimulator {
+    event_file_pathes: Vec<PathBuf>,
+    genesis_config: GenesisConfig,
+    bank_forks: Arc<RwLock<BankForks>>,
+    blockstore: Arc<Blockstore>,
+    block_production_method: BlockProductionMethod,
+}
+
+impl BankingSimulator {
+    pub fn new(
+        event_file_pathes: Vec<PathBuf>,
+        genesis_config: GenesisConfig,
+        bank_forks: Arc<RwLock<BankForks>>,
+        blockstore: Arc<Blockstore>,
+        block_production_method: BlockProductionMethod,
+    ) -> Self {
+        Self {
+            event_file_pathes,
+            genesis_config,
+            bank_forks,
+            blockstore,
+            block_production_method,
+        }
+    }
+
+    fn read_event_files(
+        &self,
+    ) -> (
+        BTreeMap<Slot, HashMap<u32, (SystemTime, usize)>>,
+        BTreeMap<SystemTime, (ChannelLabel, BankingPacketBatch)>,
+        HashMap<u64, (Hash, Hash)>,
+    ) {
+        let mut events = vec![];
+        for event_file_path in &self.event_file_pathes {
+            info!("Reading events from {event_file_path:?}");
+            let mut stream = BufReader::new(File::open(event_file_path).unwrap());
+            let old_len = events.len();
+
+            loop {
+                let d = bincode::deserialize_from::<_, TimedTracedEvent>(&mut stream);
+                let Ok(event) = d else {
+                    info!(
+                        "deserialize error after {} events: {:?}",
+                        events.len() - old_len,
+                        &d
+                    );
+                    break;
+                };
+                events.push(event);
+            }
+        }
+
+        let mut bank_starts_by_slot = BTreeMap::new();
+        let mut packet_batches_by_time = BTreeMap::new();
+        let mut hashes_by_slot = HashMap::new();
+        for TimedTracedEvent(event_time, event) in events {
+            match event {
+                TracedEvent::PacketBatch(label, batch) => {
+                    packet_batches_by_time.insert(event_time, (label, batch));
+                }
+                TracedEvent::BlockAndBankHash(slot, blockhash, bank_hash) => {
+                    hashes_by_slot.insert(slot, (blockhash, bank_hash));
+                    bank_starts_by_slot
+                        .entry(slot)
+                        .and_modify(|e: &mut HashMap<u32, (SystemTime, usize)>| {
+                            e.insert(0, (event_time, 0));
+                        })
+                        .or_insert(HashMap::from([(0, (event_time, 0)); 1]));
+                }
+            }
+        }
+
+        (bank_starts_by_slot, packet_batches_by_time, hashes_by_slot)
+    }
+
+    pub fn start(&self) {
+        let mut bank = self
+            .bank_forks
+            .read()
+            .unwrap()
+            .working_bank_with_scheduler()
+            .clone_with_scheduler();
+
+        let (bank_starts_by_slot, packet_batches_by_time, hashes_by_slot) = self.read_event_files();
+        let bank_slot = bank.slot();
+
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let skipped_slot_offset = 4;
+        let start_slot = bank.slot();
+        let simulated_slot = start_slot + skipped_slot_offset;
+        let simulated_leader = leader_schedule_cache
+            .slot_leader_at(simulated_slot, None)
+            .unwrap();
+        info!(
+            "simulated leader and slot: {}, {}",
+            simulated_leader, simulated_slot
+        );
+        let start_bank = self.bank_forks.read().unwrap().root_bank();
+
+        let (exit, poh_recorder, poh_service, entry_receiver) = {
+            let exit = Arc::new(AtomicBool::default());
+            info!("poh is starting!");
+            let (r, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
+                start_bank.tick_height(),
+                start_bank.last_blockhash(),
+                start_bank.clone(),
+                Some((simulated_slot, simulated_slot + 4)),
+                start_bank.ticks_per_slot(),
+                false,
+                self.blockstore.clone(),
+                self.blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &self.genesis_config.poh_config,
+                None,
+                exit.clone(),
+            );
+            let r = Arc::new(RwLock::new(r));
+            let s = PohService::new(
+                r.clone(),
+                &self.genesis_config.poh_config,
+                exit.clone(),
+                start_bank.ticks_per_slot(),
+                solana_poh::poh_service::DEFAULT_PINNED_CPU_CORE + 4,
+                solana_poh::poh_service::DEFAULT_HASHES_PER_BATCH,
+                record_receiver,
+            );
+            (exit, r, s, entry_receiver)
+        };
+        let target_ns_per_slot = solana_poh::poh_service::PohService::target_ns_per_tick(
+            start_bank.ticks_per_slot(),
+            self.genesis_config
+                .poh_config
+                .target_tick_duration
+                .as_nanos() as u64,
+        ) * start_bank.ticks_per_slot();
+        let warmup_duration = std::time::Duration::from_nanos(
+            (simulated_slot - (start_bank.slot() + skipped_slot_offset)) * target_ns_per_slot,
+        );
+        // if slot is too short => bail
+        info!("warmup_duration: {:?}", warmup_duration);
+
+        let (banking_retracer, retracer_thread) = BankingTracer::new(Some((
+            &self.blockstore.banking_retracer_path(),
+            exit.clone(),
+            BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+        )))
+        .unwrap();
+        if banking_retracer.is_enabled() {
+            info!(
+                "Enabled banking retracer (dir_byte_limit: {})",
+                BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+            );
+        } else {
+            info!("Disabled banking retracer");
+        }
+
+        let (non_vote_sender, non_vote_receiver) = banking_retracer.create_channel_non_vote();
+        let (tpu_vote_sender, tpu_vote_receiver) = banking_retracer.create_channel_tpu_vote();
+        let (gossip_vote_sender, gossip_vote_receiver) =
+            banking_retracer.create_channel_gossip_vote();
+
+        let cluster_info = ClusterInfo::new(
+            Node::new_localhost_with_pubkey(&simulated_leader).info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
+        let cluster_info = Arc::new(cluster_info);
+        let connection_cache = ConnectionCache::new("connection_kache!");
+        let (replay_vote_sender, _replay_vote_receiver) = unbounded();
+        let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
+        let shred_version = compute_shred_version(
+            &self.genesis_config.hash(),
+            Some(&self.bank_forks.read().unwrap().root_bank().hard_forks()),
+        );
+        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+        let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
+            vec![UdpSocket::bind("127.0.0.1:0").unwrap()],
+            cluster_info.clone(),
+            entry_receiver,
+            retransmit_slots_receiver,
+            exit.clone(),
+            self.blockstore.clone(),
+            self.bank_forks.clone(),
+            shred_version,
+            sender,
+        );
+
+        let sender_thread = thread::spawn({
+            let exit = exit.clone();
+            move || {
+                let (adjusted_reference, range_iter) =
+                    if let Some((most_recent_past_leader_slot, starts)) =
+                        bank_starts_by_slot.range(bank_slot..).next()
+                    {
+                        let mut start = starts.values().map(|a| a.0).min().unwrap();
+                        start -= warmup_duration;
+
+                        (
+                            Some((
+                                {
+                                    let datetime: chrono::DateTime<chrono::Utc> = (start).into();
+                                    format!(
+                                        "{} (warmup: -{warmup_duration:?})",
+                                        datetime.format("%Y-%m-%d %H:%M:%S.%f")
+                                    )
+                                },
+                                most_recent_past_leader_slot,
+                                start,
+                            )),
+                            packet_batches_by_time.range(start..),
+                        )
+                    } else {
+                        (None, packet_batches_by_time.range(..))
+                    };
+                info!(
+                    "simulating banking trace events: {} out of {}, starting at slot {} (adjusted to {:?})",
+                    range_iter.clone().count(),
+                    packet_batches_by_time.len(),
+                    bank_slot,
+                    adjusted_reference,
+                );
+                let (mut non_vote_count, mut tpu_vote_count, mut gossip_vote_count) = (0, 0, 0);
+                let (mut non_vote_tx_count, mut tpu_vote_tx_count, mut gossip_vote_tx_count) =
+                    (0, 0, 0);
+
+                let reference_time = adjusted_reference
+                    .map(|b| b.2)
+                    .unwrap_or_else(|| std::time::SystemTime::now());
+
+                info!("start sending!...");
+                let simulation_time = std::time::SystemTime::now();
+                for (&time, ref value) in range_iter.clone() {
+                    let (label, batch) = &value;
+                    debug!("sent {:?} {} batches", label, batch.0.len());
+
+                    if time > reference_time {
+                        let target_duration = time.duration_since(reference_time).unwrap();
+                        // cache last simulation_time!
+                        while simulation_time.elapsed().unwrap() < target_duration {}
+                    }
+
+                    match label {
+                        ChannelLabel::NonVote => {
+                            non_vote_sender.send(batch.clone()).unwrap();
+                            non_vote_count += batch.0.len();
+                            non_vote_tx_count += batch.0.iter().map(|b| b.len()).sum::<usize>();
+                        }
+                        ChannelLabel::TpuVote => {
+                            tpu_vote_sender.send(batch.clone()).unwrap();
+                            tpu_vote_count += batch.0.len();
+                            tpu_vote_tx_count += batch.0.iter().map(|b| b.len()).sum::<usize>();
+                        }
+                        ChannelLabel::GossipVote => {
+                            gossip_vote_sender.send(batch.clone()).unwrap();
+                            gossip_vote_count += batch.0.len();
+                            gossip_vote_tx_count += batch.0.iter().map(|b| b.len()).sum::<usize>();
+                        }
+                        ChannelLabel::Dummy => unreachable!(),
+                    }
+
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
+                info!(
+                    "finished sending...(non_vote: {}({}), tpu_vote: {}({}), gossip_vote: {}({}))",
+                    non_vote_count,
+                    non_vote_tx_count,
+                    tpu_vote_count,
+                    tpu_vote_tx_count,
+                    gossip_vote_count,
+                    gossip_vote_tx_count
+                );
+                // hold these senders in join_handle to control banking stage termination!
+                (non_vote_sender, tpu_vote_sender, gossip_vote_sender)
+            }
+        });
+
+        info!("start banking stage!...");
+        let pfc = &Arc::new(PrioritizationFeeCache::new(0u64));
+        let banking_stage = BankingStage::new_num_threads(
+            self.block_production_method.clone(),
+            &cluster_info,
+            &poh_recorder,
+            non_vote_receiver,
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            NUM_THREADS,
+            None,
+            replay_vote_sender,
+            None,
+            Arc::new(connection_cache),
+            self.bank_forks.clone(),
+            pfc,
+            false,
+        );
+
+        for i in 0..5000 {
+            let slot = poh_recorder.read().unwrap().slot();
+            info!("poh: {}, {}", i, slot);
+            if slot >= simulated_slot {
+                break;
+            }
+            sleep(Duration::from_millis(10));
+        }
+
+        for _ in 0..500 {
+            if poh_recorder.read().unwrap().bank().is_none() {
+                poh_recorder.write().unwrap().reset(
+                    bank.clone_without_scheduler(),
+                    Some((bank.slot(), bank.slot() + 1)),
+                );
+                info!("Bank::new_from_parent()!");
+
+                let old_slot = bank.slot();
+                bank.freeze_with_bank_hash_override(hashes_by_slot.get(&old_slot).map(|hh| hh.1));
+                let new_slot = if bank.slot() == start_slot {
+                    info!("initial leader block!");
+                    bank.slot() + skipped_slot_offset
+                } else {
+                    info!("next leader block!");
+                    bank.slot() + 1
+                };
+                info!("new leader bank slot: {new_slot}");
+                let new_leader = leader_schedule_cache
+                    .slot_leader_at(new_slot, None)
+                    .unwrap();
+                if simulated_leader != new_leader {
+                    info!(
+                        "{} isn't leader anymore at slot {}; new leader: {}",
+                        simulated_leader, new_slot, new_leader
+                    );
+                    break;
+                }
+                let options = NewBankOptions {
+                    blockhash_override: hashes_by_slot.get(&new_slot).map(|hh| hh.0),
+                    ..Default::default()
+                };
+                let new_bank = Bank::new_from_parent_with_options(
+                    bank.clone_without_scheduler(),
+                    &simulated_leader,
+                    new_slot,
+                    options,
+                );
+                // make sure parent is frozen for finalized hashes via the above
+                // new()-ing of its child bank
+                banking_retracer.hash_event(bank.slot(), &bank.last_blockhash(), &bank.hash());
+                retransmit_slots_sender.send(bank.slot()).unwrap();
+                self.bank_forks.write().unwrap().insert(new_bank);
+                bank = self
+                    .bank_forks
+                    .read()
+                    .unwrap()
+                    .working_bank_with_scheduler()
+                    .clone_with_scheduler();
+                poh_recorder
+                    .write()
+                    .unwrap()
+                    .set_bank(bank.clone_with_scheduler(), false);
+            }
+
+            sleep(Duration::from_millis(10));
+        }
+        info!("sleeping just before exit...");
+        sleep(Duration::from_millis(30_000));
+        exit.store(true, Ordering::Relaxed);
+        // the order is important. consuming sender_thread by joining will terminate banking_stage, in turn
+        // banking_retracer thread will termianl
+        sender_thread.join().unwrap();
+        banking_stage.join().unwrap();
+        poh_service.join().unwrap();
+        if let Some(retracer_thread) = retracer_thread {
+            retracer_thread.join().unwrap().unwrap();
+        }
+
+        // TODO: add flag to store shreds into ledger so that we can even benchmark replay stgage with
+        // actua blocks created by these simulation
+        // also sadly need to feed these overriding hashes into replaying stage for those recreted
+        // simulated blocks...
+        info!("joining broadcast stage...");
+        drop(poh_recorder);
+        drop(retransmit_slots_sender);
+        broadcast_stage.join().unwrap();
+    }
+
+    pub fn event_file_name(index: usize) -> String {
+        if index == 0 {
+            BASENAME.to_string()
+        } else {
+            format!("{BASENAME}.{index}")
         }
     }
 }

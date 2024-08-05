@@ -31,12 +31,13 @@ use {
     },
     solana_cli_output::OutputFormat,
     solana_core::{
+        banking_trace::BankingSimulator,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::BlockVerificationMethod,
+        validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_ledger::{
-        blockstore::{create_new_ledger, Blockstore},
+        blockstore::{create_new_ledger, Blockstore, PurgeType},
         blockstore_options::{AccessType, LedgerColumnOptions},
         blockstore_processor::{
             ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
@@ -1401,6 +1402,30 @@ fn main() {
                 ),
         )
         .subcommand(
+            SubCommand::with_name("simulate-block-production")
+                .about("Simulate producing blocks with banking trace event files in the ledger")
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
+                .arg(&halt_at_slot_arg)
+                .arg(
+                    Arg::with_name("block_production_method")
+                        .long("block-production-method")
+                        .value_name("METHOD")
+                        .takes_value(true)
+                        .possible_values(BlockProductionMethod::cli_names())
+                        .help(BlockProductionMethod::cli_message()),
+                )
+                .arg(
+                    Arg::with_name("banking_trace_events")
+                        .long("banking-trace-events")
+                        .value_name("DIR_OR_FILE")
+                        .takes_value(true)
+                        .multiple(true)
+                        .help("Use events files in the dir or individual event files"),
+                )
+        )
+        .subcommand(
             SubCommand::with_name("accounts")
                 .about("Print account stats and contents after processing the ledger")
                 .arg(&load_genesis_config_arg)
@@ -2357,6 +2382,64 @@ fn main() {
                         exit_signal.store(true, Ordering::Relaxed);
                         system_monitor_service.join().unwrap();
                     }
+                }
+                ("simulate-block-production", Some(arg_matches)) => {
+                    let process_options = parse_process_options(&ledger_path, arg_matches);
+
+                    let blockstore = Arc::new(open_blockstore(
+                        &ledger_path,
+                        arg_matches,
+                        AccessType::Primary, // needed for purging already existing simulated block shreds...
+                    ));
+                    let first_simulated_slot = process_options.halt_at_slot.unwrap() + 1;
+                    if let Some(end_slot) = blockstore
+                        .slot_meta_iterator(first_simulated_slot)
+                        .unwrap()
+                        .map(|(s, _)| s)
+                        .last()
+                    {
+                        info!("purging slots {first_simulated_slot}, {end_slot}");
+
+                        blockstore.purge_from_next_slots(first_simulated_slot, end_slot);
+                        blockstore.purge_slots(first_simulated_slot, end_slot, PurgeType::Exact);
+                        info!("done: purging");
+                    } else {
+                        info!("skipping purging...");
+                    }
+                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            blockstore.clone(),
+                            process_options,
+                            None, // transaction status sender
+                        );
+
+                    let block_production_method = value_t!(
+                        arg_matches,
+                        "block_production_method",
+                        BlockProductionMethod
+                    )
+                    .unwrap_or_default();
+                    info!("Using: block-production-method: {block_production_method}");
+
+                    let event_file_pathes = parse_banking_trace_event_file_paths(
+                        arg_matches,
+                        blockstore.banking_trace_path(),
+                    );
+                    info!("Using: event files: {event_file_pathes:?}");
+
+                    let simulator = BankingSimulator::new(
+                        event_file_pathes,
+                        genesis_config,
+                        bank_forks,
+                        blockstore,
+                        block_production_method,
+                    );
+                    simulator.start();
+
+                    println!("Ok");
                 }
                 ("accounts", Some(arg_matches)) => {
                     let process_options = parse_process_options(&ledger_path, arg_matches);

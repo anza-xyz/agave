@@ -1,6 +1,7 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
+    log::{info, warn},
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
         accounts_file::StorageAccess,
@@ -13,6 +14,7 @@ use {
         input_parsers::pubkeys_of,
         input_validators::{is_parsable, is_pow2},
     },
+    solana_core::banking_trace::BankingSimulator,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
@@ -21,7 +23,9 @@ use {
     solana_sdk::clock::Slot,
     std::{
         collections::HashSet,
+        ffi::OsString,
         path::{Path, PathBuf},
+        process::exit,
         sync::Arc,
     },
 };
@@ -333,6 +337,81 @@ pub fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
     } else {
         None
     }
+}
+
+pub(crate) fn parse_banking_trace_event_file_paths(
+    arg_matches: &ArgMatches<'_>,
+    banking_trace_path: PathBuf,
+) -> Vec<PathBuf> {
+    let event_pathes = if arg_matches.is_present("banking_trace_events") {
+        warn!("Supressing to use the default banking trace dir ({banking_trace_path:?}) due to --banking-trace-events(s)");
+        Some(values_t_or_exit!(
+            arg_matches,
+            "banking_trace_events",
+            PathBuf
+        ))
+    } else {
+        None
+    };
+    let (mut event_file_pathes, event_dir_path) = if let Some(event_pathes) = event_pathes {
+        let dirs = event_pathes
+            .iter()
+            .filter(|event_path| std::path::Path::new(&event_path).is_dir())
+            .collect::<Vec<_>>();
+
+        if dirs.is_empty() {
+            // All of event_pathes items can be regarded as specifying individual
+            // event files.
+            (event_pathes, None)
+        } else if dirs.len() == 1 {
+            if event_pathes.len() > 1 {
+                eprintln!("Error: mixed dirs and files: {:?}", event_pathes);
+                exit(1);
+            }
+            let event_dir_path = dirs.first().map(|d| PathBuf::from(d).clone());
+            (vec![], event_dir_path)
+        } else {
+            eprintln!("Error: multiple dirs are specified: {:?}", dirs);
+            exit(1);
+        }
+    } else {
+        if !banking_trace_path.exists() {
+            eprintln!("Error: ledger doesn't have the banking trace dir: ${banking_trace_path:?}");
+            exit(1);
+        }
+        (vec![], Some(banking_trace_path))
+    };
+    if let Some(event_dir_path) = event_dir_path {
+        assert!(event_file_pathes.is_empty());
+        info!("Using: banking trace events dir: {event_dir_path:?}");
+
+        if let Ok(entries) = std::fs::read_dir(&event_dir_path) {
+            let mut e2 = entries
+                .flat_map(|r| r.ok().map(|r| r.file_name()))
+                .collect::<HashSet<OsString>>();
+            for event_file_name in (0..).map(BankingSimulator::event_file_name) {
+                let event_file_name: OsString = event_file_name.into();
+                if e2.remove(&event_file_name) {
+                    event_file_pathes.push(event_dir_path.join(event_file_name));
+                } else {
+                    break;
+                }
+            }
+            event_file_pathes.reverse();
+            if !e2.is_empty() {
+                let e3 = e2
+                    .into_iter()
+                    .map(|ee| event_dir_path.join(ee))
+                    .collect::<Vec<_>>();
+                warn!("Some files in {event_dir_path:?} is ignored due to gapped events file rotation or unrecognized names: {e3:?}");
+            }
+        } else {
+            eprintln!("Error: failed to open event_dir_path");
+            exit(1);
+        }
+    }
+
+    event_file_pathes
 }
 
 #[cfg(test)]

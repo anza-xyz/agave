@@ -70,23 +70,8 @@ impl DecisionMaker {
         if let Some(bank_start) = bank_start_fn() {
             // If the bank is available, this node is the leader
             BufferedPacketsDecision::Consume(bank_start)
-        } else if would_be_leader_shortly_fn() {
-            // If the node will be the leader soon, hold the packets for now
-            BufferedPacketsDecision::Hold
-        } else if would_be_leader_fn() {
-            // Node will be leader within ~20 slots, hold the transactions in
-            // case it is the only node which produces an accepted slot.
-            BufferedPacketsDecision::ForwardAndHold
-        } else if let Some(x) = leader_pubkey_fn() {
-            if x != *my_pubkey {
-                // If the current node is not the leader, forward the buffered packets
-                BufferedPacketsDecision::Forward
-            } else {
-                // If the current node is the leader, return the buffered packets as is
-                BufferedPacketsDecision::Hold
-            }
         } else {
-            // We don't know the leader. Hold the packets for now
+            // If the node will be the leader soon, hold the packets for now
             BufferedPacketsDecision::Hold
         }
     }

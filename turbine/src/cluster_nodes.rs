@@ -293,7 +293,7 @@ pub fn new_cluster_nodes<T: 'static>(
     let stakes: Vec<u64> = nodes.iter().map(|node| node.stake).collect();
     let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", &stakes);
     if broadcast {
-        weighted_shuffle.remove_index(index[&self_pubkey]);
+        //weighted_shuffle.remove_index(index[&self_pubkey]);
     }
     ClusterNodes {
         pubkey: self_pubkey,
