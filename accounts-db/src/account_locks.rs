@@ -134,10 +134,12 @@ thread_local! {
 
 /// Check for duplicate account keys.
 fn has_duplicates(account_keys: AccountKeys) -> bool {
+    // Benchmarking has shown that for sets of 32 or more keys, it is faster to
+    // use a HashSet to check for duplicates.
+    // For smaller sets a brute-force O(n^2) check seems to be faster.
     const USE_ACCOUNT_LOCK_SET_SIZE: usize = 32;
     if account_keys.len() >= USE_ACCOUNT_LOCK_SET_SIZE {
-        HAS_DUPLICATES_SET.with(|set| {
-            let mut set = set.borrow_mut();
+        HAS_DUPLICATES_SET.with_borrow_mut(|set| {
             let has_duplicates = account_keys.iter().any(|key| !set.insert(*key));
             set.clear();
             has_duplicates
