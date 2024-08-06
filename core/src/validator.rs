@@ -1682,7 +1682,11 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
 }
 
 fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), ValidatorError> {
-    if let Some(hashes_per_tick) = bank.hashes_per_tick() {
+    let Some(hashes_per_tick) = bank.hashes_per_tick() else {
+        warn!("Unable to read hashes per tick from Bank, skipping PoH speed check");
+        return Ok(());
+    };
+
         let ticks_per_slot = bank.ticks_per_slot();
         let hashes_per_slot = hashes_per_tick * ticks_per_slot;
         let hash_samples = maybe_hash_samples.unwrap_or(hashes_per_slot);
@@ -1705,9 +1709,6 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
                 target: target_hashes_per_second,
             });
         }
-    } else {
-        warn!("Unable to read hashes per tick from Bank, skipping PoH speed check");
-    }
 
     Ok(())
 }
