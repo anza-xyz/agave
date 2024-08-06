@@ -89,7 +89,6 @@ use {
     solana_cost_model::cost_tracker::CostTracker,
     solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_measure::{measure::Measure, measure_time, measure_us},
-    solana_perf::perf_libs,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
@@ -103,9 +102,9 @@ use {
         clock::{
             BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
             DEFAULT_TICKS_PER_SECOND, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
-            MAX_TRANSACTION_FORWARDING_DELAY, MAX_TRANSACTION_FORWARDING_DELAY_GPU,
-            SECONDS_PER_DAY, UPDATED_HASHES_PER_TICK2, UPDATED_HASHES_PER_TICK3,
-            UPDATED_HASHES_PER_TICK4, UPDATED_HASHES_PER_TICK5, UPDATED_HASHES_PER_TICK6,
+            MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY, UPDATED_HASHES_PER_TICK2,
+            UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4, UPDATED_HASHES_PER_TICK5,
+            UPDATED_HASHES_PER_TICK6,
         },
         epoch_info::EpochInfo,
         epoch_schedule::EpochSchedule,
@@ -124,8 +123,7 @@ use {
         message::{AccountKeys, SanitizedMessage},
         native_loader,
         native_token::LAMPORTS_PER_SOL,
-        nonce::{self, state::DurableNonce, NONCED_TX_MARKER_IX_INDEX},
-        nonce_account,
+        nonce::state::DurableNonce,
         packet::PACKET_DATA_SIZE,
         precompiles::get_precompiles,
         pubkey::Pubkey,
@@ -141,7 +139,7 @@ use {
         sysvar::{self, last_restart_slot::LastRestartSlot, Sysvar, SysvarId},
         timing::years_as_slots,
         transaction::{
-            self, MessageHash, Result, SanitizedTransaction, Transaction, TransactionError,
+            MessageHash, Result, SanitizedTransaction, Transaction, TransactionError,
             TransactionVerificationMode, VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
         transaction_context::{TransactionAccount, TransactionReturnData},
@@ -151,12 +149,9 @@ use {
         stake_state::StakeStateV2,
     },
     solana_svm::{
-        account_loader::{
-            collect_rent_from_account, CheckedTransactionDetails, TransactionCheckResult,
-        },
+        account_loader::collect_rent_from_account,
         account_overrides::AccountOverrides,
         account_saver::collect_accounts_to_store,
-        nonce_info::NonceInfo,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -199,6 +194,7 @@ use {
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
+    solana_sdk::nonce,
     solana_svm::program_loader::load_program_with_pubkey,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
 };
@@ -216,6 +212,7 @@ mod address_lookup_table;
 pub mod bank_hash_details;
 mod builtin_programs;
 pub mod builtins;
+mod check_transactions;
 pub mod epoch_accounts_hash_utils;
 mod fee_distribution;
 mod metrics;
@@ -321,14 +318,9 @@ pub struct LoadAndExecuteTransactionsOutput {
     // Vector of results indicating whether a transaction was executed or could not
     // be executed. Note executed transactions can still have failed!
     pub execution_results: Vec<TransactionExecutionResult>,
-    // Total number of transactions that were executed
-    pub executed_transactions_count: usize,
-    // Number of non-vote transactions that were executed
-    pub executed_non_vote_transactions_count: usize,
-    // Total number of the executed transactions that returned success/not
-    // an error.
-    pub executed_with_successful_result_count: usize,
-    pub signature_count: u64,
+    // Executed transaction counts used to update bank transaction counts and
+    // for metrics reporting.
+    pub execution_counts: ExecutedTransactionCounts,
 }
 
 pub struct TransactionSimulationResult {
@@ -890,10 +882,11 @@ struct PrevEpochInflationRewards {
     foundation_rate: f64,
 }
 
+#[derive(Debug, Default, PartialEq)]
 pub struct ExecutedTransactionCounts {
     pub executed_transactions_count: u64,
+    pub executed_successfully_count: u64,
     pub executed_non_vote_transactions_count: u64,
-    pub executed_with_failure_result_count: u64,
     pub signature_count: u64,
 }
 
@@ -3430,96 +3423,6 @@ impl Bank {
         self.rc.accounts.accounts_db.remove_unrooted_slots(slots)
     }
 
-    fn check_age(
-        &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
-        lock_results: &[Result<()>],
-        max_age: usize,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
-        let hash_queue = self.blockhash_queue.read().unwrap();
-        let last_blockhash = hash_queue.last_hash();
-        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
-
-        sanitized_txs
-            .iter()
-            .zip(lock_results)
-            .map(|(tx, lock_res)| match lock_res {
-                Ok(()) => self.check_transaction_age(
-                    tx.borrow(),
-                    max_age,
-                    &next_durable_nonce,
-                    &hash_queue,
-                    error_counters,
-                ),
-                Err(e) => Err(e.clone()),
-            })
-            .collect()
-    }
-
-    fn check_transaction_age(
-        &self,
-        tx: &SanitizedTransaction,
-        max_age: usize,
-        next_durable_nonce: &DurableNonce,
-        hash_queue: &BlockhashQueue,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> TransactionCheckResult {
-        let recent_blockhash = tx.message().recent_blockhash();
-        if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: hash_info.lamports_per_signature(),
-            })
-        } else if let Some((nonce, nonce_data)) =
-            self.check_and_load_message_nonce_account(tx.message(), next_durable_nonce)
-        {
-            Ok(CheckedTransactionDetails {
-                nonce: Some(nonce),
-                lamports_per_signature: nonce_data.get_lamports_per_signature(),
-            })
-        } else {
-            error_counters.blockhash_not_found += 1;
-            Err(TransactionError::BlockhashNotFound)
-        }
-    }
-
-    fn is_transaction_already_processed(
-        &self,
-        sanitized_tx: &SanitizedTransaction,
-        status_cache: &BankStatusCache,
-    ) -> bool {
-        let key = sanitized_tx.message_hash();
-        let transaction_blockhash = sanitized_tx.message().recent_blockhash();
-        status_cache
-            .get_status(key, transaction_blockhash, &self.ancestors)
-            .is_some()
-    }
-
-    fn check_status_cache(
-        &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
-        lock_results: Vec<TransactionCheckResult>,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
-        let rcache = self.status_cache.read().unwrap();
-        sanitized_txs
-            .iter()
-            .zip(lock_results)
-            .map(|(sanitized_tx, lock_result)| {
-                let sanitized_tx = sanitized_tx.borrow();
-                if lock_result.is_ok()
-                    && self.is_transaction_already_processed(sanitized_tx, &rcache)
-                {
-                    error_counters.already_processed += 1;
-                    return Err(TransactionError::AlreadyProcessed);
-                }
-
-                lock_result
-            })
-            .collect()
-    }
-
     pub fn get_hash_age(&self, hash: &Hash) -> Option<u64> {
         self.blockhash_queue.read().unwrap().get_hash_age(hash)
     }
@@ -3529,49 +3432,6 @@ impl Bank {
             .read()
             .unwrap()
             .is_hash_valid_for_age(hash, max_age)
-    }
-
-    fn load_message_nonce_account(
-        &self,
-        message: &SanitizedMessage,
-    ) -> Option<(NonceInfo, nonce::state::Data)> {
-        let nonce_address = message.get_durable_nonce()?;
-        let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
-        let nonce_data =
-            nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
-
-        let nonce_is_authorized = message
-            .get_ix_signers(NONCED_TX_MARKER_IX_INDEX as usize)
-            .any(|signer| signer == &nonce_data.authority);
-        if !nonce_is_authorized {
-            return None;
-        }
-
-        Some((NonceInfo::new(*nonce_address, nonce_account), nonce_data))
-    }
-
-    fn check_and_load_message_nonce_account(
-        &self,
-        message: &SanitizedMessage,
-        next_durable_nonce: &DurableNonce,
-    ) -> Option<(NonceInfo, nonce::state::Data)> {
-        let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
-        if nonce_is_advanceable {
-            self.load_message_nonce_account(message)
-        } else {
-            None
-        }
-    }
-
-    pub fn check_transactions(
-        &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
-        lock_results: &[Result<()>],
-        max_age: usize,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
-        let lock_results = self.check_age(sanitized_txs, lock_results, max_age, error_counters);
-        self.check_status_cache(sanitized_txs, lock_results, error_counters)
     }
 
     pub fn collect_balances(&self, batch: &TransactionBatch) -> TransactionBalances {
@@ -3635,10 +3495,7 @@ impl Bank {
             measure_us!(self.collect_logs(sanitized_txs, &sanitized_output.execution_results));
         timings.saturating_add_in_place(ExecuteTimingType::CollectLogsUs, collect_logs_us);
 
-        let mut signature_count = 0;
-        let mut executed_transactions_count: usize = 0;
-        let mut executed_non_vote_transactions_count: usize = 0;
-        let mut executed_with_successful_result_count: usize = 0;
+        let mut execution_counts = ExecutedTransactionCounts::default();
         let err_count = &mut error_counters.total;
 
         for (execution_result, tx) in sanitized_output.execution_results.iter().zip(sanitized_txs) {
@@ -3656,17 +3513,18 @@ impl Bank {
                 // Signature count must be accumulated only if the transaction
                 // is executed, otherwise a mismatched count between banking and
                 // replay could occur
-                signature_count += u64::from(tx.message().header().num_required_signatures);
-                executed_transactions_count += 1;
+                execution_counts.signature_count +=
+                    u64::from(tx.message().header().num_required_signatures);
+                execution_counts.executed_transactions_count += 1;
 
                 if !tx.is_simple_vote_transaction() {
-                    executed_non_vote_transactions_count += 1;
+                    execution_counts.executed_non_vote_transactions_count += 1;
                 }
             }
 
             match execution_result.flattened_result() {
                 Ok(()) => {
-                    executed_with_successful_result_count += 1;
+                    execution_counts.executed_successfully_count += 1;
                 }
                 Err(err) => {
                     if *err_count == 0 {
@@ -3679,10 +3537,7 @@ impl Bank {
 
         LoadAndExecuteTransactionsOutput {
             execution_results: sanitized_output.execution_results,
-            executed_transactions_count,
-            executed_non_vote_transactions_count,
-            executed_with_successful_result_count,
-            signature_count,
+            execution_counts,
         }
     }
 
@@ -3888,7 +3743,7 @@ impl Bank {
         mut execution_results: Vec<TransactionExecutionResult>,
         last_blockhash: Hash,
         lamports_per_signature: u64,
-        counts: ExecutedTransactionCounts,
+        execution_counts: &ExecutedTransactionCounts,
         timings: &mut ExecuteTimings,
     ) -> Vec<TransactionCommitResult> {
         assert!(
@@ -3899,9 +3754,9 @@ impl Bank {
         let ExecutedTransactionCounts {
             executed_transactions_count,
             executed_non_vote_transactions_count,
-            executed_with_failure_result_count,
+            executed_successfully_count,
             signature_count,
-        } = counts;
+        } = *execution_counts;
 
         self.increment_transaction_count(executed_transactions_count);
         self.increment_non_vote_transaction_count_since_restart(
@@ -3909,6 +3764,8 @@ impl Bank {
         );
         self.increment_signature_count(signature_count);
 
+        let executed_with_failure_result_count =
+            executed_transactions_count.saturating_sub(executed_successfully_count);
         if executed_with_failure_result_count > 0 {
             self.transaction_error_count
                 .fetch_add(executed_with_failure_result_count, Relaxed);
@@ -4702,10 +4559,7 @@ impl Bank {
 
         let LoadAndExecuteTransactionsOutput {
             execution_results,
-            executed_transactions_count,
-            executed_non_vote_transactions_count,
-            executed_with_successful_result_count,
-            signature_count,
+            execution_counts,
         } = self.load_and_execute_transactions(
             batch,
             max_age,
@@ -4729,14 +4583,7 @@ impl Bank {
             execution_results,
             last_blockhash,
             lamports_per_signature,
-            ExecutedTransactionCounts {
-                executed_transactions_count: executed_transactions_count as u64,
-                executed_non_vote_transactions_count: executed_non_vote_transactions_count as u64,
-                executed_with_failure_result_count: executed_transactions_count
-                    .saturating_sub(executed_with_successful_result_count)
-                    as u64,
-                signature_count,
-            },
+            &execution_counts,
             timings,
         );
         let post_balances = if collect_balances {
@@ -6560,36 +6407,6 @@ impl Bank {
             .accounts_db
             .epoch_accounts_hash_manager
             .try_get_epoch_accounts_hash()
-    }
-
-    /// Checks a batch of sanitized transactions again bank for age and status
-    pub fn check_transactions_with_forwarding_delay(
-        &self,
-        transactions: &[SanitizedTransaction],
-        filter: &[transaction::Result<()>],
-        forward_transactions_to_leader_at_slot_offset: u64,
-    ) -> Vec<TransactionCheckResult> {
-        let mut error_counters = TransactionErrorMetrics::default();
-        // The following code also checks if the blockhash for a transaction is too old
-        // The check accounts for
-        //  1. Transaction forwarding delay
-        //  2. The slot at which the next leader will actually process the transaction
-        // Drop the transaction if it will expire by the time the next node receives and processes it
-        let api = perf_libs::api();
-        let max_tx_fwd_delay = if api.is_none() {
-            MAX_TRANSACTION_FORWARDING_DELAY
-        } else {
-            MAX_TRANSACTION_FORWARDING_DELAY_GPU
-        };
-
-        self.check_transactions(
-            transactions,
-            filter,
-            (MAX_PROCESSING_AGE)
-                .saturating_sub(max_tx_fwd_delay)
-                .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
-            &mut error_counters,
-        )
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {

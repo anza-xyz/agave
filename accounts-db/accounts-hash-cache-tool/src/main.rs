@@ -7,11 +7,12 @@ use {
     },
     memmap2::Mmap,
     solana_accounts_db::{
-        parse_cache_hash_data_filename, CacheHashDataFileEntry, CacheHashDataFileHeader,
-        ParsedCacheHashDataFilename,
+        accounts_hash::AccountHash, parse_cache_hash_data_filename, CacheHashDataFileEntry,
+        CacheHashDataFileHeader, ParsedCacheHashDataFilename,
     },
+    solana_program::pubkey::Pubkey,
     std::{
-        cmp::Ordering,
+        cmp::{self, Ordering},
         fs::{self, File, Metadata},
         io::{self, BufReader, Read},
         mem::size_of,
@@ -57,6 +58,7 @@ fn main() {
         )
         .subcommand(
             SubCommand::with_name(CMD_DIFF)
+                .about("Compares cache files")
                 .subcommand(
                     SubCommand::with_name(CMD_DIFF_FILES)
                         .about("Diff two accounts hash cache files")
@@ -179,41 +181,31 @@ fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
 }
 
 fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(), String> {
-    let force = false; // skipping sanity checks is not supported when diffing
-    let (mut reader1, header1) = open_file(&file1, force).map_err(|err| {
-        format!(
-            "failed to open accounts hash cache file 1 '{}': {err}",
-            file1.as_ref().display(),
-        )
-    })?;
-    let (mut reader2, header2) = open_file(&file2, force).map_err(|err| {
-        format!(
-            "failed to open accounts hash cache file 2 '{}': {err}",
-            file2.as_ref().display(),
-        )
-    })?;
-    // Note: Purposely open both files before reading either one.  This way, if there's an error
-    // opening file 2, we can bail early without having to wait for file 1 to be read completely.
-
-    // extract the entries from both files
-    let do_extract = |reader: &mut BufReader<_>, header: &CacheHashDataFileHeader| {
-        let mut entries = Vec::new();
-        scan_file(reader, header.count, |entry| {
-            entries.push(entry);
-        })?;
-
-        // entries in the file are sorted by pubkey then slot,
-        // so we want to keep the *last* entry (if there are duplicates)
-        let entries: HashMap<_, _> = entries
-            .into_iter()
-            .map(|entry| (entry.pubkey, (entry.hash, entry.lamports)))
-            .collect();
-        Ok::<_, String>(entries)
-    };
-    let entries1 = do_extract(&mut reader1, &header1)
+    let LatestEntriesInfo {
+        latest_entries: entries1,
+        capitalization: capitalization1,
+    } = extract_latest_entries_in(&file1)
         .map_err(|err| format!("failed to extract entries from file 1: {err}"))?;
-    let entries2 = do_extract(&mut reader2, &header2)
+    let LatestEntriesInfo {
+        latest_entries: entries2,
+        capitalization: capitalization2,
+    } = extract_latest_entries_in(&file2)
         .map_err(|err| format!("failed to extract entries from file 2: {err}"))?;
+
+    let num_accounts1 = entries1.len();
+    let num_accounts2 = entries2.len();
+    let num_accounts_width = {
+        let width1 = (num_accounts1 as f64).log10().ceil() as usize;
+        let width2 = (num_accounts2 as f64).log10().ceil() as usize;
+        cmp::max(width1, width2)
+    };
+    let lamports_width = {
+        let width1 = (capitalization1 as f64).log10().ceil() as usize;
+        let width2 = (capitalization2 as f64).log10().ceil() as usize;
+        cmp::max(width1, width2)
+    };
+    println!("File 1: number of accounts: {num_accounts1:num_accounts_width$}, capitalization: {capitalization1:lamports_width$} lamports");
+    println!("File 2: number of accounts: {num_accounts2:num_accounts_width$}, capitalization: {capitalization2:lamports_width$} lamports");
 
     // compute the differences between the files
     let do_compute = |lhs: &HashMap<_, (_, _)>, rhs: &HashMap<_, (_, _)>| {
@@ -260,7 +252,7 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(),
             for (i, entry) in entries.iter().enumerate() {
                 total_lamports += entry.lamports;
                 println!(
-                    "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {}",
+                    "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {:lamports_width$}",
                     entry.pubkey.to_string(),
                     entry.hash.0.to_string(),
                     entry.lamports,
@@ -281,13 +273,13 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(),
     } else {
         for (i, (lhs, rhs)) in mismatch_entries.iter().enumerate() {
             println!(
-                "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {}",
+                "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {:lamports_width$}",
                 lhs.pubkey.to_string(),
                 lhs.hash.0.to_string(),
                 lhs.lamports,
             );
             println!(
-                "{i:count_width$}: file 2: {:44}, hash: {:44}, lamports: {}",
+                "{i:count_width$}: file 2: {:44}, hash: {:44}, lamports: {:lamports_width$}",
                 "(same)".to_string(),
                 rhs.hash.0.to_string(),
                 rhs.lamports,
@@ -494,7 +486,38 @@ fn get_cache_files_in(dir: impl AsRef<Path>) -> Result<Vec<CacheFileInfo>, io::E
     Ok(cache_files)
 }
 
-/// Scan file with `reader` and apply `user_fn` to each entry
+/// Returns the entries in `file`, and the capitalization
+///
+/// If there are multiple entries for a pubkey, only the latest is returned.
+fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo, String> {
+    let force = false; // skipping sanity checks is not supported when extracting entries
+    let (reader, header) = open_file(&file, force).map_err(|err| {
+        format!(
+            "failed to open accounts hash cache file '{}': {err}",
+            file.as_ref().display(),
+        )
+    })?;
+
+    // entries in the file are sorted by pubkey then slot,
+    // so we want to keep the *last* entry (if there are duplicates)
+    let mut capitalization = Saturating(0);
+    let mut entries = HashMap::default();
+    scan_file(reader, header.count, |entry| {
+        capitalization += entry.lamports;
+        let old_value = entries.insert(entry.pubkey, (entry.hash, entry.lamports));
+        if let Some((_, old_lamports)) = old_value {
+            // back out the old value's lamports, so we only keep the latest's for capitalization
+            capitalization -= old_lamports;
+        }
+    })?;
+
+    Ok(LatestEntriesInfo {
+        latest_entries: entries,
+        capitalization: capitalization.0,
+    })
+}
+
+/// Scans file with `reader` and applies `user_fn` to each entry
 ///
 /// NOTE: `reader`'s cursor must already be at the first entry; i.e. *past* the header.
 fn scan_file(
@@ -581,6 +604,12 @@ struct CacheFileInfo {
     path: PathBuf,
     metadata: Metadata,
     parsed: ParsedCacheHashDataFilename,
+}
+
+#[derive(Debug)]
+struct LatestEntriesInfo {
+    latest_entries: HashMap<Pubkey, (AccountHash, /* lamports */ u64)>,
+    capitalization: u64, // lamports
 }
 
 #[derive(Debug)]
