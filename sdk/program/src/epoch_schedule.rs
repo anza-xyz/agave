@@ -12,7 +12,8 @@
 //! epochs increasing in slots until they last for [`DEFAULT_SLOTS_PER_EPOCH`].
 
 pub use crate::clock::{Epoch, Slot, DEFAULT_SLOTS_PER_EPOCH};
-use solana_sdk_macro::CloneZeroed;
+use solana_program::padding::ZeroedPadding;
+use solana_sdk_macro::NoPadding;
 
 /// The default number of slots before an epoch starts to calculate the leader schedule.
 pub const DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET: u64 = DEFAULT_SLOTS_PER_EPOCH;
@@ -30,7 +31,7 @@ pub const MINIMUM_SLOTS_PER_EPOCH: u64 = 32;
 
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, CloneZeroed, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, NoPadding, PartialEq, Eq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EpochSchedule {
     /// The maximum number of slots in each epoch.
@@ -42,6 +43,10 @@ pub struct EpochSchedule {
 
     /// Whether epochs start short and grow.
     pub warmup: bool,
+
+    /// Excess padding, should be set to `0`s
+    #[serde(skip)]
+    pub _padding: ZeroedPadding<7>,
 
     /// The first epoch after the warmup period.
     ///
@@ -96,6 +101,7 @@ impl EpochSchedule {
             warmup,
             first_normal_epoch,
             first_normal_slot,
+            _padding: Default::default(),
         }
     }
 
@@ -255,6 +261,7 @@ mod tests {
             warmup: true,
             first_normal_epoch: 4,
             first_normal_slot: 5,
+            _padding: Default::default(),
         };
         #[allow(clippy::clone_on_copy)]
         let cloned_epoch_schedule = epoch_schedule.clone();

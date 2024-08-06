@@ -24,7 +24,7 @@ use {
     crate::{
         fee_calculator::FeeCalculator, impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar,
     },
-    solana_sdk_macro::CloneZeroed,
+    solana_sdk_macro::NoPadding,
 };
 
 crate::declare_deprecated_sysvar_id!("SysvarFees111111111111111111111111111111111", Fees);
@@ -35,7 +35,7 @@ crate::declare_deprecated_sysvar_id!("SysvarFees11111111111111111111111111111111
     note = "Please do not use, will no longer be available in the future"
 )]
 #[repr(C)]
-#[derive(Serialize, Deserialize, Debug, CloneZeroed, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, NoPadding, Default, PartialEq, Eq, Clone)]
 pub struct Fees {
     pub fee_calculator: FeeCalculator,
 }

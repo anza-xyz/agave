@@ -507,6 +507,7 @@ pub mod log;
 pub mod message;
 pub mod native_token;
 pub mod nonce;
+pub mod padding;
 pub mod program;
 pub mod program_error;
 pub mod program_option;

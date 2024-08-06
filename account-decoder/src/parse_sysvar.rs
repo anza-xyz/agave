@@ -290,6 +290,7 @@ mod test {
             warmup: false,
             first_normal_epoch: 1,
             first_normal_slot: 12,
+            _padding: Default::default(),
         };
         let epoch_schedule_sysvar = create_account_for_test(&epoch_schedule);
         assert_eq!(
@@ -325,6 +326,7 @@ mod test {
             lamports_per_byte_year: 10,
             exemption_threshold: 2.0,
             burn_percent: 5,
+            _padding: Default::default(),
         };
         let rent_sysvar = create_account_for_test(&rent);
         assert_eq!(
