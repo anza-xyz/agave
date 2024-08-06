@@ -86,8 +86,8 @@ pub enum InstructionError {
     ExternalAccountLamportSpend,
 
     /// Program modified the data of an account that doesn't belong to it
-    #[error("instruction modified data of an account it does not own")]
-    ExternalAccountDataModified,
+    #[error("instruction modified data of account {0} which it does not own")]
+    ExternalAccountDataModified(Pubkey),
 
     /// Read-only account's lamports modified
     #[error("instruction changed the balance of a read-only account")]

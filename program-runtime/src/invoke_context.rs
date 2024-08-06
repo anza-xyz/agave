@@ -1060,7 +1060,9 @@ mod tests {
             (MockInstruction::ModifyOwned, Ok(())),
             (
                 MockInstruction::ModifyNotOwned,
-                Err(InstructionError::ExternalAccountDataModified),
+                Err(InstructionError::ExternalAccountDataModified(
+                    Pubkey::default(),
+                )),
             ),
             (
                 MockInstruction::ModifyReadonly,
