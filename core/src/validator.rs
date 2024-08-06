@@ -1687,28 +1687,28 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
         return Ok(());
     };
 
-        let ticks_per_slot = bank.ticks_per_slot();
-        let hashes_per_slot = hashes_per_tick * ticks_per_slot;
-        let hash_samples = maybe_hash_samples.unwrap_or(hashes_per_slot);
+    let ticks_per_slot = bank.ticks_per_slot();
+    let hashes_per_slot = hashes_per_tick * ticks_per_slot;
+    let hash_samples = maybe_hash_samples.unwrap_or(hashes_per_slot);
 
-        let hash_time = compute_hash_time(hash_samples);
-        let my_hashes_per_second = (hash_samples as f64 / hash_time.as_secs_f64()) as u64;
+    let hash_time = compute_hash_time(hash_samples);
+    let my_hashes_per_second = (hash_samples as f64 / hash_time.as_secs_f64()) as u64;
 
-        let target_slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
-        let target_hashes_per_second =
-            (hashes_per_slot as f64 / target_slot_duration.as_secs_f64()) as u64;
+    let target_slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
+    let target_hashes_per_second =
+        (hashes_per_slot as f64 / target_slot_duration.as_secs_f64()) as u64;
 
-        info!(
-            "PoH speed check: \
+    info!(
+        "PoH speed check: \
             computed hashes per second {my_hashes_per_second}, \
             target hashes per second {target_hashes_per_second}"
-        );
-        if my_hashes_per_second < target_hashes_per_second {
-            return Err(ValidatorError::PohTooSlow {
-                mine: my_hashes_per_second,
-                target: target_hashes_per_second,
-            });
-        }
+    );
+    if my_hashes_per_second < target_hashes_per_second {
+        return Err(ValidatorError::PohTooSlow {
+            mine: my_hashes_per_second,
+            target: target_hashes_per_second,
+        });
+    }
 
     Ok(())
 }
