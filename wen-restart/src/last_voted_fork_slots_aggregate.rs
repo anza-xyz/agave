@@ -54,9 +54,7 @@ impl LastVotedForkSlotsAggregate {
 
     fn total_stake_at_slot(bank: &Arc<Bank>, slot: &Slot) -> Option<u64> {
         let epoch = bank.epoch_schedule().get_epoch(*slot);
-        bank.epoch_stakes_map()
-            .get(&epoch)
-            .map(|epoch_stakes| epoch_stakes.total_stake())
+        bank.epoch_total_stake(epoch)
     }
 
     pub(crate) fn new(
@@ -138,14 +136,15 @@ impl LastVotedForkSlotsAggregate {
             shred_version: new_slots.shred_version as u32,
             wallclock: new_slots.wallclock,
         };
-        if !self.update_slots_stakes_map_and_slots_to_repair(new_slots, new_slots_vec) {
+        if self.update_and_check_if_message_already_saved(new_slots, new_slots_vec) {
             return None;
         }
         self.update_epoch_info_vec();
         Some(record)
     }
 
-    fn update_slots_stakes_map_and_slots_to_repair(
+    // Return true if the message has already been saved, so we can skip the rest of the processing.
+    fn update_and_check_if_message_already_saved(
         &mut self,
         new_slots: RestartLastVotedForkSlots,
         new_slots_vec: Vec<Slot>,
@@ -155,7 +154,7 @@ impl LastVotedForkSlotsAggregate {
         let old_slots_set = match self.last_voted_fork_slots.insert(*from, new_slots.clone()) {
             Some(old_slots) => {
                 if old_slots == new_slots {
-                    return false;
+                    return true;
                 } else {
                     HashSet::from_iter(old_slots.to_slots(self.root_bank.slot()))
                 }
@@ -186,7 +185,7 @@ impl LastVotedForkSlotsAggregate {
                 }
             }
         }
-        true
+        false
     }
 
     fn update_epoch_info_vec(&mut self) {
