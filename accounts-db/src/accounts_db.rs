@@ -3062,6 +3062,12 @@ impl AccountsDb {
             std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
                 .take(num_bins)
                 .collect();
+
+        let insert_pubkey = |pubkey: Pubkey| {
+            let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
+            let mut candidates_bin = candidates[index].write().unwrap();
+            candidates_bin.insert(pubkey, CleaningInfo::default());
+        };
         let dirty_ancient_stores = AtomicUsize::default();
         let mut dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
@@ -3075,9 +3081,7 @@ impl AccountsDb {
                         }
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
                         store.accounts.scan_pubkeys(|key| {
-                            let index = self.accounts_index.bin_calculator.bin_from_pubkey(key);
-                            let mut candidates_bin = candidates[index].write().unwrap();
-                            candidates_bin.insert(*key, CleaningInfo::default());
+                            insert_pubkey(*key);
                         });
                     });
                     oldest_dirty_slot
@@ -3117,9 +3121,7 @@ impl AccountsDb {
         self.thread_pool_clean.install(|| {
             delta_keys.par_iter().for_each(|keys| {
                 for key in keys {
-                    let index = self.accounts_index.bin_calculator.bin_from_pubkey(key);
-                    let mut candidates_bin = candidates[index].write().unwrap();
-                    candidates_bin.insert(*key, CleaningInfo::default());
+                    insert_pubkey(*key);
                 }
             });
         });
@@ -3145,9 +3147,7 @@ impl AccountsDb {
                     let is_candidate_for_clean =
                         max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
-                        let index = self.accounts_index.bin_calculator.bin_from_pubkey(pubkey);
-                        let mut candidates_bin = candidates[index].write().unwrap();
-                        candidates_bin.insert(*pubkey, CleaningInfo::default());
+                        insert_pubkey(*pubkey);
                     }
                     !is_candidate_for_clean
                 });
