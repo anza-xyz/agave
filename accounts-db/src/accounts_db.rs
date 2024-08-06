@@ -3413,6 +3413,9 @@ impl AccountsDb {
                 },
             ) in candidates_bin.write().unwrap().iter_mut()
             {
+                if slot_list.is_empty() {
+                    continue; // seems simpler than filtering. `candidates` contains all the pubkeys we original started with
+                }
                 if purged_account_slots.contains_key(pubkey) {
                     *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
                 }
