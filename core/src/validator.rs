@@ -1672,7 +1672,7 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
 fn check_poh_speed(
     genesis_config: &GenesisConfig,
     maybe_hash_samples: Option<u64>,
-) -> Result<(), ValidatorError> {
+) -> Result<(), String> {
     if let Some(hashes_per_tick) = genesis_config.hashes_per_tick() {
         let ticks_per_slot = genesis_config.ticks_per_slot();
         let hashes_per_slot = hashes_per_tick * ticks_per_slot;
@@ -1690,10 +1690,10 @@ fn check_poh_speed(
             target hashes per second {target_hashes_per_second}"
         );
         if my_hashes_per_second < target_hashes_per_second {
-            return Err(ValidatorError::PohTooSlow {
-                mine: my_hashes_per_second,
-                target: target_hashes_per_second,
-            });
+            return Err(format!(
+                "PoH hashes/second rate is slower than the cluster target: \
+                mine {my_hashes_per_second}, cluster {target_hashes_per_second}"
+            ));
         }
     }
     Ok(())
@@ -1852,7 +1852,7 @@ fn load_blockstore(
     }
 
     if !config.no_poh_speed_test {
-        check_poh_speed(&genesis_config, None).map_err(|err| format!("{err}"))?;
+        check_poh_speed(&genesis_config, None)?;
     }
 
     let mut blockstore =
@@ -2329,24 +2329,7 @@ fn initialize_rpc_transaction_history_services(
 enum ValidatorError {
     BadExpectedBankHash,
     NotEnoughLedgerData,
-<<<<<<< HEAD
     Error(String),
-=======
-
-    #[error("{0}")]
-    Other(String),
-
-    #[error(
-        "PoH hashes/second rate is slower than the cluster target: mine {mine}, cluster {target}"
-    )]
-    PohTooSlow { mine: u64, target: u64 },
-
-    #[error(transparent)]
-    TraceError(#[from] TraceError),
-
-    #[error("Wen Restart finished, please continue with --wait-for-supermajority")]
-    WenRestartFinished,
->>>>>>> ecc05c50b8 (Cleanup PoH speed check error (#2400))
 }
 
 // Return if the validator waited on other nodes to start. In this case
