@@ -9,7 +9,7 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
-    ahash::{AHashMap, AHashSet},
+    ahash::AHashSet,
     dashmap::DashMap,
     log::*,
     solana_sdk::{
@@ -19,18 +19,14 @@ use {
         message::v0::LoadedAddresses,
         pubkey::Pubkey,
         slot_hashes::SlotHashes,
-        transaction::{Result, SanitizedTransaction},
-        transaction::{
-            Result, SanitizedTransaction, TransactionAccountLocks, TransactionError,
-            MAX_TX_ACCOUNT_LOCKS,
-        },
+        transaction::{Result, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         transaction_context::TransactionAccount,
     },
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
     std::{
-        cell::{RefCell, RefMut},
+        cell::RefCell,
         cmp::Reverse,
         collections::{BinaryHeap, HashSet},
         ops::RangeBounds,
@@ -47,10 +43,12 @@ pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
     transaction: &'a T,
+}
+
 #[derive(Debug, Default)]
-struct BatchAccountLocks {
-    writables: AHashSet<Pubkey>,
-    readables: AHashSet<Pubkey>,
+pub struct BatchAccountLocks {
+    pub writables: AHashSet<Pubkey>,
+    pub readables: AHashSet<Pubkey>,
 }
 
 thread_local! {
@@ -65,11 +63,11 @@ impl BatchAccountLocks {
         }
     }
 
-    fn insert_read_lock(&mut self, key: &Pubkey) {
+    pub fn insert_read_lock(&mut self, key: &Pubkey) {
         self.readables.insert(*key);
     }
 
-    fn insert_write_lock(&mut self, key: &Pubkey) {
+    pub fn insert_write_lock(&mut self, key: &Pubkey) {
         self.writables.insert(*key);
     }
 
@@ -77,14 +75,6 @@ impl BatchAccountLocks {
         self.writables.clear();
         self.readables.clear();
     }
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Default)]
-pub struct AccountLocks {
-    // A key can have multiple outstanding write locks in the case of a self-conflicting batch.
-    write_locks: AHashMap<Pubkey, u64>,
-    readonly_locks: AHashMap<Pubkey, u64>,
 }
 
 impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
@@ -100,61 +90,6 @@ impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
             .iter()
             .enumerate()
             .map(|(index, key)| (key, self.transaction.is_writable(index)))
-    }
-    fn is_locked_write(&self, key: &Pubkey) -> bool {
-        self.write_locks.get(key).map_or(false, |count| *count > 0)
-    }
-
-    fn insert_new_write(&mut self, key: &Pubkey) {
-        assert!(self.write_locks.insert(*key, 1).is_none());
-    }
-
-    fn lock_write(&mut self, key: &Pubkey) -> bool {
-        self.write_locks.get_mut(key).map_or(false, |count| {
-            *count += 1;
-            true
-        })
-    }
-
-    fn insert_new_readonly(&mut self, key: &Pubkey) {
-        assert!(self.readonly_locks.insert(*key, 1).is_none());
-    }
-
-    fn lock_readonly(&mut self, key: &Pubkey) -> bool {
-        self.readonly_locks.get_mut(key).map_or(false, |count| {
-            *count += 1;
-            true
-        })
-    }
-
-    fn unlock_readonly(&mut self, key: &Pubkey) {
-        if let hash_map::Entry::Occupied(mut occupied_entry) = self.readonly_locks.entry(*key) {
-            let count = occupied_entry.get_mut();
-            *count -= 1;
-            if *count == 0 {
-                occupied_entry.remove_entry();
-            }
-        } else {
-            debug_assert!(
-                false,
-                "Attempted to remove a read-lock for a key that wasn't read-locked"
-            );
-        }
-    }
-
-    fn unlock_write(&mut self, key: &Pubkey) {
-        if let hash_map::Entry::Occupied(mut occupied_entry) = self.write_locks.entry(*key) {
-            let count = occupied_entry.get_mut();
-            *count -= 1;
-            if *count == 0 {
-                occupied_entry.remove_entry();
-            }
-        } else {
-            debug_assert!(
-                false,
-                "Attempted to remove a write-lock for a key that wasn't write-locked"
-            );
-        }
     }
 }
 
@@ -612,100 +547,6 @@ impl Accounts {
         self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
     }
 
-    // this function will be obsolete after self conflicting batches are allowed
-    fn lock_account(
-        &self,
-        account_locks: &mut AccountLocks,
-        writable_keys: Vec<&Pubkey>,
-        readonly_keys: Vec<&Pubkey>,
-    ) -> Result<()> {
-        for k in writable_keys.iter() {
-            if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
-                debug!("Write-only account in use: {:?}", k);
-                return Err(TransactionError::AccountInUse);
-            }
-        }
-        for k in readonly_keys.iter() {
-            if account_locks.is_locked_write(k) {
-                debug!("Read-only account in use: {:?}", k);
-                return Err(TransactionError::AccountInUse);
-            }
-        }
-
-        for k in writable_keys {
-            account_locks.insert_new_write(k);
-        }
-
-        for k in readonly_keys {
-            if !account_locks.lock_readonly(k) {
-                account_locks.insert_new_readonly(k);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn lock_account_with_conflicting_batches(
-        &self,
-        account_locks: &mut AccountLocks,
-        writable_keys: Vec<&Pubkey>,
-        readonly_keys: Vec<&Pubkey>,
-        batch_account_locks: &mut RefMut<BatchAccountLocks>,
-    ) -> (Result<()>, bool) {
-        let mut self_conflicting_batch = false;
-
-        for k in writable_keys.iter() {
-            if account_locks.is_locked_write(k) || account_locks.is_locked_readonly(k) {
-                if !(batch_account_locks.writables.contains(k)
-                    || batch_account_locks.readables.contains(k))
-                {
-                    debug!("Write-only account in use: {:?}", k);
-                    return (Err(TransactionError::AccountInUse), false);
-                }
-                self_conflicting_batch = true;
-            }
-        }
-        for k in readonly_keys.iter() {
-            if account_locks.is_locked_write(k) {
-                if !batch_account_locks.writables.contains(k) {
-                    debug!("Read-only account in use: {:?}", k);
-                    return (Err(TransactionError::AccountInUse), false);
-                }
-                self_conflicting_batch = true;
-            }
-        }
-
-        for k in writable_keys {
-            batch_account_locks.insert_write_lock(k);
-            if !account_locks.lock_write(k) {
-                account_locks.insert_new_write(k);
-            }
-        }
-
-        for k in readonly_keys {
-            batch_account_locks.insert_read_lock(k);
-            if !account_locks.lock_readonly(k) {
-                account_locks.insert_new_readonly(k);
-            }
-        }
-
-        (Ok(()), self_conflicting_batch)
-    }
-
-    fn unlock_account(
-        &self,
-        account_locks: &mut AccountLocks,
-        writable_keys: Vec<&Pubkey>,
-        readonly_keys: Vec<&Pubkey>,
-    ) {
-        for k in writable_keys {
-            account_locks.unlock_write(k);
-        }
-        for k in readonly_keys {
-            account_locks.unlock_readonly(k);
-        }
-    }
-
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time
     #[must_use]
@@ -754,16 +595,46 @@ impl Accounts {
         allow_self_conflicting_entries: bool,
     ) -> (Vec<Result<()>>, bool) {
         let account_locks = &mut self.account_locks.lock().unwrap();
-        (tx_account_locks_results
-            .into_iter()
-            .map(|tx_account_locks_result| match tx_account_locks_result {
-                Ok(tx_account_locks) => {
-                    account_locks.try_lock_accounts(tx_account_locks.accounts_with_is_writable())
-                }
-                Err(err) => Err(err),
+        let mut self_conflicting_batch = false;
+        if allow_self_conflicting_entries {
+            BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
+                let mut batch_account_locks = batch_account_locks.borrow_mut();
+                let (lock_results, self_conflicting_batch) = (
+                    tx_account_locks_results
+                        .into_iter()
+                        .map(|tx_account_locks_result| match tx_account_locks_result {
+                            Ok(tx_account_locks) => {
+                                let (res, conflicting_tx) = account_locks
+                                    .try_lock_accounts_with_conflicting_batches(
+                                        tx_account_locks.accounts_with_is_writable(),
+                                        &mut batch_account_locks,
+                                    );
+                                self_conflicting_batch = self_conflicting_batch || conflicting_tx;
+                                res
+                            }
+                            Err(err) => Err(err),
+                        })
+                        .collect(),
+                    self_conflicting_batch,
+                );
+                // clear up the entry level locks lookup table
+                batch_account_locks.clear();
+                (lock_results, self_conflicting_batch)
             })
-            .collect(),
-            false)
+        } else {
+            (
+                tx_account_locks_results
+                    .into_iter()
+                    .map(|tx_account_locks_result| match tx_account_locks_result {
+                        Ok(tx_account_locks) => account_locks
+                            .try_lock_accounts(tx_account_locks.accounts_with_is_writable()),
+                        Err(err) => Err(err),
+                    })
+                    .collect(),
+                // in case the self conflicting batches are not allowed then this flag is always false
+                self_conflicting_batch,
+            )
+        }
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
@@ -1264,22 +1135,16 @@ mod tests {
 
         assert!(!self_conflicting_batch);
         assert_eq!(results0, vec![Ok(())]);
-        assert_eq!(
-            *accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .readonly_locks
-                .get(&keypair1.pubkey())
-                .unwrap(),
-            1
-        );
         assert!(accounts
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair0.pubkey()),);
+            .is_locked_readonly(&keypair1.pubkey()));
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_write(&keypair0.pubkey()));
 
         accounts.unlock_accounts(iter::once(&tx).zip(&results0));
 
@@ -1316,16 +1181,11 @@ mod tests {
                 Ok(()), // Read-only account (keypair1) should also be locked as writable
             ],
         );
-        assert_eq!(
-            *accounts
-                .account_locks
-                .lock()
-                .unwrap()
-                .readonly_locks
-                .get(&keypair1.pubkey())
-                .unwrap(),
-            1
-        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair1.pubkey()));
 
         accounts.unlock_accounts(txs.iter().zip(&results1));
 
@@ -1366,8 +1226,7 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair1.pubkey()));
+            .is_locked_write(&keypair1.pubkey()));
 
         // batch write-write conflict. outstanding (read/write lock)
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
@@ -1407,8 +1266,7 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair1.pubkey()));
+            .is_locked_write(&keypair1.pubkey()));
 
         accounts.unlock_accounts(txs.iter().zip(&results1));
         accounts.unlock_accounts(txs2.iter().zip(&results2));
@@ -1464,8 +1322,7 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair3.pubkey()));
+            .is_locked_write(&keypair3.pubkey()));
 
         accounts.unlock_accounts(iter::once(&tx).zip(&results0));
         accounts.unlock_accounts(txs.iter().zip(&results1));
@@ -1493,8 +1350,7 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .readonly_locks
-            .contains_key(&keypair1.pubkey()));
+            .is_locked_readonly(&keypair1.pubkey()));
     }
 
     #[test]
@@ -1621,14 +1477,12 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair0.pubkey()));
+            .is_locked_write(&keypair0.pubkey()));
         assert!(accounts
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair1.pubkey()));
+            .is_locked_write(&keypair1.pubkey()));
     }
 
     impl Accounts {
@@ -1729,24 +1583,7 @@ mod tests {
             .account_locks
             .lock()
             .unwrap()
-            .write_locks
-            .contains_key(&keypair2.pubkey()));
-
-        accounts.unlock_accounts(txs.iter().zip(&results));
-
-        // check all locks to be removed
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .readonly_locks
-            .is_empty());
-        assert!(accounts
-            .account_locks
-            .lock()
-            .unwrap()
-            .write_locks
-            .is_empty());
+            .is_locked_write(&keypair2.pubkey()));
     }
 
     #[test]

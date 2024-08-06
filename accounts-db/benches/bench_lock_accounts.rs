@@ -85,7 +85,7 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
             b.iter(|| {
                 for batch in &transaction_batches {
                     let (results, _) = accounts.lock_accounts(
-                        test::black_box(batch.iter()),
+                        black_box(batch.iter()),
                         MAX_TX_ACCOUNT_LOCKS,
                         self_conflicting_batch,
                     );
