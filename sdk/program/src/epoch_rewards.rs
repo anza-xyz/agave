@@ -6,7 +6,7 @@
 //!
 //! [`sysvar::epoch_rewards`]: crate::sysvar::epoch_rewards
 
-use {crate::hash::Hash, solana_sdk_macro::CloneZeroed, std::ops::AddAssign};
+use {crate::hash::Hash, solana_sdk_macro::CloneZeroed};
 
 #[repr(C, align(16))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -44,7 +44,7 @@ impl EpochRewards {
     pub fn distribute(&mut self, amount: u64) {
         assert!(self.distributed_rewards.saturating_add(amount) <= self.total_rewards);
 
-        self.distributed_rewards.add_assign(amount);
+        self.distributed_rewards = self.distributed_rewards.saturating_add(amount);
     }
 }
 
