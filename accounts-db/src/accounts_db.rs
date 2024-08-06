@@ -3763,6 +3763,9 @@ impl AccountsDb {
                     slot_list,
                     ref_count: _,
                 } = cleaning_info;
+                if slot_list.is_empty() {
+                    return false;
+                }
                 // Only keep purges_zero_lamports where the entire history of the account in the root set
                 // can be purged. All AppendVecs for those updates are dead.
                 for (slot, _account_info) in slot_list.iter() {
