@@ -5265,7 +5265,7 @@ impl Bank {
 
     /// If the epoch accounts hash should be included in this Bank, then fetch it. If the EAH
     /// calculation has not completed yet, this fn will block until it does complete.
-    fn wait_get_epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
+    pub(crate) fn wait_get_epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
         if !self.should_include_epoch_accounts_hash() {
             return None;
         }
