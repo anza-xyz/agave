@@ -331,6 +331,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             config,
                         );
 
+                        // XXX need to code the thing to update the cache. also handle nonces
+                        // actually maybe i should just write test cases first and then finish it up
+                        // also i dont understand how duplicate transactions are filtered
+                        // would they just automatically clash? do we only need to change this when we mess with locks?
+                        // yea im pretty sure the answer is yes. we actually can reduce this code to one version
+                        // also remember to look into that bug with core bpf migrations
+
                         // Update batch specific cache of the loaded programs with the modifications
                         // made by the transaction, if it executed successfully.
                         if executed_tx.was_successful() {

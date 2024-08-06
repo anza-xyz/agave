@@ -58,7 +58,6 @@ use {
     },
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
-    itertools::Itertools,
     log::*,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -3430,7 +3429,6 @@ impl Bank {
 
         sanitized_txs
             .iter()
-            .unique_by(|tx| tx.borrow().message_hash())
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => self.check_transaction_age(
