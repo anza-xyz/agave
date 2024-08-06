@@ -3021,6 +3021,13 @@ impl AccountsDb {
         self.remove_uncleaned_slots_and_collect_pubkeys(uncleaned_slots)
     }
 
+    fn count_pubkeys(candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>]) -> u64 {
+        candidates
+            .iter()
+            .map(|x| x.read().unwrap().len())
+            .sum::<usize>() as u64
+    }
+
     /// Construct a vec of pubkeys for cleaning from:
     ///   uncleaned_pubkeys - the delta set of updated pubkeys in rooted slots from the last clean
     ///   dirty_stores - set of stores which had accounts removed or recently rooted
@@ -3090,10 +3097,7 @@ impl AccountsDb {
                 dirty_store_routine();
             });
         }
-        timings.dirty_pubkeys_count = candidates
-            .iter()
-            .map(|x| x.read().unwrap().len())
-            .sum::<usize>() as u64;
+        timings.dirty_pubkeys_count = Self::count_pubkeys(&candidates);
         trace!(
             "dirty_stores.len: {} pubkeys.len: {}",
             dirty_stores_len,
@@ -3122,10 +3126,7 @@ impl AccountsDb {
         delta_insert.stop();
         timings.delta_insert_us += delta_insert.as_us();
 
-        timings.delta_key_count = candidates
-            .iter()
-            .map(|x| x.read().unwrap().len())
-            .sum::<usize>() as u64;
+        timings.delta_key_count = Self::count_pubkeys(&candidates);
 
         let mut hashset_to_vec = Measure::start("flat_map");
         hashset_to_vec.stop();
@@ -3262,10 +3263,7 @@ impl AccountsDb {
             epoch_schedule,
         );
 
-        let num_candidates = candidates
-            .iter()
-            .map(|x| x.read().unwrap().len())
-            .sum::<usize>();
+        let num_candidates = Self::count_pubkeys(&candidates);
         let mut accounts_scan = Measure::start("accounts_scan");
         let uncleaned_roots = self.accounts_index.clone_uncleaned_roots();
         let found_not_zero_accum = AtomicU64::new(0);
