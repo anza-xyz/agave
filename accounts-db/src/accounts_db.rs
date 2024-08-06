@@ -3423,50 +3423,50 @@ impl AccountsDb {
                     *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
                 }
                 slot_list.retain(|(slot, account_info)| {
-                let was_slot_purged = purged_account_slots
-                    .get(pubkey)
-                    .map(|slots_removed| slots_removed.contains(slot))
-                    .unwrap_or(false);
-                if was_slot_purged {
-                    // No need to look up the slot storage below if the entire
-                    // slot was purged
-                    return false;
-                }
-                // Check if this update in `slot` to the account with `key` was reclaimed earlier by
-                // `clean_accounts_older_than_root()`
-                let was_reclaimed = removed_accounts
-                    .get(slot)
-                    .map(|store_removed| store_removed.contains(&account_info.offset()))
-                    .unwrap_or(false);
-                if was_reclaimed {
-                    return false;
-                }
-                if let Some(store_count) = store_counts.get_mut(slot) {
-                    store_count.0 -= 1;
-                    store_count.1.insert(*pubkey);
-                } else {
-                    let mut key_set = HashSet::new();
-                    key_set.insert(*pubkey);
-                    assert!(
-                        !account_info.is_cached(),
-                        "The Accounts Cache must be flushed first for this account info. pubkey: {}, slot: {}",
-                        *pubkey,
-                        *slot
-                    );
-                    let count = self
-                        .storage
-                        .get_account_storage_entry(*slot, account_info.store_id())
-                        .map(|store| store.count())
-                        .unwrap()
-                        - 1;
-                    debug!(
-                        "store_counts, inserting slot: {}, store id: {}, count: {}",
-                        slot, account_info.store_id(), count
-                    );
-                    store_counts.insert(*slot, (count, key_set));
-                }
-                true
-            });
+                    let was_slot_purged = purged_account_slots
+                        .get(pubkey)
+                        .map(|slots_removed| slots_removed.contains(slot))
+                        .unwrap_or(false);
+                    if was_slot_purged {
+                        // No need to look up the slot storage below if the entire
+                        // slot was purged
+                        return false;
+                    }
+                    // Check if this update in `slot` to the account with `key` was reclaimed earlier by
+                    // `clean_accounts_older_than_root()`
+                    let was_reclaimed = removed_accounts
+                        .get(slot)
+                        .map(|store_removed| store_removed.contains(&account_info.offset()))
+                        .unwrap_or(false);
+                    if was_reclaimed {
+                        return false;
+                    }
+                    if let Some(store_count) = store_counts.get_mut(slot) {
+                        store_count.0 -= 1;
+                        store_count.1.insert(*pubkey);
+                    } else {
+                        let mut key_set = HashSet::new();
+                        key_set.insert(*pubkey);
+                        assert!(
+                            !account_info.is_cached(),
+                            "The Accounts Cache must be flushed first for this account info. pubkey: {}, slot: {}",
+                            *pubkey,
+                            *slot
+                        );
+                        let count = self
+                            .storage
+                            .get_account_storage_entry(*slot, account_info.store_id())
+                            .map(|store| store.count())
+                            .unwrap()
+                            - 1;
+                        debug!(
+                            "store_counts, inserting slot: {}, store id: {}, count: {}",
+                            slot, account_info.store_id(), count
+                        );
+                        store_counts.insert(*slot, (count, key_set));
+                    }
+                    true
+                });
             }
         }
         store_counts_time.stop();
