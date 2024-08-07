@@ -42,11 +42,6 @@ pub struct LastVotedForkSlotsFinalResult {
 }
 
 impl LastVotedForkSlotsAggregate {
-    fn validator_stake_at_epoch(bank: &Arc<Bank>, epoch: &Epoch, id: &Pubkey) -> Option<u64> {
-        bank.epoch_stakes(*epoch)
-            .and_then(|epoch_stakes| epoch_stakes.node_id_to_stake(id))
-    }
-
     pub(crate) fn new(
         root_bank: Arc<Bank>,
         repair_threshold: f64,
@@ -60,8 +55,7 @@ impl LastVotedForkSlotsAggregate {
         let root_epoch = root_bank.epoch();
         for slot in last_voted_fork_slots {
             if slot >= &root_slot {
-                if let Some(sender_stake) =
-                    Self::validator_stake_at_epoch(&root_bank, &root_epoch, my_pubkey)
+                if let Some(sender_stake) = root_bank.epoch_node_id_to_stake(root_epoch, my_pubkey)
                 {
                     slots_stake_map.insert(*slot, sender_stake);
                 } else {
@@ -164,9 +158,7 @@ impl LastVotedForkSlotsAggregate {
         for slot in old_slots_set.difference(&new_slots_set) {
             let epoch = self.root_bank.epoch_schedule().get_epoch(*slot);
             let entry = self.slots_stake_map.get_mut(slot).unwrap();
-            if let Some(sender_stake) =
-                Self::validator_stake_at_epoch(&self.root_bank, &epoch, from)
-            {
+            if let Some(sender_stake) = self.root_bank.epoch_node_id_to_stake(epoch, from) {
                 *entry = entry.saturating_sub(sender_stake);
                 let repair_threshold_stake = (self.root_bank.epoch_total_stake(epoch).unwrap()
                     as f64
@@ -179,9 +171,7 @@ impl LastVotedForkSlotsAggregate {
         for slot in new_slots_set.difference(&old_slots_set) {
             let epoch = self.root_bank.epoch_schedule().get_epoch(*slot);
             let entry = self.slots_stake_map.entry(*slot).or_insert(0);
-            if let Some(sender_stake) =
-                Self::validator_stake_at_epoch(&self.root_bank, &epoch, from)
-            {
+            if let Some(sender_stake) = self.root_bank.epoch_node_id_to_stake(epoch, from) {
                 *entry = entry.saturating_add(sender_stake);
                 let repair_threshold_stake = (self.root_bank.epoch_total_stake(epoch).unwrap()
                     as f64
@@ -198,7 +188,8 @@ impl LastVotedForkSlotsAggregate {
         for entry in self.epoch_info_vec.iter_mut() {
             entry.total_active_stake = self.active_peers.iter().fold(0, |sum: u64, pubkey| {
                 sum.saturating_add(
-                    Self::validator_stake_at_epoch(&self.root_bank, &entry.epoch, pubkey)
+                    self.root_bank
+                        .epoch_node_id_to_stake(entry.epoch, pubkey)
                         .unwrap_or(0),
                 )
             });
