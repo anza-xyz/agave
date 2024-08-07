@@ -24,7 +24,11 @@ impl InstructionsMeta {
         // Each instruction needs at least 3 bytes, so do a sanity check here to
         // ensure we have enough bytes to read the number of instructions.
         let num_instructions = optimized_read_compressed_u16(bytes, offset)?;
-        check_remaining(bytes, *offset, 3 * usize::from(num_instructions))?;
+        check_remaining(
+            bytes,
+            *offset,
+            3usize.wrapping_mul(usize::from(num_instructions)),
+        )?;
 
         // We know the offset does not exceed packet length, and our packet
         // length is less than u16::MAX, so we can safely cast to u16.
