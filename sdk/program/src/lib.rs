@@ -469,7 +469,6 @@
 // Allows macro expansion of `use ::solana_program::*` to work within this crate
 extern crate self as solana_program;
 
-pub mod account_info;
 pub mod address_lookup_table;
 pub mod big_mod_exp;
 pub mod blake3;
@@ -484,9 +483,7 @@ pub mod bpf_loader_deprecated;
 pub mod bpf_loader_upgradeable;
 pub mod clock;
 pub mod compute_units;
-pub mod debug_account_data;
 pub mod ed25519_program;
-pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod epoch_rewards;
 pub mod epoch_schedule;
@@ -513,7 +510,6 @@ pub mod program_option;
 pub mod program_pack;
 pub mod program_stubs;
 pub mod program_utils;
-pub mod pubkey;
 pub mod rent;
 pub mod secp256k1_program;
 pub mod serde_varint;
@@ -530,7 +526,6 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
-pub use solana_msg::msg;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
@@ -541,6 +536,14 @@ pub use solana_secp256k1_recover as secp256k1_recover;
 pub use solana_short_vec as short_vec;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
+pub use {
+    solana_account_info::{self as account_info, debug_account_data},
+    solana_entrypoint::{
+        self as entrypoint, custom_heap_default, custom_panic_default, entrypoint,
+    },
+    solana_msg::msg,
+    solana_pubkey as pubkey,
+};
 
 /// The [config native program][np].
 ///

@@ -100,16 +100,23 @@ members = [
     "runtime-transaction",
     "sanitize",
     "sdk",
+    "sdk/account-info",
     "sdk/atomic-u64",
     "sdk/cargo-build-sbf",
     "sdk/cargo-test-sbf",
     "sdk/decode-error",
+    "sdk/entrypoint",
     "sdk/gen-headers",
+    "sdk/hash",
+    "sdk/hasher",
+    "sdk/instruction",
     "sdk/macro",
     "sdk/msg",
     "sdk/package-metadata-macro",
     "sdk/program",
+    "sdk/program-error",
     "sdk/program-memory",
+    "sdk/pubkey",
     "send-transaction-service",
     "short-vec",
     "stake-accounts",
@@ -335,6 +342,7 @@ smpl_jwt = "0.7.1"
 socket2 = "0.5.7"
 soketto = "0.7"
 solana-account-decoder = { path = "account-decoder", version = "=2.1.0" }
+solana-account-info = { path = "sdk/account-info", version = "=2.1.0" }
 solana-accounts-db = { path = "accounts-db", version = "=2.1.0" }
 solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.1.0" }
 solana-atomic-u64 = { path = "sdk/atomic-u64", version = "=2.1.0" }
@@ -365,6 +373,7 @@ solana-decode-error = { path = "sdk/decode-error", version = "=2.1.0" }
 solana-define-syscall = { path = "define-syscall", version = "=2.1.0" }
 solana-download-utils = { path = "download-utils", version = "=2.1.0" }
 solana-entry = { path = "entry", version = "=2.1.0" }
+solana-entrypoint = { path = "sdk/entrypoint", version = "=2.1.0" }
 solana-faucet = { path = "faucet", version = "=2.1.0" }
 solana-fee = { path = "fee", version = "=2.1.0" }
 solana-frozen-abi = { path = "frozen-abi", version = "=2.1.0" }
@@ -375,7 +384,10 @@ solana-genesis-utils = { path = "genesis-utils", version = "=2.1.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.1.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.1.0" }
 solana-gossip = { path = "gossip", version = "=2.1.0" }
+solana-hash = { path = "sdk/hash", version = "=2.1.0" }
+solana-hasher = { path = "sdk/hasher", version = "=2.1.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.1.0" }
+solana-instruction = { path = "sdk/instruction", version = "=2.1.0", default-features = false }
 solana-lattice-hash = { path = "lattice-hash", version = "=2.1.0" }
 solana-ledger = { path = "ledger", version = "=2.1.0" }
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.1.0" }
@@ -394,9 +406,11 @@ solana-perf = { path = "perf", version = "=2.1.0" }
 solana-poh = { path = "poh", version = "=2.1.0" }
 solana-poseidon = { path = "poseidon", version = "=2.1.0" }
 solana-program = { path = "sdk/program", version = "=2.1.0", default-features = false }
+solana-program-error = { path = "sdk/program-error", version = "=2.1.0" }
 solana-program-memory = { path = "sdk/program-memory", version = "=2.1.0" }
 solana-program-runtime = { path = "program-runtime", version = "=2.1.0" }
 solana-program-test = { path = "program-test", version = "=2.1.0" }
+solana-pubkey = { path = "sdk/pubkey", version = "=2.1.0", default-features = false }
 solana-pubsub-client = { path = "pubsub-client", version = "=2.1.0" }
 solana-quic-client = { path = "quic-client", version = "=2.1.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.1.0" }
