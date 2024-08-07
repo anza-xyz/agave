@@ -135,7 +135,8 @@ impl EpochStakes {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VersionedEpochStakes {
     Current {
         stakes: StakesSerdeWrapper,
@@ -153,10 +154,26 @@ pub enum VersionedEpochStakes {
 /// data structure still allocates a fair amount of memory but the memory only
 /// remains allocated during serialization.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum StakesSerdeWrapper {
     Stake(Stakes<Stake>),
     Account(Stakes<StakeAccount<Delegation>>),
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl PartialEq<Self> for StakesSerdeWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stake(stakes), Self::Stake(other)) => stakes == other,
+            (Self::Account(stakes), Self::Account(other)) => stakes == other,
+            (Self::Stake(stakes), Self::Account(other)) => {
+                stakes == &Stakes::<Stake>::from(other.clone())
+            }
+            (Self::Account(stakes), Self::Stake(other)) => {
+                other == &Stakes::<Stake>::from(stakes.clone())
+            }
+        }
+    }
 }
 
 impl From<StakesSerdeWrapper> for StakesEnum {
