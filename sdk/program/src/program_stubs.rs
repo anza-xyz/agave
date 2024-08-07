@@ -4,10 +4,11 @@
 
 use {
     crate::{
-        account_info::AccountInfo, entrypoint::ProgramResult, instruction::Instruction,
-        program_error::UNSUPPORTED_SYSVAR, pubkey::Pubkey,
+        account_info::AccountInfo, entrypoint::ProgramResult, program_error::UNSUPPORTED_SYSVAR,
+        pubkey::Pubkey,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
+    solana_instruction::{stubs as instruction_stubs, Instruction},
     solana_program_memory::stubs,
     std::sync::{Arc, RwLock},
 };
@@ -102,11 +103,11 @@ pub trait SyscallStubs: Sync + Send {
                 .join(" ")
         );
     }
-    fn sol_get_processed_sibling_instruction(&self, _index: usize) -> Option<Instruction> {
-        None
+    fn sol_get_processed_sibling_instruction(&self, index: usize) -> Option<Instruction> {
+        instruction_stubs::sol_get_processed_sibling_instruction(index)
     }
     fn sol_get_stack_height(&self) -> u64 {
-        0
+        instruction_stubs::sol_get_stack_height()
     }
 }
 
@@ -198,17 +199,6 @@ pub(crate) fn sol_set_return_data(data: &[u8]) {
 
 pub(crate) fn sol_log_data(data: &[&[u8]]) {
     SYSCALL_STUBS.read().unwrap().sol_log_data(data)
-}
-
-pub(crate) fn sol_get_processed_sibling_instruction(index: usize) -> Option<Instruction> {
-    SYSCALL_STUBS
-        .read()
-        .unwrap()
-        .sol_get_processed_sibling_instruction(index)
-}
-
-pub(crate) fn sol_get_stack_height() -> u64 {
-    SYSCALL_STUBS.read().unwrap().sol_get_stack_height()
 }
 
 pub(crate) fn sol_get_epoch_rewards_sysvar(var_addr: *mut u8) -> u64 {
