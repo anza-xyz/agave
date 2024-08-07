@@ -1,25 +1,38 @@
 //! Solana account addresses.
-
+#![no_std]
+#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(target_arch = "wasm32")]
-use crate::wasm_bindgen;
-#[cfg(test)]
+#[cfg(any(feature = "std", target_arch = "wasm32"))]
+extern crate std;
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 use arbitrary::Arbitrary;
+#[cfg(feature = "bytemuck")]
+use bytemuck_derive::{Pod, Zeroable};
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
 #[cfg(feature = "borsh")]
-use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use {
-    crate::hash::hashv,
-    bytemuck_derive::{Pod, Zeroable},
-    num_derive::{FromPrimitive, ToPrimitive},
-    solana_decode_error::DecodeError,
-    std::{
-        convert::{Infallible, TryFrom},
-        fmt, mem,
-        str::FromStr,
-    },
-    thiserror::Error,
+    borsh::{BorshDeserialize, BorshSchema, BorshSerialize},
+    std::string::ToString,
 };
+#[cfg(any(feature = "std", target_arch = "wasm32"))]
+use {core::str::FromStr, std::vec::Vec};
+use {
+    core::{
+        convert::{Infallible, TryFrom},
+        fmt,
+    },
+    num_traits::{FromPrimitive, ToPrimitive},
+    solana_decode_error::DecodeError,
+};
+#[cfg(target_arch = "wasm32")]
+use {
+    js_sys::{Array, Uint8Array},
+    wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue},
+};
+#[cfg(target_os = "solana")]
+pub mod syscalls;
 
 /// Number of bytes in a pubkey
 pub const PUBKEY_BYTES: usize = 32;
@@ -27,21 +40,78 @@ pub const PUBKEY_BYTES: usize = 32;
 pub const MAX_SEED_LEN: usize = 32;
 /// Maximum number of seeds
 pub const MAX_SEEDS: usize = 16;
+#[cfg(any(feature = "std", target_arch = "wasm32"))]
 /// Maximum string length of a base58 encoded pubkey
 const MAX_BASE58_LEN: usize = 44;
 
+#[cfg(any(target_os = "solana", feature = "sha2", feature = "curve25519"))]
 const PDA_MARKER: &[u8; 21] = b"ProgramDerivedAddress";
 
-#[derive(Error, Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
+/// Copied from `solana_program::entrypoint::SUCCESS`
+/// to avoid a `solana_program` dependency
+#[cfg(target_os = "solana")]
+const SUCCESS: u64 = 0;
+
+#[cfg_attr(feature = "serde", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PubkeyError {
     /// Length of the seed is too long for address generation
-    #[error("Length of the seed is too long for address generation")]
     MaxSeedLengthExceeded,
-    #[error("Provided seeds do not result in a valid address")]
     InvalidSeeds,
-    #[error("Provided owner is not allowed")]
     IllegalOwner,
 }
+
+impl ToPrimitive for PubkeyError {
+    #[inline]
+    fn to_i64(&self) -> Option<i64> {
+        Some(match *self {
+            PubkeyError::MaxSeedLengthExceeded => PubkeyError::MaxSeedLengthExceeded as i64,
+            PubkeyError::InvalidSeeds => PubkeyError::InvalidSeeds as i64,
+            PubkeyError::IllegalOwner => PubkeyError::IllegalOwner as i64,
+        })
+    }
+    #[inline]
+    fn to_u64(&self) -> Option<u64> {
+        self.to_i64().map(|x| x as u64)
+    }
+}
+
+impl FromPrimitive for PubkeyError {
+    #[inline]
+    fn from_i64(n: i64) -> Option<Self> {
+        if n == PubkeyError::MaxSeedLengthExceeded as i64 {
+            Some(PubkeyError::MaxSeedLengthExceeded)
+        } else if n == PubkeyError::InvalidSeeds as i64 {
+            Some(PubkeyError::InvalidSeeds)
+        } else if n == PubkeyError::IllegalOwner as i64 {
+            Some(PubkeyError::IllegalOwner)
+        } else {
+            None
+        }
+    }
+    #[inline]
+    fn from_u64(n: u64) -> Option<Self> {
+        Self::from_i64(n as i64)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for PubkeyError {}
+
+impl fmt::Display for PubkeyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PubkeyError::MaxSeedLengthExceeded => {
+                f.write_str("Length of the seed is too long for address generation")
+            }
+            PubkeyError::InvalidSeeds => {
+                f.write_str("Provided seeds do not result in a valid address")
+            }
+            PubkeyError::IllegalOwner => f.write_str("Provided owner is not allowed"),
+        }
+    }
+}
+
 impl<T> DecodeError<T> for PubkeyError {
     fn type_of() -> &'static str {
         "PubkeyError"
@@ -73,37 +143,69 @@ impl From<u64> for PubkeyError {
 /// [`Keypair`]: https://docs.rs/solana-sdk/latest/solana_sdk/signer/keypair/struct.Keypair.html
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[repr(transparent)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[cfg_attr(
     feature = "borsh",
-    derive(BorshSerialize, BorshDeserialize, BorshSchema),
+    derive(BorshSerialize, BorshDeserialize),
     borsh(crate = "borsh")
 )]
-#[derive(
-    Clone,
-    Copy,
-    Default,
-    Deserialize,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Pod,
-    Serialize,
-    Zeroable,
-)]
-#[cfg_attr(test, derive(Arbitrary))]
+#[cfg_attr(all(feature = "borsh", feature = "std"), derive(BorshSchema))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "bytemuck", derive(Pod, Zeroable))]
+#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(any(test, feature = "dev-context-only-utils"), derive(Arbitrary))]
 pub struct Pubkey(pub(crate) [u8; 32]);
 
 impl solana_sanitize::Sanitize for Pubkey {}
 
-#[derive(Error, Debug, Serialize, Clone, PartialEq, Eq, FromPrimitive, ToPrimitive)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsePubkeyError {
-    #[error("String is the wrong size")]
     WrongSize,
-    #[error("Invalid Base58 string")]
     Invalid,
+}
+
+impl ToPrimitive for ParsePubkeyError {
+    #[inline]
+    fn to_i64(&self) -> Option<i64> {
+        Some(match *self {
+            ParsePubkeyError::WrongSize => ParsePubkeyError::WrongSize as i64,
+            ParsePubkeyError::Invalid => ParsePubkeyError::Invalid as i64,
+        })
+    }
+    #[inline]
+    fn to_u64(&self) -> Option<u64> {
+        self.to_i64().map(|x| x as u64)
+    }
+}
+
+impl FromPrimitive for ParsePubkeyError {
+    #[inline]
+    fn from_i64(n: i64) -> Option<Self> {
+        if n == ParsePubkeyError::WrongSize as i64 {
+            Some(ParsePubkeyError::WrongSize)
+        } else if n == ParsePubkeyError::Invalid as i64 {
+            Some(ParsePubkeyError::Invalid)
+        } else {
+            None
+        }
+    }
+    #[inline]
+    fn from_u64(n: u64) -> Option<Self> {
+        Self::from_i64(n as i64)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ParsePubkeyError {}
+
+impl fmt::Display for ParsePubkeyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> ::core::fmt::Result {
+        match self {
+            ParsePubkeyError::WrongSize => f.write_str("String is the wrong size"),
+            ParsePubkeyError::Invalid => f.write_str("Invalid Base58 string"),
+        }
+    }
 }
 
 impl From<Infallible> for ParsePubkeyError {
@@ -118,6 +220,7 @@ impl<T> DecodeError<T> for ParsePubkeyError {
     }
 }
 
+#[cfg(any(feature = "std", target_arch = "wasm32"))]
 impl FromStr for Pubkey {
     type Err = ParsePubkeyError;
 
@@ -128,7 +231,7 @@ impl FromStr for Pubkey {
         let pubkey_vec = bs58::decode(s)
             .into_vec()
             .map_err(|_| ParsePubkeyError::Invalid)?;
-        if pubkey_vec.len() != mem::size_of::<Pubkey>() {
+        if pubkey_vec.len() != core::mem::size_of::<Pubkey>() {
             Err(ParsePubkeyError::WrongSize)
         } else {
             Pubkey::try_from(pubkey_vec).map_err(|_| ParsePubkeyError::Invalid)
@@ -144,7 +247,7 @@ impl From<[u8; 32]> for Pubkey {
 }
 
 impl TryFrom<&[u8]> for Pubkey {
-    type Error = std::array::TryFromSliceError;
+    type Error = core::array::TryFromSliceError;
 
     #[inline]
     fn try_from(pubkey: &[u8]) -> Result<Self, Self::Error> {
@@ -152,6 +255,7 @@ impl TryFrom<&[u8]> for Pubkey {
     }
 }
 
+#[cfg(any(feature = "std", target_arch = "wasm32"))]
 impl TryFrom<Vec<u8>> for Pubkey {
     type Error = Vec<u8>;
 
@@ -161,6 +265,7 @@ impl TryFrom<Vec<u8>> for Pubkey {
     }
 }
 
+#[cfg(feature = "std")]
 impl TryFrom<&str> for Pubkey {
     type Error = ParsePubkeyError;
     fn try_from(s: &str) -> Result<Self, Self::Error> {
@@ -168,6 +273,10 @@ impl TryFrom<&str> for Pubkey {
     }
 }
 
+// If target_os = "solana", then this panics so there are no dependencies.
+// When target_os != "solana", this should be opt-in so users
+// don't need the curve25519 dependency.
+#[cfg(any(target_os = "solana", feature = "curve25519"))]
 #[allow(clippy::used_underscore_binding)]
 pub fn bytes_are_curve_point<T: AsRef<[u8]>>(_bytes: T) -> bool {
     #[cfg(not(target_os = "solana"))]
@@ -198,6 +307,11 @@ impl Pubkey {
         Self::from(b)
     }
 
+    // If target_os = "solana", then the solana_hasher crate will use
+    // syscalls which bring no dependencies.
+    // When target_os != "solana", this should be opt-in so users
+    // don't need the sha2 dependency.
+    #[cfg(any(target_os = "solana", feature = "sha2"))]
     pub fn create_with_seed(
         base: &Pubkey,
         seed: &str,
@@ -214,7 +328,7 @@ impl Pubkey {
                 return Err(PubkeyError::IllegalOwner);
             }
         }
-        let hash = hashv(&[base.as_ref(), seed.as_ref(), owner]);
+        let hash = solana_hasher::hashv(&[base.as_ref(), seed.as_ref(), owner]);
         Ok(Pubkey::from(hash.to_bytes()))
     }
 
@@ -305,10 +419,10 @@ impl Pubkey {
     ///
     /// First the on-chain Solana program:
     ///
-    /// ```
+    /// ```text
     /// # use borsh::{BorshSerialize, BorshDeserialize};
+    /// # use solana_pubkey::Pubkey;
     /// # use solana_program::{
-    /// #     pubkey::Pubkey,
     /// #     entrypoint::ProgramResult,
     /// #     program::invoke_signed,
     /// #     system_instruction,
@@ -385,11 +499,11 @@ impl Pubkey {
     ///
     /// The client program:
     ///
-    /// ```
+    /// ```text
     /// # use borsh::{BorshSerialize, BorshDeserialize};
     /// # use solana_program::example_mocks::{solana_sdk, solana_rpc_client};
+    /// # use solana_pubkey::Pubkey;
     /// # use solana_program::{
-    /// #     pubkey::Pubkey,
     /// #     instruction::Instruction,
     /// #     hash::Hash,
     /// #     instruction::AccountMeta,
@@ -471,6 +585,11 @@ impl Pubkey {
     /// #
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    // If target_os = "solana", then the function will use
+    // syscalls which bring no dependencies.
+    // When target_os != "solana", this should be opt-in so users
+    // don't need the curve25519 dependency.
+    #[cfg(any(target_os = "solana", feature = "curve25519"))]
     pub fn find_program_address(seeds: &[&[u8]], program_id: &Pubkey) -> (Pubkey, u8) {
         Self::try_find_program_address(seeds, program_id)
             .unwrap_or_else(|| panic!("Unable to find a viable program address bump seed"))
@@ -488,6 +607,11 @@ impl Pubkey {
     /// See the documentation for [`find_program_address`] for a full description.
     ///
     /// [`find_program_address`]: Pubkey::find_program_address
+    // If target_os = "solana", then the function will use
+    // syscalls which bring no dependencies.
+    // When target_os != "solana", this should be opt-in so users
+    // don't need the curve25519 dependency.
+    #[cfg(any(target_os = "solana", feature = "curve25519"))]
     #[allow(clippy::same_item_push)]
     pub fn try_find_program_address(seeds: &[&[u8]], program_id: &Pubkey) -> Option<(Pubkey, u8)> {
         // Perform the calculation inline, calling this from within a program is
@@ -524,7 +648,7 @@ impl Pubkey {
                 )
             };
             match result {
-                crate::entrypoint::SUCCESS => Some((Pubkey::from(bytes), bump_seed)),
+                SUCCESS => Some((Pubkey::from(bytes), bump_seed)),
                 _ => None,
             }
         }
@@ -565,13 +689,18 @@ impl Pubkey {
     /// that the returned `Pubkey` has the expected value.
     ///
     /// ```
-    /// # use solana_program::pubkey::Pubkey;
+    /// # use solana_pubkey::Pubkey;
     /// # let program_id = Pubkey::new_unique();
     /// let (expected_pda, bump_seed) = Pubkey::find_program_address(&[b"vault"], &program_id);
     /// let actual_pda = Pubkey::create_program_address(&[b"vault", &[bump_seed]], &program_id)?;
     /// assert_eq!(expected_pda, actual_pda);
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    // If target_os = "solana", then the function will use
+    // syscalls which bring no dependencies.
+    // When target_os != "solana", this should be opt-in so users
+    // don't need the curve225519 dep.
+    #[cfg(any(target_os = "solana", feature = "curve25519"))]
     pub fn create_program_address(
         seeds: &[&[u8]],
         program_id: &Pubkey,
@@ -589,7 +718,7 @@ impl Pubkey {
         // not supported
         #[cfg(not(target_os = "solana"))]
         {
-            let mut hasher = crate::hash::Hasher::default();
+            let mut hasher = solana_hasher::Hasher::default();
             for seed in seeds.iter() {
                 hasher.hash(seed);
             }
@@ -615,7 +744,7 @@ impl Pubkey {
                 )
             };
             match result {
-                crate::entrypoint::SUCCESS => Ok(Pubkey::from(bytes)),
+                SUCCESS => Ok(Pubkey::from(bytes)),
                 _ => Err(result.into()),
             }
         }
@@ -625,6 +754,10 @@ impl Pubkey {
         self.0
     }
 
+    // If target_os = "solana", then this panics so there are no dependencies.
+    // When target_os != "solana", this should be opt-in so users
+    // don't need the curve25519 dependency.
+    #[cfg(any(target_os = "solana", feature = "curve25519"))]
     pub fn is_on_curve(&self) -> bool {
         bytes_are_curve_point(self)
     }
@@ -636,8 +769,8 @@ impl Pubkey {
             crate::syscalls::sol_log_pubkey(self.as_ref() as *const _ as *const u8)
         };
 
-        #[cfg(not(target_os = "solana"))]
-        crate::program_stubs::sol_log(&self.to_string());
+        #[cfg(all(not(target_os = "solana"), feature = "std"))]
+        std::println!("{}", std::string::ToString::to_string(&self));
     }
 }
 
@@ -684,7 +817,7 @@ macro_rules! impl_borsh_schema {
             [u8; 32]: $borsh::BorshSchema,
         {
             fn declaration() -> $borsh::schema::Declaration {
-                "Pubkey".to_string()
+                std::string::String::from("Pubkey")
             }
             fn add_definitions_recursively(
                 definitions: &mut $borsh::maybestd::collections::HashMap<
@@ -727,6 +860,133 @@ macro_rules! impl_borsh_serialize {
 }
 #[cfg(feature = "borsh")]
 impl_borsh_serialize!(borsh0_10);
+
+#[cfg(all(target_arch = "wasm32", feature = "curve25519"))]
+fn js_value_to_seeds_vec(array_of_uint8_arrays: &[JsValue]) -> Result<Vec<Vec<u8>>, JsValue> {
+    let vec_vec_u8 = array_of_uint8_arrays
+        .iter()
+        .filter_map(|u8_array| {
+            u8_array
+                .dyn_ref::<Uint8Array>()
+                .map(|u8_array| u8_array.to_vec())
+        })
+        .collect::<Vec<_>>();
+
+    if vec_vec_u8.len() != array_of_uint8_arrays.len() {
+        Err("Invalid Array of Uint8Arrays".into())
+    } else {
+        Ok(vec_vec_u8)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn display_to_jsvalue<T: std::fmt::Display>(display: T) -> JsValue {
+    std::string::ToString::to_string(&display).into()
+}
+
+#[allow(non_snake_case)]
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl Pubkey {
+    /// Create a new Pubkey object
+    ///
+    /// * `value` - optional public key as a base58 encoded string, `Uint8Array`, `[number]`
+    #[wasm_bindgen(constructor)]
+    pub fn constructor(value: JsValue) -> Result<Pubkey, JsValue> {
+        if let Some(base58_str) = value.as_string() {
+            base58_str.parse::<Pubkey>().map_err(display_to_jsvalue)
+        } else if let Some(uint8_array) = value.dyn_ref::<Uint8Array>() {
+            Pubkey::try_from(uint8_array.to_vec())
+                .map_err(|err| JsValue::from(std::format!("Invalid Uint8Array pubkey: {err:?}")))
+        } else if let Some(array) = value.dyn_ref::<Array>() {
+            let mut bytes = std::vec![];
+            let iterator = js_sys::try_iter(&array.values())?.expect("array to be iterable");
+            for x in iterator {
+                let x = x?;
+
+                if let Some(n) = x.as_f64() {
+                    if n >= 0. && n <= 255. {
+                        bytes.push(n as u8);
+                        continue;
+                    }
+                }
+                return Err(std::format!("Invalid array argument: {:?}", x).into());
+            }
+            Pubkey::try_from(bytes)
+                .map_err(|err| JsValue::from(std::format!("Invalid Array pubkey: {err:?}")))
+        } else if value.is_undefined() {
+            Ok(Pubkey::default())
+        } else {
+            Err("Unsupported argument".into())
+        }
+    }
+
+    /// Return the base58 string representation of the public key
+    pub fn toString(&self) -> std::string::String {
+        std::string::ToString::to_string(self)
+    }
+
+    /// Check if a `Pubkey` is on the ed25519 curve.
+    #[cfg(feature = "curve25519")]
+    pub fn isOnCurve(&self) -> bool {
+        self.is_on_curve()
+    }
+
+    /// Checks if two `Pubkey`s are equal
+    pub fn equals(&self, other: &Pubkey) -> bool {
+        self == other
+    }
+
+    /// Return the `Uint8Array` representation of the public key
+    pub fn toBytes(&self) -> std::boxed::Box<[u8]> {
+        self.0.clone().into()
+    }
+
+    /// Derive a Pubkey from another Pubkey, string seed, and a program id
+    #[cfg(feature = "sha2")]
+    pub fn createWithSeed(base: &Pubkey, seed: &str, owner: &Pubkey) -> Result<Pubkey, JsValue> {
+        Pubkey::create_with_seed(base, seed, owner).map_err(display_to_jsvalue)
+    }
+
+    /// Derive a program address from seeds and a program id
+    #[cfg(feature = "curve25519")]
+    pub fn createProgramAddress(
+        seeds: std::boxed::Box<[JsValue]>,
+        program_id: &Pubkey,
+    ) -> Result<Pubkey, JsValue> {
+        let seeds_vec = js_value_to_seeds_vec(&seeds)?;
+        let seeds_slice = seeds_vec
+            .iter()
+            .map(|seed| seed.as_slice())
+            .collect::<Vec<_>>();
+
+        Pubkey::create_program_address(seeds_slice.as_slice(), program_id)
+            .map_err(display_to_jsvalue)
+    }
+
+    /// Find a valid program address
+    ///
+    /// Returns:
+    /// * `[PubKey, number]` - the program address and bump seed
+    #[cfg(feature = "curve25519")]
+    pub fn findProgramAddress(
+        seeds: std::boxed::Box<[JsValue]>,
+        program_id: &Pubkey,
+    ) -> Result<JsValue, JsValue> {
+        let seeds_vec = js_value_to_seeds_vec(&seeds)?;
+        let seeds_slice = seeds_vec
+            .iter()
+            .map(|seed| seed.as_slice())
+            .collect::<Vec<_>>();
+
+        let (address, bump_seed) = Pubkey::find_program_address(seeds_slice.as_slice(), program_id);
+
+        let result = Array::new_with_length(2);
+        result.set(0, address.into());
+        result.set(1, bump_seed.into());
+        Ok(result.into())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -925,7 +1185,7 @@ mod tests {
     fn test_pubkey_off_curve() {
         // try a bunch of random input, all successful generated program
         // addresses must land off the curve and be unique
-        let mut addresses = vec![];
+        let mut addresses = std::vec![];
         for _ in 0..1_000 {
             let program_id = Pubkey::new_unique();
             let bytes1 = rand::random::<[u8; 10]>();
@@ -966,7 +1226,8 @@ mod tests {
         let mut to_fake = owner.to_bytes().to_vec();
         to_fake.extend_from_slice(marker);
 
-        let seed = &String::from_utf8(to_fake[..to_fake.len() - 32].to_vec()).expect("not utf8");
+        let seed = &std::string::String::from_utf8(to_fake[..to_fake.len() - 32].to_vec())
+            .expect("not utf8");
         let base = &Pubkey::try_from(&to_fake[to_fake.len() - 32..]).unwrap();
 
         Pubkey::create_with_seed(&key, seed, base)
