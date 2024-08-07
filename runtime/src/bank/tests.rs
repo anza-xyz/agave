@@ -13017,11 +13017,11 @@ fn test_bank_epoch_stakes() {
         );
     }
     assert_eq!(bank1.epoch(), 1);
-    assert_eq!(bank1.epoch_total_stake(0), Some(total_stake));
-    assert_eq!(bank1.epoch_node_id_to_stake(0, &Pubkey::new_unique()), None);
+    assert_eq!(bank1.epoch_total_stake(1), Some(total_stake));
+    assert_eq!(bank1.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
     for (i, keypair) in voting_keypairs.iter().enumerate() {
         assert_eq!(
-            bank0.epoch_node_id_to_stake(0, &keypair.node_keypair.pubkey()),
+            bank1.epoch_node_id_to_stake(1, &keypair.node_keypair.pubkey()),
             Some(stakes[i])
         );
     }
