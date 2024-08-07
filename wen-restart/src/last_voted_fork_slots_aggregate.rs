@@ -10,7 +10,6 @@ use {
         pubkey::Pubkey,
     },
     std::{
-        cmp::Ordering,
         collections::{BTreeSet, HashMap, HashSet},
         str::FromStr,
         sync::Arc,
@@ -22,6 +21,7 @@ pub(crate) struct LastVotedForkSlotsEpochInfo {
     pub epoch: Epoch,
     pub total_stake: u64,
     pub total_active_stake: u64,
+    pub considered_during_exit: bool,
 }
 
 pub(crate) struct LastVotedForkSlotsAggregate {
@@ -72,11 +72,18 @@ impl LastVotedForkSlotsAggregate {
                 }
             }
         }
-        let epoch_info_vec = vec![LastVotedForkSlotsEpochInfo {
-            epoch: root_epoch,
-            total_stake: root_bank.epoch_total_stake(root_bank.epoch()).unwrap(),
-            total_active_stake: 0,
-        }];
+        // We would only consider slots in root_epoch and the next epoch.
+        let epoch_info_vec: Vec<LastVotedForkSlotsEpochInfo> = (root_epoch
+            ..root_epoch
+                .checked_add(2)
+                .expect("root_epoch should not be so big"))
+            .map(|epoch| LastVotedForkSlotsEpochInfo {
+                epoch,
+                total_stake: root_bank.epoch_total_stake(epoch).unwrap(),
+                total_active_stake: 0,
+                considered_during_exit: false,
+            })
+            .collect();
         Self {
             active_peers,
             epoch_info_vec,
@@ -117,7 +124,10 @@ impl LastVotedForkSlotsAggregate {
         if from == &self.my_pubkey {
             return None;
         }
-        self.active_peers.insert(*from);
+        // If active peers didn't change, we don't need to update active stake in epoch info.
+        if self.active_peers.insert(*from) {
+            self.update_epoch_info_active_stake();
+        }
         let root_slot = self.root_bank.slot();
         let new_slots_vec = new_slots.to_slots(root_slot);
         let record = LastVotedForkSlotsRecord {
@@ -129,7 +139,7 @@ impl LastVotedForkSlotsAggregate {
         if self.update_and_check_if_message_already_saved(new_slots, new_slots_vec) {
             return None;
         }
-        self.update_epoch_info_vec();
+        self.update_epoch_info_considered_during_exit();
         Some(record)
     }
 
@@ -184,54 +194,34 @@ impl LastVotedForkSlotsAggregate {
         false
     }
 
-    fn update_epoch_info_vec(&mut self) {
-        let highest_repair_slot = self.slots_to_repair.last();
-        match highest_repair_slot {
-            Some(slot) => {
-                let current_epoch = self.root_bank.get_epoch_and_slot_index(*slot).0;
-                let last_entry_epoch = self.epoch_info_vec.last().unwrap().epoch;
-                match last_entry_epoch.cmp(&current_epoch) {
-                    Ordering::Less => {
-                        // wandering into new epoch, add to the end of state vec, we should have at most 2 entries.
-                        self.epoch_info_vec.push(LastVotedForkSlotsEpochInfo {
-                            epoch: current_epoch,
-                            total_stake: self.root_bank.epoch_total_stake(current_epoch).unwrap(),
-                            total_active_stake: 0,
-                        });
-                    }
-                    Ordering::Greater => {
-                        // Somehow wandering into new epoch and no more because someone changed votes, let's remove
-                        // the new epoch and update the old one.
-                        assert!(self.epoch_info_vec.first().unwrap().epoch == current_epoch);
-                        self.epoch_info_vec.truncate(1);
-                    }
-                    Ordering::Equal => {}
-                }
-                for entry in self.epoch_info_vec.iter_mut().rev() {
-                    entry.total_active_stake =
-                        self.active_peers.iter().fold(0, |sum: u64, pubkey| {
-                            sum.saturating_add(
-                                Self::validator_stake_at_epoch(
-                                    &self.root_bank,
-                                    &entry.epoch,
-                                    pubkey,
-                                )
-                                .unwrap_or(0),
-                            )
-                        });
-                }
-            }
-            None => {
-                self.epoch_info_vec.truncate(1);
-                let first_entry = self.epoch_info_vec.first_mut().unwrap();
-                first_entry.total_active_stake = 0;
-            }
+    fn update_epoch_info_active_stake(&mut self) {
+        for entry in self.epoch_info_vec.iter_mut() {
+            entry.total_active_stake = self.active_peers.iter().fold(0, |sum: u64, pubkey| {
+                sum.saturating_add(
+                    Self::validator_stake_at_epoch(&self.root_bank, &entry.epoch, pubkey)
+                        .unwrap_or(0),
+                )
+            });
+        }
+    }
+
+    fn update_epoch_info_considered_during_exit(&mut self) {
+        let highest_repair_slot_epoch = self
+            .slots_to_repair
+            .last()
+            .map(|slot| self.root_bank.epoch_schedule().get_epoch(*slot));
+        for entry in self.epoch_info_vec.iter_mut() {
+            // If highest_repair_slot_epoch is None, it means no slot has reached the repair threshold,
+            // no epoch is considered for exit.
+            // Otherwise consider the epoch if it's smaller or equal to the highest_repair_slot_epoch.
+            entry.considered_during_exit = Some(entry.epoch) <= highest_repair_slot_epoch;
         }
     }
 
     pub(crate) fn min_active_percent(&self) -> f64 {
         self.epoch_info_vec
             .iter()
+            .filter(|info| info.considered_during_exit)
             .map(|info| info.total_active_stake as f64 / info.total_stake as f64 * 100.0)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0)
@@ -446,11 +436,20 @@ mod tests {
                 ]
                 .into_iter()
                 .collect(),
-                epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
-                    epoch: 0,
-                    total_stake: 1000,
-                    total_active_stake: 500,
-                },],
+                epoch_info_vec: vec![
+                    LastVotedForkSlotsEpochInfo {
+                        epoch: 0,
+                        total_stake: 1000,
+                        total_active_stake: 500,
+                        considered_during_exit: true,
+                    },
+                    LastVotedForkSlotsEpochInfo {
+                        epoch: 1,
+                        total_stake: 1000,
+                        total_active_stake: 500,
+                        considered_during_exit: false
+                    }
+                ],
             },
         );
     }
@@ -583,11 +582,20 @@ mod tests {
                 ]
                 .into_iter()
                 .collect(),
-                epoch_info_vec: vec![LastVotedForkSlotsEpochInfo {
-                    epoch: 0,
-                    total_stake: 1000,
-                    total_active_stake: 500,
-                },],
+                epoch_info_vec: vec![
+                    LastVotedForkSlotsEpochInfo {
+                        epoch: 0,
+                        total_stake: 1000,
+                        total_active_stake: 500,
+                        considered_during_exit: true,
+                    },
+                    LastVotedForkSlotsEpochInfo {
+                        epoch: 1,
+                        total_stake: 1000,
+                        total_active_stake: 500,
+                        considered_during_exit: false
+                    }
+                ],
             },
         );
     }

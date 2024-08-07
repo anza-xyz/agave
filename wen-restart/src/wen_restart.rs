@@ -981,6 +981,7 @@ pub(crate) fn increment_and_write_wen_restart_records(
                                 epoch: info.epoch,
                                 total_stake: info.total_stake,
                                 total_active_stake: info.total_active_stake,
+                                considered_during_exit: info.considered_during_exit,
                             })
                             .collect(),
                     });
@@ -1117,6 +1118,7 @@ pub(crate) fn initialize(
                                                 epoch: info.epoch,
                                                 total_stake: info.total_stake,
                                                 total_active_stake: info.total_active_stake,
+                                                considered_during_exit: info.considered_during_exit,
                                             })
                                             .collect(),
                                     }
@@ -1146,6 +1148,7 @@ pub(crate) fn initialize(
                                         epoch: info.epoch,
                                         total_stake: info.total_stake,
                                         total_active_stake: info.total_active_stake,
+                                        considered_during_exit: info.considered_during_exit,
                                     })
                                     .collect(),
                             })
@@ -1236,7 +1239,7 @@ mod tests {
     };
 
     const SHRED_VERSION: u16 = 2;
-    const EXPECTED_SLOTS: Slot = 90;
+    const EXPECTED_SLOTS: Slot = 40;
     const TICKS_PER_SLOT: u64 = 2;
     const TOTAL_VALIDATOR_COUNT: u16 = 20;
     const MY_INDEX: usize = TOTAL_VALIDATOR_COUNT as usize - 1;
@@ -1690,13 +1693,15 @@ mod tests {
                                 epoch: 0,
                                 // We are simulating 5% joined LastVotedForkSlots but not HeaviestFork.
                                 total_active_stake: total_active_stake_during_heaviest_fork + 100,
-                                total_stake: 2000
+                                total_stake: 2000,
+                                considered_during_exit: true,
                             },
                             LastVotedForkSlotsEpochInfoRecord {
                                 epoch: 1,
                                 // We are simulating 5% joined LastVotedForkSlots but not HeaviestFork.
                                 total_active_stake: total_active_stake_during_heaviest_fork + 100,
-                                total_stake: 2000
+                                total_stake: 2000,
+                                considered_during_exit: true,
                             },
                         ],
                     }),
@@ -1941,11 +1946,13 @@ mod tests {
                             epoch: 1,
                             total_active_stake: 800,
                             total_stake: 1000,
+                            considered_during_exit: true,
                         },
                         LastVotedForkSlotsEpochInfoRecord {
                             epoch: 2,
                             total_active_stake: 900,
                             total_stake: 1000,
+                            considered_during_exit: false,
                         },
                     ],
                 }),
@@ -1969,11 +1976,13 @@ mod tests {
                                 epoch: 1,
                                 total_active_stake: 800,
                                 total_stake: 1000,
+                                considered_during_exit: true,
                             },
                             LastVotedForkSlotsEpochInfo {
                                 epoch: 2,
                                 total_active_stake: 900,
                                 total_stake: 1000,
+                                considered_during_exit: false,
                             }
                         ],
                     },
@@ -2285,6 +2294,7 @@ mod tests {
                     epoch: 0,
                     total_stake: 2000,
                     total_active_stake: 900,
+                    considered_during_exit: true,
                 }],
             }),
         });
@@ -2341,6 +2351,7 @@ mod tests {
                             epoch: 0,
                             total_stake: 2000,
                             total_active_stake: 900,
+                            considered_during_exit: true,
                         }],
                     }),
                 },
@@ -2351,6 +2362,7 @@ mod tests {
                             epoch: 0,
                             total_stake: 2000,
                             total_active_stake: 900,
+                            considered_during_exit: true,
                         }],
                     },
                     my_heaviest_fork: None,
@@ -2376,6 +2388,7 @@ mod tests {
                             epoch: 0,
                             total_stake: 2000,
                             total_active_stake: 900,
+                            considered_during_exit: true,
                         }],
                     },
                     my_heaviest_fork: Some(HeaviestForkRecord {
@@ -2497,6 +2510,7 @@ mod tests {
                         epoch: 0,
                         total_stake: 1000,
                         total_active_stake: 900,
+                        considered_during_exit: true,
                     }],
                 },
                 test_state.bank_forks.clone(),
@@ -2517,6 +2531,7 @@ mod tests {
                         epoch: 0,
                         total_stake: 1000,
                         total_active_stake: 900,
+                        considered_during_exit: true,
                     }],
                 },
                 test_state.bank_forks.clone(),
@@ -2538,6 +2553,7 @@ mod tests {
                         epoch: 0,
                         total_stake: 1000,
                         total_active_stake: 900,
+                        considered_during_exit: true,
                     }],
                 },
                 test_state.bank_forks.clone(),
@@ -2583,16 +2599,13 @@ mod tests {
                             epoch: 0,
                             total_stake: 1000,
                             total_active_stake: 900,
+                            considered_during_exit: true,
                         },
                         LastVotedForkSlotsEpochInfo {
                             epoch: 1,
                             total_stake: 1000,
                             total_active_stake: 900,
-                        },
-                        LastVotedForkSlotsEpochInfo {
-                            epoch: 2,
-                            total_stake: 1000,
-                            total_active_stake: 900,
+                            considered_during_exit: true,
                         },
                     ],
                 },
@@ -2639,16 +2652,13 @@ mod tests {
                             epoch: 0,
                             total_stake: 1000,
                             total_active_stake: 900,
+                            considered_during_exit: true,
                         },
                         LastVotedForkSlotsEpochInfo {
                             epoch: 1,
                             total_stake: 1000,
                             total_active_stake: 900,
-                        },
-                        LastVotedForkSlotsEpochInfo {
-                            epoch: 2,
-                            total_stake: 1000,
-                            total_active_stake: 900,
+                            considered_during_exit: true,
                         },
                     ],
                 },
