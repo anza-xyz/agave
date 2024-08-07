@@ -12989,10 +12989,11 @@ fn test_blockhash_last_valid_block_height() {
 fn test_bank_epoch_stakes() {
     solana_logger::setup();
     let num_of_nodes: u64 = 30;
-    let voting_keypairs = (0..num_of_nodes)
+    let stakes = (1..num_of_nodes.checked_add(1).expect("Shouldn't be big")).collect::<Vec<_>>();
+    let voting_keypairs = stakes
+        .iter()
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
-    let stakes = (1..num_of_nodes.checked_add(1).expect("Shouldn't be big")).collect::<Vec<_>>();
     let total_stake = stakes.iter().sum();
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_vote_accounts(1_000_000_000, &voting_keypairs, stakes.clone());
