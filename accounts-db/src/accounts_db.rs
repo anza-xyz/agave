@@ -1051,7 +1051,6 @@ pub enum AccountsHashVerificationError {
 struct CleanKeyTimings {
     collect_delta_keys_us: u64,
     delta_insert_us: u64,
-    hashset_to_vec_us: u64,
     dirty_store_processing_us: u64,
     delta_key_count: u64,
     dirty_pubkeys_count: u64,
@@ -3129,10 +3128,6 @@ impl AccountsDb {
         timings.delta_insert_us += delta_insert.as_us();
 
         timings.delta_key_count = Self::count_pubkeys(&candidates);
-
-        let mut hashset_to_vec = Measure::start("flat_map");
-        hashset_to_vec.stop();
-        timings.hashset_to_vec_us += hashset_to_vec.as_us();
 
         // Check if we should purge any of the zero_lamport_accounts_to_purge_later, based on the
         // latest_full_snapshot_slot.
