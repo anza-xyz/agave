@@ -16,6 +16,7 @@ use {
 };
 
 const NUM_TRANSACTIONS_PER_ITER: usize = 1024;
+const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
 
 fn build_sanitized_transaction(
     payer_keypair: &Keypair,
@@ -43,14 +44,7 @@ fn bench_process_compute_budget_instructions_empty(bencher: &mut Bencher) {
 #[bench]
 fn bench_process_compute_budget_instructions_non_builtins(bencher: &mut Bencher) {
     let ixs: Vec<_> = (0..4)
-        .map(|_| {
-            Instruction::new_with_bincode(
-                Pubkey::create_program_address(&[b"", &[1]], &solana_sdk::bpf_loader::id())
-                    .unwrap(),
-                &0_u8,
-                vec![],
-            )
-        })
+        .map(|_| Instruction::new_with_bincode(DUMMY_PROGRAM_ID.parse().unwrap(), &0_u8, vec![]))
         .collect();
     assert_eq!(4, ixs.len());
     let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
@@ -111,14 +105,7 @@ fn bench_process_compute_budget_instructions_builtins(bencher: &mut Bencher) {
 fn bench_process_compute_budget_instructions_mixed(bencher: &mut Bencher) {
     let payer_keypair = Keypair::new();
     let mut ixs: Vec<_> = (0..128)
-        .map(|_| {
-            Instruction::new_with_bincode(
-                Pubkey::create_program_address(&[b"", &[1]], &solana_sdk::bpf_loader::id())
-                    .unwrap(),
-                &0_u8,
-                vec![],
-            )
-        })
+        .map(|_| Instruction::new_with_bincode(DUMMY_PROGRAM_ID.parse().unwrap(), &0_u8, vec![]))
         .collect();
     ixs.extend(vec![
         ComputeBudgetInstruction::request_heap_frame(40 * 1024),
