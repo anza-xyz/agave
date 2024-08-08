@@ -207,6 +207,12 @@ fn has_duplicates(account_keys: AccountKeys) -> bool {
 #[cfg(test)]
 mod tests {
     use {super::*, solana_sdk::message::v0::LoadedAddresses};
+    use super::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static BATCH_ACCOUNT_LOCKS: RefCell<BatchAccountLocks> = RefCell::new(BatchAccountLocks::with_capacity(64*128));
+    }
 
     #[test]
     fn test_account_locks() {
@@ -335,5 +341,50 @@ mod tests {
         keys[47] = keys[3]; // Duplicate key
         let account_keys = AccountKeys::new(&keys, None);
         assert!(has_duplicates(account_keys));
+    }
+
+    #[test]
+    fn test_account_locks_with_conflicting_batches_and_unlock() {
+        let mut account_locks = AccountLocks::default();
+
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+        BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
+            let mut batch_account_locks = batch_account_locks.borrow_mut();
+            // Add write and read-lock.
+            let (result,_) = account_locks.try_lock_accounts_with_conflicting_batches([(&key1, true), (&key2, false)].into_iter(), &mut batch_account_locks);
+            assert!(result.is_ok());
+
+            // Try to add duplicate write-lock, allowed in conflicting batch.
+            let (result,_) = account_locks.try_lock_accounts_with_conflicting_batches([(&key1, true)].into_iter(),&mut  batch_account_locks);
+            assert!(result.is_ok());
+
+            // Try to add write lock on read-locked account, allowed in conflicting batch.
+            let (result,_) = account_locks.try_lock_accounts_with_conflicting_batches([(&key2, true)].into_iter(), &mut batch_account_locks);
+            assert!(result.is_ok());
+
+            // Try to add read lock on write-locked account, allowed in conflicting batch.
+            let (result,_) = account_locks.try_lock_accounts_with_conflicting_batches([(&key1, false)].into_iter(), &mut batch_account_locks);
+            assert!(result.is_ok());
+
+            // Add read lock on read-locked account.
+            let (result,_) = account_locks.try_lock_accounts_with_conflicting_batches([(&key2, false)].into_iter(), &mut batch_account_locks);
+            assert!(result.is_ok());
+
+            // Unlock write and read locks.
+            account_locks.unlock_accounts([(&key1, true), (&key2, false)].into_iter());
+
+            // More remaining write-locks and Read-lock.
+            assert!(account_locks.is_locked_write(&key1));
+            assert!(account_locks.is_locked_readonly(&key2));
+
+            // Unlock remaining write locks
+            account_locks.unlock_accounts([(&key1, true)].into_iter());
+            assert!(!account_locks.is_locked_write(&key1));
+            
+            // Unlock read lock.
+            account_locks.unlock_accounts([(&key2, false)].into_iter());
+            assert!(!account_locks.is_locked_readonly(&key2));
+        })
     }
 }

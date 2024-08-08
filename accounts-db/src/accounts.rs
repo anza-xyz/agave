@@ -56,7 +56,7 @@ thread_local! {
 }
 
 impl BatchAccountLocks {
-    fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
         BatchAccountLocks {
             writables: AHashSet::with_capacity(capacity),
             readables: AHashSet::with_capacity(capacity),
