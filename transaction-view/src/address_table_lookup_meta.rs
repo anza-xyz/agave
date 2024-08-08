@@ -89,6 +89,7 @@ mod tests {
         let meta = AddressTableLookupMeta::try_new(&bytes, &mut offset).unwrap();
         assert_eq!(meta.num_address_table_lookup, 0);
         assert_eq!(meta.offset, 1);
+        assert_eq!(offset, bytes.len());
     }
 
     #[test]
@@ -114,6 +115,7 @@ mod tests {
         let meta = AddressTableLookupMeta::try_new(&bytes, &mut offset).unwrap();
         assert_eq!(meta.num_address_table_lookup, 1);
         assert_eq!(meta.offset, 1);
+        assert_eq!(offset, bytes.len());
     }
 
     #[test]
@@ -135,6 +137,7 @@ mod tests {
         let meta = AddressTableLookupMeta::try_new(&bytes, &mut offset).unwrap();
         assert_eq!(meta.num_address_table_lookup, 2);
         assert_eq!(meta.offset, 1);
+        assert_eq!(offset, bytes.len());
     }
 
     #[test]
