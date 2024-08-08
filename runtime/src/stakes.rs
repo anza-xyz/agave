@@ -607,6 +607,8 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
     }
 }
 
+/// This conversion is memory intensive so should only be used in development
+/// contexts.
 #[cfg(feature = "dev-context-only-utils")]
 impl From<StakesEnum> for Stakes<Delegation> {
     fn from(stakes: StakesEnum) -> Self {
