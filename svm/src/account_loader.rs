@@ -209,21 +209,22 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         .unique()
         .collect::<Vec<&u8>>();
 
-    let mut collect_account = |key, account_size, account, rent, account_found| -> Result<()> {
-        accumulate_and_check_loaded_account_data_size(
-            &mut accumulated_accounts_data_size,
-            account_size,
-            tx_details.compute_budget_limits.loaded_accounts_bytes,
-            error_metrics,
-        )?;
+    let mut collect_account =
+        |key, account_size, account: AccountSharedData, rent, account_found| -> Result<()> {
+            accumulate_and_check_loaded_account_data_size(
+                &mut accumulated_accounts_data_size,
+                account_size,
+                tx_details.compute_budget_limits.loaded_accounts_bytes,
+                error_metrics,
+            )?;
 
-        tx_rent += rent;
-        rent_debits.insert(key, rent, account.lamports());
+            tx_rent += rent;
+            rent_debits.insert(key, rent, account.lamports());
 
-        accounts.push((*key, account));
-        accounts_found.push(account_found);
-        Ok(())
-    };
+            accounts.push((*key, account));
+            accounts_found.push(account_found);
+            Ok(())
+        };
 
     // Since the fee payer is always the first account, collect it first. Note
     // that account overrides are already applied during fee payer validation so
