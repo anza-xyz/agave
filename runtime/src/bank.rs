@@ -318,10 +318,10 @@ impl BankRc {
 }
 
 pub struct LoadAndExecuteTransactionsOutput {
-    // Vector of results indicating whether a transaction was executed or could not
-    // be executed. Note executed transactions can still have failed!
+    // Vector of results indicating whether a transaction was processed or could not
+    // be processed. Note processed transactions can still have failed!
     pub processing_results: Vec<TransactionProcessingResult>,
-    // Executed transaction counts used to update bank transaction counts and
+    // Processed transaction counts used to update bank transaction counts and
     // for metrics reporting.
     pub processed_counts: ProcessedTransactionCounts,
 }
@@ -889,7 +889,7 @@ struct PrevEpochInflationRewards {
 pub struct ProcessedTransactionCounts {
     pub processed_transactions_count: u64,
     pub processed_non_vote_transactions_count: u64,
-    pub processed_successfully: u64,
+    pub processed_with_successful_result_count: u64,
     pub signature_count: u64,
 }
 
@@ -3528,7 +3528,7 @@ impl Bank {
 
             match processing_result.flattened_result() {
                 Ok(()) => {
-                    processed_counts.processed_successfully += 1;
+                    processed_counts.processed_with_successful_result_count += 1;
                 }
                 Err(err) => {
                     if *err_count == 0 {
@@ -3760,7 +3760,7 @@ impl Bank {
         let ProcessedTransactionCounts {
             processed_transactions_count,
             processed_non_vote_transactions_count,
-            processed_successfully,
+            processed_with_successful_result_count,
             signature_count,
         } = *processed_counts;
 
@@ -3771,7 +3771,7 @@ impl Bank {
         self.increment_signature_count(signature_count);
 
         let processed_with_failure_result_count =
-            processed_transactions_count.saturating_sub(processed_successfully);
+            processed_transactions_count.saturating_sub(processed_with_successful_result_count);
         self.transaction_error_count
             .fetch_add(processed_with_failure_result_count, Relaxed);
 

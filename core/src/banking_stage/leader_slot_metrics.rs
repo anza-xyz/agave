@@ -1,6 +1,6 @@
 use {
     super::{
-        consumer::ExecuteAndCommitTransactionsCounts,
+        consumer::LeaderProcessedTransactionCounts,
         leader_slot_timing_metrics::{LeaderExecuteAndCommitTimings, LeaderSlotTimingMetrics},
         packet_deserializer::PacketReceiverStats,
         unprocessed_transaction_storage::{
@@ -69,7 +69,7 @@ pub struct CommittedTransactionsCounts {
 impl CommittedTransactionsCounts {
     pub fn accumulate(
         &mut self,
-        transaction_counts: &ExecuteAndCommitTransactionsCounts,
+        transaction_counts: &LeaderProcessedTransactionCounts,
         committed: bool,
     ) {
         saturating_add_assign!(

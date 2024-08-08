@@ -58,7 +58,7 @@ pub struct ProcessTransactionBatchOutput {
 pub struct ExecuteAndCommitTransactionsOutput {
     // Transactions counts reported to `ConsumeWorkerMetrics` and then
     // accumulated later for `LeaderSlotMetrics`
-    pub(crate) transaction_counts: ExecuteAndCommitTransactionsCounts,
+    pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
     pub(crate) retryable_transaction_indexes: Vec<usize>,
@@ -72,7 +72,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct ExecuteAndCommitTransactionsCounts {
+pub struct LeaderProcessedTransactionCounts {
     // Total number of transactions that were passed as candidates for execution
     pub(crate) attempted_processing_count: u64,
     // The number of transactions of that were processed. See description of in `ProcessTransactionsSummary`
@@ -627,9 +627,10 @@ impl Consumer {
             processed_counts,
         } = load_and_execute_transactions_output;
 
-        let transaction_counts = ExecuteAndCommitTransactionsCounts {
+        let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
-            processed_with_successful_result_count: processed_counts.processed_successfully,
+            processed_with_successful_result_count: processed_counts
+                .processed_with_successful_result_count,
             attempted_processing_count: processing_results.len() as u64,
         };
 
@@ -1121,7 +1122,7 @@ mod tests {
 
             assert_eq!(
                 transaction_counts,
-                ExecuteAndCommitTransactionsCounts {
+                LeaderProcessedTransactionCounts {
                     attempted_processing_count: 1,
                     processed_count: 1,
                     processed_with_successful_result_count: 1,
@@ -1169,7 +1170,7 @@ mod tests {
             } = process_transactions_batch_output.execute_and_commit_transactions_output;
             assert_eq!(
                 transaction_counts,
-                ExecuteAndCommitTransactionsCounts {
+                LeaderProcessedTransactionCounts {
                     attempted_processing_count: 1,
                     // Transactions was still executed, just wasn't committed, so should be counted here.
                     processed_count: 1,
@@ -1310,7 +1311,7 @@ mod tests {
 
             assert_eq!(
                 transaction_counts,
-                ExecuteAndCommitTransactionsCounts {
+                LeaderProcessedTransactionCounts {
                     attempted_processing_count: 1,
                     processed_count: 1,
                     processed_with_successful_result_count: 0,
@@ -1416,7 +1417,7 @@ mod tests {
 
             assert_eq!(
                 transaction_counts,
-                ExecuteAndCommitTransactionsCounts {
+                LeaderProcessedTransactionCounts {
                     attempted_processing_count: 1,
                     processed_count: 0,
                     processed_with_successful_result_count: 0,
@@ -1665,7 +1666,7 @@ mod tests {
 
             assert_eq!(
                 transaction_counts,
-                ExecuteAndCommitTransactionsCounts {
+                LeaderProcessedTransactionCounts {
                     attempted_processing_count: 2,
                     processed_count: 1,
                     processed_with_successful_result_count: 1,
