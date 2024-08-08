@@ -222,6 +222,7 @@ mod tests {
             sysvar::tests::mock_get_sysvar_syscall,
         },
         serial_test::serial,
+        test_case::test_case,
     };
 
     #[test]
@@ -235,6 +236,85 @@ mod tests {
             )
             .unwrap() as usize
         );
+    }
+
+    fn mock_slot_hashes(slot_hashes: &SlotHashes) {
+        // The data is always `SlotHashes::size_of()`.
+        let mut data = vec![0; SlotHashes::size_of()];
+        bincode::serialize_into(&mut data[..], slot_hashes).unwrap();
+        mock_get_sysvar_syscall(&data);
+    }
+
+    #[test_case(0)]
+    #[test_case(1)]
+    #[test_case(2)]
+    #[test_case(5)]
+    #[test_case(10)]
+    #[test_case(64)]
+    #[test_case(128)]
+    #[test_case(192)]
+    #[test_case(256)]
+    #[test_case(384)]
+    #[test_case(MAX_ENTRIES)]
+    #[serial]
+    fn test_pod_slot_hashes(num_entries: usize) {
+        let mut slot_hashes = vec![];
+        for i in 0..num_entries {
+            slot_hashes.push((
+                i as u64,
+                hash(&[(i >> 24) as u8, (i >> 16) as u8, (i >> 8) as u8, i as u8]),
+            ));
+        }
+
+        let check_slot_hashes = SlotHashes::new(&slot_hashes);
+        mock_slot_hashes(&check_slot_hashes);
+
+        let pod_slot_hashes = PodSlotHashes::fetch().unwrap();
+
+        // Assert the slice of `PodSlotHash` has the same length as
+        // `SlotHashes`.
+        let pod_slot_hashes_slice = pod_slot_hashes.as_slice().unwrap();
+        assert_eq!(pod_slot_hashes_slice.len(), slot_hashes.len());
+
+        // Assert `PodSlotHashes` and `SlotHashes` contain the same slot hashes
+        // in the same order.
+        for slot in slot_hashes.iter().map(|(slot, _hash)| slot) {
+            // `get`:
+            assert_eq!(
+                pod_slot_hashes.get(slot).unwrap().as_ref(),
+                check_slot_hashes.get(slot),
+            );
+            // `position`:
+            assert_eq!(
+                pod_slot_hashes.position(slot).unwrap(),
+                check_slot_hashes.position(slot),
+            );
+        }
+
+        // Check a few `None` values.
+        let not_a_slot = num_entries.saturating_add(1) as u64;
+        assert_eq!(
+            pod_slot_hashes.get(&not_a_slot).unwrap().as_ref(),
+            check_slot_hashes.get(&not_a_slot),
+        );
+        assert_eq!(pod_slot_hashes.get(&not_a_slot).unwrap(), None);
+        assert_eq!(
+            pod_slot_hashes.position(&not_a_slot).unwrap(),
+            check_slot_hashes.position(&not_a_slot),
+        );
+        assert_eq!(pod_slot_hashes.position(&not_a_slot).unwrap(), None);
+
+        let not_a_slot = num_entries.saturating_add(2) as u64;
+        assert_eq!(
+            pod_slot_hashes.get(&not_a_slot).unwrap().as_ref(),
+            check_slot_hashes.get(&not_a_slot),
+        );
+        assert_eq!(pod_slot_hashes.get(&not_a_slot).unwrap(), None);
+        assert_eq!(
+            pod_slot_hashes.position(&not_a_slot).unwrap(),
+            check_slot_hashes.position(&not_a_slot),
+        );
+        assert_eq!(pod_slot_hashes.position(&not_a_slot).unwrap(), None);
     }
 
     #[serial]
