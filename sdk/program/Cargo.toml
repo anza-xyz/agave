@@ -83,6 +83,7 @@ itertools = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 static_assertions = { workspace = true }
+trybuild2 = "1.2.0"
 
 [build-dependencies]
 rustc_version = { workspace = true }
