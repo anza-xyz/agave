@@ -1,4 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
+#![deny(clippy::wildcard_enum_match_arm)]
 // Remove the following `allow` when `StakeState` is removed, required to avoid
 // warnings from uses of deprecated types during trait derivations.
 #![allow(deprecated)]
@@ -375,10 +376,15 @@ impl Authorized {
         signers: &HashSet<Pubkey>,
         stake_authorize: StakeAuthorize,
     ) -> Result<(), InstructionError> {
-        match stake_authorize {
-            StakeAuthorize::Staker if signers.contains(&self.staker) => Ok(()),
-            StakeAuthorize::Withdrawer if signers.contains(&self.withdrawer) => Ok(()),
-            _ => Err(InstructionError::MissingRequiredSignature),
+        let authorized_signer = match stake_authorize {
+            StakeAuthorize::Staker => &self.staker,
+            StakeAuthorize::Withdrawer => &self.withdrawer,
+        };
+
+        if signers.contains(authorized_signer) {
+            Ok(())
+        } else {
+            Err(InstructionError::MissingRequiredSignature)
         }
     }
 
