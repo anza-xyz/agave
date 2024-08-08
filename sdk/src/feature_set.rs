@@ -837,6 +837,10 @@ pub mod ed25519_precompile_verify_strict {
     solana_sdk::declare_id!("ed9tNscbWLYBooxWA7FE2B5KHWs8A6sxfY8EzezEcoo");
 }
 
+pub mod verify_retransmitter_signature {
+    solana_sdk::declare_id!("BZ5g4hRbu5hLQQBdPyo2z9icGyJ8Khiyj3QS6dhWijTb");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1041,6 +1045,7 @@ lazy_static! {
         (zk_elgamal_proof_program_enabled::id(), "Enable ZkElGamalProof program SIMD-0153"),
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
         (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
+        (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
