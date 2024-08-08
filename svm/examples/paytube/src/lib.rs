@@ -63,7 +63,9 @@ use {
     crate::{
         loader::PayTubeAccountLoader, settler::PayTubeSettler, transaction::PayTubeTransaction,
     },
-    processor::{create_transaction_batch_processor, get_transaction_check_results},
+    processor::{
+        create_transaction_batch_processor, get_transaction_check_results, PayTubeForkGraph,
+    },
     solana_client::rpc_client::RpcClient,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_sdk::{
@@ -73,7 +75,7 @@ use {
     solana_svm::transaction_processor::{
         TransactionProcessingConfig, TransactionProcessingEnvironment,
     },
-    std::sync::Arc,
+    std::sync::{Arc, RwLock},
     transaction::create_svm_transactions,
 };
 
@@ -133,8 +135,13 @@ impl PayTubeChannel {
         // translated and executed within a provisioned virtual machine, as
         // well as offers many of the same functionality as the lower-level
         // Solana runtime.
-        let processor =
-            create_transaction_batch_processor(&account_loader, &feature_set, &compute_budget);
+        let fork_graph = Arc::new(RwLock::new(PayTubeForkGraph {}));
+        let processor = create_transaction_batch_processor(
+            &account_loader,
+            &feature_set,
+            &compute_budget,
+            Arc::clone(&fork_graph),
+        );
 
         // The PayTube transaction processing runtime environment.
         //

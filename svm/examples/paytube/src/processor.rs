@@ -38,6 +38,7 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
     callbacks: &CB,
     feature_set: &FeatureSet,
     compute_budget: &ComputeBudget,
+    fork_graph: Arc<RwLock<PayTubeForkGraph>>,
 ) -> TransactionBatchProcessor<PayTubeForkGraph> {
     let processor = TransactionBatchProcessor::<PayTubeForkGraph>::default();
 
@@ -45,7 +46,7 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
         let mut cache = processor.program_cache.write().unwrap();
 
         // Initialize the mocked fork graph.
-        let fork_graph = Arc::new(RwLock::new(PayTubeForkGraph {}));
+        // let fork_graph = Arc::new(RwLock::new(PayTubeForkGraph {}));
         cache.fork_graph = Some(Arc::downgrade(&fork_graph));
 
         // Initialize a proper cache environment.

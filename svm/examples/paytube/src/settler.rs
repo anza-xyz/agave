@@ -73,7 +73,9 @@ impl Ledger {
                     {
                         transaction.amount as i128
                     } else {
-                        transaction.amount.checked_neg().unwrap() as i128
+                        (transaction.amount as i128)
+                            .checked_neg()
+                            .unwrap_or_default()
                     };
                     ledger
                         .entry(LedgerKey { mint, keys })
