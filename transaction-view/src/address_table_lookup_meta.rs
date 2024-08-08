@@ -9,7 +9,7 @@ use {
     solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
 };
 
-/// Contains meta-data about the address table lookups in a transaction packet.
+/// Contains metadata about the address table lookups in a transaction packet.
 pub struct AddressTableLookupMeta {
     /// The number of address table lookups in the transaction.
     pub(crate) num_address_table_lookup: u8,
