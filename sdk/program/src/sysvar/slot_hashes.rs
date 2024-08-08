@@ -168,8 +168,10 @@ impl PodSlotHashes {
 }
 
 /// API for querying the `SlotHashes` sysvar.
+#[deprecated(since = "2.1.0", note = "Please use `PodSlotHashes` instead")]
 pub struct SlotHashesSysvar;
 
+#[allow(deprecated)]
 impl SlotHashesSysvar {
     /// Get a value from the sysvar entries by its key.
     /// Returns `None` if the key is not found.
@@ -317,6 +319,7 @@ mod tests {
         assert_eq!(pod_slot_hashes.position(&not_a_slot).unwrap(), None);
     }
 
+    #[allow(deprecated)]
     #[serial]
     #[test]
     fn test_slot_hashes_sysvar() {
