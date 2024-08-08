@@ -231,7 +231,7 @@ impl StakeStateV2 {
     pub fn delegation_ref(&self) -> Option<&Delegation> {
         match self {
             StakeStateV2::Stake(_meta, stake, _stake_flags) => Some(&stake.delegation),
-            _ => None,
+            Self::Uninitialized | Self::Initialized(_) | Self::RewardsPool => None,
         }
     }
 
