@@ -75,7 +75,11 @@ mod tests {
     fn test_zero_instructions() {
         let bytes = bincode::serialize(&ShortVec(Vec::<CompiledInstruction>::new())).unwrap();
         let mut offset = 0;
-        assert!(InstructionsMeta::try_new(&bytes, &mut offset).is_ok());
+        let instructions_meta = InstructionsMeta::try_new(&bytes, &mut offset).unwrap();
+
+        assert_eq!(instructions_meta.num_instructions, 0);
+        assert_eq!(instructions_meta.offset, 1);
+        assert_eq!(offset, bytes.len());
     }
 
     #[test]
@@ -104,6 +108,7 @@ mod tests {
         let instructions_meta = InstructionsMeta::try_new(&bytes, &mut offset).unwrap();
         assert_eq!(instructions_meta.num_instructions, 1);
         assert_eq!(instructions_meta.offset, 1);
+        assert_eq!(offset, bytes.len());
     }
 
     #[test]
@@ -125,6 +130,7 @@ mod tests {
         let instructions_meta = InstructionsMeta::try_new(&bytes, &mut offset).unwrap();
         assert_eq!(instructions_meta.num_instructions, 2);
         assert_eq!(instructions_meta.offset, 1);
+        assert_eq!(offset, bytes.len());
     }
 
     #[test]
