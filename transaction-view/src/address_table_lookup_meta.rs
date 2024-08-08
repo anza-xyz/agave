@@ -12,7 +12,7 @@ use {
 /// Contains meta-data about the address table lookups in a transaction packet.
 pub struct AddressTableLookupMeta {
     /// The number of address table lookups in the transaction.
-    pub(crate) num_address_table_lookup: u16,
+    pub(crate) num_address_table_lookup: u8,
     /// The offset to the first address table lookup in the transaction.
     pub(crate) offset: u16,
 }
@@ -36,7 +36,7 @@ impl AddressTableLookupMeta {
         // Maximum number of ATLs should be represented by a single byte,
         // thus the MSB should not be set.
         const _: () = assert!(MAX_ATLS_PER_PACKET & 0b1000_0000 == 0);
-        let num_address_table_lookups = u16::from(read_byte(bytes, offset)?);
+        let num_address_table_lookups = read_byte(bytes, offset)?;
         check_remaining(
             bytes,
             *offset,
