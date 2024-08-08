@@ -209,22 +209,21 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         .unique()
         .collect::<Vec<&u8>>();
 
-    let mut collect_account =
-        |key: &Pubkey, account_size: usize, account: AccountSharedData, rent: u64| -> Result<()> {
-            accumulate_and_check_loaded_account_data_size(
-                &mut accumulated_accounts_data_size,
-                account_size,
-                tx_details.compute_budget_limits.loaded_accounts_bytes,
-                error_metrics,
-            )?;
+    let mut collect_account = |key, account_size, account, rent, account_found| -> Result<()> {
+        accumulate_and_check_loaded_account_data_size(
+            &mut accumulated_accounts_data_size,
+            account_size,
+            tx_details.compute_budget_limits.loaded_accounts_bytes,
+            error_metrics,
+        )?;
 
-            tx_rent += rent;
-            rent_debits.insert(key, rent, account.lamports());
+        tx_rent += rent;
+        rent_debits.insert(key, rent, account.lamports());
 
-            accounts.push((*key, account));
-            accounts_found.push(true);
-            Ok(())
-        };
+        accounts.push((*key, account));
+        accounts_found.push(account_found);
+        Ok(())
+    };
 
     // Since the fee payer is always the first account, collect it first. Note
     // that account overrides are already applied during fee payer validation so
@@ -235,6 +234,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         tx_details.fee_payer_account.data().len(),
         tx_details.fee_payer_account,
         tx_details.fee_payer_rent_debit,
+        true, // account_found
     )?;
 
     // Attempt to load and collect remaining non-fee payer accounts
@@ -296,7 +296,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 })
         };
 
-        collect_account(key, account_size, account, rent)?;
+        collect_account(key, account_size, account, rent, account_found)?;
     }
 
     let builtins_start_index = accounts.len();
