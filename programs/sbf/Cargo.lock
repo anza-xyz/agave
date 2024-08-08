@@ -7185,6 +7185,7 @@ dependencies = [
  "prost-types",
  "protobuf-src",
  "rayon",
+ "rustc_version",
  "solana-entry",
  "solana-gossip",
  "solana-ledger",
