@@ -3,7 +3,7 @@ use crate::{
     result::Result,
 };
 
-/// Contains meta-data about the instructions in a transaction packet.
+/// Contains metadata about the instructions in a transaction packet.
 #[derive(Default)]
 pub struct InstructionsMeta {
     /// The number of instructions in the transaction.
