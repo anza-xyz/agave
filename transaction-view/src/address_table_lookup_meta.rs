@@ -27,7 +27,11 @@ impl AddressTableLookupMeta {
         // Read the number of ATLs at the current offset.
         // Each ATL needs at least 34 bytes, so do a sanity check here to
         // ensure we have enough bytes to read the number of ATLs.
-        const MIN_SIZED_ATL: usize = core::mem::size_of::<Pubkey>() + 1 + 1;
+        const MIN_SIZED_ATL: usize = {
+            core::mem::size_of::<Pubkey>() // account key
+            + 1 // writable indexes length
+            + 1 // readonly indexes length
+        };
         const MAX_ATLS_PER_PACKET: usize = PACKET_DATA_SIZE / MIN_SIZED_ATL;
         // Maximum number of ATLs should be represented by a single byte,
         // thus the MSB should not be set.
