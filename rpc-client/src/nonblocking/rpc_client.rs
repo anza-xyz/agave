@@ -4558,6 +4558,26 @@ impl RpcClient {
         Ok(blockhash)
     }
 
+    pub async fn get_latest_blockhash_with_config(
+        &self,
+        config: RpcLatestBlockhashConfig,
+    ) -> ClientResult<(Hash, u64)> {
+        let RpcBlockhash {
+            blockhash,
+            last_valid_block_height,
+        } = self
+            .send::<Response<RpcBlockhash>>(RpcRequest::GetLatestBlockhash, json!([config]))
+            .await?
+            .value;
+        let blockhash = blockhash.parse().map_err(|_| {
+            ClientError::new_with_request(
+                RpcError::ParseError("Hash".to_string()).into(),
+                RpcRequest::GetLatestBlockhash,
+            )
+        })?;
+        Ok((blockhash, last_valid_block_height))
+    }
+
     pub async fn get_latest_blockhash_with_commitment(
         &self,
         commitment: CommitmentConfig,

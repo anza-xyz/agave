@@ -342,3 +342,12 @@ pub struct RpcContextConfig {
     pub commitment: Option<CommitmentConfig>,
     pub min_context_slot: Option<Slot>,
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcLatestBlockhashConfig {
+    #[serde(flatten)]
+    pub context: RpcContextConfig,
+    #[serde(default)]
+    pub rollback: usize,
+}
