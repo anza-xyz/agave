@@ -233,7 +233,6 @@ pub(crate) mod tests;
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
-const DEFAULT_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 #[derive(Default)]
 struct RentMetrics {
@@ -3435,104 +3434,6 @@ impl Bank {
 
     pub fn remove_unrooted_slots(&self, slots: &[(Slot, BankId)]) {
         self.rc.accounts.accounts_db.remove_unrooted_slots(slots)
-    }
-
-    fn check_age(
-        &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
-        lock_results: &[Result<()>],
-        max_age: usize,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
-        let hash_queue = self.blockhash_queue.read().unwrap();
-        let last_blockhash = hash_queue.last_hash();
-        let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
-        let mut entry_level_dedup_map = HashSet::with_capacity(DEFAULT_NUM_TRANSACTIONS_PER_BATCH);
-
-        sanitized_txs
-            .iter()
-            .zip(lock_results)
-            .map(|(tx, lock_res)| match lock_res {
-                Ok(()) => {
-                    let msg_hash = tx.borrow().message_hash();
-                    if !entry_level_dedup_map.insert(msg_hash) {
-                        return Err(TransactionError::AlreadyProcessed);
-                    }
-
-                    self.check_transaction_age(
-                        tx.borrow(),
-                        max_age,
-                        &next_durable_nonce,
-                        &hash_queue,
-                        error_counters,
-                    )
-                }
-                Err(e) => Err(e.clone()),
-            })
-            .collect()
-    }
-
-    fn check_transaction_age(
-        &self,
-        tx: &SanitizedTransaction,
-        max_age: usize,
-        next_durable_nonce: &DurableNonce,
-        hash_queue: &BlockhashQueue,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> TransactionCheckResult {
-        let recent_blockhash = tx.message().recent_blockhash();
-        if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: hash_info.lamports_per_signature(),
-            })
-        } else if let Some((nonce, nonce_data)) =
-            self.check_and_load_message_nonce_account(tx.message(), next_durable_nonce)
-        {
-            Ok(CheckedTransactionDetails {
-                nonce: Some(nonce),
-                lamports_per_signature: nonce_data.get_lamports_per_signature(),
-            })
-        } else {
-            error_counters.blockhash_not_found += 1;
-            Err(TransactionError::BlockhashNotFound)
-        }
-    }
-
-    fn is_transaction_already_processed(
-        &self,
-        sanitized_tx: &SanitizedTransaction,
-        status_cache: &BankStatusCache,
-    ) -> bool {
-        let key = sanitized_tx.message_hash();
-        let transaction_blockhash = sanitized_tx.message().recent_blockhash();
-        status_cache
-            .get_status(key, transaction_blockhash, &self.ancestors)
-            .is_some()
-    }
-
-    fn check_status_cache(
-        &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
-        lock_results: Vec<TransactionCheckResult>,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionCheckResult> {
-        let rcache = self.status_cache.read().unwrap();
-        sanitized_txs
-            .iter()
-            .zip(lock_results)
-            .map(|(sanitized_tx, lock_result)| {
-                let sanitized_tx = sanitized_tx.borrow();
-                if lock_result.is_ok()
-                    && self.is_transaction_already_processed(sanitized_tx, &rcache)
-                {
-                    error_counters.already_processed += 1;
-                    return Err(TransactionError::AlreadyProcessed);
-                }
-
-                lock_result
-            })
-            .collect()
     }
 
     pub fn get_hash_age(&self, hash: &Hash) -> Option<u64> {
