@@ -20,8 +20,6 @@
 //!
 //! [oracle]: https://docs.solanalabs.com/implemented-proposals/validator-timestamp-oracle
 
-use solana_sdk_macro::CloneZeroed;
-
 /// The default tick rate that the cluster attempts to achieve (160 per second).
 ///
 /// Note that the actual tick rate at any given time should be expected to drift.
@@ -172,7 +170,7 @@ pub type UnixTimestamp = i64;
 ///
 /// All members of `Clock` start from 0 upon network boot.
 #[repr(C)]
-#[derive(Serialize, Deserialize, Debug, CloneZeroed, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 pub struct Clock {
     /// The current `Slot`.
     pub slot: Slot,
@@ -193,6 +191,24 @@ pub struct Clock {
     /// [tsc]: https://docs.solanalabs.com/implemented-proposals/bank-timestamp-correction
     /// [oracle]: https://docs.solanalabs.com/implemented-proposals/validator-timestamp-oracle
     pub unix_timestamp: UnixTimestamp,
+}
+
+// Recursive expansion of CloneZeroed macro
+// =========================================
+impl Clone for Clock {
+    fn clone(&self) -> Self {
+        let mut value = std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            std::ptr::write_bytes(&mut value, 0, 1);
+            let ptr = value.as_mut_ptr();
+            std::ptr::addr_of_mut!((*ptr).slot).write(self.slot);
+            std::ptr::addr_of_mut!((*ptr).epoch_start_timestamp).write(self.epoch_start_timestamp);
+            std::ptr::addr_of_mut!((*ptr).epoch).write(self.epoch);
+            std::ptr::addr_of_mut!((*ptr).leader_schedule_epoch).write(self.leader_schedule_epoch);
+            std::ptr::addr_of_mut!((*ptr).unix_timestamp).write(self.unix_timestamp);
+            value.assume_init()
+        }
+    }
 }
 
 #[cfg(test)]

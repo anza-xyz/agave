@@ -294,7 +294,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.2.1"
-proc-macro2 = "1.0.86"
+proc-macro2 = { version = "1.0.86", default-features = false }
 proptest = "1.5"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -304,7 +304,7 @@ qstring = "0.7.2"
 qualifier_attr = { version = "0.2.2", default-features = false }
 quinn = "0.10.2"
 quinn-proto = "0.10.6"
-quote = "1.0"
+quote = { version = "1.0", default-features = false }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = "1.10.0"
@@ -458,7 +458,7 @@ strum = "0.24"
 strum_macros = "0.24"
 subtle = "2.6.1"
 symlink = "0.1.0"
-syn = "2.0"
+syn = { version = "2.0", default-features = false }
 sys-info = "0.9.1"
 sysctl = "0.4.6"
 systemstat = "0.2.3"

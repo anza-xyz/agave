@@ -6,11 +6,11 @@
 //!
 //! [`sysvar::epoch_rewards`]: crate::sysvar::epoch_rewards
 
-use {crate::hash::Hash, solana_sdk_macro::CloneZeroed, std::ops::AddAssign};
+use {crate::hash::Hash, std::ops::AddAssign};
 
 #[repr(C, align(16))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, CloneZeroed)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EpochRewards {
     /// The starting block height of the rewards distribution in the current
     /// epoch
@@ -38,6 +38,27 @@ pub struct EpochRewards {
     /// Whether the rewards period (including calculation and distribution) is
     /// active
     pub active: bool,
+}
+
+// Recursive expansion of CloneZeroed macro
+// =========================================
+impl Clone for EpochRewards {
+    fn clone(&self) -> Self {
+        let mut value = std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            std::ptr::write_bytes(&mut value, 0, 1);
+            let ptr = value.as_mut_ptr();
+            std::ptr::addr_of_mut!((*ptr).distribution_starting_block_height)
+                .write(self.distribution_starting_block_height);
+            std::ptr::addr_of_mut!((*ptr).num_partitions).write(self.num_partitions);
+            std::ptr::addr_of_mut!((*ptr).parent_blockhash).write(self.parent_blockhash);
+            std::ptr::addr_of_mut!((*ptr).total_points).write(self.total_points);
+            std::ptr::addr_of_mut!((*ptr).total_rewards).write(self.total_rewards);
+            std::ptr::addr_of_mut!((*ptr).distributed_rewards).write(self.distributed_rewards);
+            std::ptr::addr_of_mut!((*ptr).active).write(self.active);
+            value.assume_init()
+        }
+    }
 }
 
 impl EpochRewards {
