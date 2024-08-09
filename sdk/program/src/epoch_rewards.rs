@@ -42,9 +42,9 @@ pub struct EpochRewards {
 
 impl EpochRewards {
     pub fn distribute(&mut self, amount: u64) {
-        assert!(self.distributed_rewards.saturating_add(amount) <= self.total_rewards);
-
-        self.distributed_rewards = self.distributed_rewards.saturating_add(amount);
+        let new_distributed_rewards = self.distributed_rewards.saturating_add(amount);
+        assert!(new_distributed_rewards <= self.total_rewards);
+        self.distributed_rewards = new_distributed_rewards;
     }
 }
 
