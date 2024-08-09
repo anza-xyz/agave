@@ -5,8 +5,9 @@
 //!
 //! * `mode` argument defines interface to use (e.g. rpc, tvu, tpu)
 //! * `data-type` argument specifies the type of the request.
-//!   Some request types might be used only with particular `mode` value.
-//!   For example, `get-account-info` is valid only with `mode=rpc`.
+//!
+//! Some request types might be used only with particular `mode` value.
+//! For example, `get-account-info` is valid only with `mode=rpc`.
 //!
 //! Most options are provided for `data-type = transaction`.
 //! These options allow to compose transaction which fails at
