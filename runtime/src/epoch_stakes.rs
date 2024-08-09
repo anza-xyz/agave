@@ -1,8 +1,9 @@
 use {
     crate::stakes::{Stakes, StakesEnum},
+    im::HashMap as ImHashMap,
     serde::{Deserialize, Serialize},
     solana_sdk::{clock::Epoch, pubkey::Pubkey, stake::state::Stake},
-    solana_vote::vote_account::VoteAccountsHashMap,
+    solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -42,6 +43,21 @@ impl EpochStakes {
 
     pub fn stakes(&self) -> &StakesEnum {
         &self.stakes
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_tests(
+        vote_accounts_hash_map: VoteAccountsHashMap,
+        leader_schedule_epoch: Epoch,
+    ) -> Self {
+        Self::new(
+            Arc::new(StakesEnum::Accounts(Stakes::new_for_tests(
+                0,
+                VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
+                ImHashMap::default(),
+            ))),
+            leader_schedule_epoch,
+        )
     }
 
     pub fn total_stake(&self) -> u64 {
@@ -224,10 +240,9 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::{stake_account::StakeAccount, stakes::StakesCache},
-        im::HashMap as ImHashMap,
         solana_sdk::{account::AccountSharedData, rent::Rent},
         solana_stake_program::stake_state::{self, Delegation},
-        solana_vote::vote_account::{VoteAccount, VoteAccounts},
+        solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{self, create_account_with_authorized},
         std::iter,
     };
@@ -524,14 +539,7 @@ pub(crate) mod tests {
         let epoch_vote_accounts = new_epoch_vote_accounts(&vote_accounts_map, |node_id| {
             *node_id_to_stake_map.get(node_id).unwrap()
         });
-        let epoch_stakes = EpochStakes::new(
-            Arc::new(StakesEnum::Accounts(Stakes::new_for_tests(
-                0,
-                VoteAccounts::from(Arc::new(epoch_vote_accounts)),
-                ImHashMap::default(),
-            ))),
-            0,
-        );
+        let epoch_stakes = EpochStakes::new_for_tests(epoch_vote_accounts, 0);
 
         assert_eq!(epoch_stakes.total_stake(), 11000);
         for (node_id, stake) in node_id_to_stake_map.iter() {

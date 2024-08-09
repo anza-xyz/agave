@@ -1222,6 +1222,7 @@ mod tests {
             vote::state::{TowerSync, Vote},
         },
         solana_runtime::{
+            epoch_stakes::EpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
@@ -1230,10 +1231,13 @@ mod tests {
             snapshot_utils::build_incremental_snapshot_archive_path,
         },
         solana_sdk::{
+            pubkey::Pubkey,
             signature::{Keypair, Signer},
             timing::timestamp,
         },
         solana_streamer::socket::SocketAddrSpace,
+        solana_vote::vote_account::VoteAccount,
+        solana_vote_program::vote_state::create_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
     };
@@ -1743,6 +1747,180 @@ mod tests {
             .permissions();
         perms.set_readonly(readonly);
         std::fs::set_permissions(wen_restart_proto_path, perms).unwrap();
+    }
+
+    #[test]
+    fn test_wen_restart_divergence_across_epoch_boundary() {
+        solana_logger::setup();
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let test_state = wen_restart_test_init(&ledger_path);
+        let last_vote_slot = test_state.last_voted_fork_slots[0];
+
+        let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
+
+        // Add bank last_vote + 1 linking directly to 0, tweak its epoch_stakes, and then add it to bank_forks.
+        let new_root_slot = last_vote_slot + 1;
+        let mut new_root_bank =
+            Bank::new_from_parent(old_root_bank.clone(), &Pubkey::default(), new_root_slot);
+        assert_eq!(new_root_bank.epoch(), 1);
+
+        // For epoch 2, make validator 0 have 90% of the stake.
+        let vote_accounts_hash_map = test_state
+            .validator_voting_keypairs
+            .iter()
+            .enumerate()
+            .map(|(i, keypairs)| {
+                let stake = if i == 0 {
+                    900 * (TOTAL_VALIDATOR_COUNT - 1) as u64
+                } else {
+                    100
+                };
+                let authorized_voter = keypairs.vote_keypair.pubkey();
+                let node_id = keypairs.node_keypair.pubkey();
+                (
+                    authorized_voter,
+                    (
+                        stake,
+                        VoteAccount::try_from(create_account_with_authorized(
+                            &node_id,
+                            &authorized_voter,
+                            &node_id,
+                            0,
+                            100,
+                        ))
+                        .unwrap(),
+                    ),
+                )
+            })
+            .collect();
+        let epoch2_eopch_stakes = EpochStakes::new_for_tests(vote_accounts_hash_map, 2);
+        new_root_bank.set_epoch_stakes_for_test(2, Some(epoch2_eopch_stakes));
+        let _ = insert_slots_into_blockstore(
+            test_state.blockstore.clone(),
+            0,
+            &[new_root_slot],
+            TICKS_PER_SLOT,
+            old_root_bank.last_blockhash(),
+        );
+        let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
+            .thread_name(|i| format!("solReplayTx{i:02}"))
+            .build()
+            .expect("new rayon threadpool");
+        let recyclers = VerifyRecyclers::default();
+        let mut timing = ExecuteTimings::default();
+        let opts = ProcessOptions::default();
+        let mut progress = ConfirmationProgress::new(old_root_bank.last_blockhash());
+        let last_vote_bankhash = new_root_bank.hash();
+        let bank_with_scheduler = test_state
+            .bank_forks
+            .write()
+            .unwrap()
+            .insert_from_ledger(new_root_bank);
+        if let Err(e) = process_single_slot(
+            &test_state.blockstore,
+            &bank_with_scheduler,
+            &replay_tx_thread_pool,
+            &opts,
+            &recyclers,
+            &mut progress,
+            None,
+            None,
+            None,
+            None,
+            &mut timing,
+        ) {
+            panic!("process_single_slot failed: {:?}", e);
+        }
+
+        {
+            let mut bank_forks = test_state.bank_forks.write().unwrap();
+            let _ = bank_forks.set_root(
+                last_vote_slot + 1,
+                &AbsRequestSender::default(),
+                Some(last_vote_slot + 1),
+            );
+        }
+        let new_root_bank = test_state
+            .bank_forks
+            .read()
+            .unwrap()
+            .get(last_vote_slot + 1)
+            .unwrap();
+
+        // Add two more banks: old_epoch_bank (slot = last_vote_slot + 2) and
+        // new_epoch_bank (slot = first slot in epoch 2). They both link to last_vote_slot + 1.
+        // old_epoch_bank has everyone's votes except 0, so it has > 66% stake in the old epoch.
+        // new_epoch_bank has 0's vote, so it has > 66% stake in the new epoch.
+        let old_epoch_slot = new_root_slot + 1;
+        let _ = insert_slots_into_blockstore(
+            test_state.blockstore.clone(),
+            new_root_bank.slot(),
+            &[old_epoch_slot],
+            TICKS_PER_SLOT,
+            new_root_bank.last_blockhash(),
+        );
+        let new_epoch_slot = new_root_bank.epoch_schedule().get_first_slot_in_epoch(2);
+        let _ = insert_slots_into_blockstore(
+            test_state.blockstore.clone(),
+            new_root_slot,
+            &[new_epoch_slot],
+            TICKS_PER_SLOT,
+            new_root_bank.last_blockhash(),
+        );
+        let mut rng = rand::thread_rng();
+        // Everyone except 0 votes for old_epoch_bank.
+        for (index, keypairs) in test_state
+            .validator_voting_keypairs
+            .iter()
+            .take(TOTAL_VALIDATOR_COUNT as usize - 1)
+            .enumerate()
+        {
+            let node_pubkey = keypairs.node_keypair.pubkey();
+            let node = ContactInfo::new_rand(&mut rng, Some(node_pubkey));
+            let last_vote_hash = Hash::new_unique();
+            let now = timestamp();
+            // Validator 0 votes for the new_epoch_bank while everyone elese vote for old_epoch_bank.
+            let last_voted_fork_slots = if index == 0 {
+                vec![new_epoch_slot, new_root_slot, 0]
+            } else {
+                vec![old_epoch_slot, new_root_slot, 0]
+            };
+            push_restart_last_voted_fork_slots(
+                test_state.cluster_info.clone(),
+                &node,
+                &last_voted_fork_slots,
+                &last_vote_hash,
+                &keypairs.node_keypair,
+                now,
+            );
+        }
+
+        assert_eq!(
+            wait_for_wen_restart(WenRestartConfig {
+                wen_restart_path: test_state.wen_restart_proto_path,
+                last_vote: VoteTransaction::from(Vote::new(
+                    vec![new_root_slot],
+                    last_vote_bankhash
+                )),
+                blockstore: test_state.blockstore,
+                cluster_info: test_state.cluster_info,
+                bank_forks: test_state.bank_forks,
+                wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
+                wait_for_supermajority_threshold_percent: 80,
+                snapshot_config: SnapshotConfig::default(),
+                accounts_background_request_sender: AbsRequestSender::default(),
+                genesis_config_hash: test_state.genesis_config_hash,
+                exit: Arc::new(AtomicBool::new(false)),
+            })
+            .unwrap_err()
+            .downcast::<WenRestartError>()
+            .unwrap(),
+            WenRestartError::BlockNotLinkedToExpectedParent(
+                new_epoch_slot,
+                Some(new_root_slot),
+                old_epoch_slot
+            )
+        );
     }
 
     #[test]

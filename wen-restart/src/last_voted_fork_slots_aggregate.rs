@@ -73,7 +73,9 @@ impl LastVotedForkSlotsAggregate {
                 .expect("root_epoch should not be so big"))
             .map(|epoch| LastVotedForkSlotsEpochInfo {
                 epoch,
-                total_stake: root_bank.epoch_total_stake(epoch).unwrap(),
+                total_stake: root_bank
+                    .epoch_total_stake(epoch)
+                    .expect("epoch stake not found"),
                 total_active_stake: 0,
                 considered_during_exit: false,
             })

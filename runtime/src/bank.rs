@@ -1969,6 +1969,15 @@ impl Bank {
         }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_epoch_stakes_for_test(&mut self, epoch: Epoch, stakes: Option<EpochStakes>) {
+        if let Some(stakes) = stakes {
+            self.epoch_stakes.insert(epoch, stakes);
+        } else {
+            self.epoch_stakes.remove(&epoch);
+        }
+    }
+
     fn update_rent(&self) {
         self.update_sysvar_account(&sysvar::rent::id(), |account| {
             create_account(
