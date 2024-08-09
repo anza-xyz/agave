@@ -319,7 +319,7 @@ impl Stakes<StakeAccount> {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
