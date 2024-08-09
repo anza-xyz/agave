@@ -5198,11 +5198,10 @@ impl Bank {
             self.last_blockhash().as_ref(),
         ]);
 
-        let epoch_accounts_hash = self.should_include_epoch_accounts_hash().then(|| {
-            let epoch_accounts_hash = self.wait_get_epoch_accounts_hash();
+        let epoch_accounts_hash = self.wait_get_epoch_accounts_hash();
+        if let Some(epoch_accounts_hash) = epoch_accounts_hash {
             hash = hashv(&[hash.as_ref(), epoch_accounts_hash.as_ref().as_ref()]);
-            epoch_accounts_hash
-        });
+        }
 
         let buf = self
             .hard_forks
@@ -5249,7 +5248,11 @@ impl Bank {
 
     /// If the epoch accounts hash should be included in this Bank, then fetch it.  If the EAH
     /// calculation has not completed yet, this fn will block until it does complete.
-    fn wait_get_epoch_accounts_hash(&self) -> EpochAccountsHash {
+    pub(crate) fn wait_get_epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
+        if !self.should_include_epoch_accounts_hash() {
+            return None;
+        }
+
         let (epoch_accounts_hash, waiting_time_us) = measure_us!(self
             .rc
             .accounts
@@ -5262,7 +5265,8 @@ impl Bank {
             ("slot", self.slot(), i64),
             ("waiting-time-us", waiting_time_us, i64),
         );
-        epoch_accounts_hash
+
+        Some(epoch_accounts_hash)
     }
 
     /// Used by ledger tool to run a final hash calculation once all ledger replay has completed.

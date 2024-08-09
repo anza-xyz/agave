@@ -11,6 +11,7 @@ use {
     solana_accounts_db::{
         accounts_db::PubkeyHashAccount,
         accounts_hash::{AccountHash, AccountsDeltaHash},
+        epoch_accounts_hash::EpochAccountsHash,
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
@@ -94,6 +95,9 @@ pub struct SlotDetails {
     #[serde(skip_serializing_if = "String::is_empty")]
     #[serde(default)]
     pub last_blockhash: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
+    pub epoch_accounts_hash: String,
     #[serde(skip_serializing_if = "accounts_is_empty")]
     #[serde(default)]
     pub accounts: AccountsDetails,
@@ -118,6 +122,7 @@ impl SlotDetails {
         accounts_delta_hash: Hash,
         signature_count: u64,
         last_blockhash: Hash,
+        epoch_accounts_hash: Option<EpochAccountsHash>,
         accounts: AccountsDetails,
     ) -> Self {
         Self {
@@ -127,6 +132,9 @@ impl SlotDetails {
             accounts_delta_hash: accounts_delta_hash.to_string(),
             signature_count,
             last_blockhash: last_blockhash.to_string(),
+            epoch_accounts_hash: epoch_accounts_hash
+                .map(|hash| hash.to_string())
+                .unwrap_or_default(),
             accounts,
             transactions: Vec::new(),
         }
@@ -162,6 +170,7 @@ impl TryFrom<&Bank> for SlotDetails {
             accounts_delta_hash,
             bank.signature_count(),
             bank.last_blockhash(),
+            bank.wait_get_epoch_accounts_hash(),
             AccountsDetails { accounts },
         ))
     }
@@ -328,6 +337,7 @@ pub mod tests {
                 let parent_bank_hash = hash("parent_bank".as_bytes());
                 let accounts_delta_hash = hash("accounts_delta".as_bytes());
                 let last_blockhash = hash("last_blockhash".as_bytes());
+                let epoch_accounts = EpochAccountsHash::new(hash("epoch_accounts_hash".as_bytes()));
 
                 SlotDetails::new(
                     slot as Slot,
@@ -336,6 +346,7 @@ pub mod tests {
                     accounts_delta_hash,
                     signature_count,
                     last_blockhash,
+                    Some(epoch_accounts),
                     accounts,
                 )
             })

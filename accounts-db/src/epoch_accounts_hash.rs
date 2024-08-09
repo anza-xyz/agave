@@ -7,7 +7,7 @@
 //!
 //! This results in all nodes effectively voting on the accounts state (at least) once per epoch.
 
-use {crate::accounts_hash::AccountsHash, solana_sdk::hash::Hash};
+use {crate::accounts_hash::AccountsHash, solana_sdk::hash::Hash, std::fmt};
 
 mod manager;
 pub use manager::Manager as EpochAccountsHashManager;
@@ -20,6 +20,12 @@ pub struct EpochAccountsHash(Hash);
 impl AsRef<Hash> for EpochAccountsHash {
     fn as_ref(&self) -> &Hash {
         &self.0
+    }
+}
+
+impl fmt::Display for EpochAccountsHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
