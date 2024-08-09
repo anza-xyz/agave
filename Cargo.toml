@@ -105,6 +105,8 @@ members = [
     "sdk/cargo-test-sbf",
     "sdk/decode-error",
     "sdk/gen-headers",
+    "sdk/hash",
+    "sdk/hasher",
     "sdk/macro",
     "sdk/msg",
     "sdk/package-metadata-macro",
@@ -376,6 +378,8 @@ solana-genesis-utils = { path = "genesis-utils", version = "=2.1.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.1.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.1.0" }
 solana-gossip = { path = "gossip", version = "=2.1.0" }
+solana-hash = { path = "sdk/hash", version = "=2.1.0" }
+solana-hasher = { path = "sdk/hasher", version = "=2.1.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.1.0" }
 solana-lattice-hash = { path = "lattice-hash", version = "=2.1.0" }
 solana-ledger = { path = "ledger", version = "=2.1.0" }
