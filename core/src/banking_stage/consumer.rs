@@ -73,7 +73,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct LeaderProcessedTransactionCounts {
-    // Total number of transactions that were passed as candidates for execution
+    // Total number of transactions that were passed as candidates for processing
     pub(crate) attempted_processing_count: u64,
     // The number of transactions of that were processed. See description of in `ProcessTransactionsSummary`
     // for possible outcomes of execution.
@@ -1172,7 +1172,7 @@ mod tests {
                 transaction_counts,
                 LeaderProcessedTransactionCounts {
                     attempted_processing_count: 1,
-                    // Transactions was still executed, just wasn't committed, so should be counted here.
+                    // Transaction was still processed, just wasn't committed, so should be counted here.
                     processed_count: 1,
                     processed_with_successful_result_count: 1,
                 }
