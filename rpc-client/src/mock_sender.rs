@@ -37,7 +37,7 @@ use {
         TransactionConfirmationStatus, TransactionStatus, UiCompiledInstruction, UiMessage,
         UiRawMessage, UiTransaction, UiTransactionStatusMeta,
     },
-    solana_version::Version,
+    solana_version::{ClientId, Version},
     std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::RwLock},
 };
 
@@ -317,6 +317,8 @@ impl RpcSender for MockSender {
                 json!(RpcVersionInfo {
                     solana_core: version.to_string(),
                     feature_set: Some(version.feature_set),
+                    commit: Some(version.commit),
+                    client_id: Some(version.client()),
                 })
             }
             "getLatestBlockhash" => serde_json::to_value(Response {
@@ -345,6 +347,8 @@ impl RpcSender for MockSender {
                 version: Some("1.0.0 c375ce1f".to_string()),
                 feature_set: None,
                 shred_version: None,
+                commit: None,
+                client_id: Some(ClientId::Agave),
             }])?,
             "getBlock" => serde_json::to_value(EncodedConfirmedBlock {
                 previous_blockhash: "mfcyqEXB3DnHXki6KjjmZck6YjmZLvpAByy2fj4nh6B".to_string(),

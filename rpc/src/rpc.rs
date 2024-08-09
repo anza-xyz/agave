@@ -2717,6 +2717,9 @@ pub mod rpc_minimal {
             Ok(RpcVersionInfo {
                 solana_core: version.to_string(),
                 feature_set: Some(version.feature_set),
+                commit: Some(version.commit),
+                client_id: Some(version.client()),
+
             })
         }
 
@@ -3284,7 +3287,7 @@ pub mod rpc_full {
     use {
         super::*,
         solana_sdk::message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::UiInnerInstructions,
+        solana_transaction_status::UiInnerInstructions, solana_version::ClientId,
     };
     #[rpc]
     pub trait Full {
@@ -3486,12 +3489,12 @@ pub mod rpc_full {
                             .map(|addr| socket_addr_space.check(&addr))
                             .unwrap_or_default()
                     {
-                        let (version, feature_set) = if let Some(version) =
-                            cluster_info.get_node_version(contact_info.pubkey())
+                        let (version, feature_set, commit, client_id) = if let Some(version) =
+                        cluster_info.get_node_version(contact_info.pubkey())
                         {
-                            (Some(version.to_string()), Some(version.feature_set))
+                            (Some(version.to_string()), Some(version.feature_set), Some(version.commit), Some(version.client()))
                         } else {
-                            (None, None)
+                            (None, None, None, Some(ClientId::Unknown(0)))
                         };
                         Some(RpcContactInfo {
                             pubkey: contact_info.pubkey().to_string(),
@@ -3535,6 +3538,8 @@ pub mod rpc_full {
                             version,
                             feature_set,
                             shred_version: Some(my_shred_version),
+                            commit,
+                            client_id,
                         })
                     } else {
                         None // Exclude spy nodes
@@ -4847,6 +4852,8 @@ pub mod tests {
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
+            "commit": "00000000",
+            "clientId": "Agave",
         }, {
             "pubkey": rpc.leader_pubkey().to_string(),
             "gossip": "127.0.0.1:1235",
@@ -4862,8 +4869,17 @@ pub mod tests {
             "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
+            "commit": "00000000",
+            "clientId": "Agave",
         }]);
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_version() {
+        let version = solana_version::Version::default();
+        let json_version = serde_json::to_string(&version).unwrap();
+        println!("json_version: {}", json_version);
     }
 
     #[test]
@@ -6682,6 +6698,8 @@ pub mod tests {
             json!({
                 "solana-core": version.to_string(),
                 "feature-set": version.feature_set,
+                "commit": version.commit,
+                "client_id": version.client(),
             })
         };
         assert_eq!(result, expected);

@@ -12,6 +12,7 @@ use {
         ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus, UiConfirmedBlock,
         UiInnerInstructions, UiTransactionReturnData,
     },
+    solana_version::ClientId,
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
     thiserror::Error,
 };
@@ -292,6 +293,21 @@ pub struct RpcContactInfo {
     pub feature_set: Option<u32>,
     /// Shred version
     pub shred_version: Option<u16>,
+    /// First 4 bytes of the sha1 commit hash
+    #[serde(serialize_with = "int_as_hex")]
+    pub commit: Option<u32>,
+    /// Client id
+    pub client_id: Option<ClientId>,
+}
+// TODO relocate this?
+pub fn int_as_hex<S>(input: &Option<u32>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match input {
+        Some(sha1) => serializer.serialize_str(format!("{:08x}", sha1).as_str()),
+        None => serializer.serialize_str(format!("{:08x}", 0).as_str())
+    }
 }
 
 /// Map of leader base58 identity pubkeys to the slot indices relative to the first epoch slot
@@ -319,6 +335,11 @@ pub struct RpcVersionInfo {
     pub solana_core: String,
     /// first 4 bytes of the FeatureSet identifier
     pub feature_set: Option<u32>,
+    // first 4 bytes of the sha1 commit hash
+    #[serde(serialize_with = "int_as_hex")]
+    pub commit: Option<u32>,
+    /// Client id
+    pub client_id: Option<ClientId>, // TODO maybe rename to client?
 }
 
 impl fmt::Debug for RpcVersionInfo {
