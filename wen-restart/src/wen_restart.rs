@@ -672,8 +672,6 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let mut progress_last_sent = Instant::now();
     let mut cursor = solana_gossip::crds::Cursor::default();
     let mut progress_changed = false;
-    let mut saw_supermajority_the_first_time = false;
-    let mut saw_supermajority_previously = false;
     let majority_stake_required =
         (total_stake as f64 / 100.0 * adjusted_threshold_percent as f64).round() as u64;
     let mut total_active_stake_higher_than_supermajority = false;
@@ -696,13 +694,6 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                     .insert(from, record);
                 progress_changed = true;
             }
-        }
-        if progress_changed
-            && !saw_supermajority_previously
-            && heaviest_fork_aggregate.saw_supermajority_myself()
-        {
-            saw_supermajority_the_first_time = true;
-            saw_supermajority_previously = true;
         }
         let current_total_active_stake = heaviest_fork_aggregate.total_active_stake();
         if current_total_active_stake > total_active_stake {
@@ -749,7 +740,6 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 write_wen_restart_records(wen_restart_path, progress)?;
                 progress_last_sent = Instant::now();
             }
-            saw_supermajority_the_first_time = false;
             if can_exit {
                 break;
             }

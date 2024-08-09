@@ -189,11 +189,6 @@ impl HeaviestForkAggregate {
     pub(crate) fn block_stake_map(self) -> HashMap<(Slot, Hash), u64> {
         self.block_stake_map
     }
-
-    pub(crate) fn saw_supermajority_myself(&self) -> bool {
-        self.active_peers_seen_supermajority
-            .contains(&self.my_pubkey)
-    }
 }
 
 #[cfg(test)]
