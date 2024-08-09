@@ -8,6 +8,7 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::FeatureSet,
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_rbpf::{
@@ -22,7 +23,6 @@ use {
         bpf_loader_deprecated,
         clock::Slot,
         epoch_schedule::EpochSchedule,
-        feature_set::FeatureSet,
         hash::Hash,
         instruction::{AccountMeta, InstructionError},
         native_loader,
@@ -677,9 +677,10 @@ macro_rules! with_mock_invoke_context {
     ) => {
         use {
             solana_compute_budget::compute_budget::ComputeBudget,
+            solana_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
             solana_sdk::{
-                account::ReadableAccount, feature_set::FeatureSet, hash::Hash, sysvar::rent::Rent,
+                account::ReadableAccount, hash::Hash, sysvar::rent::Rent,
                 transaction_context::TransactionContext,
             },
             solana_type_overrides::sync::Arc,

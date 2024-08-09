@@ -84,6 +84,7 @@ sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-decode-error = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-program = { workspace = true }

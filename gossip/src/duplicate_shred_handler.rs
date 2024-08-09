@@ -5,11 +5,11 @@ use {
     },
     crossbeam_channel::Sender,
     log::error,
+    solana_feature_set as feature_set,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         clock::{Epoch, Slot},
-        feature_set,
         pubkey::Pubkey,
     },
     std::{

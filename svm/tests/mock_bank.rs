@@ -1,10 +1,10 @@
 use {
+    solana_feature_set::FeatureSet,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::Epoch,
-        feature_set::FeatureSet,
         native_loader,
         pubkey::Pubkey,
         slot_hashes::Slot,

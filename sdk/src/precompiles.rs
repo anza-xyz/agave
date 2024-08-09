@@ -3,9 +3,10 @@
 #![cfg(feature = "full")]
 
 use {
-    crate::{feature_set::FeatureSet, instruction::CompiledInstruction, pubkey::Pubkey},
+    crate::{instruction::CompiledInstruction, pubkey::Pubkey},
     lazy_static::lazy_static,
     solana_decode_error::DecodeError,
+    solana_feature_set::FeatureSet,
     thiserror::Error,
 };
 

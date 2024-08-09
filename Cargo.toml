@@ -104,6 +104,7 @@ members = [
     "sdk/cargo-build-sbf",
     "sdk/cargo-test-sbf",
     "sdk/decode-error",
+    "sdk/feature-set",
     "sdk/gen-headers",
     "sdk/macro",
     "sdk/msg",
@@ -367,6 +368,7 @@ solana-define-syscall = { path = "define-syscall", version = "=2.1.0" }
 solana-download-utils = { path = "download-utils", version = "=2.1.0" }
 solana-entry = { path = "entry", version = "=2.1.0" }
 solana-faucet = { path = "faucet", version = "=2.1.0" }
+solana-feature-set = { path = "sdk/feature-set", version = "=2.1.0" }
 solana-fee = { path = "fee", version = "=2.1.0" }
 solana-frozen-abi = { path = "frozen-abi", version = "=2.1.0" }
 solana-frozen-abi-macro = { path = "frozen-abi/macro", version = "=2.1.0" }

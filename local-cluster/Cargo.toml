@@ -20,6 +20,7 @@ solana-client = { workspace = true }
 solana-config-program = { workspace = true }
 solana-core = { workspace = true }
 solana-entry = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }

@@ -8,6 +8,7 @@ use {
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_feature_set::FeatureSet,
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
@@ -17,7 +18,6 @@ use {
         account::Account,
         clock::Slot,
         commitment_config::CommitmentLevel,
-        feature_set::FeatureSet,
         hash::Hash,
         message::{Message, SanitizedMessage},
         pubkey::Pubkey,
