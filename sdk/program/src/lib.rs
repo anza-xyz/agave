@@ -513,7 +513,6 @@ pub mod program_option;
 pub mod program_pack;
 pub mod program_stubs;
 pub mod program_utils;
-pub mod pubkey;
 pub mod rent;
 pub mod secp256k1_program;
 pub mod serde_varint;
@@ -530,7 +529,6 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
-pub use solana_msg::msg;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
@@ -541,6 +539,7 @@ pub use solana_secp256k1_recover as secp256k1_recover;
 pub use solana_short_vec as short_vec;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
+pub use {solana_msg::msg, solana_pubkey as pubkey};
 
 /// The [config native program][np].
 ///

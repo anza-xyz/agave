@@ -311,7 +311,7 @@ pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "6YaMJand6tKtNLUrqvusC5QVDmVLCWYRg5LtxYNi6XN4")
+    frozen_abi(digest = "x4KDXZSqicP2C95ZPhqekM6Jo8FqrkzJARaZwN4f1Y5")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
