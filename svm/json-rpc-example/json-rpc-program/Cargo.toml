@@ -1,0 +1,29 @@
+[package]
+name = "json-rpc-program"
+version = "2.1.0"
+edition = "2021"
+
+[features]
+# This was needed for ci
+dummy-for-ci-check = []
+# https://docs.solana.com/developing/on-chain-programs/developing-rust#project-layout
+#
+# When toggled on this feature will cause the crate to not compile a
+# bpf entrypoint.
+#
+# See the corresponding `#[cfg(not(feature = "exclude_entrypoint"))]`
+# in lib.rs. This is needed so that other Solana programs can import
+# helper functions from this library without causing symbol conflicts
+# with our entrypoint.
+exclude_entrypoint = []
+frozen-abi = []
+
+[dependencies]
+borsh = "0.9"
+solana-program = { path = "../../../sdk/program", version = "=2.1.0" }
+
+[lib]
+name = "helloworld"
+crate-type = ["cdylib", "lib"]
+
+[workspace]
