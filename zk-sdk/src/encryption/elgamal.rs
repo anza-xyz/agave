@@ -6,9 +6,10 @@
 //! A twisted ElGamal ciphertext consists of two components:
 //! - A Pedersen commitment that encodes a message to be encrypted
 //! - A "decryption handle" that binds the Pedersen opening to a specific public key
-//!   In contrast to the traditional ElGamal encryption scheme, the twisted ElGamal encodes messages
-//!   directly as a Pedersen commitment. Therefore, proof systems that are designed specifically for
-//!   Pedersen commitments can be used on the twisted ElGamal ciphertexts.
+//!
+//! In contrast to the traditional ElGamal encryption scheme, the twisted ElGamal encodes messages
+//! directly as a Pedersen commitment. Therefore, proof systems that are designed specifically for
+//! Pedersen commitments can be used on the twisted ElGamal ciphertexts.
 //!
 //! As the messages are encrypted as scalar elements (a.k.a. in the "exponent"), one must solve the
 //! discrete log to recover the originally encrypted value.
