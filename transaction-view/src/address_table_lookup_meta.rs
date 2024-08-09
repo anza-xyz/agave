@@ -23,8 +23,11 @@ const MIN_SIZED_ATL: usize = {
 // A valid packet with ATLs has:
 // 1. At least 1 signature
 // 2. 1 message prefix byte
-// 3. 1 static account key
-// 4. 1 recent blockhash
+// 3. 3 bytes for the message header
+// 4. 1 static account key
+// 5. 1 recent blockhash
+// 6. 1 byte for the number of instructions (0)
+// 7. 1 byte for the number of ATLS
 const MIN_SIZED_PACKET_WITH_ATLS: usize = {
     1 // signatures count
     + core::mem::size_of::<Signature>() // signature
