@@ -68,8 +68,9 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     pub error_metrics: TransactionErrorMetrics,
     /// Timings for transaction batch execution.
     pub execute_timings: ExecuteTimings,
-    // Vector of results indicating whether a transaction was executed or could not
-    // be executed. Note executed transactions can still have failed!
+    /// Vector of results indicating whether a transaction was processed or
+    /// could not be processed. Note processed transactions can still have a
+    /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
 }
 
