@@ -19,7 +19,7 @@ use {
         },
     },
     log::debug,
-    //percentage::Percentage,
+    percentage::Percentage,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::{
         compute_budget::ComputeBudget,
@@ -241,207 +241,112 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut execute_timings = ExecuteTimings::default();
 
         let mut execution_results = vec![];
-        const HANAMODE: bool = true;
 
-        if HANAMODE {
-            let (program_cache_for_tx_batch, _program_cache_us) = measure_us!({
-                let mut program_accounts_map = Self::hana_filter_executable_program_accounts(
-                    callbacks,
-                    sanitized_txs,
-                    &check_results,
-                    PROGRAM_OWNERS,
-                );
-                for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                    program_accounts_map.insert(*builtin_program, 0);
-                }
-
-                let program_cache_for_tx_batch =
-                    Rc::new(RefCell::new(self.replenish_program_cache(
-                        callbacks,
-                        &program_accounts_map,
-                        config.check_program_modification_slot,
-                        config.limit_to_load_programs,
-                    )));
-
-                if program_cache_for_tx_batch.borrow().hit_max_limit {
-                    const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
-                    let execution_results =
-                        vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
-                    return LoadAndExecuteSanitizedTransactionsOutput {
-                        error_metrics,
-                        execute_timings,
-                        execution_results,
-                    };
-                }
-
-                program_cache_for_tx_batch
-            });
-
-            let accounts_cache = hana_load_accounts(
+        let (program_cache_for_tx_batch, _program_cache_us) = measure_us!({
+            let mut program_accounts_map = Self::hana_filter_executable_program_accounts(
                 callbacks,
                 sanitized_txs,
                 &check_results,
-                config.account_overrides,
+                PROGRAM_OWNERS,
             );
-
-            // XXX maybe make a struct that combines tx with check result since they need to go like three places together now
-            for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-                let validate_result = check_result.and_then(|tx_details| {
-                    self.validate_transaction_fee_payer(
-                        callbacks,
-                        tx.message(),
-                        tx_details,
-                        &environment.feature_set,
-                        environment
-                            .fee_structure
-                            .unwrap_or(&FeeStructure::default()),
-                        environment
-                            .rent_collector
-                            .unwrap_or(&RentCollector::default()),
-                        &mut error_metrics,
-                    )
-                });
-
-                let load_result = validate_result.and_then(|tx_details| {
-                    hana_load_transaction_accounts(
-                        &accounts_cache,
-                        tx.message(),
-                        tx_details,
-                        &mut error_metrics,
-                        &environment.feature_set,
-                        environment
-                            .rent_collector
-                            .unwrap_or(&RentCollector::default()),
-                        &program_cache_for_tx_batch.borrow(),
-                    )
-                });
-
-                match load_result {
-                    Err(e) => {
-                        execution_results.push(TransactionExecutionResult::NotExecuted(e.clone()))
-                    }
-                    Ok(loaded_transaction) => {
-                        let executed_tx = self.execute_loaded_transaction(
-                            tx,
-                            loaded_transaction,
-                            &mut execute_timings,
-                            &mut error_metrics,
-                            &mut program_cache_for_tx_batch.borrow_mut(),
-                            environment,
-                            config,
-                        );
-
-                        // XXX need to code the thing to update the cache. also handle nonces
-                        // actually maybe i should just write test cases first and then finish it up
-                        // also i dont understand how duplicate transactions are filtered
-                        // would they just automatically clash? do we only need to change this when we mess with locks?
-                        // yea im pretty sure the answer is yes. we actually can reduce this code to one version
-                        // also remember to look into that bug with core bpf migrations
-
-                        // Update batch specific cache of the loaded programs with the modifications
-                        // made by the transaction, if it executed successfully.
-                        if executed_tx.was_successful() {
-                            program_cache_for_tx_batch
-                                .borrow_mut()
-                                .merge(&executed_tx.programs_modified_by_tx);
-                        }
-
-                        execution_results
-                            .push(TransactionExecutionResult::Executed(Box::new(executed_tx)));
-                    }
-                }
+            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
+                program_accounts_map.insert(*builtin_program, 0);
             }
-        } else {
-            let (validation_results, _validate_fees_us) = measure_us!(self.validate_fees(
+
+            let program_cache_for_tx_batch = Rc::new(RefCell::new(self.replenish_program_cache(
                 callbacks,
-                sanitized_txs,
-                check_results,
-                &environment.feature_set,
-                environment
-                    .fee_structure
-                    .unwrap_or(&FeeStructure::default()),
-                environment
-                    .rent_collector
-                    .unwrap_or(&RentCollector::default()),
-                &mut error_metrics
-            ));
+                &program_accounts_map,
+                config.check_program_modification_slot,
+                config.limit_to_load_programs,
+            )));
 
-            let (program_cache_for_tx_batch, _program_cache_us) = measure_us!({
-                let mut program_accounts_map = Self::filter_executable_program_accounts(
+            if program_cache_for_tx_batch.borrow().hit_max_limit {
+                const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
+                let execution_results =
+                    vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
+                return LoadAndExecuteSanitizedTransactionsOutput {
+                    error_metrics,
+                    execute_timings,
+                    execution_results,
+                };
+            }
+
+            program_cache_for_tx_batch
+        });
+
+        let accounts_cache = hana_load_accounts(
+            callbacks,
+            sanitized_txs,
+            &check_results,
+            config.account_overrides,
+        );
+
+        // XXX maybe make a struct that combines tx with check result since they need to go like three places together now
+        for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
+            let validate_result = check_result.and_then(|tx_details| {
+                self.validate_transaction_fee_payer(
                     callbacks,
-                    sanitized_txs,
-                    &validation_results,
-                    PROGRAM_OWNERS,
-                );
-                for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                    program_accounts_map.insert(*builtin_program, 0);
-                }
-
-                let program_cache_for_tx_batch =
-                    Rc::new(RefCell::new(self.replenish_program_cache(
-                        callbacks,
-                        &program_accounts_map,
-                        config.check_program_modification_slot,
-                        config.limit_to_load_programs,
-                    )));
-
-                if program_cache_for_tx_batch.borrow().hit_max_limit {
-                    const ERROR: TransactionError = TransactionError::ProgramCacheHitMaxLimit;
-                    let execution_results =
-                        vec![TransactionExecutionResult::NotExecuted(ERROR); sanitized_txs.len()];
-                    return LoadAndExecuteSanitizedTransactionsOutput {
-                        error_metrics,
-                        execute_timings,
-                        execution_results,
-                    };
-                }
-
-                program_cache_for_tx_batch
+                    tx.message(),
+                    tx_details,
+                    &environment.feature_set,
+                    environment
+                        .fee_structure
+                        .unwrap_or(&FeeStructure::default()),
+                    environment
+                        .rent_collector
+                        .unwrap_or(&RentCollector::default()),
+                    &mut error_metrics,
+                )
             });
 
-            let (loaded_transactions, _load_accounts_us) = measure_us!(load_accounts(
-                callbacks,
-                sanitized_txs,
-                validation_results,
-                &mut error_metrics,
-                config.account_overrides,
-                &environment.feature_set,
-                environment
-                    .rent_collector
-                    .unwrap_or(&RentCollector::default()),
-                &program_cache_for_tx_batch.borrow(),
-            ));
+            let load_result = validate_result.and_then(|tx_details| {
+                hana_load_transaction_accounts(
+                    &accounts_cache,
+                    tx.message(),
+                    tx_details,
+                    &mut error_metrics,
+                    &environment.feature_set,
+                    environment
+                        .rent_collector
+                        .unwrap_or(&RentCollector::default()),
+                    &program_cache_for_tx_batch.borrow(),
+                )
+            });
 
-            execution_results = loaded_transactions
-                .into_iter()
-                .zip(sanitized_txs.iter())
-                .map(|(load_result, tx)| {
-                    match load_result {
-                        Err(e) => TransactionExecutionResult::NotExecuted(e.clone()),
-                        Ok(loaded_transaction) => {
-                            let executed_tx = self.execute_loaded_transaction(
-                                tx,
-                                loaded_transaction,
-                                &mut execute_timings,
-                                &mut error_metrics,
-                                &mut program_cache_for_tx_batch.borrow_mut(),
-                                environment,
-                                config,
-                            );
+            match load_result {
+                Err(e) => {
+                    execution_results.push(TransactionExecutionResult::NotExecuted(e.clone()))
+                }
+                Ok(loaded_transaction) => {
+                    let executed_tx = self.execute_loaded_transaction(
+                        tx,
+                        loaded_transaction,
+                        &mut execute_timings,
+                        &mut error_metrics,
+                        &mut program_cache_for_tx_batch.borrow_mut(),
+                        environment,
+                        config,
+                    );
 
-                            // Update batch specific cache of the loaded programs with the modifications
-                            // made by the transaction, if it executed successfully.
-                            if executed_tx.was_successful() {
-                                program_cache_for_tx_batch
-                                    .borrow_mut()
-                                    .merge(&executed_tx.programs_modified_by_tx);
-                            }
+                    // XXX need to code the thing to update the cache. also handle nonces
+                    // actually maybe i should just write test cases first and then finish it up
+                    // also i dont understand how duplicate transactions are filtered
+                    // would they just automatically clash? do we only need to change this when we mess with locks?
+                    // yea im pretty sure the answer is yes. we actually can reduce this code to one version
+                    // also remember to look into that bug with core bpf migrations
 
-                            TransactionExecutionResult::Executed(Box::new(executed_tx))
-                        }
+                    // Update batch specific cache of the loaded programs with the modifications
+                    // made by the transaction, if it executed successfully.
+                    if executed_tx.was_successful() {
+                        program_cache_for_tx_batch
+                            .borrow_mut()
+                            .merge(&executed_tx.programs_modified_by_tx);
                     }
-                })
-                .collect();
+
+                    execution_results
+                        .push(TransactionExecutionResult::Executed(Box::new(executed_tx)));
+                }
+            }
         }
 
         println!(
@@ -461,7 +366,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        /* XXX not needed for testing i believe
         if program_cache_for_tx_batch.borrow().loaded_missing
             || program_cache_for_tx_batch.borrow().merged_modified
         {
@@ -474,7 +378,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     self.slot,
                 );
         }
-        */
 
         /* XXX redo timings
         debug!(
@@ -497,36 +400,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execute_timings,
             execution_results,
         }
-    }
-
-    fn validate_fees<CB: TransactionProcessingCallback>(
-        &self,
-        callbacks: &CB,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
-        check_results: Vec<TransactionCheckResult>,
-        feature_set: &FeatureSet,
-        fee_structure: &FeeStructure,
-        rent_collector: &RentCollector,
-        error_counters: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionValidationResult> {
-        sanitized_txs
-            .iter()
-            .zip(check_results)
-            .map(|(sanitized_tx, check_result)| {
-                check_result.and_then(|checked_details| {
-                    let message = sanitized_tx.borrow().message();
-                    self.validate_transaction_fee_payer(
-                        callbacks,
-                        message,
-                        checked_details,
-                        feature_set,
-                        fee_structure,
-                        rent_collector,
-                        error_counters,
-                    )
-                })
-            })
-            .collect()
     }
 
     // Loads transaction fee payer, collects rent if necessary, then calculates
