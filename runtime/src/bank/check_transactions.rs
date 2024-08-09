@@ -17,7 +17,10 @@ use {
         nonce_info::NonceInfo,
         transaction_error_metrics::TransactionErrorMetrics,
     },
+    std::collections::HashSet,
 };
+
+const DEFAULT_NUM_TRANSACTIONS_PER_BATCH: usize = 64;
 
 impl Bank {
     /// Checks a batch of sanitized transactions again bank for age and status
@@ -61,7 +64,7 @@ impl Bank {
         self.check_status_cache(sanitized_txs, lock_results, error_counters)
     }
 
-    fn check_age(
+    pub fn check_age(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
         lock_results: &[TransactionResult<()>],
@@ -71,18 +74,26 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        let mut entry_level_dedup_map = HashSet::with_capacity(DEFAULT_NUM_TRANSACTIONS_PER_BATCH);
 
         sanitized_txs
             .iter()
             .zip(lock_results)
             .map(|(tx, lock_res)| match lock_res {
-                Ok(()) => self.check_transaction_age(
-                    tx.borrow(),
-                    max_age,
-                    &next_durable_nonce,
-                    &hash_queue,
-                    error_counters,
-                ),
+                Ok(()) => {
+                    let msg_hash = tx.borrow().message_hash();
+                    if !entry_level_dedup_map.insert(msg_hash) {
+                        return Err(TransactionError::AlreadyProcessed);
+                    }
+
+                    self.check_transaction_age(
+                        tx.borrow(),
+                        max_age,
+                        &next_durable_nonce,
+                        &hash_queue,
+                        error_counters,
+                    )
+                }
                 Err(e) => Err(e.clone()),
             })
             .collect()

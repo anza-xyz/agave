@@ -387,6 +387,214 @@ fn prepare_transactions(
     all_transactions.push(sanitized_transaction.unwrap());
     transaction_checks.push(Err(TransactionError::BlockhashNotFound));
 
+    // A transaction for two transfers with same fee payer
+    let sender = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let fee_payer = Pubkey::new_unique();
+    let system_account = Pubkey::new_from_array([0; 32]);
+    let data = 5000u64.to_be_bytes().to_vec();
+    transaction_builder.create_instruction(
+        transfer_program_account,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        data,
+    );
+
+    let sanitized_transaction = transaction_builder.build(
+        Hash::new_unique(),
+        (fee_payer, Signature::new_unique()),
+        true,
+    );
+    all_transactions.push(sanitized_transaction.clone().unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
+
+    // fee payer with enough funds to pay for 2 transactions
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(25000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(fee_payer, account_data);
+
+    // Sender
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(9000000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(sender, account_data);
+
+    // recipient
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(9000000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(recipient, account_data);
+
+    //Second transaction
+    let data = 5000u64.to_be_bytes().to_vec();
+
+    transaction_builder.create_instruction(
+        transfer_program_account,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        data,
+    );
+
+    let sanitized_transaction =
+        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), true);
+    all_transactions.push(sanitized_transaction.clone().unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
+
+    //Third transaction where fee payer dont have enough to pay fee
+    let data = 5000u64.to_be_bytes().to_vec();
+
+    transaction_builder.create_instruction(
+        transfer_program_account,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        data,
+    );
+
+    let sanitized_transaction = transaction_builder.build(
+        Hash::new_unique(),
+        (fee_payer, Signature::new_unique()),
+        true,
+    );
+    all_transactions.push(sanitized_transaction.clone().unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
+
+    // Two duplicate transactions
+    let sender = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let fee_payer1 = Pubkey::new_unique();
+    let system_account = Pubkey::new_from_array([0; 32]);
+    let data = 5000u64.to_be_bytes().to_vec();
+    transaction_builder.create_instruction(
+        transfer_program_account,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system_account,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        data,
+    );
+
+    let sanitized_transaction =
+        transaction_builder.build(Hash::default(), (fee_payer1, Signature::new_unique()), true);
+    all_transactions.push(sanitized_transaction.clone().unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
+
+    all_transactions.push(sanitized_transaction.clone().unwrap());
+    transaction_checks.push(Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    }));
+
+    // fee payer
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(250000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(fee_payer1, account_data);
+
+    // Sender
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(9000000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(sender, account_data);
+
+    // recipient
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(9000000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(recipient, account_data);
+
     (all_transactions, transaction_checks)
 }
 
@@ -429,12 +637,15 @@ fn svm_integration() {
         &processing_config,
     );
 
-    assert_eq!(result.execution_results.len(), 5);
-
-    let executed_tx_0 = result.execution_results[0].executed_transaction().unwrap();
-    assert!(executed_tx_0.was_successful());
-    let logs = executed_tx_0
-        .execution_details
+    assert_eq!(result.execution_results.len(), 10);
+    assert!(result.execution_results[0]
+        .details()
+        .unwrap()
+        .status
+        .is_ok());
+    let logs = result.execution_results[0]
+        .details()
+        .unwrap()
         .log_messages
         .as_ref()
         .unwrap();
@@ -477,4 +688,111 @@ fn svm_integration() {
         result.execution_results[4],
         TransactionExecutionResult::NotExecuted(TransactionError::BlockhashNotFound)
     ));
+
+    // First transactons with same fee payer
+    assert!(result.execution_results[5]
+        .details()
+        .unwrap()
+        .status
+        .is_ok());
+
+    let fee_payer_key = transactions[5].message().account_keys()[0];
+    let fee_payer_data = result.execution_results[5]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .loaded_transaction
+        .accounts
+        .iter()
+        .find(|key| key.0 == fee_payer_key)
+        .unwrap();
+
+    assert_eq!(fee_payer_data.1.lamports(), 15000);
+
+    let sender_key = transactions[5].message().account_keys()[1];
+    let sender_data = result.execution_results[5]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .loaded_transaction
+        .accounts
+        .iter()
+        .find(|key| key.0 == sender_key)
+        .unwrap();
+
+    assert_eq!(sender_data.1.lamports(), 8995000);
+
+    let recipient_key = transactions[5].message().account_keys()[2];
+    let recipient_data = result.execution_results[5]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .loaded_transaction
+        .accounts
+        .iter()
+        .find(|key| key.0 == recipient_key)
+        .unwrap();
+
+    assert_eq!(recipient_data.1.lamports(), 9005000);
+
+    // Second transactons with same fee payer
+    assert!(result.execution_results[6]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .execution_details
+        .status
+        .is_ok());
+
+    let fee_payer_key = transactions[6].message().account_keys()[0];
+    let fee_payer_data = result.execution_results[6]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .loaded_transaction
+        .accounts
+        .iter()
+        .find(|key| key.0 == fee_payer_key)
+        .unwrap();
+
+    assert_eq!(fee_payer_data.1.lamports(), 5000);
+
+    let sender_key = transactions[6].message().account_keys()[1];
+    let sender_data = result.execution_results[6]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .loaded_transaction
+        .accounts
+        .iter()
+        .find(|key| key.0 == sender_key)
+        .unwrap();
+
+    assert_eq!(sender_data.1.lamports(), 8990000);
+
+    let recipient_key = transactions[6].message().account_keys()[2];
+    let recipient_data = result.execution_results[6]
+        .executed_transaction()
+        .as_ref()
+        .unwrap()
+        .loaded_transaction
+        .accounts
+        .iter()
+        .find(|key| key.0 == recipient_key)
+        .unwrap();
+
+    assert_eq!(recipient_data.1.lamports(), 9010000);
+
+    //Transaction where fee payer doesn't have enough funds to pay fee
+    assert!(matches!(
+        result.execution_results[7],
+        TransactionExecutionResult::NotExecuted(TransactionError::InsufficientFundsForFee)
+    ));
+
+    //Two duplicate transactions
+    assert!(result.execution_results[8]
+        .details()
+        .unwrap()
+        .status
+        .is_ok());
 }

@@ -47,6 +47,7 @@ pub enum ExecuteTimingType {
     CheckUs,
     ValidateFeesUs,
     LoadUs,
+    LoadProgramIndicesUs,
     ExecuteUs,
     StoreUs,
     UpdateStakesCacheUs,
@@ -119,6 +120,13 @@ eager_macro_rules! { $eager_1
                 *$self
                     .metrics
                     .index(ExecuteTimingType::LoadUs),
+                i64
+            ),
+            (
+                "load_program_indices_us",
+                *$self
+                    .metrics
+                    .index(ExecuteTimingType::LoadProgramIndicesUs),
                 i64
             ),
             (
