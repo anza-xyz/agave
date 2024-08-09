@@ -3,6 +3,8 @@ use {
     solana_program_test::*,
     solana_sdk::{
         ed25519_instruction::new_ed25519_instruction,
+        instruction::InstructionError,
+        precompiles::PrecompileError,
         signature::Signer,
         transaction::{Transaction, TransactionError},
     },
@@ -68,7 +70,9 @@ async fn test_failure() {
     assert_matches!(
         client.process_transaction(transaction).await,
         Err(BanksClientError::TransactionError(
-            TransactionError::InvalidAccountIndex
+            TransactionError::InstructionError(0, InstructionError::Custom(3))
         ))
     );
+    // this assert is for documenting the matched error code above
+    assert_eq!(3, PrecompileError::InvalidDataOffsets as u32);
 }
