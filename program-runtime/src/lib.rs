@@ -11,3 +11,4 @@ pub mod loaded_programs;
 pub mod mem_pool;
 pub mod stable_log;
 pub mod sysvar_cache;
+pub mod stable_log_old;

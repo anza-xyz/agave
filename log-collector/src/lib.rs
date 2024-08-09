@@ -21,6 +21,7 @@ impl Default for LogCollector {
     }
 }
 
+//Possibly use String::from(message) instead of to_string() to avoid trait resolution?
 impl LogCollector {
     pub fn log(&mut self, message: &str) {
         let Some(limit) = self.bytes_limit else {
@@ -28,6 +29,7 @@ impl LogCollector {
             return;
         };
 
+        //Is there an alternative to using saturation_add to avoid the little bit of overhead?
         let bytes_written = self.bytes_written.saturating_add(message.len());
         if bytes_written >= limit {
             if !self.limit_warning {

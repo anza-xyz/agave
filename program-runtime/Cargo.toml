@@ -33,6 +33,8 @@ solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
 solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
+criterion = { workspace = true }
+criterion-stats = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -59,3 +61,7 @@ frozen-abi = [
     "solana-sdk/frozen-abi",
 ]
 shuttle-test = ["solana-type-overrides/shuttle-test", "solana_rbpf/shuttle-test"]
+
+[[bench]]
+name = "logging_benchmark"
+harness = false

@@ -2,15 +2,16 @@
 //!
 //! The format of these log messages should not be modified to avoid breaking downstream consumers
 //! of program logging
-
-use base64::encoded_len;
 use {
     base64::{prelude::BASE64_STANDARD, Engine},
+    itertools::Itertools,
     solana_log_collector::{ic_logger_msg, LogCollector},
     solana_sdk::pubkey::Pubkey,
     std::{cell::RefCell, rc::Rc},
 };
 
+//TODO This is the previous version of stable_log. Currently used for bench testing improvements.
+//TODO remove after creating improvement reports.
 /// Log a program invoke.
 ///
 /// The general form is:
@@ -23,8 +24,12 @@ pub fn program_invoke(
     program_id: &Pubkey,
     invoke_depth: usize,
 ) {
-    //Potentially use itoa for invoke_depth, but is currently not an included dep.
-    ic_logger_msg!(log_collector, &["Program ",  &program_id.to_string(), " invoke [", &invoke_depth.to_string(), "]"].join(""));
+    ic_logger_msg!(
+        log_collector,
+        "Program {} invoke [{}]",
+        program_id,
+        invoke_depth
+    );
 }
 
 /// Log a message from the program itself.
@@ -37,7 +42,7 @@ pub fn program_invoke(
 ///
 /// That is, any program-generated output is guaranteed to be prefixed by "Program log: "
 pub fn program_log(log_collector: &Option<Rc<RefCell<LogCollector>>>, message: &str) {
-    ic_logger_msg!(log_collector, &["Program log: ", message].join(""));
+    ic_logger_msg!(log_collector, "Program log: {}", message);
 }
 
 /// Emit a program data.
@@ -50,22 +55,11 @@ pub fn program_log(log_collector: &Option<Rc<RefCell<LogCollector>>>, message: &
 ///
 /// That is, any program-generated output is guaranteed to be prefixed by "Program data: "
 pub fn program_data(log_collector: &Option<Rc<RefCell<LogCollector>>>, data: &[&[u8]]) {
-    // Pre-allocate the result string with an estimated capacity.
-    // The estimation assumes base64 encoding increases the size by about 4/3, plus some extra for spaces (padding = true).
-    let estimated_capacity = data.iter().map(|v| encoded_len(v.len(), true).unwrap()).sum::<usize>();
-    let mut result = String::with_capacity(estimated_capacity);
-
-    // Build the string manually to avoid intermediate allocations.
-    result.push_str("Program data: ");
-
-    for (i, v) in data.iter().enumerate() {
-        if i > 0 {
-            result.push(' ');
-        }
-        // Use BASE64_STANDARD.encode_string() to append directly to the existing string, instead of creating new strings for each piece of data.
-        BASE64_STANDARD.encode_string(v, &mut result);
-    }
-    ic_logger_msg!(log_collector, &result);
+    ic_logger_msg!(
+        log_collector,
+        "Program data: {}",
+        data.iter().map(|v| BASE64_STANDARD.encode(v)).join(" ")
+    );
 }
 
 /// Log return data as from the program itself. This line will not be present if no return
@@ -83,7 +77,12 @@ pub fn program_return(
     program_id: &Pubkey,
     data: &[u8],
 ) {
-    ic_logger_msg!(log_collector, &["Program return: ",  &program_id.to_string(), &BASE64_STANDARD.encode(data)].concat());
+    ic_logger_msg!(
+        log_collector,
+        "Program return: {} {}",
+        program_id,
+        BASE64_STANDARD.encode(data)
+    );
 }
 
 /// Log successful program execution.
@@ -94,7 +93,7 @@ pub fn program_return(
 /// "Program <address> success"
 /// ```
 pub fn program_success(log_collector: &Option<Rc<RefCell<LogCollector>>>, program_id: &Pubkey) {
-    ic_logger_msg!(log_collector, &["Program ",  &program_id.to_string(), " success"].join(""));
+    ic_logger_msg!(log_collector, "Program {} success", program_id);
 }
 
 /// Log program execution failure
@@ -109,7 +108,7 @@ pub fn program_failure<E: std::fmt::Display>(
     program_id: &Pubkey,
     err: &E,
 ) {
-    ic_logger_msg!(log_collector, &["Program ",  &program_id.to_string(), " failed: ", &err.to_string()].join(""));
+    ic_logger_msg!(log_collector, "Program {} failed: {}", program_id, err);
 }
 
 #[cfg(test)]
