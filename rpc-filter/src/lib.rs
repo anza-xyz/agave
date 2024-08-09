@@ -1,6 +1,6 @@
 use {
     base64::{prelude::BASE64_STANDARD, Engine},
-    serde::Deserialize,
+    serde_derive::{Deserialize, Serialize},
     solana_inline_spl::{token::GenericTokenAccount, token_2022::Account},
     solana_sdk::account::{AccountSharedData, ReadableAccount},
     std::borrow::Cow,
@@ -91,7 +91,7 @@ pub enum MemcmpEncodedBytes {
     Bytes(Vec<u8>),
 }
 
-impl<'de> Deserialize<'de> for MemcmpEncodedBytes {
+impl<'de> serde::Deserialize<'de> for MemcmpEncodedBytes {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -194,6 +194,7 @@ impl Memcmp {
         }
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn bytes_match(&self, data: &[u8]) -> bool {
         match self.bytes() {
             Some(bytes) => {

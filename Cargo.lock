@@ -5913,6 +5913,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-rpc-client-nonce-utils",
+ "solana-rpc-filter",
  "solana-sdk",
  "solana-streamer",
  "solana-test-validator",
@@ -5994,6 +5995,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-rpc-client-nonce-utils",
+ "solana-rpc-filter",
  "solana-sdk",
  "solana-streamer",
  "solana-thin-client",
@@ -7126,6 +7128,7 @@ dependencies = [
  "solana-poh",
  "solana-rayon-threadlimit",
  "solana-rpc-client-api",
+ "solana-rpc-filter",
  "solana-runtime",
  "solana-sdk",
  "solana-send-transaction-service",
@@ -7183,9 +7186,6 @@ name = "solana-rpc-client-api"
 version = "2.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
- "bs58",
- "const_format",
  "jsonrpc-core",
  "reqwest",
  "reqwest-middleware",
@@ -7194,7 +7194,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "solana-account-decoder",
- "solana-inline-spl",
+ "solana-rpc-filter",
  "solana-sdk",
  "solana-transaction-status",
  "solana-version",
@@ -7216,6 +7216,21 @@ dependencies = [
  "solana-sdk",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "solana-rpc-filter"
+version = "2.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bs58",
+ "const_format",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "solana-inline-spl",
+ "solana-sdk",
+ "thiserror",
 ]
 
 [[package]]

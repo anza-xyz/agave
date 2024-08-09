@@ -45,7 +45,7 @@ pub mod rpc_custom_error {
     pub use solana_rpc_client_api::custom_error::*;
 }
 pub mod rpc_filter {
-    pub use solana_rpc_client_api::filter::*;
+    pub use solana_rpc_filter::*;
 }
 pub mod rpc_request {
     pub use solana_rpc_client_api::request::*;

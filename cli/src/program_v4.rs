@@ -28,10 +28,10 @@ use {
     solana_rbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::{
-        config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
-        filter::{Memcmp, RpcFilterType},
+    solana_rpc_client_api::config::{
+        RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig,
     },
+    solana_rpc_filter::{Memcmp, RpcFilterType},
     solana_sdk::{
         account::Account,
         commitment_config::CommitmentConfig,

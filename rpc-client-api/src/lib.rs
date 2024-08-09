@@ -1,10 +1,9 @@
-#![allow(clippy::arithmetic_side_effects)]
-
 pub mod client_error;
 pub mod config;
 pub mod custom_error;
 pub mod error_object;
-pub mod filter;
+#[deprecated(since = "2.1.0", note = "Use `solana-rpc-filter` crate instead")]
+pub use solana_rpc_filter as filter;
 pub mod request;
 pub mod response;
 
