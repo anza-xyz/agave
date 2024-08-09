@@ -7,9 +7,9 @@ use {
         derivation_path::DerivationPath,
         pubkey::Pubkey,
         signature::{PresignerError, Signature},
-        transaction::TransactionError,
     },
     itertools::Itertools,
+    solana_transaction_error::TransactionError,
     std::{
         error,
         fs::{self, File, OpenOptions},

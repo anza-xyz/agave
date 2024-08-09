@@ -16,10 +16,11 @@ use {
         signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
         solana_sdk::feature_set,
-        transaction::{Result, Transaction, TransactionError, VersionedTransaction},
+        transaction::{Result, Transaction, VersionedTransaction},
     },
     solana_program::message::SanitizedVersionedMessage,
     solana_sanitize::Sanitize,
+    solana_transaction_error::TransactionError,
     std::collections::HashSet,
 };
 

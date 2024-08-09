@@ -1,16 +1,18 @@
+#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
+#[cfg(not(target_os = "solana"))]
+use solana_program::message::{AddressLoaderError, SanitizeMessageError};
 use {
-    crate::{
-        instruction::InstructionError,
-        message::{AddressLoaderError, SanitizeMessageError},
-    },
-    serde::Serialize,
-    solana_sanitize::SanitizeError,
-    thiserror::Error,
+    solana_program::instruction::InstructionError, solana_sanitize::SanitizeError, thiserror::Error,
 };
 
 /// Reasons a transaction might be rejected.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Error, Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Error, Debug, PartialEq, Eq, Clone)]
 pub enum TransactionError {
     /// An account is already being processed in another transaction in a way
     /// that does not support parallelism
@@ -180,6 +182,7 @@ impl From<SanitizeError> for TransactionError {
     }
 }
 
+#[cfg(not(target_os = "solana"))]
 impl From<SanitizeMessageError> for TransactionError {
     fn from(err: SanitizeMessageError) -> Self {
         match err {
@@ -189,6 +192,7 @@ impl From<SanitizeMessageError> for TransactionError {
     }
 }
 
+#[cfg(not(target_os = "solana"))]
 impl From<AddressLoaderError> for TransactionError {
     fn from(err: AddressLoaderError) -> Self {
         match err {
