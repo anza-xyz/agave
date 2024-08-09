@@ -1041,8 +1041,8 @@ mod tests {
         // Updated socket address is not a duplicate instance.
         {
             let mut other = node.clone();
-            other.set_gossip(new_rand_socket(&mut rng)).unwrap();
-            other.set_serve_repair(new_rand_socket(&mut rng)).unwrap();
+            while other.set_gossip(new_rand_socket(&mut rng)).is_err() {}
+            while other.set_serve_repair(new_rand_socket(&mut rng)).is_err() {}
             assert!(!node.check_duplicate(&other));
             assert!(!other.check_duplicate(&node));
             other.remove_serve_repair();
