@@ -2,8 +2,12 @@
 use qualifier_attr::qualifiers;
 use {
     ahash::{AHashMap, AHashSet},
-    solana_sdk::{pubkey::Pubkey, transaction::TransactionError},
-    std::collections::hash_map,
+    solana_sdk::{
+        message::AccountKeys,
+        pubkey::Pubkey,
+        transaction::{TransactionError, MAX_TX_ACCOUNT_LOCKS},
+    },
+    std::{cell::RefCell, collections::hash_map},
 };
 
 #[derive(Debug, Default)]
@@ -107,6 +111,48 @@ impl AccountLocks {
             removed,
             "Attempted to remove a write-lock for a key that wasn't write-locked"
         );
+    }
+}
+
+/// Validate account locks before locking.
+pub fn validate_account_locks(
+    account_keys: AccountKeys,
+    tx_account_lock_limit: usize,
+) -> Result<(), TransactionError> {
+    if account_keys.len() > tx_account_lock_limit {
+        Err(TransactionError::TooManyAccountLocks)
+    } else if has_duplicates(account_keys) {
+        Err(TransactionError::AccountLoadedTwice)
+    } else {
+        Ok(())
+    }
+}
+
+thread_local! {
+    static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(MAX_TX_ACCOUNT_LOCKS));
+}
+
+/// Check for duplicate account keys.
+fn has_duplicates(account_keys: AccountKeys) -> bool {
+    // Benchmarking has shown that for sets of 32 or more keys, it is faster to
+    // use a HashSet to check for duplicates.
+    // For smaller sets a brute-force O(n^2) check seems to be faster.
+    const USE_ACCOUNT_LOCK_SET_SIZE: usize = 32;
+    if account_keys.len() >= USE_ACCOUNT_LOCK_SET_SIZE {
+        HAS_DUPLICATES_SET.with_borrow_mut(|set| {
+            let has_duplicates = account_keys.iter().any(|key| !set.insert(*key));
+            set.clear();
+            has_duplicates
+        })
+    } else {
+        for (idx, key) in account_keys.iter().enumerate() {
+            for jdx in idx + 1..account_keys.len() {
+                if key == &account_keys[jdx] {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
