@@ -15,7 +15,6 @@ use {
         http_sender::HttpSender,
         mock_sender::MockSender,
         nonblocking::{self, rpc_client::get_rpc_request_str},
-        rpc_sender::*,
     },
     serde::Serialize,
     serde_json::Value,
@@ -29,6 +28,7 @@ use {
         request::{RpcRequest, TokenAccountsFilter},
         response::*,
     },
+    solana_rpc_sender::*,
     solana_sdk::{
         account::{Account, ReadableAccount},
         clock::{Epoch, Slot, UnixTimestamp},
