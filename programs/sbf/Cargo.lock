@@ -5679,6 +5679,7 @@ name = "solana-runtime-transaction"
 version = "2.1.0"
 dependencies = [
  "log",
+ "solana-builtins-default-costs",
  "solana-compute-budget",
  "solana-sdk",
  "thiserror",

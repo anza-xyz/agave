@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 log = { workspace = true }
+solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-sdk = { workspace = true }
 thiserror = { workspace = true }
@@ -22,7 +23,9 @@ name = "solana_runtime_transaction"
 [dev-dependencies]
 bincode = { workspace = true }
 rand = { workspace = true }
-solana-program ={ workspace = true }
+solana-compute-budget-program = { workspace = true }
+solana-program = { workspace = true }
+solana-system-program = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
