@@ -42,7 +42,7 @@ use {
             enable_big_mod_exp_syscall, enable_get_epoch_stake_syscall,
             enable_partitioned_epoch_reward, enable_poseidon_syscall,
             error_on_syscall_bpf_function_hash_collisions, get_sysvar_syscall_enabled,
-            last_restart_slot_sysvar, reject_callx_r10, remaining_compute_units_syscall_enabled,
+            last_restart_slot_sysvar, remaining_compute_units_syscall_enabled,
         },
         hash::{Hash, Hasher},
         instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
@@ -302,7 +302,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         sanitize_user_provided_values: true,
         external_internal_function_hash_collision: feature_set
             .is_active(&error_on_syscall_bpf_function_hash_collisions::id()),
-        reject_callx_r10: feature_set.is_active(&reject_callx_r10::id()),
+        reject_callx_r10: true,
         enable_sbpf_v1: true,
         enable_sbpf_v2: false,
         optimize_rodata: false,
