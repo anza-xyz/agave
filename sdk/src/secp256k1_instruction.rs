@@ -793,10 +793,10 @@ use {
             libsecp256k1_fail_on_bad_count, libsecp256k1_fail_on_bad_count2, FeatureSet,
         },
         instruction::Instruction,
-        precompiles::PrecompileError,
     },
     digest::Digest,
     serde_derive::{Deserialize, Serialize},
+    solana_precompile_error::PrecompileError,
 };
 
 pub const HASHED_PUBKEY_SERIALIZED_SIZE: usize = 20;

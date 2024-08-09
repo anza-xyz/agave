@@ -2,32 +2,12 @@
 
 #![cfg(feature = "full")]
 
+#[deprecated(since = "2.1.0", note = "Use `solana-precompile-error` crate instead.")]
+pub use solana_precompile_error::PrecompileError;
 use {
     crate::{feature_set::FeatureSet, instruction::CompiledInstruction, pubkey::Pubkey},
     lazy_static::lazy_static,
-    solana_decode_error::DecodeError,
-    thiserror::Error,
 };
-
-/// Precompile errors
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum PrecompileError {
-    #[error("public key is not valid")]
-    InvalidPublicKey,
-    #[error("id is not valid")]
-    InvalidRecoveryId,
-    #[error("signature is not valid")]
-    InvalidSignature,
-    #[error("offset not valid")]
-    InvalidDataOffsets,
-    #[error("instruction is incorrect size")]
-    InvalidInstructionDataSize,
-}
-impl<T> DecodeError<T> for PrecompileError {
-    fn type_of() -> &'static str {
-        "PrecompileError"
-    }
-}
 
 /// All precompiled programs must implement the `Verify` function
 pub type Verify = fn(&[u8], &[&[u8]], &FeatureSet) -> std::result::Result<(), PrecompileError>;

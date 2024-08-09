@@ -8,11 +8,11 @@ use {
     crate::{
         feature_set::{ed25519_precompile_verify_strict, FeatureSet},
         instruction::Instruction,
-        precompiles::PrecompileError,
     },
     bytemuck::bytes_of,
     bytemuck_derive::{Pod, Zeroable},
     ed25519_dalek::{ed25519::signature::Signature, Signer, Verifier},
+    solana_precompile_error::PrecompileError,
 };
 
 pub const PUBKEY_SERIALIZED_SIZE: usize = 32;
