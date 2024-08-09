@@ -181,8 +181,9 @@ wait_step() {
 
 all_test_steps() {
   command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
-  command_step checks2 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh check-bins" 15 check
-  command_step checks3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh check-all-targets" 15 check
+  command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 15 check
+  command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 15 check
+  command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 15 check
   command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
   command_step frozen-abi "ci/docker-run-default-image.sh ./test-abi.sh" 15 check
   wait_step
@@ -234,6 +235,19 @@ EOF
       "Stable-SBF skipped as no relevant files were modified"
   fi
 
+   # Shuttle tests
+  if affects \
+             .rs$ \
+             Cargo.lock$ \
+             Cargo.toml$ \
+             ^ci/rust-version.sh \
+      ; then
+    command_step shuttle "ci/docker-run-default-image.sh ci/test-shuttle.sh" 10
+  else
+    annotate --style info \
+      "test-shuttle skipped as no relevant files were modified"
+  fi
+
   # Downstream backwards compatibility
   if affects \
              .rs$ \
@@ -268,23 +282,6 @@ EOF
   else
     annotate --style info \
       "wasm skipped as no relevant files were modified"
-  fi
-
-  # Benches...
-  if affects \
-             .rs$ \
-             Cargo.lock$ \
-             Cargo.toml$ \
-             ^ci/rust-version.sh \
-             ^ci/test-coverage.sh \
-             ^ci/test-bench.sh \
-             ^ci/bench \
-             .buildkite/scripts/build-bench.sh \
-      ; then
-    .buildkite/scripts/build-bench.sh >> "$output_file"
-  else
-    annotate --style info --context test-bench \
-      "Bench skipped as no .rs files were modified"
   fi
 
   # Coverage...

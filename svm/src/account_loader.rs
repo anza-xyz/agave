@@ -1,18 +1,16 @@
 use {
     crate::{
-        account_overrides::AccountOverrides, account_rent_state::RentState,
-        nonce_info::NoncePartial, rollback_accounts::RollbackAccounts,
-        transaction_error_metrics::TransactionErrorMetrics,
+        account_overrides::AccountOverrides, account_rent_state::RentState, nonce_info::NonceInfo,
+        rollback_accounts::RollbackAccounts, transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
     },
     itertools::Itertools,
-    solana_compute_budget::compute_budget_processor::ComputeBudgetLimits,
+    solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         feature_set::{self, FeatureSet},
         fee::FeeDetails,
-        message::SanitizedMessage,
         native_loader,
         nonce::State as NonceState,
         pubkey::Pubkey,
@@ -20,10 +18,14 @@ use {
         rent_collector::{CollectedInfo, RentCollector, RENT_EXEMPT_RENT_EPOCH},
         rent_debits::RentDebits,
         saturating_add_assign,
-        sysvar::{self, instructions::construct_instructions_data},
-        transaction::{Result, SanitizedTransaction, TransactionError},
+        sysvar::{
+            self,
+            instructions::{construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction},
+        },
+        transaction::{Result, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
     std::num::NonZeroU32,
 };
@@ -37,7 +39,7 @@ pub type TransactionLoadResult = Result<LoadedTransaction>;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CheckedTransactionDetails {
-    pub nonce: Option<NoncePartial>,
+    pub nonce: Option<NonceInfo>,
     pub lamports_per_signature: u64,
 }
 
@@ -155,7 +157,7 @@ pub fn validate_fee_payer(
 /// second element.
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    txs: &[SanitizedTransaction],
+    txs: &[impl SVMMessage],
     validation_results: Vec<TransactionValidationResult>,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
@@ -167,12 +169,10 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         .zip(validation_results)
         .map(|etx| match etx {
             (tx, Ok(tx_details)) => {
-                let message = tx.message();
-
                 // load transactions
                 load_transaction_accounts(
                     callbacks,
-                    message,
+                    tx,
                     tx_details,
                     error_metrics,
                     account_overrides,
@@ -188,7 +188,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
-    message: &SanitizedMessage,
+    message: &impl SVMMessage,
     tx_details: ValidatedTransactionDetails,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
@@ -203,9 +203,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut accumulated_accounts_data_size: u32 = 0;
 
     let instruction_accounts = message
-        .instructions()
-        .iter()
-        .flat_map(|instruction| &instruction.accounts)
+        .instructions_iter()
+        .flat_map(|instruction| instruction.accounts)
         .unique()
         .collect::<Vec<&u8>>();
 
@@ -291,8 +290,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 
     let builtins_start_index = accounts.len();
     let program_indices = message
-        .instructions()
-        .iter()
+        .instructions_iter()
         .map(|instruction| {
             let mut account_indices = Vec::with_capacity(2);
             let program_index = instruction.program_id_index as usize;
@@ -393,9 +391,32 @@ fn accumulate_and_check_loaded_account_data_size(
     }
 }
 
-fn construct_instructions_account(message: &SanitizedMessage) -> AccountSharedData {
+fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedData {
+    let account_keys = message.account_keys();
+    let mut decompiled_instructions = Vec::with_capacity(message.num_instructions());
+    for (program_id, instruction) in message.program_instructions_iter() {
+        let accounts = instruction
+            .accounts
+            .iter()
+            .map(|account_index| {
+                let account_index = usize::from(*account_index);
+                BorrowedAccountMeta {
+                    is_signer: message.is_signer(account_index),
+                    is_writable: message.is_writable(account_index),
+                    pubkey: account_keys.get(account_index).unwrap(),
+                }
+            })
+            .collect();
+
+        decompiled_instructions.push(BorrowedInstruction {
+            accounts,
+            data: instruction.data,
+            program_id,
+        });
+    }
+
     AccountSharedData::from(Account {
-        data: construct_instructions_data(&message.decompile_instructions()),
+        data: construct_instructions_data(&decompiled_instructions),
         owner: sysvar::id(),
         ..Account::default()
     })
@@ -410,7 +431,7 @@ mod tests {
             transaction_processing_callback::TransactionProcessingCallback,
         },
         nonce::state::Versions as NonceVersions,
-        solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_processor},
+        solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
         solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
         solana_sdk::{
             account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -1652,7 +1673,7 @@ mod tests {
         );
 
         let compute_budget = ComputeBudget::new(u64::from(
-            compute_budget_processor::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+            compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
         ));
         let transaction_context = TransactionContext::new(
             loaded_txs[0].as_ref().unwrap().accounts.clone(),

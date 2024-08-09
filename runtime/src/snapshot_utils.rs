@@ -42,6 +42,7 @@ use {
         collections::{HashMap, HashSet},
         fmt, fs,
         io::{BufReader, BufWriter, Error as IoError, Read, Result as IoResult, Seek, Write},
+        mem,
         num::NonZeroUsize,
         ops::RangeInclusive,
         path::{Path, PathBuf},
@@ -826,7 +827,7 @@ fn serialize_snapshot(
     snapshot_version: SnapshotVersion,
     snapshot_storages: &[Arc<AccountStorageEntry>],
     slot_deltas: &[BankSlotDelta],
-    bank_fields: BankFieldsToSerialize,
+    mut bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
@@ -877,10 +878,12 @@ fn serialize_snapshot(
         .map_err(AddBankSnapshotError::HardLinkStorages)?);
 
         let bank_snapshot_serializer = move |stream: &mut BufWriter<fs::File>| -> Result<()> {
+            let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let extra_fields = ExtraFieldsToSerialize {
                 lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
                 incremental_snapshot_persistence: bank_incremental_snapshot_persistence,
                 epoch_accounts_hash,
+                versioned_epoch_stakes,
             };
             serde_snapshot::serialize_bank_snapshot_into(
                 stream,
@@ -1043,10 +1046,8 @@ fn archive_snapshot(
                 .map_err(E::ArchiveSnapshotsDir)?;
 
             for storage in snapshot_storages {
-                let path_in_archive = Path::new(ACCOUNTS_DIR).join(AccountsFile::file_name(
-                    storage.slot(),
-                    storage.append_vec_id(),
-                ));
+                let path_in_archive = Path::new(ACCOUNTS_DIR)
+                    .join(AccountsFile::file_name(storage.slot(), storage.id()));
                 match storage.accounts.internals_for_archive() {
                     InternalsForArchive::Mmap(data) => {
                         let mut header = tar::Header::new_gnu();
@@ -1479,7 +1480,7 @@ pub fn hard_link_storages_to_snapshot(
         )?;
         // The appendvec could be recycled, so its filename may not be consistent to the slot and id.
         // Use the storage slot and id to compose a consistent file name for the hard-link file.
-        let hardlink_filename = AccountsFile::file_name(storage.slot(), storage.append_vec_id());
+        let hardlink_filename = AccountsFile::file_name(storage.slot(), storage.id());
         let hard_link_path = snapshot_hardlink_dir.join(hardlink_filename);
         fs::hard_link(storage_path, &hard_link_path).map_err(|err| {
             HardLinkStoragesToSnapshotError::HardLinkStorage(
@@ -2536,10 +2537,10 @@ pub fn should_take_full_snapshot(
 pub fn should_take_incremental_snapshot(
     block_height: Slot,
     incremental_snapshot_archive_interval_slots: Slot,
-    last_full_snapshot_slot: Option<Slot>,
+    latest_full_snapshot_slot: Option<Slot>,
 ) -> bool {
     block_height % incremental_snapshot_archive_interval_slots == 0
-        && last_full_snapshot_slot.is_some()
+        && latest_full_snapshot_slot.is_some()
 }
 
 /// Creates an "accounts path" directory for tests

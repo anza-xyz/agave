@@ -18,7 +18,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
     },
-    solana_svm::transaction_results::TransactionExecutionDetails,
+    solana_svm::transaction_execution_result::TransactionExecutionDetails,
     solana_transaction_status::UiInstruction,
     std::str::FromStr,
 };
@@ -69,6 +69,7 @@ impl BankHashDetails {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Default)]
 pub struct TransactionDetails {
+    pub signature: String,
     pub index: usize,
     pub accounts: Vec<String>,
     pub instructions: Vec<UiInstruction>,

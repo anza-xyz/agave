@@ -73,8 +73,10 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
     return App::new(crate_name!())
         .about(crate_description!())
         .version(version)
-        .setting(AppSettings::VersionlessSubcommands)
-        .setting(AppSettings::InferSubcommands)
+        .global_setting(AppSettings::ColoredHelp)
+        .global_setting(AppSettings::InferSubcommands)
+        .global_setting(AppSettings::UnifiedHelpMessage)
+        .global_setting(AppSettings::VersionlessSubcommands)
         .arg(
             Arg::with_name(SKIP_SEED_PHRASE_VALIDATION_ARG.name)
                 .long(SKIP_SEED_PHRASE_VALIDATION_ARG.long)
@@ -2809,6 +2811,17 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(is_parsable::<u64>)
                 .takes_value(true)
                 .help("Override the runtime's account lock limit per transaction"),
+        )
+        .arg(
+            Arg::with_name("clone_feature_set")
+                .long("clone-feature-set")
+                .takes_value(false)
+                .requires("json_rpc_url")
+                .help(
+                    "Copy a feature set from the cluster referenced by the --url \
+                     argument in the genesis configuration. If the ledger \
+                     already exists then this parameter is silently ignored",
+                ),
         );
 }
 

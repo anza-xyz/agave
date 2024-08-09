@@ -18,8 +18,12 @@ Release channels have their own copy of this changelog:
   * SDK:
     * `cargo-build-sbf` and `cargo-build-bpf` have been deprecated for two years and have now been definitely removed.
        Use `cargo-build-sbf` and `cargo-test-sbf` instead.
+  * Stake:
+    * removed the unreleased `redelegate` instruction processor and CLI commands (#2213)
 * Changes
   * SDK: removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.
+  * `agave-validator`: Update PoH speed check to compare against current hash rate from a Bank (#2447)
+  * `solana-test-validator`: Add `--clone-feature-set` flag to mimic features from a target cluster (#2480)
 
 ## [2.0.0]
 * Breaking
@@ -33,9 +37,15 @@ Release channels have their own copy of this changelog:
     getConfirmedSignaturesForAddress, getConfirmedBlock, getConfirmedBlocks, getConfirmedBlocksWithLimit,
     getConfirmedTransaction, getConfirmedSignaturesForAddress2, getRecentBlockhash, getFees,
     getFeeCalculatorForBlockhash, getFeeRateGovernor, getSnapshotSlot getStakeActivation
-  * `--enable-rpc-obsolete_v1_7` flag removed
   * Deprecated methods are removed from `RpcClient` and `RpcClient::nonblocking`
   * `solana-client`: deprecated re-exports removed; please import `solana-connection-cache`, `solana-quic-client`, or `solana-udp-client` directly
+  * Deprecated arguments removed from `agave-validator`:
+    * `--enable-rpc-obsolete_v1_7` (#1886)
+    * `--accounts-db-caching-enabled` (#2063)
+    * `--accounts-db-index-hashing` (#2063)
+    * `--no-accounts-db-index-hashing` (#2063)
+    * `--incremental-snapshots` (#2148)
+    * `--halt-on-known-validators-accounts-hash-mismatch` (#2157)
 * Changes
   * `central-scheduler` as default option for `--block-production-method` (#34891)
   * `solana-rpc-client-api`: `RpcFilterError` depends on `base64` version 0.22, so users may need to upgrade to `base64` version 0.22

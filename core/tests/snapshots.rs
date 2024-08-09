@@ -12,7 +12,7 @@ use {
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
-        snapshot_packager_service::SnapshotPackagerService,
+        snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
     },
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_runtime::{
@@ -50,7 +50,7 @@ use {
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc, Mutex, RwLock,
         },
         time::{Duration, Instant},
     },
@@ -235,12 +235,7 @@ fn run_bank_forks_snapshot_n<F>(
                 .unwrap()
                 .set_root(bank.slot(), &request_sender, None)
                 .unwrap();
-            snapshot_request_handler.handle_snapshot_requests(
-                false,
-                0,
-                &mut None,
-                &AtomicBool::new(false),
-            );
+            snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
         }
     }
 
@@ -465,7 +460,7 @@ fn test_bank_forks_incremental_snapshot(
         accounts_package_sender,
     };
 
-    let mut last_full_snapshot_slot = None;
+    let mut latest_full_snapshot_slot = None;
     for slot in 1..=LAST_SLOT {
         // Make a new bank and perform some transactions
         let bank = {
@@ -500,18 +495,14 @@ fn test_bank_forks_incremental_snapshot(
                 .unwrap()
                 .set_root(bank.slot(), &request_sender, None)
                 .unwrap();
-            snapshot_request_handler.handle_snapshot_requests(
-                false,
-                0,
-                &mut last_full_snapshot_slot,
-                &AtomicBool::new(false),
-            );
+            snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
         }
 
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
         // at the right interval
         if snapshot_utils::should_take_full_snapshot(slot, FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS) {
             make_full_snapshot_archive(&bank, &snapshot_test_config.snapshot_config).unwrap();
+            latest_full_snapshot_slot = Some(slot);
         }
         // Similarly, make an incremental snapshot archive at the right interval, but only if
         // there's been at least one full snapshot first, and a full snapshot wasn't already
@@ -521,12 +512,12 @@ fn test_bank_forks_incremental_snapshot(
         else if snapshot_utils::should_take_incremental_snapshot(
             slot,
             INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            last_full_snapshot_slot,
-        ) && slot != last_full_snapshot_slot.unwrap()
+            latest_full_snapshot_slot,
+        ) && slot != latest_full_snapshot_slot.unwrap()
         {
             make_incremental_snapshot_archive(
                 &bank,
-                last_full_snapshot_slot.unwrap(),
+                latest_full_snapshot_slot.unwrap(),
                 &snapshot_test_config.snapshot_config,
             )
             .unwrap();
@@ -676,7 +667,7 @@ fn test_snapshots_with_background_services(
     let (pruned_banks_sender, pruned_banks_receiver) = unbounded();
     let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
     let (accounts_package_sender, accounts_package_receiver) = unbounded();
-    let (snapshot_package_sender, snapshot_package_receiver) = unbounded();
+    let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
     bank_forks
@@ -709,8 +700,7 @@ fn test_snapshots_with_background_services(
 
     let exit = Arc::new(AtomicBool::new(false));
     let snapshot_packager_service = SnapshotPackagerService::new(
-        snapshot_package_sender.clone(),
-        snapshot_package_receiver,
+        pending_snapshot_packages.clone(),
         None,
         exit.clone(),
         cluster_info.clone(),
@@ -721,7 +711,7 @@ fn test_snapshots_with_background_services(
     let accounts_hash_verifier = AccountsHashVerifier::new(
         accounts_package_sender,
         accounts_package_receiver,
-        Some(snapshot_package_sender),
+        pending_snapshot_packages,
         exit.clone(),
         snapshot_test_config.snapshot_config.clone(),
     );
@@ -731,11 +721,10 @@ fn test_snapshots_with_background_services(
         exit.clone(),
         abs_request_handler,
         false,
-        None,
     );
 
-    let mut last_full_snapshot_slot = None;
-    let mut last_incremental_snapshot_slot = None;
+    let mut latest_full_snapshot_slot = None;
+    let mut latest_incremental_snapshot_slot = None;
     let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
     for slot in 1..=LAST_SLOT {
         // Make a new bank and process some transactions
@@ -788,16 +777,16 @@ fn test_snapshots_with_background_services(
                 );
                 std::thread::sleep(Duration::from_secs(1));
             }
-            last_full_snapshot_slot = Some(slot);
+            latest_full_snapshot_slot = Some(slot);
         } else if slot % INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS == 0
-            && last_full_snapshot_slot.is_some()
+            && latest_full_snapshot_slot.is_some()
         {
             let timer = Instant::now();
             while snapshot_utils::get_highest_incremental_snapshot_archive_slot(
                 &snapshot_test_config
                     .snapshot_config
                     .incremental_snapshot_archives_dir,
-                last_full_snapshot_slot.unwrap(),
+                latest_full_snapshot_slot.unwrap(),
             ) != Some(slot)
             {
                 assert!(
@@ -806,7 +795,7 @@ fn test_snapshots_with_background_services(
                 );
                 std::thread::sleep(Duration::from_secs(1));
             }
-            last_incremental_snapshot_slot = Some(slot);
+            latest_incremental_snapshot_slot = Some(slot);
         }
     }
 
@@ -841,7 +830,7 @@ fn test_snapshots_with_background_services(
 
     assert_eq!(
         deserialized_bank.slot(),
-        last_incremental_snapshot_slot.unwrap()
+        latest_incremental_snapshot_slot.unwrap()
     );
     assert_eq!(
         &deserialized_bank,

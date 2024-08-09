@@ -10,19 +10,11 @@ use {
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
     solana_sdk::{
         pubkey::Pubkey,
-        rent_debits::RentDebits,
         transaction::{self, TransactionError},
         transaction_context::TransactionReturnData,
     },
     std::{collections::HashMap, sync::Arc},
 };
-
-pub struct TransactionResults {
-    pub fee_collection_results: Vec<transaction::Result<()>>,
-    pub loaded_accounts_stats: Vec<transaction::Result<TransactionLoadedAccountsStats>>,
-    pub execution_results: Vec<TransactionExecutionResult>,
-    pub rent_debits: Vec<RentDebits>,
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct TransactionLoadedAccountsStats {
@@ -56,44 +48,6 @@ pub struct ExecutedTransaction {
 impl ExecutedTransaction {
     pub fn was_successful(&self) -> bool {
         self.execution_details.status.is_ok()
-    }
-}
-
-impl TransactionExecutionResult {
-    pub fn was_executed_successfully(&self) -> bool {
-        self.executed_transaction()
-            .map(|executed_tx| executed_tx.was_successful())
-            .unwrap_or(false)
-    }
-
-    pub fn was_executed(&self) -> bool {
-        self.executed_transaction().is_some()
-    }
-
-    pub fn details(&self) -> Option<&TransactionExecutionDetails> {
-        self.executed_transaction()
-            .map(|executed_tx| &executed_tx.execution_details)
-    }
-
-    pub fn flattened_result(&self) -> transaction::Result<()> {
-        match self {
-            Self::Executed(executed_tx) => executed_tx.execution_details.status.clone(),
-            Self::NotExecuted(err) => Err(err.clone()),
-        }
-    }
-
-    pub fn executed_transaction(&self) -> Option<&ExecutedTransaction> {
-        match self {
-            Self::Executed(executed_tx) => Some(executed_tx.as_ref()),
-            Self::NotExecuted { .. } => None,
-        }
-    }
-
-    pub fn executed_transaction_mut(&mut self) -> Option<&mut ExecutedTransaction> {
-        match self {
-            Self::Executed(executed_tx) => Some(executed_tx.as_mut()),
-            Self::NotExecuted { .. } => None,
-        }
     }
 }
 

@@ -140,8 +140,7 @@ mod serde_snapshot_tests {
         for storage_entry in storage_entries.into_iter() {
             // Copy file to new directory
             let storage_path = storage_entry.path();
-            let file_name =
-                AccountsFile::file_name(storage_entry.slot(), storage_entry.append_vec_id());
+            let file_name = AccountsFile::file_name(storage_entry.slot(), storage_entry.id());
             let output_path = output_dir.as_ref().join(file_name);
             std::fs::copy(storage_path, &output_path)?;
 
@@ -153,15 +152,15 @@ mod serde_snapshot_tests {
             )?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
-                storage_entry.append_vec_id(),
+                storage_entry.id(),
                 accounts_file,
                 num_accounts,
             );
-            next_append_vec_id = next_append_vec_id.max(new_storage_entry.append_vec_id());
+            next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(
                 new_storage_entry.slot(),
                 AccountStorageReference {
-                    id: new_storage_entry.append_vec_id(),
+                    id: new_storage_entry.id(),
                     storage: Arc::new(new_storage_entry),
                 },
             );
@@ -824,7 +823,7 @@ mod serde_snapshot_tests {
                 pubkey_count,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
             );
-            accounts.shrink_all_slots(*startup, None, &EpochSchedule::default());
+            accounts.shrink_all_slots(*startup, &EpochSchedule::default(), None);
             assert_eq!(
                 pubkey_count_after_shrink,
                 accounts.all_account_count_in_accounts_file(shrink_slot)
@@ -852,7 +851,7 @@ mod serde_snapshot_tests {
                 .unwrap();
 
             // repeating should be no-op
-            accounts.shrink_all_slots(*startup, None, &epoch_schedule);
+            accounts.shrink_all_slots(*startup, &epoch_schedule, None);
             assert_eq!(
                 pubkey_count_after_shrink,
                 accounts.all_account_count_in_accounts_file(shrink_slot)

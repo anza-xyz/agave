@@ -45,11 +45,9 @@ use {
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
         feature_set,
-        fee::FeeDetails,
         genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
-        rent_debits::RentDebits,
         saturating_add_assign,
         signature::{Keypair, Signature},
         timing,
@@ -59,11 +57,8 @@ use {
         },
     },
     solana_svm::{
+        transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processor::ExecutionRecordingConfig,
-        transaction_results::{
-            TransactionExecutionDetails, TransactionExecutionResult,
-            TransactionLoadedAccountsStats, TransactionResults,
-        },
     },
     solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
@@ -106,16 +101,13 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 // Includes transaction signature for unit-testing
 fn get_first_error(
     batch: &TransactionBatch,
-    fee_collection_results: Vec<Result<()>>,
+    commit_results: &[TransactionCommitResult],
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
-    for (result, transaction) in fee_collection_results
-        .iter()
-        .zip(batch.sanitized_transactions())
-    {
-        if let Err(ref err) = result {
+    for (commit_result, transaction) in commit_results.iter().zip(batch.sanitized_transactions()) {
+        if let Err(err) = commit_result {
             if first_err.is_none() {
-                first_err = Some((result.clone(), *transaction.signature()));
+                first_err = Some((Err(err.clone()), *transaction.signature()));
             }
             warn!(
                 "Unexpected validator error: {:?}, transaction: {:?}",
@@ -165,7 +157,7 @@ pub fn execute_batch(
         vec![]
     };
 
-    let (tx_results, balances) = batch.bank().load_execute_and_commit_transactions(
+    let (commit_results, balances) = batch.bank().load_execute_and_commit_transactions(
         batch,
         MAX_PROCESSING_AGE,
         transaction_status_sender.is_some(),
@@ -176,28 +168,15 @@ pub fn execute_batch(
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
-        &tx_results,
+        &commit_results,
         replay_vote_sender,
     );
-
-    let TransactionResults {
-        fee_collection_results,
-        loaded_accounts_stats,
-        execution_results,
-        rent_debits,
-        ..
-    } = tx_results;
 
     let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
         .feature_set
         .is_active(&feature_set::apply_cost_tracker_during_replay::id())
     {
-        check_block_cost_limits(
-            bank,
-            &loaded_accounts_stats,
-            &execution_results,
-            batch.sanitized_transactions(),
-        )
+        check_block_cost_limits(bank, &commit_results, batch.sanitized_transactions())
     } else {
         Ok(())
     });
@@ -208,11 +187,13 @@ pub fn execute_batch(
     );
     check_block_cost_limits_result?;
 
-    let executed_transactions = execution_results
+    let committed_transactions = commit_results
         .iter()
         .zip(batch.sanitized_transactions())
-        .filter_map(|(execution_result, tx)| execution_result.was_executed().then_some(tx))
+        .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx))
         .collect_vec();
+
+    let first_err = get_first_error(batch, &commit_results);
 
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions = batch.sanitized_transactions().to_vec();
@@ -226,19 +207,17 @@ pub fn execute_batch(
             TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances);
 
         transaction_status_sender.send_transaction_status_batch(
-            bank.clone(),
+            bank.slot(),
             transactions,
-            execution_results,
+            commit_results,
             balances,
             token_balances,
-            rent_debits,
             transaction_indexes.to_vec(),
         );
     }
 
-    prioritization_fee_cache.update(bank, executed_transactions.into_iter());
+    prioritization_fee_cache.update(bank, committed_transactions.into_iter());
 
-    let first_err = get_first_error(batch, fee_collection_results);
     first_err.map(|(result, _)| result).unwrap_or(Ok(()))
 }
 
@@ -247,27 +226,22 @@ pub fn execute_batch(
 // reported to metric `replay-stage-mark_dead_slot`
 fn check_block_cost_limits(
     bank: &Bank,
-    loaded_accounts_stats: &[Result<TransactionLoadedAccountsStats>],
-    execution_results: &[TransactionExecutionResult],
+    commit_results: &[TransactionCommitResult],
     sanitized_transactions: &[SanitizedTransaction],
 ) -> Result<()> {
-    assert_eq!(loaded_accounts_stats.len(), execution_results.len());
+    assert_eq!(sanitized_transactions.len(), commit_results.len());
 
-    let tx_costs_with_actual_execution_units: Vec<_> = execution_results
+    let tx_costs_with_actual_execution_units: Vec<_> = commit_results
         .iter()
-        .zip(loaded_accounts_stats)
         .zip(sanitized_transactions)
-        .filter_map(|((execution_result, loaded_accounts_stats), tx)| {
-            if let Some(details) = execution_result.details() {
-                let tx_cost = CostModel::calculate_cost_for_executed_transaction(
+        .filter_map(|(commit_result, tx)| {
+            if let Ok(committed_tx) = commit_result {
+                Some(CostModel::calculate_cost_for_executed_transaction(
                     tx,
-                    details.executed_units,
-                    loaded_accounts_stats
-                        .as_ref()
-                        .map_or(0, |stats| stats.loaded_accounts_data_size),
+                    committed_tx.execution_details.executed_units,
+                    committed_tx.loaded_account_stats.loaded_accounts_data_size,
                     &bank.feature_set,
-                );
-                Some(tx_cost)
+                ))
             } else {
                 None
             }
@@ -1725,7 +1699,7 @@ fn process_next_slots(
     blockstore: &Blockstore,
     leader_schedule_cache: &LeaderScheduleCache,
     pending_slots: &mut Vec<(SlotMeta, Bank, Hash)>,
-    halt_at_slot: Option<Slot>,
+    opts: &ProcessOptions,
 ) -> result::Result<(), BlockstoreProcessorError> {
     if meta.next_slots.is_empty() {
         return Ok(());
@@ -1733,10 +1707,13 @@ fn process_next_slots(
 
     // This is a fork point if there are multiple children, create a new child bank for each fork
     for next_slot in &meta.next_slots {
-        let skip_next_slot = halt_at_slot
-            .map(|halt_at_slot| *next_slot > halt_at_slot)
-            .unwrap_or(false);
-        if skip_next_slot {
+        if opts
+            .halt_at_slot
+            .is_some_and(|halt_at_slot| *next_slot > halt_at_slot)
+        {
+            continue;
+        }
+        if !opts.allow_dead_slots && blockstore.is_dead(*next_slot) {
             continue;
         }
 
@@ -1815,7 +1792,7 @@ fn load_frozen_forks(
         blockstore,
         leader_schedule_cache,
         &mut pending_slots,
-        opts.halt_at_slot,
+        opts,
     )?;
 
     let on_halt_store_hash_raw_data_for_debug = opts.on_halt_store_hash_raw_data_for_debug;
@@ -1994,7 +1971,7 @@ fn load_frozen_forks(
                 blockstore,
                 leader_schedule_cache,
                 &mut pending_slots,
-                opts.halt_at_slot,
+                opts,
             )?;
         }
     } else if on_halt_store_hash_raw_data_for_debug {
@@ -2131,12 +2108,11 @@ pub enum TransactionStatusMessage {
 }
 
 pub struct TransactionStatusBatch {
-    pub bank: Arc<Bank>,
+    pub slot: Slot,
     pub transactions: Vec<SanitizedTransaction>,
-    pub execution_results: Vec<Option<(TransactionExecutionDetails, FeeDetails)>>,
+    pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
     pub token_balances: TransactionTokenBalancesSet,
-    pub rent_debits: Vec<RentDebits>,
     pub transaction_indexes: Vec<usize>,
 }
 
@@ -2148,34 +2124,21 @@ pub struct TransactionStatusSender {
 impl TransactionStatusSender {
     pub fn send_transaction_status_batch(
         &self,
-        bank: Arc<Bank>,
+        slot: Slot,
         transactions: Vec<SanitizedTransaction>,
-        execution_results: Vec<TransactionExecutionResult>,
+        commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
         token_balances: TransactionTokenBalancesSet,
-        rent_debits: Vec<RentDebits>,
         transaction_indexes: Vec<usize>,
     ) {
-        let slot = bank.slot();
-
         if let Err(e) = self
             .sender
             .send(TransactionStatusMessage::Batch(TransactionStatusBatch {
-                bank,
+                slot,
                 transactions,
-                execution_results: execution_results
-                    .into_iter()
-                    .map(|result| match result {
-                        TransactionExecutionResult::Executed(executed_tx) => Some((
-                            executed_tx.execution_details,
-                            executed_tx.loaded_transaction.fee_details,
-                        )),
-                        TransactionExecutionResult::NotExecuted(_) => None,
-                    })
-                    .collect(),
+                commit_results,
                 balances,
                 token_balances,
-                rent_debits,
                 transaction_indexes,
             }))
         {
@@ -2267,18 +2230,23 @@ pub mod tests {
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             epoch_schedule::EpochSchedule,
+            fee::FeeDetails,
             hash::Hash,
             instruction::{Instruction, InstructionError},
             native_token::LAMPORTS_PER_SOL,
             pubkey::Pubkey,
+            rent_debits::RentDebits,
             signature::{Keypair, Signer},
             system_instruction::SystemError,
             system_transaction,
             transaction::{Transaction, TransactionError},
         },
         solana_svm::{
-            account_loader::LoadedTransaction, transaction_processor::ExecutionRecordingConfig,
-            transaction_results::ExecutedTransaction,
+            transaction_commit_result::CommittedTransaction,
+            transaction_execution_result::{
+                TransactionExecutionDetails, TransactionLoadedAccountsStats,
+            },
+            transaction_processor::ExecutionRecordingConfig,
         },
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
@@ -4272,13 +4240,7 @@ pub mod tests {
         );
         let txs = vec![account_not_found_tx, invalid_blockhash_tx];
         let batch = bank.prepare_batch_for_tests(txs);
-        let (
-            TransactionResults {
-                fee_collection_results,
-                ..
-            },
-            _balances,
-        ) = batch.bank().load_execute_and_commit_transactions(
+        let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             false,
@@ -4286,7 +4248,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
             None,
         );
-        let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
+        let (err, signature) = get_first_error(&batch, &commit_results).unwrap();
         assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
         assert_eq!(signature, account_not_found_sig);
     }
@@ -5113,9 +5075,12 @@ pub mod tests {
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
         let txs = vec![tx.clone(), tx];
-        let results = vec![
-            TransactionExecutionResult::Executed(Box::new(ExecutedTransaction {
-                loaded_transaction: LoadedTransaction::default(),
+        let commit_results = vec![
+            Ok(CommittedTransaction {
+                loaded_account_stats: TransactionLoadedAccountsStats {
+                    loaded_accounts_data_size: actual_loaded_accounts_data_size,
+                    loaded_accounts_count: 2,
+                },
                 execution_details: TransactionExecutionDetails {
                     status: Ok(()),
                     log_messages: None,
@@ -5124,22 +5089,16 @@ pub mod tests {
                     executed_units: actual_execution_cu,
                     accounts_data_len_delta: 0,
                 },
-                programs_modified_by_tx: HashMap::new(),
-            })),
-            TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
-        ];
-        let loaded_accounts_stats = vec![
-            Ok(TransactionLoadedAccountsStats {
-                loaded_accounts_data_size: actual_loaded_accounts_data_size,
-                loaded_accounts_count: 2
-            });
-            2
+                fee_details: FeeDetails::default(),
+                rent_debits: RentDebits::default(),
+            }),
+            Err(TransactionError::AccountNotFound),
         ];
 
-        assert!(check_block_cost_limits(&bank, &loaded_accounts_stats, &results, &txs).is_ok());
+        assert!(check_block_cost_limits(&bank, &commit_results, &txs).is_ok());
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            check_block_cost_limits(&bank, &loaded_accounts_stats, &results, &txs)
+            check_block_cost_limits(&bank, &commit_results, &txs)
         );
     }
 }

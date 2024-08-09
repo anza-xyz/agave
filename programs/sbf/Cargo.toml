@@ -11,6 +11,7 @@ edition = "2021"
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
+borsh = "1.5.1"
 byteorder = "1.3.2"
 elf = "0.0.10"
 getrandom = "0.2.10"
@@ -42,6 +43,7 @@ solana-poseidon = { path = "../../poseidon/", version = "=2.1.0" }
 solana-program = { path = "../../sdk/program", version = "=2.1.0" }
 solana-program-runtime = { path = "../../program-runtime", version = "=2.1.0" }
 solana-runtime = { path = "../../runtime", version = "=2.1.0" }
+solana-runtime-transaction = { path = "../../runtime-transaction", version = "=2.1.0" }
 solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=2.1.0" }
 solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=2.1.0" }
 solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=2.1.0" }
@@ -58,7 +60,7 @@ solana-transaction-status = { path = "../../transaction-status", version = "=2.1
 solana-type-overrides = { path = "../../type-overrides", version = "=2.1.0" }
 agave-validator = { path = "../../validator", version = "=2.1.0" }
 solana-zk-token-sdk = { path = "../../zk-token-sdk", version = "=2.1.0" }
-solana_rbpf = "=0.8.2"
+solana_rbpf = "=0.8.5"
 thiserror = "1.0"
 
 [package]
@@ -89,6 +91,7 @@ frozen-abi = []
 [dev-dependencies]
 agave-validator = { workspace = true }
 bincode = { workspace = true }
+borsh = { workspace = true }
 byteorder = { workspace = true }
 elf = { workspace = true }
 itertools = { workspace = true }
@@ -108,6 +111,7 @@ solana-measure = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-runtime-transaction = { workspace = true }
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
@@ -129,6 +133,7 @@ members = [
     "rust/alt_bn128",
     "rust/alt_bn128_compression",
     "rust/big_mod_exp",
+    "rust/call_args",
     "rust/call_depth",
     "rust/caller_access",
     "rust/curve25519",

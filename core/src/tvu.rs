@@ -160,6 +160,8 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
     ) -> Result<Self, String> {
+        let in_wen_restart = wen_restart_repair_slots.is_some();
+
         let TvuSockets {
             repair: repair_socket,
             fetch: fetch_sockets,
@@ -312,7 +314,7 @@ impl Tvu {
 
         let drop_bank_service = DropBankService::new(drop_bank_receiver);
 
-        let replay_stage = if wen_restart_repair_slots.is_some() {
+        let replay_stage = if in_wen_restart {
             None
         } else {
             Some(ReplayStage::new(
@@ -420,10 +422,7 @@ pub mod tests {
         std::sync::atomic::{AtomicU64, Ordering},
     };
 
-    #[ignore]
-    #[test]
-    #[serial]
-    fn test_tvu_exit() {
+    fn test_tvu_exit(enable_wen_restart: bool) {
         solana_logger::setup();
         let leader = Node::new_localhost();
         let target1_keypair = Keypair::new();
@@ -434,15 +433,17 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
 
-        let keypair = Arc::new(Keypair::new());
         let (turbine_quic_endpoint_sender, _turbine_quic_endpoint_receiver) =
             tokio::sync::mpsc::channel(/*capacity:*/ 128);
         let (_turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
         let (repair_quic_endpoint_sender, _repair_quic_endpoint_receiver) =
             tokio::sync::mpsc::channel(/*buffer:*/ 128);
         //start cluster_info1
-        let cluster_info1 =
-            ClusterInfo::new(target1.info.clone(), keypair, SocketAddrSpace::Unspecified);
+        let cluster_info1 = ClusterInfo::new(
+            target1.info.clone(),
+            target1_keypair.into(),
+            SocketAddrSpace::Unspecified,
+        );
         cluster_info1.insert_info(leader.info);
         let cref1 = Arc::new(cluster_info1);
 
@@ -470,6 +471,11 @@ pub mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default());
+        let wen_restart_repair_slots = if enable_wen_restart {
+            Some(Arc::new(RwLock::new(vec![])))
+        } else {
+            None
+        };
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
@@ -526,11 +532,28 @@ pub mod tests {
             repair_quic_endpoint_sender,
             outstanding_repair_requests,
             cluster_slots,
-            None,
+            wen_restart_repair_slots,
         )
         .expect("assume success");
+        if enable_wen_restart {
+            assert!(tvu.replay_stage.is_none())
+        } else {
+            assert!(tvu.replay_stage.is_some())
+        }
         exit.store(true, Ordering::Relaxed);
         tvu.join().unwrap();
         poh_service.join().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_tvu_exit_no_wen_restart() {
+        test_tvu_exit(false);
+    }
+
+    #[test]
+    #[serial]
+    fn test_tvu_exit_with_wen_restart() {
+        test_tvu_exit(true);
     }
 }
