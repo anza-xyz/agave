@@ -232,22 +232,27 @@ fn test_race_register_tick_freeze() {
     }
 }
 
-fn new_execution_result(status: Result<()>, fee_details: FeeDetails) -> TransactionExecutionResult {
-    TransactionExecutionResult::Executed(Box::new(ExecutedTransaction {
-        loaded_transaction: LoadedTransaction {
-            fee_details,
-            ..LoadedTransaction::default()
+fn new_processing_result(
+    status: Result<()>,
+    fee_details: FeeDetails,
+) -> TransactionProcessingResult {
+    Ok(ProcessedTransaction::Executed(Box::new(
+        ExecutedTransaction {
+            loaded_transaction: LoadedTransaction {
+                fee_details,
+                ..LoadedTransaction::default()
+            },
+            execution_details: TransactionExecutionDetails {
+                status,
+                log_messages: None,
+                inner_instructions: None,
+                return_data: None,
+                executed_units: 0,
+                accounts_data_len_delta: 0,
+            },
+            programs_modified_by_tx: HashMap::new(),
         },
-        execution_details: TransactionExecutionDetails {
-            status,
-            log_messages: None,
-            inner_instructions: None,
-            return_data: None,
-            executed_units: 0,
-            accounts_data_len_delta: 0,
-        },
-        programs_modified_by_tx: HashMap::new(),
-    }))
+    )))
 }
 
 impl Bank {
@@ -2874,9 +2879,9 @@ fn test_filter_program_errors_and_collect_fee() {
 
     let tx_fee = 42;
     let fee_details = FeeDetails::new(tx_fee, 0, false);
-    let execution_results = vec![
-        new_execution_result(Ok(()), fee_details),
-        new_execution_result(
+    let processing_results = vec![
+        new_processing_result(Ok(()), fee_details),
+        new_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 SystemError::ResultWithNegativeLamports.into(),
@@ -2886,7 +2891,7 @@ fn test_filter_program_errors_and_collect_fee() {
     ];
     let initial_balance = bank.get_balance(&leader);
 
-    bank.filter_program_errors_and_collect_fee(&execution_results);
+    bank.filter_program_errors_and_collect_fee(&processing_results);
     bank.freeze();
     assert_eq!(
         bank.get_balance(&leader),
@@ -2905,9 +2910,9 @@ fn test_filter_program_errors_and_collect_priority_fee() {
 
     let priority_fee = 42;
     let fee_details: FeeDetails = FeeDetails::new(0, priority_fee, false);
-    let execution_results = vec![
-        new_execution_result(Ok(()), fee_details),
-        new_execution_result(
+    let processing_results = vec![
+        new_processing_result(Ok(()), fee_details),
+        new_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 SystemError::ResultWithNegativeLamports.into(),
@@ -2917,7 +2922,7 @@ fn test_filter_program_errors_and_collect_priority_fee() {
     ];
     let initial_balance = bank.get_balance(&leader);
 
-    bank.filter_program_errors_and_collect_fee(&execution_results);
+    bank.filter_program_errors_and_collect_fee(&processing_results);
     bank.freeze();
     assert_eq!(
         bank.get_balance(&leader),
@@ -5729,7 +5734,7 @@ fn test_pre_post_transaction_balances() {
     // Failed transactions still produce balance sets
     // This is an InstructionError - fees charged
     assert_eq!(
-        commit_results[2].transaction_result(),
+        commit_results[2].as_ref().unwrap().status,
         Err(TransactionError::InstructionError(
             0,
             InstructionError::Custom(1),
@@ -6921,11 +6926,17 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         Err(TransactionError::ProgramAccountNotFound),
     );
     {
-        // Make sure it is not in the cache because the account owner is not a loader
+        // Make sure it is not in the program cache because the account owner is not a loader
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert!(slot_versions.is_empty());
     }
+
+    // Advance bank to get a new last blockhash for duplicate transaction below
+    goto_end_of_slot(bank.clone());
+    let bank = bank_client
+        .advance_slot(1, bank_forks.as_ref(), &mint_keypair.pubkey())
+        .unwrap();
 
     // Load program file
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
@@ -6992,8 +7003,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 1);
-        assert_eq!(slot_versions[0].deployment_slot, 0);
-        assert_eq!(slot_versions[0].effective_slot, 0);
+        assert_eq!(slot_versions[0].deployment_slot, bank.slot());
+        assert_eq!(slot_versions[0].effective_slot, bank.slot());
         assert!(matches!(
             slot_versions[0].program,
             ProgramCacheEntryType::Closed,
@@ -7016,8 +7027,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&buffer_address);
         assert_eq!(slot_versions.len(), 1);
-        assert_eq!(slot_versions[0].deployment_slot, 0);
-        assert_eq!(slot_versions[0].effective_slot, 0);
+        assert_eq!(slot_versions[0].deployment_slot, bank.slot());
+        assert_eq!(slot_versions[0].effective_slot, bank.slot());
         assert!(matches!(
             slot_versions[0].program,
             ProgramCacheEntryType::Closed,
@@ -7118,14 +7129,14 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
         let slot_versions = program_cache.get_slot_versions_for_tests(&program_keypair.pubkey());
         assert_eq!(slot_versions.len(), 2);
-        assert_eq!(slot_versions[0].deployment_slot, 0);
-        assert_eq!(slot_versions[0].effective_slot, 0);
+        assert_eq!(slot_versions[0].deployment_slot, bank.slot() - 1);
+        assert_eq!(slot_versions[0].effective_slot, bank.slot() - 1);
         assert!(matches!(
             slot_versions[0].program,
             ProgramCacheEntryType::Closed,
         ));
-        assert_eq!(slot_versions[1].deployment_slot, 0);
-        assert_eq!(slot_versions[1].effective_slot, 1);
+        assert_eq!(slot_versions[1].deployment_slot, bank.slot() - 1);
+        assert_eq!(slot_versions[1].effective_slot, bank.slot());
         assert!(matches!(
             slot_versions[1].program,
             ProgramCacheEntryType::Loaded(_),
@@ -9087,7 +9098,6 @@ fn test_tx_log_order() {
     assert!(commit_results[0]
         .as_ref()
         .unwrap()
-        .execution_details
         .log_messages
         .as_ref()
         .unwrap()[1]
@@ -9096,7 +9106,6 @@ fn test_tx_log_order() {
     assert!(commit_results[1]
         .as_ref()
         .unwrap()
-        .execution_details
         .log_messages
         .as_ref()
         .unwrap()[2]
@@ -9190,12 +9199,7 @@ fn test_tx_return_data() {
                 None,
             )
             .0;
-        let return_data = commit_results[0]
-            .as_ref()
-            .unwrap()
-            .execution_details
-            .return_data
-            .clone();
+        let return_data = commit_results[0].as_ref().unwrap().return_data.clone();
         if let Some(index) = index {
             let return_data = return_data.unwrap();
             assert_eq!(return_data.program_id, mock_program_id);
@@ -12800,9 +12804,9 @@ fn test_filter_program_errors_and_collect_fee_details() {
     let bank = Bank::new_for_tests(&genesis_config);
 
     let results = vec![
-        TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
-        new_execution_result(Ok(()), tx_fee_details),
-        new_execution_result(
+        Err(TransactionError::AccountNotFound),
+        new_processing_result(Ok(()), tx_fee_details),
+        new_processing_result(
             Err(TransactionError::InstructionError(
                 0,
                 SystemError::ResultWithNegativeLamports.into(),
