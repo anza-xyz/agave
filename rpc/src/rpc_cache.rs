@@ -1,5 +1,6 @@
 use {
-    solana_rpc_client_api::{config::RpcLargestAccountsFilter, response::RpcAccountBalance},
+    solana_rpc_client_api::config::RpcLargestAccountsFilter,
+    solana_rpc_response::RpcAccountBalance,
     std::{
         collections::HashMap,
         time::{Duration, SystemTime},

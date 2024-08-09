@@ -183,10 +183,10 @@ use {
             RpcTransactionLogsFilter,
         },
         error_object::RpcErrorObject,
-        response::{
-            Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
-        },
+    },
+    solana_rpc_response::{
+        Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
+        RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Signature},
     std::collections::BTreeMap,

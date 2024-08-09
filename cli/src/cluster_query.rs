@@ -36,8 +36,8 @@ use {
         },
         filter::{Memcmp, RpcFilterType},
         request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-        response::{RpcPerfSample, RpcPrioritizationFee, SlotInfo},
     },
+    solana_rpc_response::{RpcPerfSample, RpcPrioritizationFee, SlotInfo},
     solana_sdk::{
         account::from_account,
         account_utils::StateMut,

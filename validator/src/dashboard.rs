@@ -6,7 +6,8 @@ use {
     console::style,
     solana_core::validator::ValidatorStartProgress,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::{client_error, request, response::RpcContactInfo},
+    solana_rpc_client_api::{client_error, request},
+    solana_rpc_response::RpcContactInfo,
     solana_sdk::{
         clock::Slot, commitment_config::CommitmentConfig, exit::Exit, native_token::Sol,
         pubkey::Pubkey,

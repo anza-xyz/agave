@@ -1,6 +1,6 @@
 pub use reqwest;
 use {
-    crate::{request, response},
+    crate::request,
     solana_sdk::{
         signature::SignerError, transaction::TransactionError, transport::TransportError,
     },
@@ -34,7 +34,7 @@ impl ErrorKind {
             Self::RpcError(request::RpcError::RpcResponseError {
                 data:
                     request::RpcResponseErrorData::SendTransactionPreflightFailure(
-                        response::RpcSimulateTransactionResult {
+                        solana_rpc_response::RpcSimulateTransactionResult {
                             err: Some(tx_err), ..
                         },
                     ),

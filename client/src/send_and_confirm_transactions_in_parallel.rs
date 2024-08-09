@@ -11,8 +11,8 @@ use {
     solana_rpc_client_api::{
         client_error::ErrorKind,
         request::{RpcError, RpcResponseErrorData, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS},
-        response::RpcSimulateTransactionResult,
     },
+    solana_rpc_response::RpcSimulateTransactionResult,
     solana_sdk::{
         hash::Hash,
         message::Message,

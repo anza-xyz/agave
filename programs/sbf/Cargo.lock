@@ -122,6 +122,7 @@ dependencies = [
  "solana-rpc",
  "solana-rpc-client",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-runtime",
  "solana-sdk",
  "solana-send-transaction-service",
@@ -4723,7 +4724,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-clap-utils",
  "solana-cli-config",
- "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-sdk",
  "solana-transaction-status",
  "solana-vote-program",
@@ -4752,6 +4753,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-rpc-client-nonce-utils",
+ "solana-rpc-response",
  "solana-sdk",
  "solana-streamer",
  "solana-thin-client",
@@ -4864,6 +4866,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-sanitize",
@@ -5423,6 +5426,7 @@ dependencies = [
  "serde_json",
  "solana-account-decoder",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-sdk",
  "thiserror",
  "tokio",
@@ -5518,6 +5522,7 @@ dependencies = [
  "solana-poh",
  "solana-rayon-threadlimit",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-runtime",
  "solana-sdk",
  "solana-send-transaction-service",
@@ -5556,6 +5561,7 @@ dependencies = [
  "serde_json",
  "solana-account-decoder",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-sdk",
  "solana-transaction-status",
  "solana-version",
@@ -5573,15 +5579,14 @@ dependencies = [
  "jsonrpc-core",
  "reqwest",
  "reqwest-middleware",
- "semver",
  "serde",
  "serde_derive",
  "serde_json",
  "solana-account-decoder",
  "solana-inline-spl",
+ "solana-rpc-response",
  "solana-sdk",
  "solana-transaction-status",
- "solana-version",
  "thiserror",
 ]
 
@@ -5591,6 +5596,20 @@ version = "2.1.0"
 dependencies = [
  "solana-rpc-client",
  "solana-sdk",
+ "thiserror",
+]
+
+[[package]]
+name = "solana-rpc-response"
+version = "2.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_derive",
+ "solana-account-decoder",
+ "solana-sdk",
+ "solana-transaction-status",
+ "solana-version",
  "thiserror",
 ]
 
@@ -6474,6 +6493,7 @@ dependencies = [
  "solana-pubsub-client",
  "solana-rpc-client",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-sdk",
  "thiserror",
  "tokio",
@@ -6546,6 +6566,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
+ "solana-rpc-response",
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",

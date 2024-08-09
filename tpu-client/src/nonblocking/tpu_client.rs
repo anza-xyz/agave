@@ -19,8 +19,8 @@ use {
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
         request::RpcError,
-        response::{RpcContactInfo, SlotUpdate},
     },
+    solana_rpc_response::{RpcContactInfo, SlotUpdate},
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
         commitment_config::CommitmentConfig,

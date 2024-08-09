@@ -27,7 +27,15 @@ use {
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
         config::{RpcAccountInfoConfig, *},
         request::{RpcRequest, TokenAccountsFilter},
-        response::*,
+        response::RpcResult,
+    },
+    solana_rpc_response::{
+        Response, RpcAccountBalance, RpcBlockProduction,
+        RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcInflationGovernor,
+        RpcInflationRate, RpcInflationReward, RpcKeyedAccount, RpcLeaderSchedule, RpcPerfSample,
+        RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
+        RpcSnapshotSlotInfo, RpcSupply, RpcTokenAccountBalance, RpcVersionInfo,
+        RpcVoteAccountStatus,
     },
     solana_sdk::{
         account::{Account, ReadableAccount},
@@ -3758,6 +3766,7 @@ mod tests {
         jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
         serde_json::{json, Number},
         solana_rpc_client_api::client_error::ErrorKind,
+        solana_rpc_response::OptionalContext,
         solana_sdk::{
             instruction::InstructionError,
             signature::{Keypair, Signer},

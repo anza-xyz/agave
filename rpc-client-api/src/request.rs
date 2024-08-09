@@ -1,6 +1,6 @@
 use {
-    crate::response::RpcSimulateTransactionResult,
     serde_json::{json, Value},
+    solana_rpc_response::RpcSimulateTransactionResult,
     solana_sdk::{clock::Slot, pubkey::Pubkey},
     std::fmt,
     thiserror::Error,

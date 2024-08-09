@@ -17,16 +17,14 @@ use {
     jsonrpc_derive::rpc,
     jsonrpc_pubsub::{typed::Subscriber, SubscriptionId as PubSubSubscriptionId},
     solana_account_decoder::{UiAccount, UiAccountEncoding},
-    solana_rpc_client_api::{
-        config::{
-            RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
-            RpcProgramAccountsConfig, RpcSignatureSubscribeConfig, RpcTransactionLogsConfig,
-            RpcTransactionLogsFilter,
-        },
-        response::{
-            Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVersionInfo, RpcVote, SlotInfo, SlotUpdate,
-        },
+    solana_rpc_client_api::config::{
+        RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
+        RpcProgramAccountsConfig, RpcSignatureSubscribeConfig, RpcTransactionLogsConfig,
+        RpcTransactionLogsFilter,
+    },
+    solana_rpc_response::{
+        Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
+        RpcSignatureResult, RpcVersionInfo, RpcVote, SlotInfo, SlotUpdate,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Signature},
     solana_transaction_status::UiTransactionEncoding,

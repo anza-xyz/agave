@@ -7,17 +7,14 @@ use {
     serde_json::{json, Number, Value},
     solana_account_decoder::{UiAccount, UiAccountEncoding},
     solana_rpc_client_api::{
-        client_error::Result,
-        config::RpcBlockProductionConfig,
-        request::RpcRequest,
-        response::{
-            Response, RpcAccountBalance, RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
-            RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
-            RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
-            RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
-            RpcSnapshotSlotInfo, RpcSupply, RpcVersionInfo, RpcVoteAccountInfo,
-            RpcVoteAccountStatus,
-        },
+        client_error::Result, config::RpcBlockProductionConfig, request::RpcRequest,
+    },
+    solana_rpc_response::{
+        Response, RpcAccountBalance, RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
+        RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
+        RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount, RpcPerfSample,
+        RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
+        RpcSnapshotSlotInfo, RpcSupply, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
     },
     solana_sdk::{
         account::Account,

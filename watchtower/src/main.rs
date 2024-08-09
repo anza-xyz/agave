@@ -13,7 +13,8 @@ use {
     solana_metrics::{datapoint_error, datapoint_info},
     solana_notifier::{NotificationType, Notifier},
     solana_rpc_client::rpc_client::RpcClient,
-    solana_rpc_client_api::{client_error, response::RpcVoteAccountStatus},
+    solana_rpc_client_api::client_error,
+    solana_rpc_response::RpcVoteAccountStatus,
     solana_sdk::{
         hash::Hash,
         native_token::{sol_to_lamports, Sol},

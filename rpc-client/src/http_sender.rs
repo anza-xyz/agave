@@ -14,8 +14,8 @@ use {
         custom_error,
         error_object::RpcErrorObject,
         request::{RpcError, RpcRequest, RpcResponseErrorData},
-        response::RpcSimulateTransactionResult,
     },
+    solana_rpc_response::RpcSimulateTransactionResult,
     std::{
         sync::{
             atomic::{AtomicU64, Ordering},
