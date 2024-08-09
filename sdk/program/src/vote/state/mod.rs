@@ -965,11 +965,10 @@ pub mod serde_compact_vote_state_update {
         super::*,
         crate::{
             clock::{Slot, UnixTimestamp},
-            serde_varint,
             vote::state::Lockout,
         },
         serde::{Deserialize, Deserializer, Serialize, Serializer},
-        solana_short_vec as short_vec,
+        solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -1063,11 +1062,10 @@ pub mod serde_tower_sync {
         super::*,
         crate::{
             clock::{Slot, UnixTimestamp},
-            serde_varint,
             vote::state::Lockout,
         },
         serde::{Deserialize, Deserializer, Serialize, Serializer},
-        solana_short_vec as short_vec,
+        solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
