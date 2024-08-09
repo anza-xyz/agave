@@ -2656,9 +2656,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hidapi"
-version = "2.6.2"
+version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ad5e383c2cf354bf4b54b7adf1dc781942fa9ec2ebc0714ad32524de968edce"
+checksum = "03b876ecf37e86b359573c16c8366bc3eba52b689884a0fc42ba3f67203d2a8b"
 dependencies = [
  "cc",
  "cfg-if 1.0.0",
@@ -6929,6 +6929,7 @@ dependencies = [
  "solana-secp256k1-recover",
  "solana-short-vec",
  "static_assertions",
+ "test-case",
  "thiserror",
  "wasm-bindgen",
 ]
@@ -7660,6 +7661,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-svm-example-paytube"
+version = "2.1.0"
+dependencies = [
+ "solana-bpf-loader-program",
+ "solana-client",
+ "solana-compute-budget",
+ "solana-logger",
+ "solana-program-runtime",
+ "solana-sdk",
+ "solana-svm",
+ "solana-system-program",
+ "solana-test-validator",
+ "spl-associated-token-account",
+ "spl-token",
+ "termcolor",
+]
+
+[[package]]
 name = "solana-svm-transaction"
 version = "2.1.0"
 dependencies = [
@@ -7889,6 +7908,7 @@ dependencies = [
  "crossbeam-channel",
  "futures 0.3.30",
  "itertools 0.12.1",
+ "lazy-lru",
  "log",
  "lru",
  "quinn",
@@ -8046,7 +8066,6 @@ dependencies = [
  "protobuf-src",
  "rand 0.8.5",
  "rayon",
- "rustc_version 0.4.0",
  "serial_test",
  "solana-accounts-db",
  "solana-entry",
@@ -8180,9 +8199,9 @@ dependencies = [
 
 [[package]]
 name = "solana_rbpf"
-version = "0.8.2"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "381f595f78accb55aeea018a90e3acf6048f960d932002737d249e3294bd58fe"
+checksum = "1c1941b5ef0c3ce8f2ac5dd984d0fb1a97423c4ff2a02eec81e3913f02e2ac2b"
 dependencies = [
  "byteorder",
  "combine",
@@ -8676,9 +8695,9 @@ dependencies = [
 
 [[package]]
 name = "termcolor"
-version = "1.1.2"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dfed899f0eb03f32ee8c6a0aabdb8a7949659e3466561fc0adf54e26d88c5f4"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]

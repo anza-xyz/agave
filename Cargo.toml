@@ -120,6 +120,7 @@ members = [
     "svm",
     "svm-conformance",
     "svm-transaction",
+    "svm/examples/paytube",
     "test-validator",
     "thin-client",
     "timings",
@@ -237,7 +238,7 @@ gethostname = "0.2.3"
 getrandom = "0.2.10"
 goauth = "0.13.1"
 hex = "0.4.3"
-hidapi = { version = "2.6.2", default-features = false }
+hidapi = { version = "2.6.3", default-features = false }
 histogram = "0.6.9"
 hmac = "0.12.1"
 http = "0.2.12"
@@ -422,6 +423,7 @@ solana-storage-proto = { path = "storage-proto", version = "=2.1.0" }
 solana-streamer = { path = "streamer", version = "=2.1.0" }
 solana-svm = { path = "svm", version = "=2.1.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.1.0" }
+solana-svm-example-paytube = { path = "svm/examples/paytube", version = "=2.1.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.1.0" }
 solana-system-program = { path = "programs/system", version = "=2.1.0" }
 solana-test-validator = { path = "test-validator", version = "=2.1.0" }
@@ -441,7 +443,7 @@ solana-zk-keygen = { path = "zk-keygen", version = "=2.1.0" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.1.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.1.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.1.0" }
-solana_rbpf = "=0.8.2"
+solana_rbpf = "=0.8.5"
 spl-associated-token-account = "=4.0.0"
 spl-instruction-padding = "0.2"
 spl-memo = "=5.0.0"
