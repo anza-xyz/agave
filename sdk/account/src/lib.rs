@@ -1,20 +1,22 @@
+#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
 //! The Solana [`Account`] type.
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{frozen_abi, AbiExample};
 use {
-    crate::{
+    serde::ser::{Serialize, Serializer},
+    solana_program::{
+        account_info::AccountInfo,
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
         clock::{Epoch, INITIAL_RENT_EPOCH},
+        debug_account_data::*,
         lamports::LamportsError,
         loader_v4,
         pubkey::Pubkey,
+        sysvar::Sysvar,
     },
-    serde::{
-        ser::{Serialize, Serializer},
-        Deserialize,
-    },
-    solana_program::{account_info::AccountInfo, debug_account_data::*, sysvar::Sysvar},
     std::{
         cell::{Ref, RefCell},
         fmt,
@@ -32,7 +34,7 @@ use {
     derive(AbiExample),
     frozen_abi(digest = "HawRVHh7t4d3H3bitWHFt25WhhoDmbJMCfWdESQQoYEy")
 )]
-#[derive(Deserialize, PartialEq, Eq, Clone, Default)]
+#[derive(serde_derive::Deserialize, PartialEq, Eq, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     /// lamports in the account
@@ -50,9 +52,12 @@ pub struct Account {
 
 // mod because we need 'Account' below to have the name 'Account' to match expected serialization
 mod account_serialize {
+    #[cfg(feature = "frozen-abi")]
+    use solana_frozen_abi_macro::{frozen_abi, AbiExample};
     use {
-        crate::{account::ReadableAccount, clock::Epoch, pubkey::Pubkey},
+        crate::ReadableAccount,
         serde::{ser::Serializer, Serialize},
+        solana_program::{clock::Epoch, pubkey::Pubkey},
     };
     #[repr(C)]
     #[cfg_attr(
@@ -60,7 +65,7 @@ mod account_serialize {
         derive(AbiExample),
         frozen_abi(digest = "HawRVHh7t4d3H3bitWHFt25WhhoDmbJMCfWdESQQoYEy")
     )]
-    #[derive(Serialize)]
+    #[derive(serde_derive::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Account<'a> {
         lamports: u64,
@@ -96,7 +101,7 @@ impl Serialize for Account {
     where
         S: Serializer,
     {
-        crate::account::account_serialize::serialize_account(self, serializer)
+        crate::account_serialize::serialize_account(self, serializer)
     }
 }
 
@@ -105,7 +110,7 @@ impl Serialize for AccountSharedData {
     where
         S: Serializer,
     {
-        crate::account::account_serialize::serialize_account(self, serializer)
+        crate::account_serialize::serialize_account(self, serializer)
     }
 }
 
@@ -113,7 +118,7 @@ impl Serialize for AccountSharedData {
 /// This will be the in-memory representation of the 'Account' struct data.
 /// The existing 'Account' structure cannot easily change due to downstream projects.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(PartialEq, Eq, Clone, Default, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Default, serde_derive::Deserialize)]
 #[serde(from = "Account")]
 pub struct AccountSharedData {
     /// lamports in the account
