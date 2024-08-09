@@ -6,8 +6,39 @@ use {
         },
         result::Result,
     },
-    solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
+    solana_sdk::{hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Signature},
 };
+
+// Each ATL has at least a Pubkey, one byte for the number of write indexes,
+// and one byte for the number of read indexes. Additionally, for validity
+// the ATL must have at least one write or read index giving a minimum size
+// of 35 bytes.
+const MIN_SIZED_ATL: usize = {
+    core::mem::size_of::<Pubkey>() // account key
+            + 1 // writable indexes length
+            + 1 // readonly indexes length
+            + 1 // single account (either write or read)
+};
+
+// A valid packet with ATLs has:
+// 1. At least 1 signature
+// 2. 1 message prefix byte
+// 3. 1 static account key
+// 4. 1 recent blockhash
+const MIN_SIZED_PACKET_WITH_ATLS: usize = {
+    1 // signatures count
+    + core::mem::size_of::<Signature>() // signature
+    + 1 // message prefix
+    + 3 // message header
+    + 1 // static account keys count
+    + core::mem::size_of::<Pubkey>() // static account key
+    + core::mem::size_of::<Hash>() // recent blockhash
+    + 1 // number of instructions
+    + 1 // number of ATLS
+};
+
+/// The maximum number of ATLS that can fit in a valid packet.
+const MAX_ATLS_PER_PACKET: usize = (PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL;
 
 /// Contains metadata about the address table lookups in a transaction packet.
 pub struct AddressTableLookupMeta {
@@ -24,19 +55,12 @@ impl AddressTableLookupMeta {
     /// This function will parse each ATL to ensure the data is well-formed,
     /// but will not cache data related to these ATLs.
     pub fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
-        // Read the number of ATLs at the current offset.
-        // Each ATL needs at least 34 bytes, so do a sanity check here to
-        // ensure we have enough bytes to read the number of ATLs.
-        const MIN_SIZED_ATL: usize = {
-            core::mem::size_of::<Pubkey>() // account key
-            + 1 // writable indexes length
-            + 1 // readonly indexes length
-        };
-        const MAX_ATLS_PER_PACKET: usize = PACKET_DATA_SIZE / MIN_SIZED_ATL;
         // Maximum number of ATLs should be represented by a single byte,
         // thus the MSB should not be set.
         const _: () = assert!(MAX_ATLS_PER_PACKET & 0b1000_0000 == 0);
         let num_address_table_lookups = read_byte(bytes, offset)?;
+
+        // Check that the remaining bytes are enough to hold the ATLs.
         check_remaining(
             bytes,
             *offset,
