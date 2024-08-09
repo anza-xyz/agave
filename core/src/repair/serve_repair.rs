@@ -96,8 +96,12 @@ pub enum ShredRepairType {
     /// Requesting `MAX_ORPHAN_REPAIR_RESPONSES ` parent shreds
     Orphan(Slot),
     /// Requesting any shred with index greater than or equal to the particular index
+    // TODO As the value is a shred index, it should use `u32`.  But as changing the type would
+    // affect the serialized representation, we would need to introduce a conversion.
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
+    // TODO As the value is a shred index, it should use `u32`.  But as changing the type would
+    // affect the serialized representation, we would need to introduce a conversion.
     Shred(Slot, u64),
 }
 
@@ -221,6 +225,7 @@ impl RepairRequestHeader {
 pub(crate) type Ping = ping_pong::Ping<[u8; REPAIR_PING_TOKEN_SIZE]>;
 
 /// Window protocol messages
+// TODO All `u64`s in the branches of this enum are shred indices, and they should be used `u32`.
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
@@ -437,7 +442,7 @@ impl ServeRepair {
                         from_addr,
                         blockstore,
                         *slot,
-                        *shred_index,
+                        u32::try_from(*shred_index).expect("All shred indices fit into u32"),
                         *nonce,
                     );
                     if batch.is_none() {
@@ -457,7 +462,7 @@ impl ServeRepair {
                             from_addr,
                             blockstore,
                             *slot,
-                            *highest_index,
+                            u32::try_from(*highest_index).expect("All shred indices fit into u32"),
                             *nonce,
                         ),
                         "HighestWindowIndexWithNonce",
@@ -1290,7 +1295,7 @@ impl ServeRepair {
         from_addr: &SocketAddr,
         blockstore: &Blockstore,
         slot: Slot,
-        shred_index: u64,
+        shred_index: u32,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
         // Try to find the requested index in one of the slots
@@ -1313,17 +1318,17 @@ impl ServeRepair {
         from_addr: &SocketAddr,
         blockstore: &Blockstore,
         slot: Slot,
-        highest_index: u64,
+        highest_index: u32,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
         // Try to find the requested index in one of the slots
         let meta = blockstore.meta(slot).ok()??;
-        if meta.received > highest_index {
+        if meta.received > highest_index.into() {
             // meta.received must be at least 1 by this point
             let packet = repair_response::repair_response_packet(
                 blockstore,
                 slot,
-                meta.received - 1,
+                u32::try_from(meta.received - 1).expect("All shred indices fit into u32"),
                 from_addr,
                 nonce,
             )?;
@@ -1354,7 +1359,8 @@ impl ServeRepair {
             repair_response::repair_response_packet(
                 blockstore,
                 meta.slot,
-                meta.received.checked_sub(1u64)?,
+                u32::try_from(meta.received.checked_sub(1u64)?)
+                    .expect("All shred indices fit into u32"),
                 from_addr,
                 nonce,
             )
@@ -1909,7 +1915,7 @@ mod tests {
             nonce,
         )
         .expect("packets");
-        let request = ShredRepairType::HighestShred(slot, index);
+        let request = ShredRepairType::HighestShred(slot, index.into());
         verify_responses(&request, rv.iter());
 
         let rv: Vec<Shred> = rv
@@ -1920,8 +1926,10 @@ mod tests {
             })
             .collect();
         assert!(!rv.is_empty());
-        let index = blockstore.meta(slot).unwrap().unwrap().received - 1;
-        assert_eq!(rv[0].index(), index as u32);
+        let index: u32 = (blockstore.meta(slot).unwrap().unwrap().received - 1)
+            .try_into()
+            .unwrap();
+        assert_eq!(rv[0].index(), index);
         assert_eq!(rv[0].slot(), slot);
 
         let rv = ServeRepair::run_highest_window_request(
@@ -1971,7 +1979,7 @@ mod tests {
             nonce,
         )
         .expect("packets");
-        let request = ShredRepairType::Shred(slot, index);
+        let request = ShredRepairType::Shred(slot, index.into());
         verify_responses(&request, rv.iter());
         let rv: Vec<Shred> = rv
             .into_iter()
@@ -2163,7 +2171,7 @@ mod tests {
                 repair_response::repair_response_packet(
                     &blockstore,
                     slot,
-                    index,
+                    index.try_into().unwrap(),
                     &socketaddr_any!(),
                     nonce,
                 )

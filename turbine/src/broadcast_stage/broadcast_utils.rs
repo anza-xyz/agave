@@ -107,6 +107,12 @@ pub(super) fn get_chained_merkle_root_from_parent(
         .ok_or_else(|| Error::UnknownSlotMeta(parent))?
         .last_index
         .ok_or_else(|| Error::UnknownLastIndex(parent))?;
+    let index: u32 = index
+        .try_into()
+        .map_err(|_| Error::LastShredIndexOutOfRange {
+            slot: parent,
+            index,
+        })?;
     let shred = blockstore
         .get_data_shred(parent, index)?
         .ok_or(Error::ShredNotFound {
