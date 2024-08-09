@@ -86,9 +86,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "new_distributed_rewards <= self.total_rewards"
-    )]
+    #[should_panic(expected = "new_distributed_rewards <= self.total_rewards")]
     fn test_epoch_rewards_distribute_panic() {
         let mut epoch_rewards = EpochRewards::new(100, 0, 64);
         epoch_rewards.distribute(200);
