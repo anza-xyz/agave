@@ -36,6 +36,7 @@ pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 pub type TransactionLoadResult = Result<LoadedTransaction>;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct CheckedTransactionDetails {
     pub nonce: Option<NoncePartial>,
     pub lamports_per_signature: u64,
