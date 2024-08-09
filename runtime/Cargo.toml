@@ -132,3 +132,6 @@ frozen-abi = [
 
 [[bench]]
 name = "prioritization_fee_cache"
+
+[lints]
+workspace = true
