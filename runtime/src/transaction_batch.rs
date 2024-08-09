@@ -3,7 +3,7 @@ use {
     solana_sdk::transaction::{Result, SanitizedTransaction},
     std::borrow::Cow,
 };
-
+#[derive(Clone)]
 // Represents the results of trying to lock a set of accounts
 pub struct TransactionBatch<'a, 'b> {
     lock_results: Vec<Result<()>>,

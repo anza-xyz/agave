@@ -434,6 +434,7 @@ impl TaskHandler for DefaultTaskHandler {
         let batch_with_indexes = TransactionBatchWithIndexes {
             batch,
             transaction_indexes: vec![index],
+            self_conflicting_batch: false,
         };
 
         *result = execute_batch(
