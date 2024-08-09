@@ -645,7 +645,8 @@ fn process_entries(
                     (starting_index..starting_index.saturating_add(transactions.len())).collect();
                 loop {
                     // try to lock the accounts
-                    let batch = bank.prepare_sanitized_batch(transactions);
+                    let (batch, _self_conflicting_batch) =
+                        bank.prepare_sanitized_batch(transactions);
                     let first_lock_err = first_err(batch.lock_results());
 
                     // if locking worked
@@ -4799,7 +4800,7 @@ pub mod tests {
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let txs = create_test_transactions(&mint_keypair, &genesis_config.hash());
-        let batch = bank.prepare_sanitized_batch(&txs);
+        let (batch, _) = bank.prepare_sanitized_batch(&txs);
         assert!(batch.needs_unlock());
         let transaction_indexes = vec![42, 43, 44];
 
@@ -4884,7 +4885,7 @@ pub mod tests {
             });
         let bank = BankWithScheduler::new(bank, Some(Box::new(mocked_scheduler)));
 
-        let batch = bank.prepare_sanitized_batch(&txs);
+        let (batch, _self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
         let batch_with_indexes = TransactionBatchWithIndexes {
             batch,
             transaction_indexes: (0..txs.len()).collect(),
