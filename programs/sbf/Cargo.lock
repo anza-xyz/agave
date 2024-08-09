@@ -6177,7 +6177,6 @@ dependencies = [
  "digest 0.10.7",
  "ed25519-dalek",
  "ed25519-dalek-bip32",
- "generic-array",
  "getrandom 0.1.14",
  "hmac 0.12.1",
  "itertools 0.12.1",
@@ -6208,6 +6207,7 @@ dependencies = [
  "solana-sdk-macro",
  "solana-secp256k1-recover",
  "solana-short-vec",
+ "solana-signature",
  "thiserror",
  "uriparse",
  "wasm-bindgen",
@@ -6259,6 +6259,21 @@ name = "solana-short-vec"
 version = "2.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "solana-signature"
+version = "2.1.0"
+dependencies = [
+ "bs58",
+ "ed25519-dalek",
+ "generic-array",
+ "rand 0.8.5",
+ "rustc_version",
+ "serde",
+ "serde_derive",
+ "solana-sanitize",
+ "thiserror",
 ]
 
 [[package]]
