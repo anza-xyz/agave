@@ -3,11 +3,10 @@ use {
         stake_account::StakeAccount,
         stakes::{Stakes, StakesEnum},
     },
-    im::HashMap as ImHashMap,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_sdk::{clock::Epoch, pubkey::Pubkey, stake::state::Stake},
     solana_stake_program::stake_state::Delegation,
-    solana_vote::vote_account::{VoteAccounts, VoteAccountsHashMap},
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -57,8 +56,8 @@ impl EpochStakes {
         Self::new(
             Arc::new(StakesEnum::Accounts(Stakes::new_for_tests(
                 0,
-                VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
-                ImHashMap::default(),
+                solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
+                im::HashMap::default(),
             ))),
             leader_schedule_epoch,
         )
