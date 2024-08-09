@@ -4683,6 +4683,7 @@ dependencies = [
  "chrono",
  "clap",
  "rpassword",
+ "solana-derivation-path",
  "solana-remote-wallet",
  "solana-sdk",
  "thiserror",
@@ -4927,6 +4928,16 @@ dependencies = [
 [[package]]
 name = "solana-define-syscall"
 version = "2.1.0"
+
+[[package]]
+name = "solana-derivation-path"
+version = "2.1.0"
+dependencies = [
+ "derivation-path",
+ "qstring",
+ "thiserror",
+ "uriparse",
+]
 
 [[package]]
 name = "solana-download-utils"
@@ -5476,6 +5487,7 @@ dependencies = [
  "parking_lot 0.12.2",
  "qstring",
  "semver",
+ "solana-derivation-path",
  "solana-sdk",
  "thiserror",
  "uriparse",
@@ -6188,7 +6200,6 @@ dependencies = [
  "memmap2",
  "num_enum",
  "pbkdf2 0.11.0",
- "qstring",
  "qualifier_attr",
  "rand 0.7.3",
  "rand 0.8.5",
@@ -6202,6 +6213,7 @@ dependencies = [
  "siphasher",
  "solana-bn254",
  "solana-decode-error",
+ "solana-derivation-path",
  "solana-program",
  "solana-program-memory",
  "solana-sanitize",
@@ -6209,7 +6221,6 @@ dependencies = [
  "solana-secp256k1-recover",
  "solana-short-vec",
  "thiserror",
- "uriparse",
  "wasm-bindgen",
 ]
 
@@ -6698,6 +6709,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha3 0.9.1",
+ "solana-derivation-path",
  "solana-program",
  "solana-sdk",
  "subtle",
@@ -6740,6 +6752,7 @@ dependencies = [
  "serde_json",
  "sha3 0.9.1",
  "solana-curve25519",
+ "solana-derivation-path",
  "solana-program",
  "solana-sdk",
  "subtle",
