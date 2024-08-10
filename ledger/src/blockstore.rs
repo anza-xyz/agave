@@ -2906,12 +2906,21 @@ impl Blockstore {
         self.transaction_status_cf
             .put_protobuf((signature, slot), &status)?;
 
+        let mut write_batch = self.db.batch()?;
+
         for (address, writeable) in keys_with_writable {
-            self.address_signatures_cf.put(
+            write_batch.put::<cf::AddressSignatures>(
                 (*address, slot, transaction_index, signature),
                 &AddressSignatureMeta { writeable },
             )?;
         }
+
+        self.db.write(write_batch).inspect_err(|e| {
+            error!(
+                "Error: {:?} while submitting write batch of tx status for slot {:?}",
+                e, slot
+            )
+        })?;
 
         Ok(())
     }
