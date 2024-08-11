@@ -10,12 +10,8 @@ use {
 };
 
 /// Wrapper struct with custom serialization to support serializing
-/// `Stakes<StakeAccount>` as `Stakes<Stake>` without doing a full deep clone of
-/// the stake data. Serialization works by building a `Stakes<&Stake>` map which
-/// borrows `&Stake` from `StakeAccount` entries in `Stakes<StakeAccount>`. Note
-/// that `Stakes<&Stake>` still copies `Pubkey` keys so the `Stakes<&Stake>`
-/// data structure still allocates a fair amount of memory but the memory only
-/// remains allocated during serialization.
+/// `Stakes<StakeAccount>` as `Stakes<Stake>` without doing an intermediate
+/// clone of the stake data.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Debug, Clone)]
 pub enum SerdeStakesToStakeFormat {
