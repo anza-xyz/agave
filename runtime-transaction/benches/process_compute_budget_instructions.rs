@@ -43,9 +43,7 @@ fn bench_process_compute_budget_instructions_empty(c: &mut Criterion) {
 fn bench_process_compute_budget_instructions_no_builtins(c: &mut Criterion) {
     c.bench_function("No builtins", |bencher| {
         let ixs: Vec<_> = (0..4)
-            .map(|_| {
-                Instruction::new_with_bincode(DUMMY_PROGRAM_ID.parse().unwrap(), &0_u8, vec![])
-            })
+            .map(|_| Instruction::new_with_bincode(DUMMY_PROGRAM_ID.parse().unwrap(), &(), vec![]))
             .collect();
         let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
         bencher.iter(|| {
@@ -82,14 +80,14 @@ fn bench_process_compute_budget_instructions_compute_budgets(c: &mut Criterion) 
 fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
     c.bench_function("Only builtins", |bencher| {
         let ixs = vec![
-            Instruction::new_with_bincode(solana_sdk::bpf_loader::id(), &0_u8, vec![]),
-            Instruction::new_with_bincode(solana_sdk::secp256k1_program::id(), &0_u8, vec![]),
+            Instruction::new_with_bincode(solana_sdk::bpf_loader::id(), &(), vec![]),
+            Instruction::new_with_bincode(solana_sdk::secp256k1_program::id(), &(), vec![]),
             Instruction::new_with_bincode(
                 solana_sdk::address_lookup_table::program::id(),
-                &0_u8,
+                &(),
                 vec![],
             ),
-            Instruction::new_with_bincode(solana_sdk::loader_v4::id(), &0_u8, vec![]),
+            Instruction::new_with_bincode(solana_sdk::loader_v4::id(), &(), vec![]),
         ];
         let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
         bencher.iter(|| {
@@ -107,9 +105,7 @@ fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
     c.bench_function("Mixed instructions", |bencher| {
         let payer_keypair = Keypair::new();
         let mut ixs: Vec<_> = (0..128)
-            .map(|_| {
-                Instruction::new_with_bincode(DUMMY_PROGRAM_ID.parse().unwrap(), &0_u8, vec![])
-            })
+            .map(|_| Instruction::new_with_bincode(DUMMY_PROGRAM_ID.parse().unwrap(), &(), vec![]))
             .collect();
         ixs.extend(vec![
             ComputeBudgetInstruction::request_heap_frame(40 * 1024),
