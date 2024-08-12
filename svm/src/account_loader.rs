@@ -38,8 +38,13 @@ pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum TransactionLoadResult {
+    /// All transaction accounts were loaded successfully
     Loaded(LoadedTransaction),
+    /// Some transaction accounts needed for execution were unable to be loaded
+    /// but the accounts needed for fee collection were loaded successfully
     FeesOnly(FeesOnlyTransaction),
+    /// Some transaction accounts needed for fee collection were unable to be
+    /// loaded
     NotLoaded(TransactionError),
 }
 
