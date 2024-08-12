@@ -3,9 +3,10 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            collect_rent_from_account, hana_load_accounts, hana_load_transaction_accounts,
-            load_accounts, validate_fee_payer, CheckedTransactionDetails, LoadedTransaction,
-            TransactionCheckResult, TransactionValidationResult, ValidatedTransactionDetails,
+            collect_rent_from_account, hana_load_accounts, load_accounts,
+            load_transaction_accounts, validate_fee_payer, CheckedTransactionDetails,
+            LoadedTransaction, TransactionCheckResult, TransactionValidationResult,
+            ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
@@ -300,7 +301,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
 
             let load_result = validate_result.and_then(|tx_details| {
-                hana_load_transaction_accounts(
+                load_transaction_accounts(
                     &accounts_cache,
                     tx.message(),
                     tx_details,
