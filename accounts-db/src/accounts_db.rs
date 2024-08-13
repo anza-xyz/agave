@@ -3289,6 +3289,7 @@ impl AccountsDb {
                 let mut not_found_on_fork = 0;
                 let mut missing = 0;
                 let mut useful = 0;
+                let mut exist_purgeable_accounts_local = false;
                 let mut candidates_bin = candidates_bin.write().unwrap();
                 // Iterate over each HashMap entry to
                 // avoid capturing the HashMap in the
@@ -3339,8 +3340,7 @@ impl AccountsDb {
                                                 if slot_list.len() > 1 {
                                                     // no need to purge old accounts if there is only 1 slot in the slot list
                                                     candidate_info.should_purge = true;
-                                                    exist_purgeable_accounts
-                                                        .store(true, Ordering::Relaxed);
+                                                    exist_purgeable_accounts_local = true;
                                                     useless = false;
                                                 } else {
                                                     self.clean_accounts_stats
@@ -3358,7 +3358,7 @@ impl AccountsDb {
                                             // touched in must be unrooted.
                                             not_found_on_fork += 1;
                                             candidate_info.should_purge = true;
-                                            exist_purgeable_accounts.store(true, Ordering::Relaxed);
+                                            exist_purgeable_accounts_local = true;
                                             useless = false;
                                         }
                                     }
@@ -3378,7 +3378,8 @@ impl AccountsDb {
                 not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
                 missing_accum.fetch_add(missing, Ordering::Relaxed);
                 useful_accum.fetch_add(useful, Ordering::Relaxed);
-            })
+                exist_purgeable_accounts.store(exist_purgeable_accounts_local, Ordering::Release);
+            });
         };
         if is_startup {
             do_clean_scan();
@@ -3390,7 +3391,7 @@ impl AccountsDb {
 
         let mut clean_old_rooted = Measure::start("clean_old_roots");
         let ((purged_account_slots, removed_accounts), mut pubkeys_removed_from_accounts_index) =
-            if exist_purgeable_accounts.load(Ordering::Relaxed) {
+            if exist_purgeable_accounts.load(Ordering::Acquire) {
                 self.clean_accounts_older_than_root(
                     &candidates,
                     max_clean_root_inclusive,
