@@ -50,7 +50,7 @@ impl EpochStakes {
         leader_schedule_epoch: Epoch,
     ) -> Self {
         Self::new(
-            Arc::new(StakesEnum::Accounts(Stakes::new_for_tests(
+            Arc::new(StakesEnum::Accounts(crate::stakes::Stakes::new_for_tests(
                 0,
                 solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
                 im::HashMap::default(),
@@ -245,7 +245,7 @@ pub(crate) mod tests {
         },
         solana_sdk::{account::AccountSharedData, rent::Rent},
         solana_stake_program::stake_state::{self, Delegation, Stake},
-        solana_vote::vote_account::{VoteAccount, VoteAccounts},
+        solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{self, create_account_with_authorized},
         std::iter,
     };
