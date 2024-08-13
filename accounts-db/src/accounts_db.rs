@@ -3378,7 +3378,10 @@ impl AccountsDb {
                 not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
                 missing_accum.fetch_add(missing, Ordering::Relaxed);
                 useful_accum.fetch_add(useful, Ordering::Relaxed);
-                exist_purgeable_accounts.store(exist_purgeable_accounts_local, Ordering::Release);
+                if exist_purgeable_accounts_local {
+                    exist_purgeable_accounts
+                        .store(exist_purgeable_accounts_local, Ordering::Release);
+                }
             });
         };
         if is_startup {
