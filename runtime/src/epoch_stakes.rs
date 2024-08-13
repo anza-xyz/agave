@@ -46,7 +46,7 @@ impl EpochStakes {
         leader_schedule_epoch: Epoch,
     ) -> Self {
         Self::new(
-            Arc::new(StakesEnum::Accounts(Stakes::new_for_tests(
+            Arc::new(StakesEnum::Accounts(crate::stakes::Stakes::new_for_tests(
                 0,
                 solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
                 im::HashMap::default(),
