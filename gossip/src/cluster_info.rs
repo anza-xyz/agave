@@ -433,13 +433,13 @@ fn retain_staked(values: &mut Vec<CrdsValue>, stakes: &HashMap<Pubkey, u64>) {
             // Otherwise unstaked voting nodes will show up with no version in
             // the various dashboards.
             CrdsData::Version(_) => true,
-            CrdsData::NodeInstance(_) => true,
             CrdsData::AccountsHashes(_) => true,
             CrdsData::LowestSlot(_, _)
             | CrdsData::LegacyVersion(_)
             | CrdsData::DuplicateShred(_, _)
             | CrdsData::RestartHeaviestFork(_)
-            | CrdsData::RestartLastVotedForkSlots(_) => {
+            | CrdsData::RestartLastVotedForkSlots(_)
+            | CrdsData::NodeInstance(_) => {
                 let stake = stakes.get(&value.pubkey()).copied();
                 stake.unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP
             }
@@ -2475,16 +2475,21 @@ impl ClusterInfo {
 
         // Check if there is a duplicate instance of
         // this node with more recent timestamp.
-        let instance = self.instance.read().unwrap();
-        let check_duplicate_instance = |values: &[CrdsValue]| {
-            if should_check_duplicate_instance {
-                for value in values {
-                    if instance.check_duplicate(value) {
-                        return Err(GossipError::DuplicateNodeInstance);
-                    }
+        let check_duplicate_instance = {
+            let instance = self.instance.read().unwrap();
+            let my_contact_info = self.my_contact_info();
+            move |values: &[CrdsValue]| {
+                if should_check_duplicate_instance
+                    && values.iter().any(|value| {
+                        instance.check_duplicate(value)
+                            || matches!(&value.data, CrdsData::ContactInfo(other)
+                                if my_contact_info.check_duplicate(other))
+                    })
+                {
+                    return Err(GossipError::DuplicateNodeInstance);
                 }
+                Ok(())
             }
-            Ok(())
         };
         let mut pings = Vec::new();
         let mut rng = rand::thread_rng();
