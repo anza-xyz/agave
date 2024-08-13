@@ -13031,8 +13031,6 @@ fn test_bank_epoch_stakes() {
         );
     }
 
-    bank1.set_epoch_stakes_for_test(1, None);
-    assert_eq!(bank1.epoch_total_stake(1), None);
     let new_epoch_stakes = EpochStakes::new_for_tests(
         voting_keypairs
             .iter()
@@ -13052,7 +13050,7 @@ fn test_bank_epoch_stakes() {
             .collect::<HashMap<_, _>>(),
         1,
     );
-    bank1.set_epoch_stakes_for_test(1, Some(new_epoch_stakes));
+    bank1.set_epoch_stakes_for_test(1, new_epoch_stakes);
     assert_eq!(bank1.epoch_total_stake(1), Some(100 * num_of_nodes));
     assert_eq!(bank1.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
     for keypair in voting_keypairs.iter() {

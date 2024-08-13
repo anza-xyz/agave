@@ -1973,12 +1973,8 @@ impl Bank {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_epoch_stakes_for_test(&mut self, epoch: Epoch, stakes: Option<EpochStakes>) {
-        if let Some(stakes) = stakes {
-            self.epoch_stakes.insert(epoch, stakes);
-        } else {
-            self.epoch_stakes.remove(&epoch);
-        }
+    pub fn set_epoch_stakes_for_test(&mut self, epoch: Epoch, stakes: EpochStakes) {
+        self.epoch_stakes.insert(epoch, stakes);
     }
 
     fn update_rent(&self) {
