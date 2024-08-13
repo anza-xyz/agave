@@ -803,15 +803,15 @@ impl SchedulingStateMachine {
         // `Bank::prepare_unlocked_batch_from_single_tx()` as well.
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
-        let message = transaction.message();
-        let lock_contexts = message
+        let lock_contexts = transaction
+            .message()
             .account_keys()
             .iter()
             .enumerate()
             .map(|(index, address)| {
                 LockContext::new(
                     usage_queue_loader(*address),
-                    if message.is_writable(index) {
+                    if transaction.message().is_writable(index) {
                         RequestedUsage::Writable
                     } else {
                         RequestedUsage::Readonly
