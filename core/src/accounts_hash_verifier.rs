@@ -495,12 +495,11 @@ mod tests {
     use {super::*, rand::seq::SliceRandom, solana_runtime::snapshot_package::SnapshotKind};
 
     fn new(package_kind: AccountsPackageKind, slot: Slot) -> AccountsPackage {
-        AccountsPackage {
-            package_kind,
-            slot,
-            block_height: slot,
-            ..AccountsPackage::default_for_tests()
-        }
+        let mut package = AccountsPackage::default_for_tests();
+        package.package_kind = package_kind;
+        package.slot = slot;
+        package.block_height = slot;
+        package
     }
     fn new_eah(slot: Slot) -> AccountsPackage {
         new(AccountsPackageKind::EpochAccountsHash, slot)

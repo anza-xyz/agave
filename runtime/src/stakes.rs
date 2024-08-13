@@ -27,8 +27,7 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::serde_stakes_to_delegation_format;
-pub use serde_stakes::SerdeStakesToStakeFormat;
+pub(crate) use serde_stakes::{serde_stakes_to_delegation_format, SerdeStakesToStakeFormat};
 
 #[derive(Debug, Error)]
 pub enum Error {

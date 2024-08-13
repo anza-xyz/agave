@@ -14,7 +14,7 @@ use {
 /// clone of the stake data.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Debug, Clone)]
-pub enum SerdeStakesToStakeFormat {
+pub(crate) enum SerdeStakesToStakeFormat {
     Stake(Stakes<Stake>),
     Account(Stakes<StakeAccount>),
 }

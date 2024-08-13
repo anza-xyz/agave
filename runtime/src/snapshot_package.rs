@@ -38,7 +38,7 @@ pub struct AccountsPackage {
     pub rent_collector: RentCollector,
 
     /// Supplemental information needed for snapshots
-    pub snapshot_info: Option<SupplementalSnapshotInfo>,
+    pub(crate) snapshot_info: Option<SupplementalSnapshotInfo>,
 
     /// The instant this accounts package was send to the queue.
     /// Used to track how long accounts packages wait before processing.
@@ -199,13 +199,13 @@ impl std::fmt::Debug for AccountsPackage {
 }
 
 /// Supplemental information needed for snapshots
-pub struct SupplementalSnapshotInfo {
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
-    pub bank_fields_to_serialize: BankFieldsToSerialize,
-    pub bank_hash_stats: BankHashStats,
-    pub accounts_delta_hash: AccountsDeltaHash,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
-    pub write_version: StoredMetaWriteVersion,
+pub(crate) struct SupplementalSnapshotInfo {
+    pub(crate) status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub(crate) bank_fields_to_serialize: BankFieldsToSerialize,
+    pub(crate) bank_hash_stats: BankHashStats,
+    pub(crate) accounts_delta_hash: AccountsDeltaHash,
+    pub(crate) epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub(crate) write_version: StoredMetaWriteVersion,
 }
 
 /// Accounts packages are sent to the Accounts Hash Verifier for processing.  There are multiple
@@ -224,15 +224,15 @@ pub struct SnapshotPackage {
     pub slot: Slot,
     pub block_height: Slot,
     pub hash: SnapshotHash,
-    pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
-    pub bank_fields_to_serialize: BankFieldsToSerialize,
-    pub bank_hash_stats: BankHashStats,
-    pub accounts_delta_hash: AccountsDeltaHash,
-    pub accounts_hash: AccountsHash,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
-    pub write_version: StoredMetaWriteVersion,
-    pub bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
+    pub(crate) snapshot_storages: Vec<Arc<AccountStorageEntry>>,
+    pub(crate) status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub(crate) bank_fields_to_serialize: BankFieldsToSerialize,
+    pub(crate) bank_hash_stats: BankHashStats,
+    pub(crate) accounts_delta_hash: AccountsDeltaHash,
+    pub(crate) accounts_hash: AccountsHash,
+    pub(crate) epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub(crate) write_version: StoredMetaWriteVersion,
+    pub(crate) bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.

@@ -73,12 +73,11 @@ mod tests {
     #[test]
     fn test_cmp_snapshot_packages_by_priority() {
         fn new(snapshot_kind: SnapshotKind, slot: Slot) -> SnapshotPackage {
-            SnapshotPackage {
-                snapshot_kind,
-                slot,
-                block_height: slot,
-                ..SnapshotPackage::default_for_tests()
-            }
+            let mut package = SnapshotPackage::default_for_tests();
+            package.snapshot_kind = snapshot_kind;
+            package.slot = slot;
+            package.block_height = slot;
+            package
         }
 
         for (snapshot_package_a, snapshot_package_b, expected_result) in [

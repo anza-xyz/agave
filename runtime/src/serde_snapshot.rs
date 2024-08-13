@@ -411,11 +411,11 @@ struct ExtraFieldsToDeserialize {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Debug, Serialize)]
-pub struct ExtraFieldsToSerialize<'a> {
-    pub lamports_per_signature: u64,
-    pub incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
-    pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+pub(crate) struct ExtraFieldsToSerialize<'a> {
+    pub(crate) lamports_per_signature: u64,
+    pub(crate) incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>,
+    pub(crate) epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub(crate) versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
 }
 
 fn deserialize_bank_fields<R>(
@@ -616,7 +616,7 @@ where
 }
 
 /// Serializes bank snapshot into `stream` with bincode
-pub fn serialize_bank_snapshot_into<W>(
+pub(crate) fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
@@ -646,7 +646,7 @@ where
 }
 
 /// Serializes bank snapshot with `serializer`
-pub fn serialize_bank_snapshot_with<S>(
+pub(crate) fn serialize_bank_snapshot_with<S>(
     serializer: S,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,

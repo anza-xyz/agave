@@ -133,7 +133,7 @@ impl EpochStakes {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum VersionedEpochStakes {
+pub(crate) enum VersionedEpochStakes {
     Current {
         stakes: SerdeStakesToStakeFormat,
         total_stake: u64,
