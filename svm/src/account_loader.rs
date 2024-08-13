@@ -41,7 +41,8 @@ pub enum TransactionLoadResult {
     /// All transaction accounts were loaded successfully
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
-    /// but the accounts needed for fee collection were loaded successfully
+    /// but the fee payer and any nonce account needed for fee collection were
+    /// loaded successfully
     FeesOnly(FeesOnlyTransaction),
     /// Some transaction accounts needed for fee collection were unable to be
     /// loaded
