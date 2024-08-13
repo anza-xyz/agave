@@ -772,8 +772,37 @@ impl SchedulingStateMachine {
         index: usize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        // Locks are validated later in the pipeline. Here we create a task
-        // without checking that locks are valid.
+        // It's crucial for tasks to be validated with
+        // `account_locks::validate_account_locks()` prior to the creation.
+        // That's because it's part of protocol consensus regarding the
+        // rejection of blocks containing malformed transactions
+        // (`AccountLoadedTwice` and `TooManyAccountLocks`). Even more,
+        // `SchedulingStateMachine` can't properly handle transactions with
+        // duplicate addresses (those falling under `AccountLoadedTwice`).
+        //
+        // However, it's okay for now not to call `::validate_account_locks()`
+        // here.
+        //
+        // Currently `replay_stage` is always calling
+        //`::validate_account_locks()` regardless of whether unified-scheduler
+        // is enabled or not at the blockstore
+        // (`Bank::prepare_sanitized_batch()` is called in
+        // `process_entries()`). This verification will be hoisted for
+        // optimization when removing
+        // `--block-verification-method=blockstore-processor`.
+        //
+        // As for `banking_stage` with unified scheduler, it will need to run
+        // `validate_account_locks()` at least once somewhere in the code path.
+        // In the distant future, this function (`create_task()`) should be
+        // adjusted so that both stages do the checks before calling this or do
+        // the checks here, to simplify the two code paths regarding the
+        // essential `validate_account_locks` validation.
+        //
+        // Lastly, `validate_account_locks()` is currently called in
+        // `DefaultTransactionHandler::handle()` via
+        // `Bank::prepare_unlocked_batch_from_single_tx()` as well.
+        // This redundancy is known. It was just left as-is out of abundance
+        // of caution.
         let message = transaction.message();
         let lock_contexts = message
             .account_keys()
