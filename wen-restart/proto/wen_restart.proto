@@ -23,9 +23,9 @@ message LastVotedForkSlotsAggregateRecord {
 
 message LastVotedForkSlotsEpochInfoRecord {
     uint64 epoch = 1;
-    uint64 total_active_stake = 2;
-    uint64 total_stake = 3;
-    bool considered_during_exit = 4;
+    uint64 total_stake = 2;
+    double voted_percent = 3;
+    double voted_for_this_epoch_percent = 4;
 }
 
 message LastVotedForkSlotsAggregateFinal {

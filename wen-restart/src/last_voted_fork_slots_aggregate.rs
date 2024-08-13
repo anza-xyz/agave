@@ -16,16 +16,26 @@ use {
     },
 };
 
+// If at least 1/3 of the stake has voted for a slot in next Epoch, we think
+// the cluster's clock is in sync and everyone will enter the new Epoch soon.
+// So we require that we have >80% stake in the new Epoch to exit.
+const EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD: f64 = 33.33;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LastVotedForkSlotsEpochInfo {
     pub epoch: Epoch,
     pub total_stake: u64,
-    pub total_active_stake: u64,
-    pub considered_during_exit: bool,
+    // Percentage (0 to 100) of total stake of active peers in this epoch,
+    // no matter they voted for a slot in this epoch or not.
+    pub voted_percent: f64,
+    // Percentage (0 to 100) of total stake of active peers which has voted for
+    // a slot in this epoch.
+    pub voted_for_this_epoch_percent: f64,
 }
 
 pub(crate) struct LastVotedForkSlotsAggregate {
-    active_peers: HashSet<Pubkey>,
+    // Map each peer pubkey to the epoch of its last vote.
+    node_to_last_vote_epoch_map: HashMap<Pubkey, Epoch>,
     epoch_info_vec: Vec<LastVotedForkSlotsEpochInfo>,
     last_voted_fork_slots: HashMap<Pubkey, RestartLastVotedForkSlots>,
     my_pubkey: Pubkey,
@@ -48,8 +58,6 @@ impl LastVotedForkSlotsAggregate {
         last_voted_fork_slots: &Vec<Slot>,
         my_pubkey: &Pubkey,
     ) -> Self {
-        let mut active_peers = HashSet::new();
-        active_peers.insert(*my_pubkey);
         let mut slots_stake_map = HashMap::new();
         let root_slot = root_bank.slot();
         let root_epoch = root_bank.epoch();
@@ -66,6 +74,11 @@ impl LastVotedForkSlotsAggregate {
                 }
             }
         }
+        let last_vote_epoch = root_bank
+            .get_epoch_and_slot_index(last_voted_fork_slots[0])
+            .0;
+        let mut node_to_last_vote_epoch_map = HashMap::new();
+        node_to_last_vote_epoch_map.insert(*my_pubkey, last_vote_epoch);
         // We would only consider slots in root_epoch and the next epoch.
         let epoch_info_vec: Vec<LastVotedForkSlotsEpochInfo> = (root_epoch
             ..root_epoch
@@ -76,12 +89,12 @@ impl LastVotedForkSlotsAggregate {
                 total_stake: root_bank
                     .epoch_total_stake(epoch)
                     .expect("epoch stake not found"),
-                total_active_stake: 0,
-                considered_during_exit: false,
+                voted_percent: 0.0,
+                voted_for_this_epoch_percent: 0.0,
             })
             .collect();
         Self {
-            active_peers,
+            node_to_last_vote_epoch_map,
             epoch_info_vec,
             last_voted_fork_slots: HashMap::new(),
             my_pubkey: *my_pubkey,
@@ -120,12 +133,22 @@ impl LastVotedForkSlotsAggregate {
         if from == &self.my_pubkey {
             return None;
         }
-        // If active peers didn't change, we don't need to update active stake in epoch info.
-        if self.active_peers.insert(*from) {
-            self.update_epoch_info_active_stake();
-        }
         let root_slot = self.root_bank.slot();
         let new_slots_vec = new_slots.to_slots(root_slot);
+        if new_slots_vec.is_empty() {
+            return None;
+        }
+        let last_vote_epoch = self
+            .root_bank
+            .get_epoch_and_slot_index(*new_slots_vec.last().unwrap())
+            .0;
+        if self
+            .node_to_last_vote_epoch_map
+            .insert(*from, last_vote_epoch)
+            != Some(last_vote_epoch)
+        {
+            self.update_epoch_info();
+        }
         let record = LastVotedForkSlotsRecord {
             last_voted_fork_slots: new_slots_vec.clone(),
             last_vote_bankhash: new_slots.last_voted_hash.to_string(),
@@ -135,7 +158,6 @@ impl LastVotedForkSlotsAggregate {
         if self.update_and_check_if_message_already_saved(new_slots, new_slots_vec) {
             return None;
         }
-        self.update_epoch_info_considered_during_exit();
         Some(record)
     }
 
@@ -186,36 +208,31 @@ impl LastVotedForkSlotsAggregate {
         false
     }
 
-    fn update_epoch_info_active_stake(&mut self) {
+    fn update_epoch_info(&mut self) {
         for entry in self.epoch_info_vec.iter_mut() {
-            entry.total_active_stake = self.active_peers.iter().fold(0, |sum: u64, pubkey| {
-                sum.saturating_add(
-                    self.root_bank
-                        .epoch_node_id_to_stake(entry.epoch, pubkey)
-                        .unwrap_or(0),
-                )
-            });
-        }
-    }
-
-    fn update_epoch_info_considered_during_exit(&mut self) {
-        let highest_repair_slot_epoch = self
-            .slots_to_repair
-            .last()
-            .map(|slot| self.root_bank.epoch_schedule().get_epoch(*slot));
-        for entry in self.epoch_info_vec.iter_mut() {
-            // If highest_repair_slot_epoch is None, it means no slot has reached the repair threshold,
-            // no epoch is considered for exit.
-            // Otherwise consider the epoch if it's smaller or equal to the highest_repair_slot_epoch.
-            entry.considered_during_exit = Some(entry.epoch) <= highest_repair_slot_epoch;
+            let mut voted_stake: u64 = 0;
+            let mut voted_for_this_epoch_stake: u64 = 0;
+            for (node_id, last_vote_epoch) in self.node_to_last_vote_epoch_map.iter() {
+                if let Some(stake) = self.root_bank.epoch_node_id_to_stake(entry.epoch, node_id) {
+                    voted_stake = voted_stake.checked_add(stake).expect("overflow");
+                    if *last_vote_epoch >= entry.epoch {
+                        voted_for_this_epoch_stake = voted_for_this_epoch_stake
+                            .checked_add(stake)
+                            .expect("overflow");
+                    }
+                }
+            }
+            entry.voted_percent = voted_stake as f64 / entry.total_stake as f64 * 100.0;
+            entry.voted_for_this_epoch_percent =
+                voted_for_this_epoch_stake as f64 / entry.total_stake as f64 * 100.0;
         }
     }
 
     pub(crate) fn min_active_percent(&self) -> f64 {
         self.epoch_info_vec
             .iter()
-            .filter(|info| info.considered_during_exit)
-            .map(|info| info.total_active_stake as f64 / info.total_stake as f64 * 100.0)
+            .filter(|info| info.voted_for_this_epoch_percent > EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD)
+            .map(|info| info.voted_percent)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0)
     }
@@ -296,9 +313,9 @@ mod tests {
     fn test_aggregate() {
         let mut test_state = test_aggregate_init();
         let root_slot = test_state.root_slot;
-        // Until one slot reaches 42% stake, the percentage should be 0.
+        // Until 33% stake vote, the percentage should be 0.
         assert_eq!(test_state.slots_aggregate.min_active_percent(), 0.0);
-        let initial_num_active_validators = 3;
+        let initial_num_active_validators = 2;
         for validator_voting_keypair in test_state
             .validator_voting_keypairs
             .iter()
@@ -332,8 +349,10 @@ mod tests {
             .next()
             .is_none());
 
+        // Now add one more validator, min_active_percent should be 40% but repair
+        // is still empty (< 42%).
         let new_active_validator = test_state.validator_voting_keypairs
-            [initial_num_active_validators + 1]
+            [initial_num_active_validators]
             .node_keypair
             .pubkey();
         let now = timestamp();
@@ -362,12 +381,50 @@ mod tests {
             test_state.slots_aggregate.min_active_percent(),
             expected_active_percent
         );
+        assert!(test_state
+            .slots_aggregate
+            .slots_to_repair_iter()
+            .next()
+            .is_none());
+
+        // Add one more validator, then repair is > 42% and no longer empty.
+        let new_active_validator = test_state.validator_voting_keypairs
+            [initial_num_active_validators + 1]
+            .node_keypair
+            .pubkey();
+        let now = timestamp();
+        let new_active_validator_last_voted_slots = RestartLastVotedForkSlots::new(
+            new_active_validator,
+            now,
+            &test_state.last_voted_fork_slots,
+            Hash::default(),
+            SHRED_VERSION,
+        )
+        .unwrap();
+        assert_eq!(
+            test_state
+                .slots_aggregate
+                .aggregate(new_active_validator_last_voted_slots),
+            Some(LastVotedForkSlotsRecord {
+                last_voted_fork_slots: test_state.last_voted_fork_slots.clone(),
+                last_vote_bankhash: Hash::default().to_string(),
+                shred_version: SHRED_VERSION as u32,
+                wallclock: now,
+            }),
+        );
+        let expected_active_percent =
+            (initial_num_active_validators + 3) as f64 / TOTAL_VALIDATOR_COUNT as f64 * 100.0;
+        assert_eq!(
+            test_state.slots_aggregate.min_active_percent(),
+            expected_active_percent
+        );
         let mut actual_slots =
             Vec::from_iter(test_state.slots_aggregate.slots_to_repair_iter().cloned());
         actual_slots.sort();
         assert_eq!(actual_slots, test_state.last_voted_fork_slots);
 
-        let replace_message_validator = test_state.validator_voting_keypairs[2]
+        let replace_message_validator = test_state.validator_voting_keypairs
+            [initial_num_active_validators]
             .node_keypair
             .pubkey();
         // Allow specific validator to replace message.
@@ -433,14 +490,14 @@ mod tests {
                     LastVotedForkSlotsEpochInfo {
                         epoch: 0,
                         total_stake: 1000,
-                        total_active_stake: 500,
-                        considered_during_exit: true,
+                        voted_percent: 50.0,
+                        voted_for_this_epoch_percent: 50.0,
                     },
                     LastVotedForkSlotsEpochInfo {
                         epoch: 1,
                         total_stake: 1000,
-                        total_active_stake: 500,
-                        considered_during_exit: false
+                        voted_percent: 50.0,
+                        voted_for_this_epoch_percent: 0.0,
                     }
                 ],
             },
@@ -473,9 +530,9 @@ mod tests {
                 .unwrap(),
             Some(record.clone()),
         );
-        // Before some slot reaches 40% stake, the percentage should be 0.
+        // Before 33% voted for slot in this epoch, the percentage should be 0.
         assert_eq!(test_state.slots_aggregate.min_active_percent(), 0.0);
-        for i in 1..4 {
+        for i in 1..3 {
             assert_eq!(test_state.slots_aggregate.min_active_percent(), 0.0);
             let pubkey = test_state.validator_voting_keypairs[i]
                 .node_keypair
@@ -499,7 +556,7 @@ mod tests {
                 }),
             );
         }
-        assert_eq!(test_state.slots_aggregate.min_active_percent(), 50.0);
+        assert_eq!(test_state.slots_aggregate.min_active_percent(), 40.0);
         // Now if you get the same result from Gossip again, it should be ignored.
         assert_eq!(
             test_state.slots_aggregate.aggregate(
@@ -543,7 +600,7 @@ mod tests {
             }),
         );
         // percentage doesn't change since it's a replace.
-        assert_eq!(test_state.slots_aggregate.min_active_percent(), 50.0);
+        assert_eq!(test_state.slots_aggregate.min_active_percent(), 40.0);
 
         // Record from my pubkey should be ignored.
         assert_eq!(
@@ -568,9 +625,9 @@ mod tests {
             test_state.slots_aggregate.get_final_result(),
             LastVotedForkSlotsFinalResult {
                 slots_stake_map: vec![
-                    (root_slot + 1, 500),
-                    (root_slot + 2, 500),
-                    (root_slot + 3, 500),
+                    (root_slot + 1, 400),
+                    (root_slot + 2, 400),
+                    (root_slot + 3, 400),
                     (root_slot + 4, 100),
                 ]
                 .into_iter()
@@ -579,14 +636,14 @@ mod tests {
                     LastVotedForkSlotsEpochInfo {
                         epoch: 0,
                         total_stake: 1000,
-                        total_active_stake: 500,
-                        considered_during_exit: true,
+                        voted_percent: 40.0,
+                        voted_for_this_epoch_percent: 40.0,
                     },
                     LastVotedForkSlotsEpochInfo {
                         epoch: 1,
                         total_stake: 1000,
-                        total_active_stake: 500,
-                        considered_during_exit: false
+                        voted_percent: 40.0,
+                        voted_for_this_epoch_percent: 0.0,
                     }
                 ],
             },
