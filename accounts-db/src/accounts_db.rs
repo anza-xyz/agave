@@ -2684,6 +2684,7 @@ impl AccountsDb {
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
     /// Any accounts which are removed from the accounts index are returned in PubkeysRemovedFromAccountsIndex.
     /// These should NOT be unref'd later from the accounts index.
+    /// This function assumes that `candidates` include at least one item which should be purged.
     fn clean_accounts_older_than_root(
         &self,
         candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
@@ -2692,25 +2693,6 @@ impl AccountsDb {
         epoch_schedule: &EpochSchedule,
     ) -> (ReclaimResult, PubkeysRemovedFromAccountsIndex) {
         let pubkeys_removed_from_accounts_index = HashSet::default();
-        // return early if there are no old accounts to purge
-        if !candidates
-            .iter()
-            .map(|candidate_bin| {
-                candidate_bin
-                    .read()
-                    .unwrap()
-                    .iter()
-                    .any(|(_, v)| v.should_purge)
-            })
-            .reduce(|acc, e| acc || e)
-            .unwrap()
-        {
-            return (
-                ReclaimResult::default(),
-                pubkeys_removed_from_accounts_index,
-            );
-        }
-
         let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
 
@@ -3298,6 +3280,7 @@ impl AccountsDb {
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
+        let exist_purgeable_accounts = AtomicBool::new(false);
 
         // parallel scan the index.
         let do_clean_scan = || {
@@ -3356,6 +3339,8 @@ impl AccountsDb {
                                                 if slot_list.len() > 1 {
                                                     // no need to purge old accounts if there is only 1 slot in the slot list
                                                     candidate_info.should_purge = true;
+                                                    exist_purgeable_accounts
+                                                        .store(true, Ordering::Relaxed);
                                                     useless = false;
                                                 } else {
                                                     self.clean_accounts_stats
@@ -3373,6 +3358,7 @@ impl AccountsDb {
                                             // touched in must be unrooted.
                                             not_found_on_fork += 1;
                                             candidate_info.should_purge = true;
+                                            exist_purgeable_accounts.store(true, Ordering::Relaxed);
                                             useless = false;
                                         }
                                     }
@@ -3404,12 +3390,16 @@ impl AccountsDb {
 
         let mut clean_old_rooted = Measure::start("clean_old_roots");
         let ((purged_account_slots, removed_accounts), mut pubkeys_removed_from_accounts_index) =
-            self.clean_accounts_older_than_root(
-                &candidates,
-                max_clean_root_inclusive,
-                &ancient_account_cleans,
-                epoch_schedule,
-            );
+            if exist_purgeable_accounts.load(Ordering::Relaxed) {
+                self.clean_accounts_older_than_root(
+                    &candidates,
+                    max_clean_root_inclusive,
+                    &ancient_account_cleans,
+                    epoch_schedule,
+                )
+            } else {
+                (ReclaimResult::default(), HashSet::default())
+            };
 
         self.do_reset_uncleaned_roots(max_clean_root_inclusive);
         clean_old_rooted.stop();
