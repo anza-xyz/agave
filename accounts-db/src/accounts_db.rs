@@ -1349,7 +1349,8 @@ impl StoreAccountsTiming {
 struct CleaningInfo {
     slot_list: SlotList<AccountInfo>,
     ref_count: u64,
-    purge_old: bool,
+    /// True for pubkeys mapping to older versions of accounts that should be purged.
+    should_purge: bool,
 }
 
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
@@ -2691,7 +2692,7 @@ impl AccountsDb {
         epoch_schedule: &EpochSchedule,
     ) -> (ReclaimResult, PubkeysRemovedFromAccountsIndex) {
         let pubkeys_removed_from_accounts_index = HashSet::default();
-        // return early if the list of ancient accounts is empty
+        // return early if there are no old accounts to purge
         if !candidates
             .iter()
             .map(|candidate_bin| {
@@ -2699,7 +2700,7 @@ impl AccountsDb {
                     .read()
                     .unwrap()
                     .iter()
-                    .any(|(_, v)| v.purge_old)
+                    .any(|(_, v)| v.should_purge)
             })
             .reduce(|acc, e| acc || e)
             .unwrap()
@@ -2719,7 +2720,7 @@ impl AccountsDb {
             .filter_map(|candidates_bin| {
                 let mut reclaims = Vec::new();
                 for (pubkey, cleaning_info) in candidates_bin.read().unwrap().iter() {
-                    if cleaning_info.purge_old {
+                    if cleaning_info.should_purge {
                         let removed_from_index = self.accounts_index.clean_rooted_entries(
                             pubkey,
                             &mut reclaims,
@@ -2803,7 +2804,7 @@ impl AccountsDb {
                 CleaningInfo {
                     slot_list,
                     ref_count,
-                    purge_old: _,
+                    should_purge: _,
                 },
             ) in bin.iter().filter(|x| !x.1.slot_list.is_empty())
             {
@@ -3354,7 +3355,7 @@ impl AccountsDb {
                                                 }
                                                 if slot_list.len() > 1 {
                                                     // no need to purge old accounts if there is only 1 slot in the slot list
-                                                    candidate_info.purge_old = true;
+                                                    candidate_info.should_purge = true;
                                                     useless = false;
                                                 } else {
                                                     self.clean_accounts_stats
@@ -3371,7 +3372,7 @@ impl AccountsDb {
                                             // it was in the dirty list, so we assume that the slot it was
                                             // touched in must be unrooted.
                                             not_found_on_fork += 1;
-                                            candidate_info.purge_old = true;
+                                            candidate_info.should_purge = true;
                                             useless = false;
                                         }
                                     }
@@ -3424,7 +3425,7 @@ impl AccountsDb {
                 CleaningInfo {
                     slot_list,
                     ref_count,
-                    purge_old: _,
+                    should_purge: _,
                 },
             ) in candidates_bin.write().unwrap().iter_mut()
             {
@@ -3506,7 +3507,7 @@ impl AccountsDb {
                     let CleaningInfo {
                         slot_list,
                         ref_count: _,
-                        purge_old: _,
+                        should_purge: _,
                     } = cleaning_info;
                     (!slot_list.is_empty()).then_some((
                         *pubkey,
@@ -3783,7 +3784,7 @@ impl AccountsDb {
                 let CleaningInfo {
                     slot_list,
                     ref_count: _,
-                    purge_old: _,
+                    should_purge: _,
                 } = cleaning_info;
                 if slot_list.is_empty() {
                     return false;
@@ -12817,7 +12818,7 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: rooted_entries,
                     ref_count,
-                    purge_old: false,
+                    should_purge: false,
                 },
             );
         }
@@ -12828,7 +12829,7 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: list,
                     ref_count,
-                    purge_old: _,
+                    should_purge: _,
                 },
             ) in candidates_bin.iter()
             {
@@ -15133,7 +15134,7 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: vec![(slot, account_info)],
                     ref_count: 1,
-                    purge_old: false,
+                    should_purge: false,
                 },
             );
             let accounts_db = AccountsDb::new_single_for_tests();
