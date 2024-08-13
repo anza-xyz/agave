@@ -4,18 +4,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_nanos()` directly")]
 pub fn duration_as_ns(d: &Duration) -> u64 {
     d.as_nanos() as u64
 }
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_micros()` directly")]
 pub fn duration_as_us(d: &Duration) -> u64 {
     d.as_micros() as u64
 }
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_millis()` directly")]
 pub fn duration_as_ms(d: &Duration) -> u64 {
     d.as_millis() as u64
 }
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_secs_f32()` directly")]
 pub fn duration_as_s(d: &Duration) -> f32 {
     d.as_secs_f32()
 }
