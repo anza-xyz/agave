@@ -21,6 +21,7 @@ use {
         mem::size_of,
         num::Saturating,
         path::{Path, PathBuf},
+        str,
         sync::RwLock,
         time::Instant,
     },
@@ -31,6 +32,8 @@ const CMD_DIFF: &str = "diff";
 const CMD_DIFF_FILES: &str = "files";
 const CMD_DIFF_DIRS: &str = "directories";
 const CMD_DIFF_STATE: &str = "state";
+
+const DEFAULT_BINS: &str = "8192";
 
 fn main() {
     let matches = App::new(crate_name!())
@@ -127,6 +130,34 @@ fn main() {
                                 .takes_value(true)
                                 .value_name("PATH2")
                                 .help("Accounts hash cache directory 2 to diff"),
+                        )
+                        .arg(
+                            Arg::with_name("bins")
+                                .long("bins")
+                                .takes_value(true)
+                                .value_name("NUM")
+                                .default_value(DEFAULT_BINS)
+                                .help("Sets the number of bins to split the entries into")
+                                .long_help(
+                                    "Sets the number of bins to split the entries into. \
+                                     The binning is based on each entry's pubkey. \
+                                     Must be a power of two, greater than 0, \
+                                     and less-than-or-equal-to 16,777,216 (2^24)"
+                                ),
+                        )
+                        .arg(
+                            Arg::with_name("bin_of_interest")
+                                .long("bin-of-interest")
+                                .takes_value(true)
+                                .value_name("INDEX")
+                                .help("Specifies a single bin to diff")
+                                .long_help(
+                                    "Specifies a single bin to diff. \
+                                     When diffing large state that does not fit in memory, \
+                                     it may be neccessary to diff a subset at a time. \
+                                     Use this arg to limit the state to a single bin. \
+                                     The INDEX must be less than --bins."
+                                ),
                         ),
                 ),
         )
@@ -193,7 +224,23 @@ fn cmd_diff_state(
 ) -> Result<(), String> {
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
-    do_diff_state(path1, path2)
+    let num_bins = value_t_or_exit!(subcommand_matches, "bins", usize);
+    let bin_of_interest =
+        if let Some(bin_of_interest) = subcommand_matches.value_of("bin_of_interest") {
+            let bin_of_interest = bin_of_interest
+                .parse()
+                .map_err(|err| format!("argument 'bin-of-interest' is not a valid value: {err}"))?;
+            if bin_of_interest >= num_bins {
+                return Err(format!(
+                    "argument 'bin-of-interest' must be less than 'bins', \
+                     bins: {num_bins}, bin-of-interest: {bin_of_interest}",
+                ));
+            }
+            Some(bin_of_interest)
+        } else {
+            None
+        };
+    do_diff_state(path1, path2, num_bins, bin_of_interest)
 }
 
 fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
@@ -203,7 +250,7 @@ fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
             file.as_ref().display(),
         )
     })?;
-    let count_width = (header.count as f64).log10().ceil() as usize;
+    let count_width = width10(header.count as u64);
 
     let mut count = Saturating(0);
     scan_file(reader, header.count, |entry| {
@@ -235,13 +282,13 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(),
     let num_accounts1 = entries1.len();
     let num_accounts2 = entries2.len();
     let num_accounts_width = {
-        let width1 = (num_accounts1 as f64).log10().ceil() as usize;
-        let width2 = (num_accounts2 as f64).log10().ceil() as usize;
+        let width1 = width10(num_accounts1 as u64);
+        let width2 = width10(num_accounts2 as u64);
         cmp::max(width1, width2)
     };
     let lamports_width = {
-        let width1 = (capitalization1 as f64).log10().ceil() as usize;
-        let width2 = (capitalization2 as f64).log10().ceil() as usize;
+        let width1 = width10(capitalization1);
+        let width2 = width10(capitalization2);
         cmp::max(width1, width2)
     };
     println!("File 1: number of accounts: {num_accounts1:num_accounts_width$}, capitalization: {capitalization1:lamports_width$} lamports");
@@ -282,32 +329,13 @@ fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(),
     let (unique_entries1, mismatch_entries) = do_compute(&entries1, &entries2);
     let (unique_entries2, _) = do_compute(&entries2, &entries1);
 
-    // display the unique entries in each file
-    let do_print = |entries: &[CacheHashDataFileEntry]| {
-        let count_width = (entries.len() as f64).log10().ceil() as usize;
-        if entries.is_empty() {
-            println!("(none)");
-        } else {
-            let mut total_lamports = Saturating(0);
-            for (i, entry) in entries.iter().enumerate() {
-                total_lamports += entry.lamports;
-                println!(
-                    "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {:lamports_width$}",
-                    entry.pubkey.to_string(),
-                    entry.hash.0.to_string(),
-                    entry.lamports,
-                );
-            }
-            println!("total lamports: {}", total_lamports.0);
-        }
-    };
     println!("Unique entries in file 1:");
-    do_print(&unique_entries1);
+    print_unique_entries(&unique_entries1, lamports_width);
     println!("Unique entries in file 2:");
-    do_print(&unique_entries2);
+    print_unique_entries(&unique_entries2, lamports_width);
 
     println!("Mismatch values:");
-    let count_width = (mismatch_entries.len() as f64).log10().ceil() as usize;
+    let count_width = width10(mismatch_entries.len() as u64);
     if mismatch_entries.is_empty() {
         println!("(none)");
     } else {
@@ -435,7 +463,7 @@ fn do_diff_dirs(
     }
 
     let do_print = |entries: &[&CacheFileInfo]| {
-        let count_width = (entries.len() as f64).log10().ceil() as usize;
+        let count_width = width10(entries.len() as u64);
         if entries.is_empty() {
             println!("(none)");
         } else {
@@ -450,7 +478,7 @@ fn do_diff_dirs(
     do_print(&uniques2);
 
     println!("Mismatch files:");
-    let count_width = (mismatches.len() as f64).log10().ceil() as usize;
+    let count_width = width10(mismatches.len() as u64);
     if mismatches.is_empty() {
         println!("(none)");
     } else {
@@ -478,16 +506,24 @@ fn do_diff_dirs(
     Ok(())
 }
 
-fn do_diff_state(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), String> {
-    const NUM_BINS: usize = 8192;
+fn do_diff_state(
+    dir1: impl AsRef<Path>,
+    dir2: impl AsRef<Path>,
+    num_bins: usize,
+    bin_of_interest: Option<usize>,
+) -> Result<(), String> {
     let extract = |dir: &Path| -> Result<_, String> {
         let files =
             get_cache_files_in(dir).map_err(|err| format!("failed to get cache files: {err}"))?;
         let BinnedLatestEntriesInfo {
             latest_entries,
             capitalization,
-        } = extract_binned_latest_entries_in(files.iter().map(|file| &file.path), NUM_BINS)
-            .map_err(|err| format!("failed to extract entries: {err}"))?;
+        } = extract_binned_latest_entries_in(
+            files.iter().map(|file| &file.path),
+            num_bins,
+            bin_of_interest,
+        )
+        .map_err(|err| format!("failed to extract entries: {err}"))?;
         let num_accounts: usize = latest_entries.iter().map(|bin| bin.len()).sum();
         let entries = Vec::from(latest_entries);
         let state: Box<_> = entries.into_iter().map(RwLock::new).collect();
@@ -505,7 +541,7 @@ fn do_diff_state(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), S
     drop(timer);
 
     let timer = LoggingTimer::new("Diffing state");
-    let (mut mismatch_entries, mut unique_entries1) = (0..NUM_BINS)
+    let (mut mismatch_entries, mut unique_entries1) = (0..num_bins)
         .into_par_iter()
         .map(|bindex| {
             let mut bin1 = state1[bindex].write().unwrap();
@@ -527,7 +563,11 @@ fn do_diff_state(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), S
                     }
                     None => {
                         // this pubkey was *not* found in state2, so its a unique entry in state1
-                        unique_entries1.push((key1, value1));
+                        unique_entries1.push(CacheHashDataFileEntry {
+                            pubkey: key1,
+                            hash: value1.0,
+                            lamports: value1.1,
+                        });
                     }
                 }
             }
@@ -547,24 +587,30 @@ fn do_diff_state(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), S
     let mut unique_entries2 = Vec::new();
     for bin in Vec::from(state2).into_iter() {
         let mut bin = bin.write().unwrap();
-        unique_entries2.extend(bin.drain());
+        unique_entries2.extend(bin.drain().map(|(pubkey, (hash, lamports))| {
+            CacheHashDataFileEntry {
+                pubkey,
+                hash,
+                lamports,
+            }
+        }));
     }
 
     // sort all the results by pubkey to make them saner to view
     let timer = LoggingTimer::new("Sorting results");
-    unique_entries1.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    unique_entries2.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    unique_entries1.sort_unstable_by(|a, b| a.pubkey.cmp(&b.pubkey));
+    unique_entries2.sort_unstable_by(|a, b| a.pubkey.cmp(&b.pubkey));
     mismatch_entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     drop(timer);
 
     let num_accounts_width = {
-        let width1 = (num_accounts1 as f64).log10().ceil() as usize;
-        let width2 = (num_accounts2 as f64).log10().ceil() as usize;
+        let width1 = width10(num_accounts1 as u64);
+        let width2 = width10(num_accounts2 as u64);
         cmp::max(width1, width2)
     };
     let lamports_width = {
-        let width1 = (capitalization1 as f64).log10().ceil() as usize;
-        let width2 = (capitalization2 as f64).log10().ceil() as usize;
+        let width1 = width10(capitalization1);
+        let width2 = width10(capitalization2);
         cmp::max(width1, width2)
     };
 
@@ -572,43 +618,12 @@ fn do_diff_state(dir1: impl AsRef<Path>, dir2: impl AsRef<Path>) -> Result<(), S
     println!("State 2: total number of accounts: {num_accounts2:num_accounts_width$}, total capitalization: {capitalization2:lamports_width$} lamports");
 
     println!("Unique entries in state 1:");
-    if unique_entries1.is_empty() {
-        println!("(none)");
-    } else {
-        let count_width = (unique_entries1.len() as f64).log10().ceil() as usize;
-        let mut total_lamports = Saturating(0);
-        for (i, entry) in unique_entries1.iter().enumerate() {
-            total_lamports += entry.1 .1;
-            println!(
-                "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {:lamports_width$}",
-                entry.0.to_string(),
-                entry.1 .0 .0.to_string(),
-                entry.1 .1,
-            );
-        }
-        println!("total lamports: {}", total_lamports.0);
-    }
-
+    print_unique_entries(&unique_entries1, lamports_width);
     println!("Unique entries in state 2:");
-    if unique_entries1.is_empty() {
-        println!("(none)");
-    } else {
-        let count_width = (unique_entries2.len() as f64).log10().ceil() as usize;
-        let mut total_lamports = Saturating(0);
-        for (i, entry) in unique_entries2.iter().enumerate() {
-            total_lamports += entry.1 .1;
-            println!(
-                "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {:lamports_width$}",
-                entry.0.to_string(),
-                entry.1 .0 .0.to_string(),
-                entry.1 .1,
-            );
-        }
-        println!("total lamports: {}", total_lamports.0);
-    }
+    print_unique_entries(&unique_entries2, lamports_width);
 
     println!("Mismatch values:");
-    let count_width = (mismatch_entries.len() as f64).log10().ceil() as usize;
+    let count_width = width10(mismatch_entries.len() as u64);
     if mismatch_entries.is_empty() {
         println!("(none)");
     } else {
@@ -684,7 +699,7 @@ fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo
     let BinnedLatestEntriesInfo {
         latest_entries,
         capitalization,
-    } = extract_binned_latest_entries_in(iter::once(file), NUM_BINS)?;
+    } = extract_binned_latest_entries_in(iter::once(file), NUM_BINS, None)?;
     assert_eq!(latest_entries.len(), NUM_BINS);
     let mut latest_entries = Vec::from(latest_entries);
     let latest_entries = latest_entries.pop().unwrap();
@@ -699,14 +714,23 @@ fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo
 ///
 /// If there are multiple entries for a pubkey, only the latest is returned.
 ///
+/// - `num_bins` specifies the number of bins to split the entries into.
+/// - `bin_of_interest`, if Some, only returns entries from that bin.
+///   Otherwise, returns all entries.  Must be less than `num_bins`.
+///
 /// Note: `files` must be sorted in ascending order, as insertion order is
 /// relied on to guarantee the latest entry is returned.
 fn extract_binned_latest_entries_in(
     files: impl IntoIterator<Item = impl AsRef<Path>>,
-    bins: usize,
+    num_bins: usize,
+    bin_of_interest: Option<usize>,
 ) -> Result<BinnedLatestEntriesInfo, String> {
-    let binner = PubkeyBinCalculator24::new(bins);
-    let mut entries: Box<_> = iter::repeat_with(HashMap::default).take(bins).collect();
+    if let Some(bin_of_interest) = bin_of_interest {
+        assert!(bin_of_interest < num_bins);
+    }
+
+    let binner = PubkeyBinCalculator24::new(num_bins);
+    let mut entries: Box<_> = iter::repeat_with(HashMap::default).take(num_bins).collect();
     let mut capitalization = Saturating(0);
 
     for file in files.into_iter() {
@@ -719,8 +743,15 @@ fn extract_binned_latest_entries_in(
         })?;
 
         let num_entries = scan_mmap(&mmap, |entry| {
-            capitalization += entry.lamports;
             let bin = binner.bin_from_pubkey(&entry.pubkey);
+            if let Some(bin_of_interest) = bin_of_interest {
+                // Is this the bin of interest? If not, skip it.
+                if bin != bin_of_interest {
+                    return;
+                }
+            }
+
+            capitalization += entry.lamports;
             let old_value = entries[bin].insert(entry.pubkey, (entry.hash, entry.lamports));
             if let Some((_, old_lamports)) = old_value {
                 // back out the old value's lamports, so we only keep the latest's for capitalization
@@ -835,6 +866,32 @@ fn open_file(
     }
 
     Ok((reader, header))
+}
+
+/// Prints unique entries
+fn print_unique_entries(entries: &[CacheHashDataFileEntry], lamports_width: usize) {
+    if entries.is_empty() {
+        println!("(none)");
+        return;
+    }
+
+    let count_width = width10(entries.len() as u64);
+    let mut total_lamports = Saturating(0);
+    for (i, entry) in entries.iter().enumerate() {
+        total_lamports += entry.lamports;
+        println!(
+            "{i:count_width$}: pubkey: {:44}, hash: {:44}, lamports: {:lamports_width$}",
+            entry.pubkey.to_string(),
+            entry.hash.0.to_string(),
+            entry.lamports,
+        );
+    }
+    println!("total lamports: {}", total_lamports.0);
+}
+
+/// Returns the number of characters required to print `x` in base-10
+fn width10(x: u64) -> usize {
+    (x as f64).log10().ceil() as usize
 }
 
 #[derive(Debug)]

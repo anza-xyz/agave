@@ -548,11 +548,11 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
         }
-        let bank;
+        let saved_bank;
         {
-            bank = bank_forks.read().unwrap().get(slot);
+            saved_bank = bank_forks.read().unwrap().get(slot);
         }
-        let cur_bank = match bank {
+        let bank = match saved_bank {
             Some(cur_bank) => {
                 if !cur_bank.is_frozen() {
                     return Err(WenRestartError::BlockNotFrozenAfterReplay(slot, None).into());
@@ -593,14 +593,11 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 }
                 let cur_bank;
                 {
-                    cur_bank = bank_forks.read().unwrap().get(slot).unwrap();
-                }
-                if slot.saturating_sub(cur_root_bank.slot()) > 100 {
-                    // We don't want to keep too many banks in memory, and need to send EAH requests.
-                    let mut new_bank_forks = bank_forks.write().unwrap();
-                    // All slots here would be super majority root if confirmed.
-                    let _ = new_bank_forks.set_root(slot, accounts_background_request_sender, None);
-                    cur_root_bank = cur_bank.clone();
+                    cur_bank = bank_forks
+                        .read()
+                        .unwrap()
+                        .get(slot)
+                        .expect("bank should have been just inserted");
                 }
                 cur_bank
             }
