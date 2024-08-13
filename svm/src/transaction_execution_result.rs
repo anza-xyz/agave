@@ -6,7 +6,6 @@
 pub use solana_sdk::inner_instruction::{InnerInstruction, InnerInstructionsList};
 use {
     crate::account_loader::LoadedTransaction,
-    serde::{Deserialize, Serialize},
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
     solana_sdk::{
         pubkey::Pubkey,
@@ -51,45 +50,7 @@ impl ExecutedTransaction {
     }
 }
 
-impl TransactionExecutionResult {
-    pub fn was_executed_successfully(&self) -> bool {
-        self.executed_transaction()
-            .map(|executed_tx| executed_tx.was_successful())
-            .unwrap_or(false)
-    }
-
-    pub fn was_executed(&self) -> bool {
-        self.executed_transaction().is_some()
-    }
-
-    pub fn details(&self) -> Option<&TransactionExecutionDetails> {
-        self.executed_transaction()
-            .map(|executed_tx| &executed_tx.execution_details)
-    }
-
-    pub fn flattened_result(&self) -> transaction::Result<()> {
-        match self {
-            Self::Executed(executed_tx) => executed_tx.execution_details.status.clone(),
-            Self::NotExecuted(err) => Err(err.clone()),
-        }
-    }
-
-    pub fn executed_transaction(&self) -> Option<&ExecutedTransaction> {
-        match self {
-            Self::Executed(executed_tx) => Some(executed_tx.as_ref()),
-            Self::NotExecuted { .. } => None,
-        }
-    }
-
-    pub fn executed_transaction_mut(&mut self) -> Option<&mut ExecutedTransaction> {
-        match self {
-            Self::Executed(executed_tx) => Some(executed_tx.as_mut()),
-            Self::NotExecuted { .. } => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionExecutionDetails {
     pub status: transaction::Result<()>,
     pub log_messages: Option<Vec<String>>,
@@ -99,4 +60,10 @@ pub struct TransactionExecutionDetails {
     /// The change in accounts data len for this transaction.
     /// NOTE: This value is valid IFF `status` is `Ok`.
     pub accounts_data_len_delta: i64,
+}
+
+impl TransactionExecutionDetails {
+    pub fn was_successful(&self) -> bool {
+        self.status.is_ok()
+    }
 }

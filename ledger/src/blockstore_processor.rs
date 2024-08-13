@@ -57,7 +57,7 @@ use {
         },
     },
     solana_svm::{
-        transaction_commit_result::TransactionCommitResult,
+        transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
@@ -190,7 +190,7 @@ pub fn execute_batch(
     let committed_transactions = commit_results
         .iter()
         .zip(batch.sanitized_transactions())
-        .filter_map(|(commit_result, tx)| commit_result.is_ok().then_some(tx))
+        .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx))
         .collect_vec();
 
     let first_err = get_first_error(batch, &commit_results);
@@ -207,7 +207,7 @@ pub fn execute_batch(
             TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances);
 
         transaction_status_sender.send_transaction_status_batch(
-            bank.clone(),
+            bank.slot(),
             transactions,
             commit_results,
             balances,
@@ -238,7 +238,7 @@ fn check_block_cost_limits(
             if let Ok(committed_tx) = commit_result {
                 Some(CostModel::calculate_cost_for_executed_transaction(
                     tx,
-                    committed_tx.execution_details.executed_units,
+                    committed_tx.executed_units,
                     committed_tx.loaded_account_stats.loaded_accounts_data_size,
                     &bank.feature_set,
                 ))
@@ -2108,7 +2108,7 @@ pub enum TransactionStatusMessage {
 }
 
 pub struct TransactionStatusBatch {
-    pub bank: Arc<Bank>,
+    pub slot: Slot,
     pub transactions: Vec<SanitizedTransaction>,
     pub commit_results: Vec<TransactionCommitResult>,
     pub balances: TransactionBalancesSet,
@@ -2124,19 +2124,17 @@ pub struct TransactionStatusSender {
 impl TransactionStatusSender {
     pub fn send_transaction_status_batch(
         &self,
-        bank: Arc<Bank>,
+        slot: Slot,
         transactions: Vec<SanitizedTransaction>,
         commit_results: Vec<TransactionCommitResult>,
         balances: TransactionBalancesSet,
         token_balances: TransactionTokenBalancesSet,
         transaction_indexes: Vec<usize>,
     ) {
-        let slot = bank.slot();
-
         if let Err(e) = self
             .sender
             .send(TransactionStatusMessage::Batch(TransactionStatusBatch {
-                bank,
+                slot,
                 transactions,
                 commit_results,
                 balances,
@@ -2245,9 +2243,7 @@ pub mod tests {
         },
         solana_svm::{
             transaction_commit_result::CommittedTransaction,
-            transaction_execution_result::{
-                TransactionExecutionDetails, TransactionLoadedAccountsStats,
-            },
+            transaction_execution_result::TransactionLoadedAccountsStats,
             transaction_processor::ExecutionRecordingConfig,
         },
         solana_vote::vote_account::VoteAccount,
@@ -5079,20 +5075,17 @@ pub mod tests {
         let txs = vec![tx.clone(), tx];
         let commit_results = vec![
             Ok(CommittedTransaction {
+                status: Ok(()),
+                log_messages: None,
+                inner_instructions: None,
+                return_data: None,
+                executed_units: actual_execution_cu,
+                fee_details: FeeDetails::default(),
+                rent_debits: RentDebits::default(),
                 loaded_account_stats: TransactionLoadedAccountsStats {
                     loaded_accounts_data_size: actual_loaded_accounts_data_size,
                     loaded_accounts_count: 2,
                 },
-                execution_details: TransactionExecutionDetails {
-                    status: Ok(()),
-                    log_messages: None,
-                    inner_instructions: None,
-                    return_data: None,
-                    executed_units: actual_execution_cu,
-                    accounts_data_len_delta: 0,
-                },
-                fee_details: FeeDetails::default(),
-                rent_debits: RentDebits::default(),
             }),
             Err(TransactionError::AccountNotFound),
         ];

@@ -683,8 +683,6 @@ fn record_transactions(
 ) {
     for tsm in recv {
         if let TransactionStatusMessage::Batch(batch) = tsm {
-            let slot = batch.bank.slot();
-
             assert_eq!(batch.transactions.len(), batch.commit_results.len());
 
             let transactions: Vec<_> = batch
@@ -708,16 +706,14 @@ fn record_transactions(
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
-                    let execution_results = commit_result
-                        .ok()
-                        .map(|committed_tx| committed_tx.execution_details);
+                    let commit_details = commit_result.ok().map(|committed_tx| committed_tx.into());
 
                     TransactionDetails {
                         signature: tx.signature().to_string(),
                         accounts,
                         instructions,
                         is_simple_vote_tx,
-                        execution_results,
+                        commit_details,
                         index,
                     }
                 })
@@ -725,11 +721,11 @@ fn record_transactions(
 
             let mut slots = slots.lock().unwrap();
 
-            if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == slot) {
+            if let Some(recorded_slot) = slots.iter_mut().find(|f| f.slot == batch.slot) {
                 recorded_slot.transactions.extend(transactions);
             } else {
                 slots.push(SlotDetails {
-                    slot,
+                    slot: batch.slot,
                     transactions,
                     ..Default::default()
                 });
