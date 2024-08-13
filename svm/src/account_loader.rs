@@ -217,7 +217,9 @@ fn load_transaction<CB: TransactionProcessingCallback>(
             let load_result = load_transaction_accounts(
                 callbacks,
                 message,
-                &tx_details,
+                tx_details.fee_payer_account,
+                tx_details.fee_payer_rent_debit,
+                &tx_details.compute_budget_limits,
                 error_metrics,
                 account_overrides,
                 feature_set,
@@ -255,10 +257,13 @@ struct LoadedTransactionAccounts {
     pub loaded_accounts_data_size: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     message: &impl SVMMessage,
-    tx_details: &ValidatedTransactionDetails,
+    fee_payer_account: AccountSharedData,
+    fee_payer_rent_debit: u64,
+    compute_budget_limits: &ComputeBudgetLimits,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
@@ -283,7 +288,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             accumulate_and_check_loaded_account_data_size(
                 &mut accumulated_accounts_data_size,
                 account_size,
-                tx_details.compute_budget_limits.loaded_accounts_bytes,
+                compute_budget_limits.loaded_accounts_bytes,
                 error_metrics,
             )?;
 
@@ -301,9 +306,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     // overrides again.
     collect_account(
         message.fee_payer(),
-        tx_details.fee_payer_account.data().len(),
-        tx_details.fee_payer_account,
-        tx_details.fee_payer_rent_debit,
+        fee_payer_account.data().len(),
+        fee_payer_account,
+        fee_payer_rent_debit,
         true, // account_found
     )?;
 
@@ -414,7 +419,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
                         owner_account.data().len(),
-                        tx_details.compute_budget_limits.loaded_accounts_bytes,
+                        compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
                     accounts.push((*owner_id, owner_account));
@@ -1147,11 +1152,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                fee_payer_rent_debit,
-                ..ValidatedTransactionDetails::default()
-            },
+            fee_payer_account_data.clone(),
+            fee_payer_rent_debit,
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1212,10 +1215,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
-            },
+            fee_payer_account_data.clone(),
+            0, // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1275,7 +1277,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails::default(),
+            AccountSharedData::default(), // fee_payer_account
+            0,                            // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1319,7 +1323,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails::default(),
+            AccountSharedData::default(), // fee_payer_account
+            0,                            // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1363,7 +1369,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails::default(),
+            AccountSharedData::default(), // fee_payer_account
+            0,                            // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1416,10 +1424,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
-            },
+            fee_payer_account_data.clone(),
+            0, // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1481,7 +1488,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails::default(),
+            AccountSharedData::default(), // fee_payer_account
+            0,                            // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1534,7 +1543,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails::default(),
+            AccountSharedData::default(), // fee_payer_account
+            0,                            // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1594,10 +1605,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
-            },
+            fee_payer_account_data.clone(),
+            0, // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1681,10 +1691,9 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            &ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
-            },
+            fee_payer_account_data.clone(),
+            0, // fee_payer_rent_debit
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
