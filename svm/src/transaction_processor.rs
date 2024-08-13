@@ -3,10 +3,9 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            collect_rent_from_account, hana_load_accounts, load_accounts,
-            load_transaction_accounts, validate_fee_payer, CheckedTransactionDetails,
-            LoadedTransaction, TransactionCheckResult, TransactionValidationResult,
-            ValidatedTransactionDetails,
+            collect_rent_from_account, load_accounts, load_transaction_accounts,
+            validate_fee_payer, CheckedTransactionDetails, LoadedTransaction,
+            TransactionCheckResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::MessageProcessor,
@@ -275,7 +274,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch
         });
 
-        let accounts_cache = hana_load_accounts(
+        let accounts_cache = load_accounts(
             callbacks,
             sanitized_txs,
             &check_results,
