@@ -22,10 +22,10 @@ pub fn duration_as_s(d: &Duration) -> f32 {
 
 /// return timestamp as ms
 pub fn timestamp() -> u64 {
-    let now = SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("create timestamp in timing");
-    duration_as_ms(&now)
+        .expect("create timestamp in timing")
+        .as_millis() as u64
 }
 
 pub const SECONDS_PER_YEAR: f64 = 365.242_199 * 24.0 * 60.0 * 60.0;
@@ -37,7 +37,7 @@ pub fn years_as_slots(years: f64, tick_duration: &Duration, ticks_per_slot: u64)
     //  slots/year  is  seconds/year ...
         SECONDS_PER_YEAR
     //  * (ns/s)/(ns/tick) / ticks/slot = 1/s/1/tick = ticks/s
-        * (1_000_000_000.0 / duration_as_ns(tick_duration) as f64)
+        * (1_000_000_000.0 / tick_duration.as_nanos() as f64)
     //  / ticks/slot
         / ticks_per_slot as f64
 }
