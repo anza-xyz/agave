@@ -1,35 +1,23 @@
 //! The `timing` module provides std::time utility functions.
-use {
-    crate::unchecked_div_by_const,
-    std::{
-        sync::atomic::{AtomicU64, Ordering},
-        time::{Duration, SystemTime, UNIX_EPOCH},
-    },
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 pub fn duration_as_ns(d: &Duration) -> u64 {
-    d.as_secs()
-        .saturating_mul(1_000_000_000)
-        .saturating_add(u64::from(d.subsec_nanos()))
+    d.as_nanos() as u64
 }
 
 pub fn duration_as_us(d: &Duration) -> u64 {
-    d.as_secs()
-        .saturating_mul(1_000_000)
-        .saturating_add(unchecked_div_by_const!(u64::from(d.subsec_nanos()), 1_000))
+    d.as_micros() as u64
 }
 
 pub fn duration_as_ms(d: &Duration) -> u64 {
-    d.as_secs()
-        .saturating_mul(1000)
-        .saturating_add(unchecked_div_by_const!(
-            u64::from(d.subsec_nanos()),
-            1_000_000
-        ))
+    d.as_millis() as u64
 }
 
 pub fn duration_as_s(d: &Duration) -> f32 {
-    d.as_secs() as f32 + (d.subsec_nanos() as f32 / 1_000_000_000.0)
+    d.as_secs_f32()
 }
 
 /// return timestamp as ms
