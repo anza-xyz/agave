@@ -595,9 +595,7 @@ impl Validator {
         }
         let genesis_config = load_genesis(config, ledger_path)?;
 
-        metrics_config_sanity_check(genesis_config.cluster_type).map_err(|err| {
-            anyhow!("Invalid metrics configuration detected in genesis config: {err}")
-        })?;
+        metrics_config_sanity_check(genesis_config.cluster_type)?;
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
