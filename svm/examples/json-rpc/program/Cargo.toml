@@ -20,10 +20,10 @@ frozen-abi = []
 
 [dependencies]
 borsh = "0.9"
-solana-program = { path = "../../../sdk/program", version = "=2.1.0" }
+solana-program = { path = "../../../../sdk/program", version = "=2.1.0" }
 
 [lib]
-name = "helloworld"
+name = "program"
 crate-type = ["cdylib", "lib"]
 
 [workspace]

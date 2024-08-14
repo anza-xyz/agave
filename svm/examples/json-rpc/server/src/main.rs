@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     clap::{value_t_or_exit, App, Arg},
     std::{

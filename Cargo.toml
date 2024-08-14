@@ -165,9 +165,6 @@ members = [
 
 exclude = [
     "programs/sbf",
-    "svm/json-rpc-example/json-rpc-client",
-    "svm/json-rpc-example/json-rpc-program",
-    "svm/json-rpc-example/json-rpc-server",
     "svm/tests/example-programs",
 ]
 

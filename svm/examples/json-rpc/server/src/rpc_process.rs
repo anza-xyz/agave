@@ -73,8 +73,10 @@ use {
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         account_overrides::AccountOverrides,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::{TransactionExecutionDetails, TransactionExecutionResult},
         transaction_processing_callback::TransactionProcessingCallback,
+        transaction_processing_result::{
+            TransactionProcessingResult, TransactionProcessingResultExtensions,
+        },
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
             TransactionProcessingConfig, TransactionProcessingEnvironment,
@@ -143,14 +145,12 @@ pub struct JsonRpcRequestProcessor {
     #[allow(dead_code)]
     exit: Arc<RwLock<Exit>>,
     transaction_processor: Arc<RwLock<TransactionBatchProcessor<MockForkGraph>>>,
-    transaction_log_collector: Arc<RwLock<TransactionLogCollector>>,
-    transaction_log_collector_config: Arc<RwLock<TransactionLogCollectorConfig>>,
 }
 
 struct LoadAndExecuteTransactionsOutput {
     // Vector of results indicating whether a transaction was executed or could not
     // be executed. Note executed transactions can still have failed!
-    pub execution_results: Vec<TransactionExecutionResult>,
+    pub processing_results: Vec<TransactionProcessingResult>,
 }
 
 struct TransactionBatch<'a> {
@@ -165,6 +165,14 @@ struct TransactionSimulationResult {
     pub units_consumed: u64,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct ProcessedTransactionCounts {
+    pub processed_transactions_count: u64,
+    pub processed_non_vote_transactions_count: u64,
+    pub processed_with_successful_result_count: u64,
+    pub signature_count: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -376,9 +384,6 @@ impl JsonRpcRequestProcessor {
             ancestors,
             exit,
             transaction_processor: Arc::new(RwLock::new(batch_processor)),
-            transaction_log_collector: Arc::<RwLock<TransactionLogCollector>>::default(),
-            transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
-            ),
         }
     }
 
@@ -517,7 +522,7 @@ impl JsonRpcRequestProcessor {
 
         let batch = self.prepare_unlocked_batch_from_single_tx(transaction);
         let LoadAndExecuteTransactionsOutput {
-            mut execution_results,
+            mut processing_results,
             ..
         } = self.load_and_execute_transactions(
             &mock_bank,
@@ -541,18 +546,15 @@ impl JsonRpcRequestProcessor {
             },
         );
 
-        let execution_result =
-            execution_results
-                .pop()
-                .unwrap_or(TransactionExecutionResult::NotExecuted(
-                    TransactionError::InvalidProgramForExecution,
-                ));
-        let flattened_result = execution_result.flattened_result();
+        let processing_result = processing_results
+            .pop()
+            .unwrap_or(Err(TransactionError::InvalidProgramForExecution));
+        let flattened_result = processing_result.flattened_result();
         let (post_simulation_accounts, logs, return_data, inner_instructions) =
-            match execution_result {
-                TransactionExecutionResult::Executed(executed_tx) => {
-                    let details = executed_tx.execution_details;
-                    let post_simulation_accounts = executed_tx
+            match processing_result {
+                Ok(processed_tx) => {
+                    let details = processed_tx.execution_details;
+                    let post_simulation_accounts = processed_tx
                         .loaded_transaction
                         .accounts
                         .into_iter()
@@ -565,7 +567,7 @@ impl JsonRpcRequestProcessor {
                         details.inner_instructions,
                     )
                 }
-                TransactionExecutionResult::NotExecuted(_) => (vec![], None, None, None),
+                Err(_) => (vec![], None, None, None),
             };
         let logs = logs.unwrap_or_default();
         let units_consumed: u64 = 0;
@@ -807,97 +809,44 @@ impl JsonRpcRequestProcessor {
                 &processing_config,
             );
 
-        debug!("Execution results {:?}", sanitized_output.execution_results);
+        debug!("Execution results {:?}", sanitized_output.processing_results);
 
-        let mut executed_with_successful_result_count: usize = 0;
         let err_count = &mut error_counters.total;
-        let transaction_log_collector_config =
-            self.transaction_log_collector_config.read().unwrap();
 
-        for (execution_result, tx) in sanitized_output.execution_results.iter().zip(sanitized_txs) {
-            let is_vote = tx.is_simple_vote_transaction();
+        let mut processed_counts = ProcessedTransactionCounts::default();
+        for (processing_result, tx) in sanitized_output
+            .processing_results
+            .iter()
+            .zip(sanitized_txs)
+        {
+            if processing_result.was_processed() {
+                // Signature count must be accumulated only if the transaction
+                // is processed, otherwise a mismatched count between banking
+                // and replay could occur
+                processed_counts.signature_count +=
+                    u64::from(tx.message().header().num_required_signatures);
+                processed_counts.processed_transactions_count += 1;
 
-            if execution_result.was_executed() // Skip log collection for unprocessed transactions
-                && transaction_log_collector_config.filter != TransactionLogCollectorFilter::None
-            {
-                let mut filtered_mentioned_addresses = Vec::new();
-                if !transaction_log_collector_config
-                    .mentioned_addresses
-                    .is_empty()
-                {
-                    for key in tx.message().account_keys().iter() {
-                        if transaction_log_collector_config
-                            .mentioned_addresses
-                            .contains(key)
-                        {
-                            filtered_mentioned_addresses.push(*key);
-                        }
-                    }
-                }
-
-                let store = match transaction_log_collector_config.filter {
-                    TransactionLogCollectorFilter::All => {
-                        !is_vote || !filtered_mentioned_addresses.is_empty()
-                    }
-                    TransactionLogCollectorFilter::AllWithVotes => true,
-                    TransactionLogCollectorFilter::None => false,
-                    TransactionLogCollectorFilter::OnlyMentionedAddresses => {
-                        !filtered_mentioned_addresses.is_empty()
-                    }
-                };
-
-                if store {
-                    if let Some(TransactionExecutionDetails {
-                        status,
-                        log_messages: Some(log_messages),
-                        ..
-                    }) = execution_result.details()
-                    {
-                        let mut transaction_log_collector =
-                            self.transaction_log_collector.write().unwrap();
-                        let transaction_log_index = transaction_log_collector.logs.len();
-
-                        transaction_log_collector.logs.push(TransactionLogInfo {
-                            signature: *tx.signature(),
-                            result: status.clone(),
-                            is_vote,
-                            log_messages: log_messages.clone(),
-                        });
-                        for key in filtered_mentioned_addresses.into_iter() {
-                            transaction_log_collector
-                                .mentioned_address_map
-                                .entry(key)
-                                .or_default()
-                                .push(transaction_log_index);
-                        }
-                    }
+                if !tx.is_simple_vote_transaction() {
+                    processed_counts.processed_non_vote_transactions_count += 1;
                 }
             }
 
-            match execution_result.flattened_result() {
+            match processing_result.flattened_result() {
                 Ok(()) => {
-                    executed_with_successful_result_count =
-                        executed_with_successful_result_count.saturating_add(1);
+                    processed_counts.processed_with_successful_result_count += 1;
                 }
                 Err(err) => {
                     if *err_count == 0 {
                         debug!("tx error: {:?} {:?}", err, tx);
                     }
-                    *err_count = err_count.saturating_add(1);
+                    *err_count += 1;
                 }
             }
         }
 
-        if *err_count > 0 {
-            debug!(
-                "{} errors of {} txs",
-                *err_count,
-                err_count.saturating_add(executed_with_successful_result_count)
-            );
-        }
-
         LoadAndExecuteTransactionsOutput {
-            execution_results: sanitized_output.execution_results,
+            processing_results: sanitized_output.processing_results,
         }
     }
 }
