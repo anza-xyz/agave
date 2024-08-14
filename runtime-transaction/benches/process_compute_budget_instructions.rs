@@ -120,7 +120,7 @@ fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
 }
 
 fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
-    let num_instructions = 1024;
+    let num_instructions = 355;
     c.benchmark_group("bench_process_compute_budget_instructions_mixed")
         .throughput(Throughput::Elements(NUM_TRANSACTIONS_PER_ITER as u64))
         .bench_function(
