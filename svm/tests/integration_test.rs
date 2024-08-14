@@ -26,10 +26,13 @@ use {
         clock::{Clock, Epoch, Slot, UnixTimestamp},
         hash::Hash,
         instruction::AccountMeta,
+        native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
-        signature::Signature,
+        signature::{Signature, Signer},
+        signer::keypair::Keypair,
+        system_instruction,
         sysvar::SysvarId,
-        transaction::{SanitizedTransaction, TransactionError},
+        transaction::{SanitizedTransaction, Transaction, TransactionError},
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -477,4 +480,91 @@ fn svm_integration() {
         result.execution_results[4],
         TransactionExecutionResult::NotExecuted(TransactionError::BlockhashNotFound)
     ));
+}
+
+// XXX ok so for this i want something like uh
+// basically i want to use test_case to define a test function that accepts...
+// before pubkey/accountshareddata list, transaction/check list, after pubkey/accountshareddata list
+// and i guess programs. ok this is worth doing as a separate pr i guess
+
+#[test]
+fn hana_svm_integration() {
+    let mut mock_bank = MockBankCallback::default();
+
+    let source_keypair = Keypair::new();
+    let source = source_keypair.pubkey();
+    let destination1 = Pubkey::new_unique();
+    let destination2 = Pubkey::new_unique();
+
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(LAMPORTS_PER_SOL * 10);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(source, account_data);
+
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
+        EXECUTION_SLOT,
+        EXECUTION_EPOCH,
+        HashSet::new(),
+    );
+
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+
+    create_executable_environment(
+        fork_graph.clone(),
+        &mut mock_bank,
+        &mut batch_processor.program_cache.write().unwrap(),
+    );
+
+    // The sysvars must be put in the cache
+    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+    register_builtins(&mock_bank, &batch_processor);
+
+    let processing_config = TransactionProcessingConfig {
+        recording_config: ExecutionRecordingConfig {
+            enable_log_recording: true,
+            enable_return_data_recording: true,
+            enable_cpi_recording: false,
+        },
+        ..Default::default()
+    };
+
+    let ix1 = system_instruction::transfer(&source, &destination1, LAMPORTS_PER_SOL);
+    let tx1 = Transaction::new_signed_with_payer(
+        &[ix1],
+        Some(&source),
+        &[&source_keypair],
+        Hash::default(),
+    );
+
+    let ix2 = system_instruction::transfer(&source, &destination2, LAMPORTS_PER_SOL * 2);
+    let tx2 = Transaction::new_signed_with_payer(
+        &[ix2],
+        Some(&source),
+        &[&source_keypair],
+        Hash::default(),
+    );
+
+    let check_details = vec![
+        Ok(CheckedTransactionDetails {
+            nonce: None,
+            lamports_per_signature: 5000
+        });
+        2
+    ];
+
+    let result = batch_processor.load_and_execute_sanitized_transactions(
+        &mock_bank,
+        &[
+            SanitizedTransaction::from_transaction_for_tests(tx1),
+            SanitizedTransaction::from_transaction_for_tests(tx2),
+        ],
+        check_details,
+        &TransactionProcessingEnvironment::default(),
+        &processing_config,
+    );
+
+    println!("HANA after: {:#?}", result.execution_results);
 }
