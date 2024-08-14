@@ -2,7 +2,8 @@ use {
     crate::{
         rollback_accounts::RollbackAccounts,
         transaction_processing_result::{
-            TransactionProcessingResult, TransactionProcessingResultExtensions,
+            ProcessedTransaction, TransactionProcessingResult,
+            TransactionProcessingResultExtensions,
         },
     },
     solana_sdk::{
@@ -26,12 +27,15 @@ fn max_number_of_accounts_to_collect(
                 .processed_transaction()
                 .map(|processed_tx| (processed_tx, tx))
         })
-        .map(
-            |(processed_tx, tx)| match processed_tx.execution_details.status {
-                Ok(_) => tx.message().num_write_locks() as usize,
-                Err(_) => processed_tx.loaded_transaction.rollback_accounts.count(),
-            },
-        )
+        .map(|(processed_tx, tx)| match processed_tx {
+            ProcessedTransaction::Executed(executed_tx) => {
+                match executed_tx.execution_details.status {
+                    Ok(_) => tx.message().num_write_locks() as usize,
+                    Err(_) => executed_tx.loaded_transaction.rollback_accounts.count(),
+                }
+            }
+            ProcessedTransaction::FeesOnly(fees_only_tx) => fees_only_tx.rollback_accounts.count(),
+        })
         .sum()
 }
 
@@ -53,22 +57,36 @@ pub fn collect_accounts_to_store<'a>(
             continue;
         };
 
-        if processed_tx.execution_details.status.is_ok() {
-            collect_accounts_for_successful_tx(
-                &mut accounts,
-                &mut transactions,
-                transaction,
-                &processed_tx.loaded_transaction.accounts,
-            );
-        } else {
-            collect_accounts_for_failed_tx(
-                &mut accounts,
-                &mut transactions,
-                transaction,
-                &mut processed_tx.loaded_transaction.rollback_accounts,
-                durable_nonce,
-                lamports_per_signature,
-            );
+        match processed_tx {
+            ProcessedTransaction::Executed(executed_tx) => {
+                if executed_tx.execution_details.status.is_ok() {
+                    collect_accounts_for_successful_tx(
+                        &mut accounts,
+                        &mut transactions,
+                        transaction,
+                        &executed_tx.loaded_transaction.accounts,
+                    );
+                } else {
+                    collect_accounts_for_failed_tx(
+                        &mut accounts,
+                        &mut transactions,
+                        transaction,
+                        &mut executed_tx.loaded_transaction.rollback_accounts,
+                        durable_nonce,
+                        lamports_per_signature,
+                    );
+                }
+            }
+            ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                collect_accounts_for_failed_tx(
+                    &mut accounts,
+                    &mut transactions,
+                    transaction,
+                    &mut fees_only_tx.rollback_accounts,
+                    durable_nonce,
+                    lamports_per_signature,
+                );
+            }
         }
     }
     (accounts, transactions)
