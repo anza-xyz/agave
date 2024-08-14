@@ -2064,7 +2064,7 @@ pub fn main() {
         Ok(validator) => validator,
         Err(err) => match err.downcast_ref() {
             Some(ValidatorError::WenRestartFinished) => {
-                error!("Please remove --wen_restart and use --wait_for_supermajority now");
+                error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
                 exit(200);
             }
             _ => {

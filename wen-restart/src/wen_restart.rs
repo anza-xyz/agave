@@ -832,7 +832,6 @@ pub struct WenRestartConfig {
     pub exit: Arc<AtomicBool>,
 }
 
-// Returns whether a restart is needed if there is no error.
 pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
     let (mut state, mut progress) = initialize(
         &config.wen_restart_path,
@@ -946,9 +945,9 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                 shred_version,
             } => {
                 error!(
-                    "Wen start finished, restart with --wait-for-supermajority {} \
-                       --expected-bank-hash {} --shred-version {} --hard-fork {}  \
-                       --no-snapshot-fetchsnapshot",
+                    "Wen start finished, please remove --wen_restart and restart with \
+                    --wait-for-supermajority {} --expected-bank-hash {} --shred-version {}\
+                    --hard-fork {} --no-snapshot-fetchsnapshot",
                     slot, hash, shred_version, slot
                 );
                 return Ok(());
