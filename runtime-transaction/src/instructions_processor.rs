@@ -44,9 +44,8 @@ mod tests {
                 Message::new($instructions, Some(&payer_keypair.pubkey())),
                 Hash::default(),
             ));
-            let result = process_compute_budget_instructions(
-                SVMMessage::program_instructions_iter(&tx)
-            );
+            let result =
+                process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx));
             assert_eq!($expected_result, result);
         };
     }
@@ -353,9 +352,9 @@ mod tests {
                 Hash::default(),
             ));
 
-        let result = process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&transaction)
-        );
+        let result = process_compute_budget_instructions(SVMMessage::program_instructions_iter(
+            &transaction,
+        ));
 
         // assert process_instructions will be successful with default,
         // and the default compute_unit_limit is 2 times default: one for bpf ix, one for

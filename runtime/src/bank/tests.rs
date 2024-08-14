@@ -105,6 +105,7 @@ use {
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::ExecutedTransaction,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     solana_vote_program::{
         vote_instruction,
@@ -9935,7 +9936,7 @@ fn calculate_test_fee(
     fee_structure: &FeeStructure,
 ) -> u64 {
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(message.program_instructions_iter())
+        process_compute_budget_instructions(SVMMessage::program_instructions_iter(message))
             .unwrap_or_default(),
     );
     solana_fee::calculate_fee(
