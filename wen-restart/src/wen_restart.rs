@@ -193,7 +193,6 @@ pub(crate) enum WenRestartProgressInternalState {
         slot: Slot,
         hash: Hash,
         shred_version: u16,
-        snapshot_path: String,
     },
 }
 
@@ -945,10 +944,13 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                 slot,
                 hash,
                 shred_version,
-                snapshot_path,
             } => {
-                error!("Wen start finished, restart with snapshot: slot: {}, hash: {}, shred_version: {}, snapshot_path: {}",
-                    slot, hash, shred_version, snapshot_path);
+                error!(
+                    "Wen start finished, restart with --wait-for-supermajority {} \
+                       --expected-bank-hash {} --shred-version {} --hard-fork {}  \
+                       --no-snapshot-fetchsnapshot",
+                    slot, hash, shred_version, slot
+                );
                 return Ok(());
             }
         };
@@ -1029,7 +1031,6 @@ pub(crate) fn increment_and_write_wen_restart_records(
                     slot: my_snapshot.slot,
                     hash: Hash::from_str(&my_snapshot.bankhash).unwrap(),
                     shred_version: my_snapshot.shred_version as u16,
-                    snapshot_path: my_snapshot.path.clone(),
                 }
             } else {
                 return Err(WenRestartError::MissingSnapshotInProtobuf.into());
@@ -1076,7 +1077,6 @@ pub(crate) fn initialize(
                         slot: my_snapshot.slot,
                         hash: Hash::from_str(&my_snapshot.bankhash).unwrap(),
                         shred_version: my_snapshot.shred_version as u16,
-                        snapshot_path: my_snapshot.path.clone(),
                     },
                     progress,
                 ))
@@ -2024,7 +2024,6 @@ mod tests {
                     slot: last_vote_slot,
                     hash: snapshot_slot_hash,
                     shred_version: SHRED_VERSION,
-                    snapshot_path: "/path/to/snapshot".to_string(),
                 },
                 progress
             )
@@ -2419,7 +2418,6 @@ mod tests {
                     slot: 1,
                     hash: my_bankhash,
                     shred_version: new_shred_version,
-                    snapshot_path: "snapshot_1".to_string(),
                 },
                 WenRestartProgress {
                     state: RestartState::HeaviestFork.into(),
@@ -2462,7 +2460,6 @@ mod tests {
                     slot: 1,
                     hash: my_bankhash,
                     shred_version: new_shred_version,
-                    snapshot_path: "snapshot_1".to_string(),
                 },
                 &mut progress
             )
