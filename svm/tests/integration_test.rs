@@ -433,6 +433,8 @@ fn svm_integration() {
 
     let executed_tx_0 = result.processing_results[0]
         .processed_transaction()
+        .unwrap()
+        .executed_transaction()
         .unwrap();
     assert!(executed_tx_0.was_successful());
     let logs = executed_tx_0
@@ -444,6 +446,8 @@ fn svm_integration() {
 
     let executed_tx_1 = result.processing_results[1]
         .processed_transaction()
+        .unwrap()
+        .executed_transaction()
         .unwrap();
     assert!(executed_tx_1.was_successful());
 
@@ -459,6 +463,8 @@ fn svm_integration() {
 
     let executed_tx_2 = result.processing_results[2]
         .processed_transaction()
+        .unwrap()
+        .executed_transaction()
         .unwrap();
     let return_data = executed_tx_2
         .execution_details
@@ -472,6 +478,8 @@ fn svm_integration() {
 
     let executed_tx_3 = result.processing_results[3]
         .processed_transaction()
+        .unwrap()
+        .executed_transaction()
         .unwrap();
     assert!(executed_tx_3.execution_details.status.is_err());
     assert!(executed_tx_3
