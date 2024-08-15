@@ -8095,7 +8095,6 @@ dependencies = [
  "solana-perf",
  "solana-program",
  "solana-program-runtime",
- "solana-rpc",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime-transaction",
