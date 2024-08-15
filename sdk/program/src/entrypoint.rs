@@ -11,7 +11,7 @@ use {
     std::{
         alloc::Layout,
         cell::RefCell,
-        mem::size_of,
+        mem::{size_of, MaybeUninit},
         ptr::null_mut,
         rc::Rc,
         result::Result as ResultGeneric,
@@ -127,9 +127,17 @@ macro_rules! entrypoint {
         /// # Safety
         #[no_mangle]
         pub unsafe extern "C" fn entrypoint(input: *mut u8) -> u64 {
-            let (program_id, accounts, instruction_data) =
-                unsafe { $crate::entrypoint::deserialize(input) };
-            match $process_instruction(&program_id, &accounts, &instruction_data) {
+            use std::mem::MaybeUninit;
+            const UNINIT_ACCOUNT_INFO: MaybeUninit<AccountInfo> =
+                MaybeUninit::<AccountInfo>::uninit();
+            const MAX_ACCOUNT_INFOS: usize = 64;
+            let mut accounts = [UNINIT_ACCOUNT_INFO; MAX_ACCOUNT_INFOS];
+            let (program_id, num_accounts, instruction_data) =
+                unsafe { $crate::entrypoint::deserialize_into(input, &mut accounts) };
+            // Use `slice_assume_init_ref` once it's stabilized
+            let accounts = &*(&accounts[..num_accounts] as *const [MaybeUninit<AccountInfo<'_>>]
+                as *const [AccountInfo<'_>]);
+            match $process_instruction(&program_id, accounts, &instruction_data) {
                 Ok(()) => $crate::entrypoint::SUCCESS,
                 Err(error) => error.into(),
             }
@@ -368,6 +376,119 @@ pub unsafe fn deserialize<'a>(input: *mut u8) -> (&'a Pubkey, Vec<AccountInfo<'a
     let program_id: &Pubkey = &*(input.add(offset) as *const Pubkey);
 
     (program_id, accounts, instruction_data)
+}
+
+/// Deserialize the input arguments
+///
+/// Differs from `deserialize` by writing the account infos into an uninitialized
+/// slice, which provides better performance, roughly 30 CUs per unique account
+/// provided to the instruction.
+///
+/// Panics if the input slice is not large enough.
+///
+/// The integer arithmetic in this method is safe when called on a buffer that was
+/// serialized by runtime. Use with buffers serialized otherwise is unsupported and
+/// done at one's own risk.
+///
+/// # Safety
+#[allow(clippy::arithmetic_side_effects)]
+#[allow(clippy::type_complexity)]
+pub unsafe fn deserialize_into<'a>(
+    input: *mut u8,
+    accounts: &mut [MaybeUninit<AccountInfo<'a>>],
+) -> (&'a Pubkey, usize, &'a [u8]) {
+    let mut offset: usize = 0;
+
+    // Number of accounts present
+
+    #[allow(clippy::cast_ptr_alignment)]
+    let num_accounts = *(input.add(offset) as *const u64) as usize;
+    offset += size_of::<u64>();
+
+    // Account Infos
+
+    for i in 0..num_accounts {
+        let dup_info = *(input.add(offset) as *const u8);
+        offset += size_of::<u8>();
+        if dup_info == NON_DUP_MARKER {
+            #[allow(clippy::cast_ptr_alignment)]
+            let is_signer = *(input.add(offset) as *const u8) != 0;
+            offset += size_of::<u8>();
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let is_writable = *(input.add(offset) as *const u8) != 0;
+            offset += size_of::<u8>();
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let executable = *(input.add(offset) as *const u8) != 0;
+            offset += size_of::<u8>();
+
+            // The original data length is stored here because these 4 bytes were
+            // originally only used for padding and served as a good location to
+            // track the original size of the account data in a compatible way.
+            let original_data_len_offset = offset;
+            offset += size_of::<u32>();
+
+            let key: &Pubkey = &*(input.add(offset) as *const Pubkey);
+            offset += size_of::<Pubkey>();
+
+            let owner: &Pubkey = &*(input.add(offset) as *const Pubkey);
+            offset += size_of::<Pubkey>();
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let lamports = Rc::new(RefCell::new(&mut *(input.add(offset) as *mut u64)));
+            offset += size_of::<u64>();
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let data_len = *(input.add(offset) as *const u64) as usize;
+            offset += size_of::<u64>();
+
+            // Store the original data length for detecting invalid reallocations and
+            // requires that MAX_PERMITTED_DATA_LENGTH fits in a u32
+            *(input.add(original_data_len_offset) as *mut u32) = data_len as u32;
+
+            let data = Rc::new(RefCell::new({
+                from_raw_parts_mut(input.add(offset), data_len)
+            }));
+            offset += data_len + MAX_PERMITTED_DATA_INCREASE;
+            offset += (offset as *const u8).align_offset(BPF_ALIGN_OF_U128); // padding
+
+            #[allow(clippy::cast_ptr_alignment)]
+            let rent_epoch = *(input.add(offset) as *const u64);
+            offset += size_of::<u64>();
+
+            accounts[i].write(AccountInfo {
+                key,
+                is_signer,
+                is_writable,
+                lamports,
+                data,
+                owner,
+                executable,
+                rent_epoch,
+            });
+        } else {
+            offset += 7; // padding
+
+            // Duplicate account, clone the original
+            accounts[i].write(accounts[dup_info as usize].assume_init_ref().clone());
+        }
+    }
+
+    // Instruction data
+
+    #[allow(clippy::cast_ptr_alignment)]
+    let instruction_data_len = *(input.add(offset) as *const u64) as usize;
+    offset += size_of::<u64>();
+
+    let instruction_data = { from_raw_parts(input.add(offset), instruction_data_len) };
+    offset += instruction_data_len;
+
+    // Program Id
+
+    let program_id: &Pubkey = &*(input.add(offset) as *const Pubkey);
+
+    (program_id, num_accounts, instruction_data)
 }
 
 #[cfg(test)]
