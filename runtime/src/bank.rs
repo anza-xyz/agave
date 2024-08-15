@@ -3037,11 +3037,11 @@ impl Bank {
 
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
-        message: &SanitizedMessage,
+        message: &impl SVMMessage,
         lamports_per_signature: u64,
     ) -> u64 {
         let fee_budget_limits = FeeBudgetLimits::from(
-            process_compute_budget_instructions(SVMMessage::program_instructions_iter(message))
+            process_compute_budget_instructions(message.program_instructions_iter())
                 .unwrap_or_default(),
         );
         solana_fee::calculate_fee(

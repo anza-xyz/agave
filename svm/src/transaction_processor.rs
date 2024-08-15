@@ -398,18 +398,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         callbacks: &CB,
         account_overrides: Option<&AccountOverrides>,
-        message: &SanitizedMessage,
+        message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         feature_set: &FeatureSet,
         fee_structure: &FeeStructure,
         rent_collector: &RentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> transaction::Result<ValidatedTransactionDetails> {
-        let compute_budget_limits =
-            process_compute_budget_instructions(SVMMessage::program_instructions_iter(message))
-                .inspect_err(|_err| {
-                    error_counters.invalid_compute_budget += 1;
-                })?;
+        let compute_budget_limits = process_compute_budget_instructions(
+            message.program_instructions_iter(),
+        )
+        .inspect_err(|_err| {
+            error_counters.invalid_compute_budget += 1;
+        })?;
 
         let fee_payer_address = message.fee_payer();
 
