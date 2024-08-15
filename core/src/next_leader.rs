@@ -7,31 +7,29 @@ use {
 };
 
 /// Returns a list of tpu vote sockets for the leaders of the next N fanout
-/// slots. Leaders are deduped but the resulting list could have duplicate
-/// sockets if two different leaders share the same tpu vote socket.
+/// slots. Leaders and sockets are deduped.
 pub(crate) fn upcoming_leader_tpu_vote_sockets(
     cluster_info: &ClusterInfo,
     poh_recorder: &RwLock<PohRecorder>,
-    fanout_slots: usize,
+    fanout_slots: u64,
 ) -> Vec<SocketAddr> {
     let upcoming_leaders = {
-        let mut upcoming_leaders = Vec::with_capacity(fanout_slots);
         let poh_recorder = poh_recorder.read().unwrap();
-        for n_slots in 1..=fanout_slots {
-            upcoming_leaders.push(poh_recorder.leader_after_n_slots(n_slots as u64));
-        }
-        upcoming_leaders
+        (1..=fanout_slots)
+            .filter_map(|n_slots| poh_recorder.leader_after_n_slots(n_slots))
+            .collect_vec()
     };
 
     upcoming_leaders
         .into_iter()
-        .flatten()
-        .unique()
+        .dedup()
         .filter_map(|leader_pubkey| {
             cluster_info
                 .lookup_contact_info(&leader_pubkey, ContactInfo::tpu_vote)?
                 .ok()
         })
+        // dedup again since leaders could potentially share the same tpu vote socket
+        .dedup()
         .collect()
 }
 

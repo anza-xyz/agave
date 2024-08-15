@@ -7,7 +7,10 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{clock::Slot, transaction::Transaction},
+    solana_sdk::{
+        clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
+        transaction::Transaction,
+    },
     std::{
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
@@ -79,7 +82,9 @@ impl VotingService {
         }
 
         // Attempt to send our vote transaction to the leaders for the next few slots
-        const UPCOMING_LEADER_FANOUT_SLOTS: usize = 2;
+        const UPCOMING_LEADER_FANOUT_SLOTS: u64 = FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET;
+        #[cfg(test)]
+        static_assertions::const_assert_eq!(UPCOMING_LEADER_FANOUT_SLOTS, 2);
         let upcoming_leader_sockets = upcoming_leader_tpu_vote_sockets(
             cluster_info,
             poh_recorder,
