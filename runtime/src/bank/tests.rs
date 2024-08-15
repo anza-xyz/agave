@@ -3107,7 +3107,7 @@ fn test_load_and_execute_commit_transactions_fees_only(disable_fees_only_txs: bo
     if disable_fees_only_txs {
         genesis_config
             .accounts
-            .remove(&solana_sdk::feature_set::enable_transaction_failure_fees::id());
+            .remove(&solana_sdk::feature_set::enable_transaction_loading_failure_fees::id());
     }
     genesis_config.rent = Rent::default();
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);

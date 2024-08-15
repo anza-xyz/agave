@@ -293,9 +293,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &program_cache_for_tx_batch,
         ));
 
-        let enable_transaction_failure_fees = environment
+        let enable_transaction_loading_failure_fees = environment
             .feature_set
-            .is_active(&feature_set::enable_transaction_failure_fees::id());
+            .is_active(&feature_set::enable_transaction_loading_failure_fees::id());
         let (processing_results, execution_us): (Vec<TransactionProcessingResult>, u64) =
             measure_us!(loaded_transactions
                 .into_iter()
@@ -303,7 +303,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .map(|(load_result, tx)| match load_result {
                     TransactionLoadResult::NotLoaded(err) => Err(err),
                     TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                        if enable_transaction_failure_fees {
+                        if enable_transaction_loading_failure_fees {
                             Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                         } else {
                             Err(fees_only_tx.load_error)

@@ -121,7 +121,7 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
             None,
         )
         .0;
-    commit_results.swap_remove(0)
+    commit_results.pop().unwrap()
 }
 
 #[cfg(feature = "sbf_rust")]
