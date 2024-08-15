@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }

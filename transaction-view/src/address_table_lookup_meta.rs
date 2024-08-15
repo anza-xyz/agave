@@ -103,6 +103,27 @@ impl AddressTableLookupMeta {
     }
 }
 
+/// A non-owning version of `MessageAddressTableLookup`.
+pub struct MessageAddressTableLookupRef<'a> {
+    pub account_key: &'a Pubkey,
+    pub writable_indexes: &'a [u8],
+    pub readonly_indexes: &'a [u8],
+}
+
+// Convenience function to convert a `MessageAddressTableLookup` to a
+// `MessageAddressTableLookupRef`.
+impl<'a> From<&'a solana_sdk::message::v0::MessageAddressTableLookup>
+    for MessageAddressTableLookupRef<'a>
+{
+    fn from(atl: &'a solana_sdk::message::v0::MessageAddressTableLookup) -> Self {
+        Self {
+            account_key: &atl.account_key,
+            writable_indexes: &atl.writable_indexes,
+            readonly_indexes: &atl.readonly_indexes,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {

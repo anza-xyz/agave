@@ -9,13 +9,14 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
+    agave_transaction_view::address_table_lookup_meta::MessageAddressTableLookupRef,
     dashmap::DashMap,
     log::*,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         address_lookup_table::{self, error::AddressLookupError, state::AddressLookupTable},
         clock::{BankId, Slot},
-        message::v0::{LoadedAddresses, MessageAddressTableLookup},
+        message::v0::LoadedAddresses,
         pubkey::Pubkey,
         slot_hashes::SlotHashes,
         transaction::{Result, SanitizedTransaction},
@@ -82,12 +83,12 @@ impl Accounts {
     pub fn load_lookup_table_addresses(
         &self,
         ancestors: &Ancestors,
-        address_table_lookup: &MessageAddressTableLookup,
+        address_table_lookup: MessageAddressTableLookupRef,
         slot_hashes: &SlotHashes,
     ) -> std::result::Result<LoadedAddresses, AddressLookupError> {
         let table_account = self
             .accounts_db
-            .load_with_fixed_root(ancestors, &address_table_lookup.account_key)
+            .load_with_fixed_root(ancestors, address_table_lookup.account_key)
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -99,12 +100,12 @@ impl Accounts {
             Ok(LoadedAddresses {
                 writable: lookup_table.lookup(
                     current_slot,
-                    &address_table_lookup.writable_indexes,
+                    address_table_lookup.writable_indexes,
                     slot_hashes,
                 )?,
                 readonly: lookup_table.lookup(
                     current_slot,
-                    &address_table_lookup.readonly_indexes,
+                    address_table_lookup.readonly_indexes,
                     slot_hashes,
                 )?,
             })
@@ -611,7 +612,7 @@ mod tests {
             address_lookup_table::state::LookupTableMeta,
             hash::Hash,
             instruction::CompiledInstruction,
-            message::{Message, MessageHeader},
+            message::{v0::MessageAddressTableLookup, Message, MessageHeader},
             native_loader,
             signature::{signers::Signers, Keypair, Signer},
             transaction::{Transaction, TransactionError, MAX_TX_ACCOUNT_LOCKS},
@@ -708,7 +709,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                &address_table_lookup,
+                MessageAddressTableLookupRef::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Err(AddressLookupError::LookupTableAccountNotFound),
@@ -735,7 +736,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                &address_table_lookup,
+                MessageAddressTableLookupRef::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Err(AddressLookupError::InvalidAccountOwner),
@@ -762,7 +763,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                &address_table_lookup,
+                MessageAddressTableLookupRef::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Err(AddressLookupError::InvalidAccountData),
@@ -801,7 +802,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                &address_table_lookup,
+                MessageAddressTableLookupRef::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Ok(LoadedAddresses {
