@@ -134,12 +134,9 @@ fn features_to_deactivate_for_cluster(
     cluster_type: &ClusterType,
     matches: &ArgMatches<'_>,
 ) -> Result<Vec<Pubkey>, Box<dyn error::Error>> {
+    let mut features_to_deactivate = pubkeys_of(matches, "deactivate_feature").unwrap_or_default();
     if cluster_type == &ClusterType::Development {
-        return Ok(pubkeys_of(matches, "deactivate_feature").unwrap_or_default());
-    }
-
-    if matches.is_present("deactivate_feature") {
-        return Err("Error: The --deactivate-feature argument cannot be used with --cluster-type={cluster_type:?}".into());
+        return Ok(features_to_deactivate);
     }
 
     // if we're here, the cluster type must be one of "mainnet-beta", "testnet", or "devnet"
@@ -154,7 +151,6 @@ fn features_to_deactivate_for_cluster(
     );
     let rpc_client = RpcClient::new_with_commitment(json_rpc_url, CommitmentConfig::confirmed());
     check_rpc_genesis_hash(cluster_type, &rpc_client)?;
-    let mut features_to_deactivate = vec![];
     for feature_ids in FEATURE_NAMES
         .keys()
         .cloned()
