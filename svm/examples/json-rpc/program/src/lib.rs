@@ -15,8 +15,6 @@ pub struct GreetingAccount {
     pub counter: u32,
 }
 
-/// Declare the programs entrypoint. The entrypoint is the function
-/// that will run when the program is executed.
 #[cfg(not(feature = "exclude_entrypoint"))]
 entrypoint!(process_instruction);
 
