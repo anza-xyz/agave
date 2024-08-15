@@ -37,7 +37,7 @@ cargo_audit_ignores=(
   # curve25519-dalek
   # Patches to address the advisory have been pulled into a fork of the repo.
   # See `[patch.crates-io.curve25519-dalek]` in Cargo.toml for more information
-  
+
   # openssl
   --ignore RUSTSEC-2024-0357
 )
