@@ -809,7 +809,10 @@ impl JsonRpcRequestProcessor {
                 &processing_config,
             );
 
-        debug!("Execution results {:?}", sanitized_output.processing_results);
+        debug!(
+            "Execution results {:?}",
+            sanitized_output.processing_results
+        );
 
         let err_count = &mut error_counters.total;
 
