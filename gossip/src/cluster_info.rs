@@ -419,7 +419,14 @@ impl Sanitize for Protocol {
 
 // Retains only CRDS values associated with nodes with enough stake.
 // (some crds types are exempted)
-fn retain_staked(values: &mut Vec<CrdsValue>, stakes: &HashMap<Pubkey, u64>) {
+fn retain_staked(
+    values: &mut Vec<CrdsValue>,
+    stakes: &HashMap<Pubkey, u64>,
+    drop_unstaked_node_instance: bool,
+) {
+    let has_min_stake_for_gossip =
+        |pubkey: &Pubkey| stakes.get(pubkey).copied().unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP;
+
     values.retain(|value| {
         match value.data {
             CrdsData::ContactInfo(_) => true,
@@ -438,10 +445,13 @@ fn retain_staked(values: &mut Vec<CrdsValue>, stakes: &HashMap<Pubkey, u64>) {
             | CrdsData::LegacyVersion(_)
             | CrdsData::DuplicateShred(_, _)
             | CrdsData::RestartHeaviestFork(_)
-            | CrdsData::RestartLastVotedForkSlots(_)
-            | CrdsData::NodeInstance(_) => {
-                let stake = stakes.get(&value.pubkey()).copied();
-                stake.unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP
+            | CrdsData::RestartLastVotedForkSlots(_) => has_min_stake_for_gossip(&value.pubkey()),
+            CrdsData::NodeInstance(_) => {
+                if drop_unstaked_node_instance {
+                    has_min_stake_for_gossip(&value.pubkey())
+                } else {
+                    true
+                }
             }
         }
     })
@@ -1646,7 +1656,7 @@ impl ClusterInfo {
             .add_relaxed(num_nodes as u64);
         if self.require_stake_for_gossip(stakes) {
             push_messages.retain(|_, data| {
-                retain_staked(data, stakes);
+                retain_staked(data, stakes, false);
                 !data.is_empty()
             })
         }
@@ -2138,7 +2148,7 @@ impl ClusterInfo {
         };
         if self.require_stake_for_gossip(stakes) {
             for resp in &mut pull_responses {
-                retain_staked(resp, stakes);
+                retain_staked(resp, stakes, true);
             }
         }
         let (responses, scores): (Vec<_>, Vec<_>) = addrs
@@ -2544,9 +2554,9 @@ impl ClusterInfo {
             }
         }
         if self.require_stake_for_gossip(stakes) {
-            retain_staked(&mut pull_responses, stakes);
+            retain_staked(&mut pull_responses, stakes, false);
             for (_, data) in &mut push_messages {
-                retain_staked(data, stakes);
+                retain_staked(data, stakes, false);
             }
             push_messages.retain(|(_, data)| !data.is_empty());
         }
