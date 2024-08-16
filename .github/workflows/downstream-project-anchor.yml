@@ -43,7 +43,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+<<<<<<< HEAD
         version: ["v0.29.0", "v0.30.0"]
+=======
+        version: ["master"]
+    if: false # Re-enable once new major versions for spl-token-2022 and spl-pod are out
+>>>>>>> 3b9e7a3ca5 (CI: Disable downstream anchor builds (#2629))
     steps:
       - uses: actions/checkout@v4
 
