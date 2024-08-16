@@ -7717,6 +7717,7 @@ dependencies = [
  "solana-timings",
  "solana-type-overrides",
  "solana-vote",
+ "test-case",
  "thiserror",
 ]
 
