@@ -1,6 +1,5 @@
 use {
     super::Bank,
-    agave_transaction_view::address_table_lookup_meta::MessageAddressTableLookupRef,
     solana_sdk::{
         address_lookup_table::error::AddressLookupError,
         message::{
@@ -9,6 +8,7 @@ use {
         },
         transaction::AddressLoader,
     },
+    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
 };
 
 fn into_address_loader_error(err: AddressLookupError) -> AddressLoaderError {
@@ -30,16 +30,16 @@ impl AddressLoader for &Bank {
         self.load_addresses_from_ref(
             address_table_lookups
                 .iter()
-                .map(MessageAddressTableLookupRef::from),
+                .map(SVMMessageAddressTableLookup::from),
         )
     }
 }
 
 impl Bank {
-    /// Load addresses from an iterator of `MessageAddressTableLookupRef`.
+    /// Load addresses from an iterator of `SVMMessageAddressTableLookup`.
     pub fn load_addresses_from_ref<'a>(
         &self,
-        address_table_lookups: impl Iterator<Item = MessageAddressTableLookupRef<'a>>,
+        address_table_lookups: impl Iterator<Item = SVMMessageAddressTableLookup<'a>>,
     ) -> Result<LoadedAddresses, AddressLoaderError> {
         let slot_hashes = self
             .transaction_processor

@@ -74,14 +74,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-transaction-view"
-version = "2.1.0"
-dependencies = [
- "solana-sdk",
- "solana-svm-transaction",
-]
-
-[[package]]
 name = "agave-validator"
 version = "2.1.0"
 dependencies = [
@@ -4548,7 +4540,6 @@ dependencies = [
 name = "solana-accounts-db"
 version = "2.1.0"
 dependencies = [
- "agave-transaction-view",
  "ahash 0.8.10",
  "bincode",
  "blake3",
@@ -5664,7 +5655,6 @@ dependencies = [
 name = "solana-runtime"
 version = "2.1.0"
 dependencies = [
- "agave-transaction-view",
  "aquamarine",
  "arrayref",
  "base64 0.22.1",

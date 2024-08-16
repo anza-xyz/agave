@@ -9,7 +9,6 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
-    agave_transaction_view::address_table_lookup_meta::MessageAddressTableLookupRef,
     dashmap::DashMap,
     log::*,
     solana_sdk::{
@@ -22,7 +21,9 @@ use {
         transaction::{Result, SanitizedTransaction},
         transaction_context::TransactionAccount,
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{
+        message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
+    },
     std::{
         cmp::Reverse,
         collections::{BinaryHeap, HashSet},
@@ -83,7 +84,7 @@ impl Accounts {
     pub fn load_lookup_table_addresses(
         &self,
         ancestors: &Ancestors,
-        address_table_lookup: MessageAddressTableLookupRef,
+        address_table_lookup: SVMMessageAddressTableLookup,
         slot_hashes: &SlotHashes,
     ) -> std::result::Result<LoadedAddresses, AddressLookupError> {
         let table_account = self
@@ -709,7 +710,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                MessageAddressTableLookupRef::from(&address_table_lookup),
+                SVMMessageAddressTableLookup::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Err(AddressLookupError::LookupTableAccountNotFound),
@@ -736,7 +737,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                MessageAddressTableLookupRef::from(&address_table_lookup),
+                SVMMessageAddressTableLookup::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Err(AddressLookupError::InvalidAccountOwner),
@@ -763,7 +764,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                MessageAddressTableLookupRef::from(&address_table_lookup),
+                SVMMessageAddressTableLookup::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Err(AddressLookupError::InvalidAccountData),
@@ -802,7 +803,7 @@ mod tests {
         assert_eq!(
             accounts.load_lookup_table_addresses(
                 &ancestors,
-                MessageAddressTableLookupRef::from(&address_table_lookup),
+                SVMMessageAddressTableLookup::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
             Ok(LoadedAddresses {
