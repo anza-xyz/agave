@@ -108,7 +108,6 @@ fn load_program(name: String) -> Vec<u8> {
     dir.push(name.as_str());
     let name = name.replace('-', "_");
     dir.push(name + "_program.so");
-    std::println!("The dir is: {:?}", dir);
     let mut file = File::open(dir.clone()).expect("file not found");
     let metadata = fs::metadata(dir).expect("Unable to read metadata");
     let mut buffer = vec![0; metadata.len() as usize];

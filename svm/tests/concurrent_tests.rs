@@ -175,21 +175,12 @@ fn svm_concurrent() {
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(BALANCE);
 
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(sender, account_data.clone());
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(recipient, account_data.clone());
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(fee_payer, account_data);
+        {
+            let shared_data = &mut mock_bank.account_shared_data.write().unwrap();
+            shared_data.insert(sender, account_data.clone());
+            shared_data.insert(recipient, account_data.clone());
+            shared_data.insert(fee_payer, account_data);
+        }
 
         transaction_builder.create_instruction(
             program_id,
