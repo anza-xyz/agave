@@ -30,14 +30,14 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
         system_transaction,
-        timing::{duration_as_ms, timestamp},
+        timing::timestamp,
         transaction::Transaction,
         transport::TransportError,
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
     solana_vote::vote_transaction::VoteTransaction,
-    solana_vote_program::vote_transaction,
+    solana_vote_program::{vote_state::TowerSync, vote_transaction},
     std::{
         collections::{HashMap, HashSet, VecDeque},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
@@ -231,7 +231,7 @@ pub fn sleep_n_epochs(
     ticks_per_slot: u64,
     slots_per_epoch: u64,
 ) {
-    let num_ticks_per_second = (1000 / duration_as_ms(&config.target_tick_duration)) as f64;
+    let num_ticks_per_second = config.target_tick_duration.as_secs_f64().recip();
     let num_ticks_to_sleep = num_epochs * ticks_per_slot as f64 * slots_per_epoch as f64;
     let secs = ((num_ticks_to_sleep + num_ticks_per_second - 1.0) / num_ticks_per_second) as u64;
     warn!("sleep_n_epochs: {} seconds", secs);
@@ -677,9 +677,9 @@ pub fn submit_vote_to_cluster_gossip(
     gossip_addr: SocketAddr,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<(), GossipError> {
-    let vote_tx = vote_transaction::new_vote_transaction(
-        vec![vote_slot],
-        vote_hash,
+    let tower_sync = TowerSync::new_from_slots(vec![vote_slot], vote_hash, None);
+    let vote_tx = vote_transaction::new_tower_sync_transaction(
+        tower_sync,
         blockhash,
         node_keypair,
         vote_keypair,
