@@ -15,7 +15,6 @@ pub struct GreetingAccount {
     pub counter: u32,
 }
 
-#[cfg(not(feature = "exclude_entrypoint"))]
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
