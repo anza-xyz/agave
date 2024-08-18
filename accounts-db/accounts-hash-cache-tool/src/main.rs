@@ -20,6 +20,7 @@ use {
         iter,
         mem::size_of,
         num::Saturating,
+        ops::Range,
         path::{Path, PathBuf},
         str,
         sync::RwLock,
@@ -146,17 +147,17 @@ fn main() {
                                 ),
                         )
                         .arg(
-                            Arg::with_name("bin_of_interest")
-                                .long("bin-of-interest")
+                            Arg::with_name("bin_range_of_interest")
+                                .long("bin-range-of-interest")
                                 .takes_value(true)
-                                .value_name("INDEX")
-                                .help("Specifies a single bin to diff")
+                                .value_name("BIN_RANGE")
+                                .help("Specifies bin range to diff")
                                 .long_help(
-                                    "Specifies a single bin to diff. \
+                                    "Specifies bin range to diff. \
                                      When diffing large state that does not fit in memory, \
-                                     it may be neccessary to diff a subset at a time. \
-                                     Use this arg to limit the state to a single bin. \
-                                     The INDEX must be less than --bins."
+                                     it may be necessary to diff a subset at a time. \
+                                     Use this arg to limit the state to bin range. \
+                                     The BIN_RANGE is specified with start-end, which contains bin with start < bin < end." 
                                 ),
                         ),
                 ),
@@ -225,22 +226,23 @@ fn cmd_diff_state(
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
     let num_bins = value_t_or_exit!(subcommand_matches, "bins", usize);
-    let bin_of_interest =
-        if let Some(bin_of_interest) = subcommand_matches.value_of("bin_of_interest") {
-            let bin_of_interest = bin_of_interest
-                .parse()
-                .map_err(|err| format!("argument 'bin-of-interest' is not a valid value: {err}"))?;
-            if bin_of_interest >= num_bins {
-                return Err(format!(
-                    "argument 'bin-of-interest' must be less than 'bins', \
-                     bins: {num_bins}, bin-of-interest: {bin_of_interest}",
-                ));
-            }
-            Some(bin_of_interest)
+
+    let bin_range_of_interest =
+        if let Some(bin_range) = subcommand_matches.value_of("bin_range_of_interest") {
+            let re = regex::Regex::new(r"(?P<start>\d+)-(?P<end>\d+)").unwrap();
+            let caps = re.captures(bin_range).unwrap();
+            let parse = |name, default| {
+                caps.name(name)
+                    .map_or(default, |s| s.as_str().parse().expect("integer"))
+            };
+
+            let start = parse("start", 0);
+            let end = parse("end", usize::MAX);
+            start..end
         } else {
-            None
+            0..usize::MAX
         };
-    do_diff_state(path1, path2, num_bins, bin_of_interest)
+    do_diff_state(path1, path2, num_bins, bin_range_of_interest)
 }
 
 fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
@@ -510,7 +512,7 @@ fn do_diff_state(
     dir1: impl AsRef<Path>,
     dir2: impl AsRef<Path>,
     num_bins: usize,
-    bin_of_interest: Option<usize>,
+    bin_range_of_interest: Range<usize>,
 ) -> Result<(), String> {
     let extract = |dir: &Path| -> Result<_, String> {
         let files =
@@ -521,7 +523,7 @@ fn do_diff_state(
         } = extract_binned_latest_entries_in(
             files.iter().map(|file| &file.path),
             num_bins,
-            bin_of_interest,
+            &bin_range_of_interest,
         )
         .map_err(|err| format!("failed to extract entries: {err}"))?;
         let num_accounts: usize = latest_entries.iter().map(|bin| bin.len()).sum();
@@ -699,7 +701,7 @@ fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo
     let BinnedLatestEntriesInfo {
         latest_entries,
         capitalization,
-    } = extract_binned_latest_entries_in(iter::once(file), NUM_BINS, None)?;
+    } = extract_binned_latest_entries_in(iter::once(file), NUM_BINS, &(0..usize::MAX))?;
     assert_eq!(latest_entries.len(), NUM_BINS);
     let mut latest_entries = Vec::from(latest_entries);
     let latest_entries = latest_entries.pop().unwrap();
@@ -715,20 +717,15 @@ fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo
 /// If there are multiple entries for a pubkey, only the latest is returned.
 ///
 /// - `num_bins` specifies the number of bins to split the entries into.
-/// - `bin_of_interest`, if Some, only returns entries from that bin.
-///   Otherwise, returns all entries.  Must be less than `num_bins`.
+/// - `bin_range_of_interest` specifies the bin_range in which the entries should be returned.
 ///
 /// Note: `files` must be sorted in ascending order, as insertion order is
 /// relied on to guarantee the latest entry is returned.
 fn extract_binned_latest_entries_in(
     files: impl IntoIterator<Item = impl AsRef<Path>>,
     num_bins: usize,
-    bin_of_interest: Option<usize>,
+    bin_range_of_interest: &Range<usize>,
 ) -> Result<BinnedLatestEntriesInfo, String> {
-    if let Some(bin_of_interest) = bin_of_interest {
-        assert!(bin_of_interest < num_bins);
-    }
-
     let binner = PubkeyBinCalculator24::new(num_bins);
     let mut entries: Box<_> = iter::repeat_with(HashMap::default).take(num_bins).collect();
     let mut capitalization = Saturating(0);
@@ -744,11 +741,8 @@ fn extract_binned_latest_entries_in(
 
         let num_entries = scan_mmap(&mmap, |entry| {
             let bin = binner.bin_from_pubkey(&entry.pubkey);
-            if let Some(bin_of_interest) = bin_of_interest {
-                // Is this the bin of interest? If not, skip it.
-                if bin != bin_of_interest {
-                    return;
-                }
+            if !bin_range_of_interest.contains(&bin) {
+                return;
             }
 
             capitalization += entry.lamports;
