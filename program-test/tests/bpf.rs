@@ -60,7 +60,7 @@ async fn test_max_accounts(num_accounts: u8, deactivate_feature: bool, expect_su
         program_test.deactivate_feature(feature_set::increase_tx_account_lock_limit::id());
     }
 
-    let mut context = program_test.start_with_context().await;
+    let context = program_test.start_with_context().await;
 
     // Subtract 2 to account for the program and fee payer
     let num_extra_accounts = num_accounts.checked_sub(2).unwrap();
