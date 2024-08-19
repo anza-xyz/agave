@@ -1,6 +1,6 @@
 use solana_sdk::pubkey::Pubkey;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PubkeyBinCalculator24 {
     // how many bits from the first 2 bytes to shift away to ignore when calculating bin
     shift_bits: u32,

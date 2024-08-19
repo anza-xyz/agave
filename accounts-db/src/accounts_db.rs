@@ -64,12 +64,14 @@ use {
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
         partitioned_rewards::{PartitionedEpochRewardsConfig, TestPartitionedEpochRewards},
+        pubkey_bins::PubkeyBinCalculator24,
         read_only_accounts_cache::ReadOnlyAccountsCache,
         sorted_storages::SortedStorages,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
+    bv::BitVec,
     crossbeam_channel::{unbounded, Receiver, Sender},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -1349,8 +1351,47 @@ impl StoreAccountsTiming {
 struct CleaningInfo {
     slot_list: SlotList<AccountInfo>,
     ref_count: u64,
-    /// True for pubkeys mapping to older versions of accounts that should be purged.
-    should_purge: bool,
+}
+
+#[derive(Debug)]
+struct CleaningMap {
+    bin_calculator: PubkeyBinCalculator24,
+    bins: Box<[RwLock<HashMap<Pubkey, CleaningInfo>>]>,
+    /// True for pubkeys mapping to older versions of accounts that
+    /// should be purged.  One bitvec exists for every bin, and bits
+    /// in bin's bitvec correspond to pubkeys in that bin's pubkeys,
+    /// assuming the order of keys in the bin's map remains unchanged
+    /// after the map was filled with its entries.
+    should_purge: Box<[RwLock<BitVec>]>,
+}
+
+impl CleaningMap {
+    fn new(num_bins: usize, bin_calculator: PubkeyBinCalculator24) -> Self {
+        Self {
+            bin_calculator,
+            bins: std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
+                .take(num_bins)
+                .collect(),
+            should_purge: std::iter::repeat_with(|| RwLock::new(BitVec::new()))
+                .take(num_bins)
+                .collect(),
+        }
+    }
+
+    fn insert_pubkey(&self, pubkey: Pubkey) {
+        let index = self.bin_calculator.bin_from_pubkey(&pubkey);
+        let mut bin = self.bins[index].write().unwrap();
+        bin.insert(pubkey, CleaningInfo::default());
+        let mut should_purge = self.should_purge[index].write().unwrap();
+        should_purge.push(false);
+    }
+
+    fn get_num_pubkeys(&self) -> u64 {
+        self.bins
+            .iter()
+            .map(|x| x.read().unwrap().len())
+            .sum::<usize>() as u64
+    }
 }
 
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
@@ -1358,7 +1399,7 @@ struct CleaningInfo {
 /// facilitate the decision making about which accounts can be removed
 /// from the accounts index. In addition, the minimal dirty slot is
 /// included in the returned value.
-type CleaningCandidates = (Box<[RwLock<HashMap<Pubkey, CleaningInfo>>]>, Option<Slot>);
+type CleaningCandidates = (CleaningMap, Option<Slot>);
 
 /// Removing unrooted slots in Accounts Background Service needs to be synchronized with flushing
 /// slots from the Accounts Cache.  This keeps track of those slots and the Mutex + Condvar for
@@ -2686,7 +2727,7 @@ impl AccountsDb {
     /// These should NOT be unref'd later from the accounts index.
     fn clean_accounts_older_than_root(
         &self,
-        candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>],
+        candidates: &CleaningMap,
         max_clean_root_inclusive: Option<Slot>,
         ancient_account_cleans: &AtomicU64,
         epoch_schedule: &EpochSchedule,
@@ -2696,12 +2737,17 @@ impl AccountsDb {
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
 
         let mut clean_rooted = Measure::start("clean_old_root-ms");
+        let should_purge_iter = (&candidates.should_purge).into_par_iter();
         let reclaim_vecs = candidates
+            .bins
             .par_iter()
-            .filter_map(|candidates_bin| {
+            .zip(should_purge_iter)
+            .filter_map(|(candidates_bin, should_purge_bin)| {
                 let mut reclaims = Vec::new();
-                for (pubkey, cleaning_info) in candidates_bin.read().unwrap().iter() {
-                    if cleaning_info.should_purge {
+                for (bin_index, (pubkey, _cleaning_info)) in
+                    candidates_bin.read().unwrap().iter().enumerate()
+                {
+                    if should_purge_bin.read().unwrap().get(bin_index as u64) {
                         let removed_from_index = self.accounts_index.clean_rooted_entries(
                             pubkey,
                             &mut reclaims,
@@ -2785,7 +2831,6 @@ impl AccountsDb {
                 CleaningInfo {
                     slot_list,
                     ref_count,
-                    should_purge: _,
                 },
             ) in bin.iter().filter(|x| !x.1.slot_list.is_empty())
             {
@@ -3034,13 +3079,6 @@ impl AccountsDb {
         self.remove_uncleaned_slots_and_collect_pubkeys(uncleaned_slots)
     }
 
-    fn count_pubkeys(candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>]) -> u64 {
-        candidates
-            .iter()
-            .map(|x| x.read().unwrap().len())
-            .sum::<usize>() as u64
-    }
-
     /// Construct a vec of pubkeys for cleaning from:
     ///   uncleaned_pubkeys - the delta set of updated pubkeys in rooted slots from the last clean
     ///   dirty_stores - set of stores which had accounts removed or recently rooted
@@ -3071,16 +3109,7 @@ impl AccountsDb {
         });
         let dirty_stores_len = dirty_stores.len();
         let num_bins = self.accounts_index.bins();
-        let candidates: Box<_> =
-            std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
-                .take(num_bins)
-                .collect();
-
-        let insert_pubkey = |pubkey: Pubkey| {
-            let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
-            let mut candidates_bin = candidates[index].write().unwrap();
-            candidates_bin.insert(pubkey, CleaningInfo::default());
-        };
+        let candidates = CleaningMap::new(num_bins, self.accounts_index.bin_calculator.clone());
         let dirty_ancient_stores = AtomicUsize::default();
         let mut dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
@@ -3094,7 +3123,7 @@ impl AccountsDb {
                         }
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
                         store.accounts.scan_pubkeys(|key| {
-                            insert_pubkey(*key);
+                            candidates.insert_pubkey(*key);
                         });
                     });
                     oldest_dirty_slot
@@ -3114,7 +3143,7 @@ impl AccountsDb {
                 dirty_store_routine();
             });
         }
-        timings.dirty_pubkeys_count = Self::count_pubkeys(&candidates);
+        timings.dirty_pubkeys_count = candidates.get_num_pubkeys();
         trace!(
             "dirty_stores.len: {} pubkeys.len: {}",
             dirty_stores_len,
@@ -3134,14 +3163,14 @@ impl AccountsDb {
         self.thread_pool_clean.install(|| {
             delta_keys.par_iter().for_each(|keys| {
                 for key in keys {
-                    insert_pubkey(*key);
+                    candidates.insert_pubkey(*key);
                 }
             });
         });
         delta_insert.stop();
         timings.delta_insert_us += delta_insert.as_us();
 
-        timings.delta_key_count = Self::count_pubkeys(&candidates);
+        timings.delta_key_count = candidates.get_num_pubkeys();
 
         // Check if we should purge any of the zero_lamport_accounts_to_purge_later, based on the
         // latest_full_snapshot_slot.
@@ -3156,7 +3185,7 @@ impl AccountsDb {
                     let is_candidate_for_clean =
                         max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
-                        insert_pubkey(*pubkey);
+                        candidates.insert_pubkey(*pubkey);
                     }
                     !is_candidate_for_clean
                 });
@@ -3273,7 +3302,7 @@ impl AccountsDb {
             epoch_schedule,
         );
 
-        let num_candidates = Self::count_pubkeys(&candidates);
+        let num_candidates = candidates.get_num_pubkeys();
         let mut accounts_scan = Measure::start("accounts_scan");
         let uncleaned_roots = self.accounts_index.clone_uncleaned_roots();
         let found_not_zero_accum = AtomicU64::new(0);
@@ -3283,102 +3312,108 @@ impl AccountsDb {
 
         // parallel scan the index.
         let do_clean_scan = || {
-            candidates.par_iter().for_each(|candidates_bin| {
-                let mut found_not_zero = 0;
-                let mut not_found_on_fork = 0;
-                let mut missing = 0;
-                let mut useful = 0;
-                let mut purges_old_accounts_local = 0;
-                let mut candidates_bin = candidates_bin.write().unwrap();
-                // Iterate over each HashMap entry to
-                // avoid capturing the HashMap in the
-                // closure passed to scan thus making
-                // conflicting read and write borrows.
-                candidates_bin
-                    .iter_mut()
-                    .for_each(|(candidate_pubkey, candidate_info)| {
-                        self.accounts_index.scan(
-                            [*candidate_pubkey].iter(),
-                            |_candidate_pubkey, slot_list_and_ref_count, _entry| {
-                                let mut useless = true;
-                                if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
-                                    // find the highest rooted slot in the slot list
-                                    let index_in_slot_list = self.accounts_index.latest_slot(
-                                        None,
-                                        slot_list,
-                                        max_clean_root_inclusive,
-                                    );
+            let should_purge_iter = (&candidates.should_purge).into_par_iter();
+            candidates.bins.par_iter().zip(should_purge_iter).for_each(
+                |(candidates_bin, should_purge_bin)| {
+                    let mut found_not_zero = 0;
+                    let mut not_found_on_fork = 0;
+                    let mut missing = 0;
+                    let mut useful = 0;
+                    let mut purges_old_accounts_local = 0;
+                    let mut candidates_bin = candidates_bin.write().unwrap();
+                    let mut should_purge_bin = should_purge_bin.write().unwrap();
+                    // Iterate over each HashMap entry to
+                    // avoid capturing the HashMap in the
+                    // closure passed to scan thus making
+                    // conflicting read and write borrows.
+                    candidates_bin.iter_mut().enumerate().for_each(
+                        |(entry_index, (candidate_pubkey, candidate_info))| {
+                            self.accounts_index.scan(
+                                [*candidate_pubkey].iter(),
+                                |_candidate_pubkey, slot_list_and_ref_count, _entry| {
+                                    let mut useless = true;
+                                    if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
+                                        // find the highest rooted slot in the slot list
+                                        let index_in_slot_list = self.accounts_index.latest_slot(
+                                            None,
+                                            slot_list,
+                                            max_clean_root_inclusive,
+                                        );
 
-                                    match index_in_slot_list {
-                                        Some(index_in_slot_list) => {
-                                            // found info relative to max_clean_root
-                                            let (slot, account_info) =
-                                                &slot_list[index_in_slot_list];
-                                            if account_info.is_zero_lamport() {
-                                                useless = false;
-                                                // The latest one is zero lamports. We may be able to purge it.
-                                                // Add all the rooted entries that contain this pubkey.
-                                                // We know the highest rooted entry is zero lamports.
-                                                candidate_info.slot_list =
-                                                    self.accounts_index.get_rooted_entries(
-                                                        slot_list,
-                                                        max_clean_root_inclusive,
-                                                    );
-                                                candidate_info.ref_count = ref_count;
-                                            } else {
-                                                found_not_zero += 1;
-                                            }
-                                            if uncleaned_roots.contains(slot) {
-                                                // Assertion enforced by `accounts_index.get()`, the latest slot
-                                                // will not be greater than the given `max_clean_root`
-                                                if let Some(max_clean_root_inclusive) =
-                                                    max_clean_root_inclusive
-                                                {
-                                                    assert!(slot <= &max_clean_root_inclusive);
-                                                }
-                                                if slot_list.len() > 1 {
-                                                    // no need to purge old accounts if there is only 1 slot in the slot list
-                                                    candidate_info.should_purge = true;
-                                                    purges_old_accounts_local += 1;
+                                        match index_in_slot_list {
+                                            Some(index_in_slot_list) => {
+                                                // found info relative to max_clean_root
+                                                let (slot, account_info) =
+                                                    &slot_list[index_in_slot_list];
+                                                if account_info.is_zero_lamport() {
                                                     useless = false;
+                                                    // The latest one is zero lamports. We may be able to purge it.
+                                                    // Add all the rooted entries that contain this pubkey.
+                                                    // We know the highest rooted entry is zero lamports.
+                                                    candidate_info.slot_list =
+                                                        self.accounts_index.get_rooted_entries(
+                                                            slot_list,
+                                                            max_clean_root_inclusive,
+                                                        );
+                                                    candidate_info.ref_count = ref_count;
                                                 } else {
-                                                    self.clean_accounts_stats
-                                                        .uncleaned_roots_slot_list_1
-                                                        .fetch_add(1, Ordering::Relaxed);
+                                                    found_not_zero += 1;
+                                                }
+                                                if uncleaned_roots.contains(slot) {
+                                                    // Assertion enforced by `accounts_index.get()`, the latest slot
+                                                    // will not be greater than the given `max_clean_root`
+                                                    if let Some(max_clean_root_inclusive) =
+                                                        max_clean_root_inclusive
+                                                    {
+                                                        assert!(slot <= &max_clean_root_inclusive);
+                                                    }
+                                                    if slot_list.len() > 1 {
+                                                        // no need to purge old accounts if there is only 1 slot in the slot list
+                                                        should_purge_bin
+                                                            .set(entry_index as u64, true);
+                                                        purges_old_accounts_local += 1;
+                                                        useless = false;
+                                                    } else {
+                                                        self.clean_accounts_stats
+                                                            .uncleaned_roots_slot_list_1
+                                                            .fetch_add(1, Ordering::Relaxed);
+                                                    }
                                                 }
                                             }
+                                            None => {
+                                                // This pubkey is in the index but not in a root slot, so clean
+                                                // it up by adding it to the to-be-purged list.
+                                                //
+                                                // Also, this pubkey must have been touched by some slot since
+                                                // it was in the dirty list, so we assume that the slot it was
+                                                // touched in must be unrooted.
+                                                not_found_on_fork += 1;
+                                                should_purge_bin.set(entry_index as u64, true);
+                                                purges_old_accounts_local += 1;
+                                                useless = false;
+                                            }
                                         }
-                                        None => {
-                                            // This pubkey is in the index but not in a root slot, so clean
-                                            // it up by adding it to the to-be-purged list.
-                                            //
-                                            // Also, this pubkey must have been touched by some slot since
-                                            // it was in the dirty list, so we assume that the slot it was
-                                            // touched in must be unrooted.
-                                            not_found_on_fork += 1;
-                                            candidate_info.should_purge = true;
-                                            purges_old_accounts_local += 1;
-                                            useless = false;
-                                        }
+                                    } else {
+                                        missing += 1;
                                     }
-                                } else {
-                                    missing += 1;
-                                }
-                                if !useless {
-                                    useful += 1;
-                                }
-                                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
-                            },
-                            None,
-                            false,
-                        );
-                    });
-                found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
-                not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
-                missing_accum.fetch_add(missing, Ordering::Relaxed);
-                useful_accum.fetch_add(useful, Ordering::Relaxed);
-                purges_old_accounts_count.fetch_add(purges_old_accounts_local, Ordering::Relaxed);
-            });
+                                    if !useless {
+                                        useful += 1;
+                                    }
+                                    AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
+                                },
+                                None,
+                                false,
+                            );
+                        },
+                    );
+                    found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
+                    not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
+                    missing_accum.fetch_add(missing, Ordering::Relaxed);
+                    useful_accum.fetch_add(useful, Ordering::Relaxed);
+                    purges_old_accounts_count
+                        .fetch_add(purges_old_accounts_local, Ordering::Relaxed);
+                },
+            );
         };
         if is_startup {
             do_clean_scan();
@@ -3405,13 +3440,12 @@ impl AccountsDb {
         // Calculate store counts as if everything was purged
         // Then purge if we can
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
-        for candidates_bin in candidates.iter() {
+        for candidates_bin in candidates.bins.iter() {
             for (
                 pubkey,
                 CleaningInfo {
                     slot_list,
                     ref_count,
-                    should_purge: _,
                 },
             ) in candidates_bin.write().unwrap().iter_mut()
             {
@@ -3471,21 +3505,21 @@ impl AccountsDb {
         store_counts_time.stop();
 
         let mut calc_deps_time = Measure::start("calc_deps");
-        self.calc_delete_dependencies(&candidates, &mut store_counts, min_dirty_slot);
+        self.calc_delete_dependencies(&candidates.bins, &mut store_counts, min_dirty_slot);
         calc_deps_time.stop();
 
         let mut purge_filter = Measure::start("purge_filter");
         self.filter_zero_lamport_clean_for_incremental_snapshots(
             max_clean_root_inclusive,
             &store_counts,
-            &candidates,
+            &candidates.bins,
         );
         purge_filter.stop();
 
         let mut reclaims_time = Measure::start("reclaims");
         // Recalculate reclaims with new purge set
         let mut pubkey_to_slot_set = Vec::new();
-        for candidates_bin in candidates.iter() {
+        for candidates_bin in candidates.bins.iter() {
             let candidates_bin = candidates_bin.read().unwrap();
             let mut bin_set = candidates_bin
                 .iter()
@@ -3493,7 +3527,6 @@ impl AccountsDb {
                     let CleaningInfo {
                         slot_list,
                         ref_count: _,
-                        should_purge: _,
                     } = cleaning_info;
                     (!slot_list.is_empty()).then_some((
                         *pubkey,
@@ -3775,7 +3808,6 @@ impl AccountsDb {
                 let CleaningInfo {
                     slot_list,
                     ref_count: _,
-                    should_purge: _,
                 } = cleaning_info;
                 if slot_list.is_empty() {
                     return false;
@@ -12809,7 +12841,6 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: rooted_entries,
                     ref_count,
-                    should_purge: false,
                 },
             );
         }
@@ -12820,7 +12851,6 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: list,
                     ref_count,
-                    should_purge: _,
                 },
             ) in candidates_bin.iter()
             {
@@ -15125,7 +15155,6 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: vec![(slot, account_info)],
                     ref_count: 1,
-                    should_purge: false,
                 },
             );
             let accounts_db = AccountsDb::new_single_for_tests();
