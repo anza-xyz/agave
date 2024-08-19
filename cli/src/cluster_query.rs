@@ -508,6 +508,12 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .long("lamports")
                         .takes_value(false)
                         .help("Display rent in lamports instead of SOL"),
+                )
+                .arg(
+                    Arg::with_name("no-header")
+                        .long("no-header")
+                        .takes_value(false)
+                        .help("Exclude rent header from calculation"),
                 ),
         )
     }
@@ -2271,13 +2277,18 @@ pub fn process_calculate_rent(
     config: &CliConfig,
     data_length: usize,
     use_lamports_unit: bool,
+    no_header: bool,
 ) -> ProcessResult {
     if data_length > MAX_PERMITTED_DATA_LENGTH.try_into().unwrap() {
         eprintln!("Warning: Maximum account size is {MAX_PERMITTED_DATA_LENGTH} bytes, {data_length} provided");
     }
     let rent_account = rpc_client.get_account(&sysvar::rent::id())?;
     let rent: Rent = rent_account.deserialize_data()?;
-    let rent_exempt_minimum_lamports = rent.minimum_balance(data_length);
+    let rent_exempt_minimum_lamports = if no_header {
+        rent.minimum_balance(data_length) - rent.minimum_balance(0)
+    } else {
+        rent.minimum_balance(data_length)
+    };
     let cli_rent_calculation = CliRentCalculation {
         lamports_per_byte_year: 0,
         lamports_per_epoch: 0,
