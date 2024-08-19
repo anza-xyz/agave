@@ -128,6 +128,13 @@ macro_rules! entrypoint {
         #[no_mangle]
         pub unsafe extern "C" fn entrypoint(input: *mut u8) -> u64 {
             use std::mem::MaybeUninit;
+            // Clippy complains about this because a `const` with interior
+            // mutability `RefCell` should use `static` instead to make it
+            // clear that it can change.
+            // In our case, however, we want to create an array of `AccountInfo`s,
+            // and the only way to do it is through a `const` expression, and
+            // we don't expect to mutate the internals of this `const` type.
+            #[allow(clippy::declare_interior_mutable_const)]
             const UNINIT_ACCOUNT_INFO: MaybeUninit<AccountInfo> =
                 MaybeUninit::<AccountInfo>::uninit();
             const MAX_ACCOUNT_INFOS: usize = 64;
