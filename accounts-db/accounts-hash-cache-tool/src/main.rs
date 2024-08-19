@@ -12,6 +12,7 @@ use {
         pubkey_bins::PubkeyBinCalculator24, CacheHashDataFileEntry, CacheHashDataFileHeader,
         ParsedCacheHashDataFilename,
     },
+    solana_clap_utils::input_parsers::values_of,
     solana_program::pubkey::Pubkey,
     std::{
         cmp::{self, Ordering},
@@ -147,17 +148,24 @@ fn main() {
                                 ),
                         )
                         .arg(
-                            Arg::with_name("bin_range_of_interest")
-                                .long("bin-range-of-interest")
+                            Arg::with_name("bins_of_interest")
+                                .long("bins-of-interest")
                                 .takes_value(true)
                                 .value_name("BIN_RANGE")
-                                .help("Specifies bin range to diff")
+                                .min_values(1)
+                                .max_values(2)
+                                .value_delimiter("-")
+                                .require_delimiter(true)
+                                .multiple(false)
+                                .help("Specifies bins to diff")
                                 .long_help(
-                                    "Specifies bin range to diff. \
+                                    "Specifies bins to diff. \
                                      When diffing large state that does not fit in memory, \
                                      it may be necessary to diff a subset at a time. \
-                                     Use this arg to limit the state to bin range. \
-                                     The BIN_RANGE is specified with start-end, which contains bin with start <= bin < end."
+                                     Use this arg to limit the state to bins of interest. \
+                                     This arg takes either a single bin or a bin_range. bin_range \
+                                     can be specified as \"start-end\", which contains bin with \
+                                     start <= bin < end."
                                 ),
                         ),
                 ),
@@ -228,17 +236,14 @@ fn cmd_diff_state(
     let num_bins = value_t_or_exit!(subcommand_matches, "bins", usize);
 
     let bin_range_of_interest =
-        if let Some(bin_range) = subcommand_matches.value_of("bin_range_of_interest") {
-            let re = regex::Regex::new(r"(?P<start>\d+)-(?P<end>\d+)").unwrap();
-            let caps = re.captures(bin_range).unwrap();
-            let parse = |name, default| {
-                caps.name(name)
-                    .map_or(default, |s| s.as_str().parse().expect("integer"))
-            };
-
-            let start = parse("start", 0);
-            let end = parse("end", usize::MAX);
-            start..end
+        if let Some(bins) = values_of::<usize>(subcommand_matches, "bins_of_interest") {
+            match bins.len() {
+                1 => bins[0]..bins[0].saturating_add(1),
+                2 => bins[0]..bins[1],
+                _ => {
+                    unreachable!("invalid argument are given to bins_of_interest.")
+                }
+            }
         } else {
             0..usize::MAX
         };

@@ -72,8 +72,8 @@ dependencies = [
  "clap 2.33.3",
  "memmap2",
  "rayon",
- "regex",
  "solana-accounts-db",
+ "solana-clap-utils",
  "solana-program",
  "solana-version",
 ]
