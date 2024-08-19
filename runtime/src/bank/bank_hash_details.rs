@@ -323,10 +323,10 @@ pub mod tests {
                     slot,
                     bank_hash: format!("bank{slot}"),
                     bank_hash_components: Some(BankHashComponents {
-                        parent_bank_hash: String::from("parent_bank_hash"),
-                        accounts_delta_hash: String::from("accounts_delta_hash"),
+                        parent_bank_hash: "parent_bank_hash".into(),
+                        accounts_delta_hash: "accounts_delta_hash".into(),
                         signature_count: slot + 10,
-                        last_blockhash: String::from("last_blockhash"),
+                        last_blockhash: "last_blockhash".into(),
                         accounts,
                     }),
                     transactions: vec![],
