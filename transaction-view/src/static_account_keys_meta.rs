@@ -10,7 +10,7 @@ use {
 // This means the maximum number of 32 byte keys is 38.
 // 38 as an min-sized encoded u16 is 1 byte.
 // We can simply read this byte, if it's >38 we can return None.
-const MAX_STATIC_ACCOUNTS_PER_PACKET: u8 =
+pub const MAX_STATIC_ACCOUNTS_PER_PACKET: u8 =
     (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 /// Contains meta-data about the static account keys in a transaction packet.
