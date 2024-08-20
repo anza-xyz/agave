@@ -163,9 +163,9 @@ fn main() {
                                      When diffing large state that does not fit in memory, \
                                      it may be necessary to diff a subset at a time. \
                                      Use this arg to limit the state to bins of interest. \
-                                     This arg takes either a single bin or a bin_range. bin_range \
-                                     can be specified as \"start-end\", which contains bin with \
-                                     start <= bin < end."
+                                     This arg takes either a single bin or a bin range. \
+                                     A bin range is specified as \"start-end\", where \
+                                     \"start\" is inclusive, and \"end\" is exclusive."
                                 ),
                         ),
                 ),
