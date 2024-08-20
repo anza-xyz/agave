@@ -8577,41 +8577,54 @@ pub(crate) mod tests {
         let poh_recorder = Arc::new(poh_recorder);
         let (retransmit_slots_sender, _) = unbounded();
 
-        let bank1 = Bank::new_from_parent(
+        // Use a bank slot when I was not leader to avoid panic for dumping my own slot
+        let slot_to_dump = (1..100)
+            .find(|i| leader_schedule_cache.slot_leader_at(*i, None) != Some(*my_pubkey))
+            .unwrap();
+        let bank_to_dump = Bank::new_from_parent(
             bank_forks.read().unwrap().get(0).unwrap(),
-            &leader_schedule_cache.slot_leader_at(1, None).unwrap(),
-            1,
+            &leader_schedule_cache
+                .slot_leader_at(slot_to_dump, None)
+                .unwrap(),
+            slot_to_dump,
         );
         progress.insert(
-            1,
+            slot_to_dump,
             ForkProgress::new_from_bank(
-                &bank1,
-                bank1.collector_id(),
+                &bank_to_dump,
+                bank_to_dump.collector_id(),
                 validator_node_to_vote_keys
-                    .get(bank1.collector_id())
+                    .get(bank_to_dump.collector_id())
                     .unwrap(),
                 Some(0),
                 0,
                 0,
             ),
         );
-        assert!(progress.get_propagated_stats(1).unwrap().is_leader_slot);
-        bank1.freeze();
-        bank_forks.write().unwrap().insert(bank1);
-        let bank1 = bank_forks.read().unwrap().get(1).expect("Just inserted");
+        assert!(progress.get_propagated_stats(slot_to_dump).is_some());
+        bank_to_dump.freeze();
+        bank_forks.write().unwrap().insert(bank_to_dump);
+        let bank_to_dump = bank_forks
+            .read()
+            .unwrap()
+            .get(slot_to_dump)
+            .expect("Just inserted");
 
         progress.get_retransmit_info_mut(0).unwrap().retry_time = Instant::now();
-        poh_recorder.write().unwrap().reset(bank1, Some((2, 2)));
-        assert_eq!(poh_recorder.read().unwrap().start_slot(), 1);
+        poh_recorder
+            .write()
+            .unwrap()
+            .reset(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)));
+        assert_eq!(poh_recorder.read().unwrap().start_slot(), slot_to_dump);
 
-        // Now dump and repair slot 1
+        // Now dump and repair slot_to_dump
         let (mut ancestors, mut descendants) = {
             let r_bank_forks = bank_forks.read().unwrap();
             (r_bank_forks.ancestors(), r_bank_forks.descendants())
         };
         let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
-        let bank1_bad_hash = Hash::new_unique();
-        duplicate_slots_to_repair.insert(1, bank1_bad_hash);
+        let bank_to_dump_bad_hash = Hash::new_unique();
+        duplicate_slots_to_repair.insert(slot_to_dump, bank_to_dump_bad_hash);
         let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
         let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
 
@@ -8630,7 +8643,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             dumped_slots_receiver.recv_timeout(Duration::from_secs(1)),
-            Ok(vec![(1, bank1_bad_hash)])
+            Ok(vec![(slot_to_dump, bank_to_dump_bad_hash)])
         );
 
         // Now check it doesn't cause panic in the following functions.
