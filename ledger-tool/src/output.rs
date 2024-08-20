@@ -476,8 +476,9 @@ pub(crate) fn encode_confirmed_block(
     Ok(encoded_block)
 }
 
-fn encode_versioned_transactions(transactions: Vec<VersionedTransaction>) -> EncodedConfirmedBlock {
-    let transactions = transactions
+fn encode_versioned_transactions(block: BlockWithoutMetadata) -> EncodedConfirmedBlock {
+    let transactions = block
+        .transactions
         .into_iter()
         .map(|transaction| EncodedTransactionWithStatusMeta {
             transaction: transaction.encode(UiTransactionEncoding::Base64),
@@ -486,11 +487,10 @@ fn encode_versioned_transactions(transactions: Vec<VersionedTransaction>) -> Enc
         })
         .collect();
 
-    // TODO: Can probably get blockhash / previous blockhash / slot without much effort
     EncodedConfirmedBlock {
-        previous_blockhash: String::new(),
-        blockhash: String::new(),
-        parent_slot: 0,
+        previous_blockhash: Hash::default().to_string(),
+        blockhash: block.blockhash,
+        parent_slot: block.parent_slot,
         transactions,
         rewards: Rewards::default(),
         num_partitions: None,
@@ -501,7 +501,15 @@ fn encode_versioned_transactions(transactions: Vec<VersionedTransaction>) -> Enc
 
 pub enum BlockContents {
     VersionedConfirmedBlock(VersionedConfirmedBlock),
-    VersionedTransactions(Vec<VersionedTransaction>),
+    BlockWithoutMetadata(BlockWithoutMetadata),
+}
+
+// A VersionedConfirmedBlock analogue for use when the transaction metadata
+// fields are unavailable. Also supports non-full blocks
+pub struct BlockWithoutMetadata {
+    pub blockhash: String,
+    pub parent_slot: Slot,
+    pub transactions: Vec<VersionedTransaction>,
 }
 
 impl BlockContents {
@@ -513,7 +521,7 @@ impl BlockContents {
                     .iter()
                     .map(|VersionedTransactionWithStatusMeta { transaction, .. }| transaction),
             ),
-            BlockContents::VersionedTransactions(transactions) => Box::new(transactions.iter()),
+            BlockContents::BlockWithoutMetadata(block) => Box::new(block.transactions.iter()),
         }
     }
 }
@@ -526,9 +534,7 @@ impl TryFrom<BlockContents> for EncodedConfirmedBlock {
             BlockContents::VersionedConfirmedBlock(block) => {
                 encode_confirmed_block(ConfirmedBlock::from(block))
             }
-            BlockContents::VersionedTransactions(transactions) => {
-                Ok(encode_versioned_transactions(transactions))
-            }
+            BlockContents::BlockWithoutMetadata(block) => Ok(encode_versioned_transactions(block)),
         }
     }
 }
@@ -569,6 +575,14 @@ pub fn output_slot(
             let entries = blockstore
                 .get_slot_entries(slot, /*shred_start_index:*/ 0)
                 .map_err(|err| LedgerToolError::from(err))?;
+
+            let blockhash = entries
+                .last()
+                .filter(|_| meta.is_full())
+                .map(|entry| entry.hash)
+                .unwrap_or(Hash::default());
+            let parent_slot = meta.parent_slot.unwrap_or(0);
+
             let mut entry_summaries = Vec::with_capacity(entries.len());
             let mut starting_transaction_index = 0;
             let transactions = entries
@@ -586,10 +600,12 @@ pub fn output_slot(
                 })
                 .collect();
 
-            (
-                BlockContents::VersionedTransactions(transactions),
-                entry_summaries,
-            )
+            let block = BlockWithoutMetadata {
+                blockhash: blockhash.to_string(),
+                parent_slot,
+                transactions,
+            };
+            (BlockContents::BlockWithoutMetadata(block), entry_summaries)
         }
     };
 
