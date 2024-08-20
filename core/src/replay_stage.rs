@@ -1310,7 +1310,7 @@ impl ReplayStage {
         // It is possible that bank corresponding to `start_slot` has been
         // dumped, so we need to double check it exists before proceeding
         if !progress.contains(&start_slot) {
-            debug!("Slot may have been dumped: start_slot={}", start_slot);
+            warn!("Poh start slot {start_slot}, is missing from progress map. This indicates that we are in the middle of a dump and repair. Skipping retransmission of unpropagated leader slots");
             return;
         }
 
