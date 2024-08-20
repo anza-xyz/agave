@@ -572,9 +572,7 @@ pub fn output_slot(
         Err(_) => {
             // Transaction metadata could be missing, try to fetch just the
             // entries and leave the metadata fields empty
-            let entries = blockstore
-                .get_slot_entries(slot, /*shred_start_index:*/ 0)
-                .map_err(|err| LedgerToolError::from(err))?;
+            let entries = blockstore.get_slot_entries(slot, /*shred_start_index:*/ 0)?;
 
             let blockhash = entries
                 .last()

@@ -27,10 +27,9 @@ use {
         },
         transaction_context::TransactionReturnData,
     },
-    std::fmt,
+    std::{collections::HashSet, fmt},
     thiserror::Error,
 };
-use std::collections::HashSet;
 
 #[macro_use]
 extern crate lazy_static;
@@ -1162,7 +1161,7 @@ impl Encodable for VersionedTransaction {
                         VersionedMessage::V0(message) => {
                             message.encode(UiTransactionEncoding::JsonParsed)
                         }
-                    }
+                    },
                 })
             }
         }
@@ -1279,11 +1278,8 @@ impl Encodable for v0::Message {
         if encoding == UiTransactionEncoding::JsonParsed {
             let account_keys = AccountKeys::new(&self.account_keys, None);
             let loaded_addresses = LoadedAddresses::default();
-            let loaded_message = LoadedMessage::new_borrowed(
-                self,
-                &loaded_addresses,
-                &HashSet::new(),
-            );
+            let loaded_message =
+                LoadedMessage::new_borrowed(self, &loaded_addresses, &HashSet::new());
             UiMessage::Parsed(UiParsedMessage {
                 account_keys: parse_v0_message_accounts(&loaded_message),
                 recent_blockhash: self.recent_blockhash.to_string(),
