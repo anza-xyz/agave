@@ -3311,8 +3311,11 @@ impl AccountsDb {
 
         // parallel scan the index.
         let do_clean_scan = || {
-            candidates.bins.par_iter().zip(candidates.should_purge.par_iter()).for_each(
-                |(candidates_bin, should_purge_bin)| {
+            candidates
+                .bins
+                .par_iter()
+                .zip(candidates.should_purge.par_iter())
+                .for_each(|(candidates_bin, should_purge_bin)| {
                     let mut found_not_zero = 0;
                     let mut not_found_on_fork = 0;
                     let mut missing = 0;
@@ -3410,8 +3413,7 @@ impl AccountsDb {
                     useful_accum.fetch_add(useful, Ordering::Relaxed);
                     purges_old_accounts_count
                         .fetch_add(purges_old_accounts_local, Ordering::Relaxed);
-                },
-            );
+                });
         };
         if is_startup {
             do_clean_scan();
