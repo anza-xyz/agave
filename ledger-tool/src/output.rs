@@ -631,12 +631,11 @@ pub fn output_slot(
             for entry in entries.iter() {
                 num_hashes += entry.num_hashes;
             }
-
-            let blockhash = if let Some(entry) = entries.last() {
-                entry.hash
-            } else {
-                Hash::default()
-            };
+            let blockhash = entries
+                .last()
+                .filter(|_| meta.is_full())
+                .map(|entry| entry.hash)
+                .unwrap_or(Hash::default());
 
             let mut num_transactions = 0;
             let mut program_ids = HashMap::new();
