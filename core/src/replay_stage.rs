@@ -2045,17 +2045,13 @@ impl ReplayStage {
 
         trace!("{} reached_leader_slot", my_pubkey);
 
-        let parent = bank_forks.read().unwrap().get(parent_slot);
-
-        if parent.is_none() {
+        let Some(parent) = bank_forks.read().unwrap().get(parent_slot) else {
             warn!(
                 "parent bank {} may have been dumped, unable to start leader",
                 parent_slot
             );
             return false;
-        }
-
-        let parent = parent.unwrap();
+        };
 
         assert!(parent.is_frozen());
 
@@ -2100,7 +2096,6 @@ impl ReplayStage {
             );
 
             if !Self::check_propagation_for_start_leader(poh_slot, parent_slot, progress_map) {
-                // We checked that parent_slot hasn't been dumped, so we should get it in the progress map.
                 let latest_unconfirmed_leader_slot = progress_map.get_latest_leader_slot_must_exist(parent_slot)
                     .expect("In order for propagated check to fail, latest leader must exist in progress map");
                 if poh_slot != skipped_slots_info.last_skipped_slot {
