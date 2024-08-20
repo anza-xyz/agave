@@ -151,7 +151,7 @@ fn main() {
                             Arg::with_name("bins_of_interest")
                                 .long("bins-of-interest")
                                 .takes_value(true)
-                                .value_name("BIN_RANGE")
+                                .value_name("BINS")
                                 .min_values(1)
                                 .max_values(2)
                                 .value_delimiter("-")
