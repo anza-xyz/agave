@@ -547,18 +547,26 @@ pub fn output_slot(
     verbose_level: u64,
     all_program_ids: &mut HashMap<Pubkey, u64>,
 ) -> Result<()> {
+    let is_root = blockstore.is_root(slot);
+    let is_dead = blockstore.is_dead(slot);
     if *output_format == OutputFormat::Display && verbose_level <= 1 {
-        println!("Slot {slot}");
+        if is_root && is_dead {
+            eprintln!("Slot {slot} is marked as both a root and dead, this shouldn't be possible");
+        }
+        println!(
+            "Slot {slot}{}",
+            if is_root {
+                " (root)"
+            } else if is_dead {
+                " (dead)"
+            } else {
+                ""
+            }
+        );
     }
 
-    if blockstore.is_dead(slot) {
-        if allow_dead_slots {
-            if *output_format == OutputFormat::Display {
-                println!(" Slot is dead");
-            }
-        } else {
-            return Err(LedgerToolError::from(BlockstoreError::DeadSlot));
-        }
+    if is_dead && !allow_dead_slots {
+        return Err(LedgerToolError::from(BlockstoreError::DeadSlot));
     }
 
     let Some(meta) = blockstore.meta(slot)? else {
@@ -692,23 +700,12 @@ pub fn output_ledger(
     let num_slots = num_slots.unwrap_or(Slot::MAX);
     let mut num_printed = 0;
     let mut all_program_ids = HashMap::new();
-    for (slot, slot_meta) in slot_iterator {
+    for (slot, _slot_meta) in slot_iterator {
         if only_rooted && !blockstore.is_root(slot) {
             continue;
         }
         if slot > ending_slot {
             break;
-        }
-
-        match output_format {
-            OutputFormat::Display => {
-                println!("Slot {} root?: {}", slot, blockstore.is_root(slot))
-            }
-            OutputFormat::Json => {
-                serde_json::to_writer(stdout(), &slot_meta)?;
-                stdout().write_all(b",\n")?;
-            }
-            _ => unreachable!(),
         }
 
         if let Err(err) = output_slot(
