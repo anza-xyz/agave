@@ -743,7 +743,7 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                     10 => InstructionError::UnbalancedInstruction,
                     11 => InstructionError::ModifiedProgramId,
                     12 => InstructionError::ExternalAccountLamportSpend,
-                    13 => InstructionError::ExternalAccountDataModified,
+                    13 => InstructionError::ExternalAccountDataModified(Pubkey::default()),
                     14 => InstructionError::ReadonlyLamportChange,
                     15 => InstructionError::ReadonlyDataModified,
                     16 => InstructionError::DuplicateAccountIndex,
@@ -1016,7 +1016,7 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                             InstructionError::ExternalAccountLamportSpend => {
                                 tx_by_addr::InstructionErrorType::ExternalAccountLamportSpend
                             }
-                            InstructionError::ExternalAccountDataModified => {
+                            InstructionError::ExternalAccountDataModified(_) => {
                                 tx_by_addr::InstructionErrorType::ExternalAccountDataModified
                             }
                             InstructionError::ReadonlyLamportChange => {
@@ -1592,8 +1592,10 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExternalAccountDataModified);
+        let transaction_error = TransactionError::InstructionError(
+            10,
+            InstructionError::ExternalAccountDataModified(Pubkey::default()),
+        );
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(

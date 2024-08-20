@@ -1085,7 +1085,9 @@ impl<'a> BorrowedAccount<'a> {
         }
         // and only if we are the owner
         if !self.is_owned_by_current_program() {
-            return Err(InstructionError::ExternalAccountDataModified);
+            return Err(InstructionError::ExternalAccountDataModified(
+                *self.get_key(),
+            ));
         }
         Ok(())
     }

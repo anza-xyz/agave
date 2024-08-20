@@ -2398,7 +2398,7 @@ mod tests {
                 callee_account,
                 false,
             ),
-            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified(Pubkey::default())
         );
 
         // without direct mapping

@@ -1460,7 +1460,7 @@ fn execute<'a, 'b: 'a>(
                             error = EbpfError::SyscallError(Box::new(if account.is_executable() {
                                 InstructionError::ExecutableDataModified
                             } else if account.is_writable() {
-                                InstructionError::ExternalAccountDataModified
+                                InstructionError::ExternalAccountDataModified(*account.get_key())
                             } else {
                                 InstructionError::ReadonlyDataModified
                             }));

@@ -3337,7 +3337,7 @@ pub mod tests {
                 InstructionError::UnbalancedInstruction,
                 InstructionError::ModifiedProgramId,
                 InstructionError::ExternalAccountLamportSpend,
-                InstructionError::ExternalAccountDataModified,
+                InstructionError::ExternalAccountDataModified(Pubkey::default()),
                 InstructionError::ReadonlyLamportChange,
                 InstructionError::ReadonlyDataModified,
                 InstructionError::DuplicateAccountIndex,

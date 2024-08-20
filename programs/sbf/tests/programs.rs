@@ -4079,7 +4079,7 @@ fn test_cpi_account_ownership_writability() {
                         result.unwrap_err().unwrap(),
                         TransactionError::InstructionError(
                             0,
-                            InstructionError::ExternalAccountDataModified
+                            InstructionError::ExternalAccountDataModified(Pubkey::default())
                         )
                     );
                 } else {
@@ -4120,7 +4120,10 @@ fn test_cpi_account_ownership_writability() {
             } else {
                 // We managed to make CPI write into the account data, but the
                 // usual checks still apply and we get an error.
-                TransactionError::InstructionError(0, InstructionError::ExternalAccountDataModified)
+                TransactionError::InstructionError(
+                    0,
+                    InstructionError::ExternalAccountDataModified(Pubkey::default()),
+                )
             }
         );
 
