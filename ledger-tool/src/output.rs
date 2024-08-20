@@ -504,6 +504,20 @@ pub enum BlockContents {
     VersionedTransactions(Vec<VersionedTransaction>),
 }
 
+impl BlockContents {
+    pub fn transactions(&self) -> Box<dyn Iterator<Item = &VersionedTransaction> + '_> {
+        match self {
+            BlockContents::VersionedConfirmedBlock(block) => Box::new(
+                block
+                    .transactions
+                    .iter()
+                    .map(|VersionedTransactionWithStatusMeta { transaction, .. }| transaction),
+            ),
+            BlockContents::VersionedTransactions(transactions) => Box::new(transactions.iter()),
+        }
+    }
+}
+
 impl TryFrom<BlockContents> for EncodedConfirmedBlock {
     type Error = LedgerToolError;
 
@@ -608,17 +622,15 @@ pub fn output_slot(
                 Hash::default()
             };
 
-            // TODO: reenable below
-            let num_transactions = 0; // = block.transactions.len();
+            let mut num_transactions = 0;
             let mut program_ids = HashMap::new();
-            /*
-            for VersionedTransactionWithStatusMeta { transaction, .. } in block.transactions.iter()
-            {
+
+            for transaction in block_contents.transactions() {
+                num_transactions += 1;
                 for program_id in get_program_ids(transaction) {
                     *program_ids.entry(*program_id).or_insert(0) += 1;
                 }
             }
-            */
             println!(
                 "  Transactions: {num_transactions}, hashes: {num_hashes}, block_hash: {blockhash}",
             );
