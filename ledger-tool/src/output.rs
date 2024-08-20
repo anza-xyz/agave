@@ -27,7 +27,7 @@ use {
         transaction::VersionedTransaction,
     },
     solana_transaction_status::{
-        BlockEncodingOptions, ConfirmedBlock, Encodable, EncodeError, EncodedConfirmedBlock,
+        BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
         EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
         UiTransactionEncoding, VersionedConfirmedBlock, VersionedConfirmedBlockWithEntries,
         VersionedTransactionWithStatusMeta,
@@ -463,20 +463,15 @@ impl EncodedConfirmedBlockWithEntries {
 pub(crate) fn encode_confirmed_block(
     confirmed_block: ConfirmedBlock,
 ) -> Result<EncodedConfirmedBlock> {
-    let encoded_block = confirmed_block
-        .encode_with_options(
-            UiTransactionEncoding::Base64,
-            BlockEncodingOptions {
-                transaction_details: TransactionDetails::Full,
-                show_rewards: true,
-                max_supported_transaction_version: Some(0),
-            },
-        )
-        .map_err(|err| match err {
-            EncodeError::UnsupportedTransactionVersion(version) => LedgerToolError::Generic(
-                format!("Failed to process unsupported transaction version ({version}) in block"),
-            ),
-        })?;
+    let encoded_block = confirmed_block.encode_with_options(
+        UiTransactionEncoding::Base64,
+        BlockEncodingOptions {
+            transaction_details: TransactionDetails::Full,
+            show_rewards: true,
+            max_supported_transaction_version: Some(0),
+        },
+    )?;
+
     let encoded_block: EncodedConfirmedBlock = encoded_block.into();
     Ok(encoded_block)
 }
