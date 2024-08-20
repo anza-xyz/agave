@@ -504,15 +504,16 @@ pub enum BlockContents {
     VersionedTransactions(Vec<VersionedTransaction>),
 }
 
-impl From<BlockContents> for EncodedConfirmedBlock {
-    fn from(block_contents: BlockContents) -> Self {
+impl TryFrom<BlockContents> for EncodedConfirmedBlock {
+    type Error = LedgerToolError;
+
+    fn try_from(block_contents: BlockContents) -> Result<Self> {
         match block_contents {
             BlockContents::VersionedConfirmedBlock(block) => {
-                // TODO: remove unwrap()
-                encode_confirmed_block(ConfirmedBlock::from(block)).unwrap()
+                encode_confirmed_block(ConfirmedBlock::from(block))
             }
             BlockContents::VersionedTransactions(transactions) => {
-                encode_versioned_transactions(transactions)
+                Ok(encode_versioned_transactions(transactions))
             }
         }
     }
@@ -628,7 +629,7 @@ pub fn output_slot(
             output_sorted_program_ids(program_ids);
         }
     } else {
-        let encoded_block = EncodedConfirmedBlock::from(block_contents);
+        let encoded_block = EncodedConfirmedBlock::try_from(block_contents)?;
         let cli_block = CliBlockWithEntries {
             encoded_confirmed_block: EncodedConfirmedBlockWithEntries::try_from(
                 encoded_block,
