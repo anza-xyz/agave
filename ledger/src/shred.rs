@@ -52,6 +52,8 @@
 pub(crate) use self::merkle::SIZE_OF_MERKLE_ROOT;
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
     crate::blockstore::{self, MAX_DATA_SHREDS_PER_SLOT},
@@ -576,6 +578,18 @@ impl Shred {
             Self::ShredData(_) => Err(Error::InvalidShredType),
         }
     }
+
+    /// Compares payload with `other` ignoring the retransmitter signatures. This modifies the
+    /// retransmitter signature of `other`. If we encounter an error while setting the retransmitter
+    /// signature this comparison occurs without signature modification.
+    pub fn equal_payload_without_retransmitter_signature(&self, other: &mut [u8]) -> bool {
+        if let Ok(signature) = self.retransmitter_signature() {
+            if let Err(err) = layout::set_retransmitter_signature(other, &signature) {
+                error!("set retransmitter signature failed: {err:?}");
+            }
+        }
+        other == self.payload()
+    }
 }
 
 // Helper methods to extract pieces of the shred from the payload
@@ -802,6 +816,7 @@ pub mod layout {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn set_retransmitter_signature(
         shred: &mut [u8],
         signature: &Signature,
