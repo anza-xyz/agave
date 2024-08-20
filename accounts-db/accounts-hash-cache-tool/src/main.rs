@@ -235,7 +235,7 @@ fn cmd_diff_state(
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
     let num_bins = value_t_or_exit!(subcommand_matches, "bins", usize);
 
-    let bin_range_of_interest =
+    let bins_of_interest =
         if let Some(bins) = values_of::<usize>(subcommand_matches, "bins_of_interest") {
             match bins.len() {
                 1 => bins[0]..bins[0].saturating_add(1),
@@ -247,7 +247,7 @@ fn cmd_diff_state(
         } else {
             0..usize::MAX
         };
-    do_diff_state(path1, path2, num_bins, bin_range_of_interest)
+    do_diff_state(path1, path2, num_bins, bins_of_interest)
 }
 
 fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
@@ -517,7 +517,7 @@ fn do_diff_state(
     dir1: impl AsRef<Path>,
     dir2: impl AsRef<Path>,
     num_bins: usize,
-    bin_range_of_interest: Range<usize>,
+    bins_of_interest: Range<usize>,
 ) -> Result<(), String> {
     let extract = |dir: &Path| -> Result<_, String> {
         let files =
@@ -528,7 +528,7 @@ fn do_diff_state(
         } = extract_binned_latest_entries_in(
             files.iter().map(|file| &file.path),
             num_bins,
-            &bin_range_of_interest,
+            &bins_of_interest,
         )
         .map_err(|err| format!("failed to extract entries: {err}"))?;
         let num_accounts: usize = latest_entries.iter().map(|bin| bin.len()).sum();
@@ -722,14 +722,14 @@ fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo
 /// If there are multiple entries for a pubkey, only the latest is returned.
 ///
 /// - `num_bins` specifies the number of bins to split the entries into.
-/// - `bin_range_of_interest` specifies the bin_range in which the entries should be returned.
+/// - `bins_of_interest` specifies the bin_range in which the entries should be returned.
 ///
 /// Note: `files` must be sorted in ascending order, as insertion order is
 /// relied on to guarantee the latest entry is returned.
 fn extract_binned_latest_entries_in(
     files: impl IntoIterator<Item = impl AsRef<Path>>,
     num_bins: usize,
-    bin_range_of_interest: &Range<usize>,
+    bins_of_interest: &Range<usize>,
 ) -> Result<BinnedLatestEntriesInfo, String> {
     let binner = PubkeyBinCalculator24::new(num_bins);
     let mut entries: Box<_> = iter::repeat_with(HashMap::default).take(num_bins).collect();
@@ -746,7 +746,7 @@ fn extract_binned_latest_entries_in(
 
         let num_entries = scan_mmap(&mmap, |entry| {
             let bin = binner.bin_from_pubkey(&entry.pubkey);
-            if !bin_range_of_interest.contains(&bin) {
+            if !bins_of_interest.contains(&bin) {
                 return;
             }
 
