@@ -145,8 +145,7 @@ where
     }
 
     if shred1.index() == shred2.index() {
-        if !shred1.equal_payload_without_retransmitter_signature(&mut shred2.clone().into_payload())
-        {
+        if shred1.is_shred_duplicate(shred2) {
             return Ok(());
         }
         return Err(Error::InvalidDuplicateShreds);

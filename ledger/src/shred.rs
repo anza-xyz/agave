@@ -579,16 +579,35 @@ impl Shred {
         }
     }
 
-    /// Compares payload with `other` ignoring the retransmitter signatures. This modifies the
-    /// retransmitter signature of `other`. If we encounter an error while setting the retransmitter
-    /// signature this comparison occurs without signature modification.
-    pub fn equal_payload_without_retransmitter_signature(&self, other: &mut [u8]) -> bool {
-        if let Ok(signature) = self.retransmitter_signature() {
-            if let Err(err) = layout::set_retransmitter_signature(other, &signature) {
-                error!("set retransmitter signature failed: {err:?}");
-            }
+    /// Returns true if the other shred has the same ShredId, i.e. (slot, index,
+    /// shred-type), but different payload.
+    /// Retransmitter's signature is ignored when comparing payloads.
+    pub fn is_shred_duplicate(&self, other: &Shred) -> bool {
+        if self.id() != other.id() {
+            return false;
         }
-        other == self.payload()
+        fn get_payload(shred: &Shred) -> &[u8] {
+            let Ok(offset) = shred.retransmitter_signature_offset() else {
+                return shred.payload();
+            };
+            // Assert that the retransmitter's signature is at the very end of
+            // the shred payload.
+            debug_assert_eq!(offset + SIZE_OF_SIGNATURE, shred.payload().len());
+            shred
+                .payload()
+                .get(..offset)
+                .unwrap_or_else(|| shred.payload())
+        }
+        get_payload(self) != get_payload(other)
+    }
+
+    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
+        match self {
+            Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
+            Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),
+            Self::ShredCode(ShredCode::Legacy(_)) => Err(Error::InvalidShredVariant),
+            Self::ShredData(ShredData::Legacy(_)) => Err(Error::InvalidShredVariant),
+        }
     }
 }
 

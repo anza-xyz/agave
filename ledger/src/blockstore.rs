@@ -4016,7 +4016,12 @@ impl Blockstore {
             ShredType::Code => self.get_coding_shred(slot, u64::from(index)),
         }
         .expect("fetch from DuplicateSlots column family failed")?;
-        (!shred.equal_payload_without_retransmitter_signature(&mut other)).then_some(other)
+        if let Ok(signature) = shred.retransmitter_signature() {
+            if let Err(err) = shred::layout::set_retransmitter_signature(&mut other, &signature) {
+                error!("set retransmitter signature failed: {err:?}");
+            }
+        }
+        (&other != shred.payload()).then_some(other)
     }
 
     pub fn has_duplicate_shreds_in_slot(&self, slot: Slot) -> bool {
