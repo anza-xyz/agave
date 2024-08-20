@@ -547,6 +547,10 @@ pub fn output_slot(
     verbose_level: u64,
     all_program_ids: &mut HashMap<Pubkey, u64>,
 ) -> Result<()> {
+    if *output_format == OutputFormat::Display && verbose_level <= 1 {
+        println!("Slot {slot}");
+    }
+
     if blockstore.is_dead(slot) {
         if allow_dead_slots {
             if *output_format == OutputFormat::Display {
