@@ -34,6 +34,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
+    solana_accounts_db::contains::Contains,
     solana_entry::entry::VerifyRecyclers,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
@@ -1305,6 +1306,13 @@ impl ReplayStage {
         progress: &mut ProgressMap,
     ) {
         let start_slot = poh_recorder.read().unwrap().start_slot();
+
+        // It is possible that bank corresponding to `start_slot` has been
+        // dumped, so we need to double check it exists before proceeding
+        if !progress.contains(&start_slot) {
+            debug!("Slot may have been dumped: start_slot={}", start_slot);
+            return;
+        }
 
         if let (false, Some(latest_leader_slot)) =
             progress.get_leader_propagation_slot_must_exist(start_slot)
@@ -8525,6 +8533,90 @@ pub(crate) mod tests {
         );
         let received_slots = receive_slots(&retransmit_slots_receiver);
         assert_eq!(received_slots, vec![8, 9, 11]);
+    }
+
+    #[test]
+    fn test_dumped_slot_in_retransmit_latest_unpropagated_leader_slot() {
+        let ReplayBlockstoreComponents {
+            validator_node_to_vote_keys,
+            leader_schedule_cache,
+            poh_recorder,
+            vote_simulator,
+            ref my_pubkey,
+            ref blockstore,
+            ..
+        } = replay_blockstore_components(None, 10, None::<GenerateVotes>);
+
+        let VoteSimulator {
+            mut progress,
+            ref bank_forks,
+            ..
+        } = vote_simulator;
+
+        let poh_recorder = Arc::new(poh_recorder);
+        let (retransmit_slots_sender, _) = unbounded();
+
+        let bank1 = Bank::new_from_parent(
+            bank_forks.read().unwrap().get(0).unwrap(),
+            &leader_schedule_cache.slot_leader_at(1, None).unwrap(),
+            1,
+        );
+        progress.insert(
+            1,
+            ForkProgress::new_from_bank(
+                &bank1,
+                bank1.collector_id(),
+                validator_node_to_vote_keys
+                    .get(bank1.collector_id())
+                    .unwrap(),
+                Some(0),
+                0,
+                0,
+            ),
+        );
+        assert!(progress.get_propagated_stats(1).unwrap().is_leader_slot);
+        bank1.freeze();
+        bank_forks.write().unwrap().insert(bank1);
+        let bank1 = bank_forks.read().unwrap().get(1).expect("Just inserted");
+
+        progress.get_retransmit_info_mut(0).unwrap().retry_time = Instant::now();
+        poh_recorder.write().unwrap().reset(bank1, None);
+        assert_eq!(poh_recorder.read().unwrap().start_slot(), 1);
+
+        // Now dump and repair slot 1
+        let (mut ancestors, mut descendants) = {
+            let r_bank_forks = bank_forks.read().unwrap();
+            (r_bank_forks.ancestors(), r_bank_forks.descendants())
+        };
+        let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
+        let bank1_bad_hash = Hash::new_unique();
+        duplicate_slots_to_repair.insert(1, bank1_bad_hash);
+        let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
+        let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
+
+        ReplayStage::dump_then_repair_correct_slots(
+            &mut duplicate_slots_to_repair,
+            &mut ancestors,
+            &mut descendants,
+            &mut progress,
+            bank_forks,
+            blockstore,
+            None,
+            &mut purge_repair_slot_counter,
+            &dumped_slots_sender,
+            my_pubkey,
+            &leader_schedule_cache,
+        );
+        assert_eq!(
+            dumped_slots_receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(vec![(1, bank1_bad_hash)])
+        );
+
+        ReplayStage::retransmit_latest_unpropagated_leader_slot(
+            &poh_recorder,
+            &retransmit_slots_sender,
+            &mut progress,
+        );
     }
 
     #[test]
