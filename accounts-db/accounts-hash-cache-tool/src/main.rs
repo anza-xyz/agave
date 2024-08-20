@@ -241,7 +241,7 @@ fn cmd_diff_state(
                 1 => bins[0]..bins[0].saturating_add(1),
                 2 => bins[0]..bins[1],
                 _ => {
-                    unreachable!("invalid argument are given to bins_of_interest.")
+                    unreachable!("invalid number of values given to bins_of_interest.")
                 }
             }
         } else {
