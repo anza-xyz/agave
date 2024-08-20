@@ -1970,6 +1970,9 @@ impl ReplayStage {
         // `poh_slot` and `parent_slot`, because they're in the same
         // `NUM_CONSECUTIVE_LEADER_SLOTS` block, we still skip the propagated
         // check because it's still within the propagation grace period.
+        //
+        // We've already checked in start_leader() that parent_slot hasn't been
+        // dumped, so we should get it in the progress map.
         if let Some(latest_leader_slot) =
             progress_map.get_latest_leader_slot_must_exist(parent_slot)
         {
@@ -2042,11 +2045,17 @@ impl ReplayStage {
 
         trace!("{} reached_leader_slot", my_pubkey);
 
-        let parent = bank_forks
-            .read()
-            .unwrap()
-            .get(parent_slot)
-            .expect("parent_slot doesn't exist in bank forks");
+        let parent = bank_forks.read().unwrap().get(parent_slot);
+
+        if parent.is_none() {
+            warn!(
+                "parent bank {} may have been dumped, unable to start leader",
+                parent_slot
+            );
+            return false;
+        }
+
+        let parent = parent.unwrap();
 
         assert!(parent.is_frozen());
 
@@ -2091,6 +2100,7 @@ impl ReplayStage {
             );
 
             if !Self::check_propagation_for_start_leader(poh_slot, parent_slot, progress_map) {
+                // We checked that parent_slot hasn't been dumped, so we should get it in the progress map.
                 let latest_unconfirmed_leader_slot = progress_map.get_latest_leader_slot_must_exist(parent_slot)
                     .expect("In order for propagated check to fail, latest leader must exist in progress map");
                 if poh_slot != skipped_slots_info.last_skipped_slot {
@@ -3595,6 +3605,8 @@ impl ReplayStage {
         vote_tracker: &VoteTracker,
         cluster_slots: &ClusterSlots,
     ) {
+        // We would only reach here if the bank is in bank_forks, so it
+        // isn't dumped and should exist in progress map.
         // If propagation has already been confirmed, return
         if progress.get_leader_propagation_slot_must_exist(slot).0 {
             return;
@@ -3910,6 +3922,8 @@ impl ReplayStage {
                 )
             };
 
+            // If we reach here, the candidate_vote_bank exists in the bank_forks, so it isn't
+            // dumped and should exist in progress map.
             let propagation_confirmed = is_leader_slot
                 || progress
                     .get_leader_propagation_slot_must_exist(candidate_vote_bank.slot())
@@ -3987,6 +4001,8 @@ impl ReplayStage {
         fork_tip: Slot,
         bank_forks: &BankForks,
     ) {
+        // We would only reach here if the bank is in bank_forks, so it
+        // isn't dumped and should exist in progress map.
         let mut current_leader_slot = progress.get_latest_leader_slot_must_exist(fork_tip);
         let mut did_newly_reach_threshold = false;
         let root = bank_forks.root();
@@ -4413,6 +4429,9 @@ impl ReplayStage {
         for failure in heaviest_fork_failures {
             match failure {
                 HeaviestForkFailures::NoPropagatedConfirmation(slot, ..) => {
+                    // If failure is NoPropagatedConfirmation, then inside select_vote_and_reset_forks
+                    // we already confirmed it's in progress map, we should see it in progress map
+                    // here because we don't have dump and repair in between.
                     if let Some(latest_leader_slot) =
                         progress.get_latest_leader_slot_must_exist(*slot)
                     {
@@ -8536,12 +8555,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_dumped_slot_in_retransmit_latest_unpropagated_leader_slot() {
+    fn test_dumped_slot_not_causing_panic() {
+        solana_logger::setup();
         let ReplayBlockstoreComponents {
             validator_node_to_vote_keys,
             leader_schedule_cache,
             poh_recorder,
             vote_simulator,
+            rpc_subscriptions,
             ref my_pubkey,
             ref blockstore,
             ..
@@ -8580,7 +8601,7 @@ pub(crate) mod tests {
         let bank1 = bank_forks.read().unwrap().get(1).expect("Just inserted");
 
         progress.get_retransmit_info_mut(0).unwrap().retry_time = Instant::now();
-        poh_recorder.write().unwrap().reset(bank1, None);
+        poh_recorder.write().unwrap().reset(bank1, Some((2, 2)));
         assert_eq!(poh_recorder.read().unwrap().start_slot(), 1);
 
         // Now dump and repair slot 1
@@ -8612,11 +8633,32 @@ pub(crate) mod tests {
             Ok(vec![(1, bank1_bad_hash)])
         );
 
+        // Now check it doesn't cause panic in the following functions.
         ReplayStage::retransmit_latest_unpropagated_leader_slot(
             &poh_recorder,
             &retransmit_slots_sender,
             &mut progress,
         );
+
+        let (banking_tracer, _) = BankingTracer::new(None).unwrap();
+        // A vote has not technically been rooted, but it doesn't matter for
+        // this test to use true to avoid skipping the leader slot
+        let has_new_vote_been_rooted = true;
+        let track_transaction_indexes = false;
+
+        assert!(!ReplayStage::maybe_start_leader(
+            my_pubkey,
+            bank_forks,
+            &poh_recorder,
+            &leader_schedule_cache,
+            &rpc_subscriptions,
+            &mut progress,
+            &retransmit_slots_sender,
+            &mut SkippedSlotsInfo::default(),
+            &banking_tracer,
+            has_new_vote_been_rooted,
+            track_transaction_indexes,
+        ));
     }
 
     #[test]
