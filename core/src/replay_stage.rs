@@ -2047,9 +2047,8 @@ impl ReplayStage {
 
         let Some(parent) = bank_forks.read().unwrap().get(parent_slot) else {
             warn!(
-                "parent bank {} may have been dumped, unable to start leader",
-                parent_slot
-            );
+                "Poh recorder parent slot {parent_slot} is missing from bank_forks. This indicates \
+                that we are in the middle of a dump and repair. Unable to start leader");
             return false;
         };
 
