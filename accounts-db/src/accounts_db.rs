@@ -1369,7 +1369,7 @@ impl CleaningMap {
     fn new(num_bins: usize, bin_calculator: PubkeyBinCalculator24) -> Self {
         Self {
             bin_calculator,
-            bins: std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
+            bins: std::iter::repeat_with(|| RwLock::new(HashMap::new()))
                 .take(num_bins)
                 .collect(),
             should_purge: std::iter::repeat_with(|| RwLock::new(BitVec::new()))
@@ -2737,17 +2737,16 @@ impl AccountsDb {
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
 
         let mut clean_rooted = Measure::start("clean_old_root-ms");
-        let should_purge_iter = (&candidates.should_purge).into_par_iter();
         let reclaim_vecs = candidates
             .bins
             .par_iter()
-            .zip(should_purge_iter)
+            .zip(candidates.should_purge.par_iter())
             .filter_map(|(candidates_bin, should_purge_bin)| {
                 let mut reclaims = Vec::new();
-                for (bin_index, (pubkey, _cleaning_info)) in
+                for (entry_index, (pubkey, _cleaning_info)) in
                     candidates_bin.read().unwrap().iter().enumerate()
                 {
-                    if should_purge_bin.read().unwrap().get(bin_index as u64) {
+                    if should_purge_bin.read().unwrap().get(entry_index as u64) {
                         let removed_from_index = self.accounts_index.clean_rooted_entries(
                             pubkey,
                             &mut reclaims,
@@ -3312,8 +3311,7 @@ impl AccountsDb {
 
         // parallel scan the index.
         let do_clean_scan = || {
-            let should_purge_iter = (&candidates.should_purge).into_par_iter();
-            candidates.bins.par_iter().zip(should_purge_iter).for_each(
+            candidates.bins.par_iter().zip(candidates.should_purge.par_iter()).for_each(
                 |(candidates_bin, should_purge_bin)| {
                     let mut found_not_zero = 0;
                     let mut not_found_on_fork = 0;
