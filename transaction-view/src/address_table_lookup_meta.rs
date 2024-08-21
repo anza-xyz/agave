@@ -2,7 +2,7 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, advance_offset_for_type, check_remaining,
-            optimized_read_compressed_u16, read_array, read_byte, read_type,
+            optimized_read_compressed_u16, read_slice_data, read_byte, read_type,
         },
         result::Result,
     },
@@ -128,13 +128,13 @@ impl<'a> Iterator for AddressTableLookupIterator<'a> {
             let num_write_accounts =
                 optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
             let writable_indexes =
-                read_array::<u8>(self.bytes, &mut self.offset, num_write_accounts).ok()?;
+                read_slice_data::<u8>(self.bytes, &mut self.offset, num_write_accounts).ok()?;
 
             // Read the number of read indexes, and then update the offset.
             let num_read_accounts =
                 optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
             let readonly_indexes =
-                read_array::<u8>(self.bytes, &mut self.offset, num_read_accounts).ok()?;
+                read_slice_data::<u8>(self.bytes, &mut self.offset, num_read_accounts).ok()?;
 
             Some(SVMMessageAddressTableLookup {
                 account_key,

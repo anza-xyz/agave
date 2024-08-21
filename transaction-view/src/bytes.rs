@@ -137,7 +137,11 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 /// 2. The size of `T` is small enough such that a usize will not overflow if
 ///    given the maximum array size (u16::MAX).
 #[inline(always)]
-pub fn read_array<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize, len: u16) -> Result<&'a [T]> {
+pub fn read_slice_data<'a, T: Sized>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    len: u16,
+) -> Result<&'a [T]> {
     let current_ptr = bytes.as_ptr().wrapping_add(*offset);
     advance_offset_for_array::<T>(bytes, offset, len)?;
     Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, len as usize) })
