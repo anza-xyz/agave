@@ -439,6 +439,14 @@ pub unsafe fn deserialize_into<'a>(
     let num_accounts = *(input.add(offset) as *const u64) as usize;
     offset += size_of::<u64>();
 
+    if num_accounts > accounts.len() {
+        panic!(
+            "{} accounts provided, but only {} are supported",
+            num_accounts,
+            accounts.len()
+        );
+    }
+
     // Account Infos
 
     for i in 0..num_accounts {
