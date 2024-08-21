@@ -3979,6 +3979,11 @@ impl AccountsDb {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn set_storage_access(&mut self, storage_access: StorageAccess) {
+        self.storage_access = storage_access;
+    }
+
     /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
     /// accounts in the vector with the same pubkey.
     ///
