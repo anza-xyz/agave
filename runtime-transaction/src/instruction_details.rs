@@ -1,6 +1,5 @@
 use {
-    crate::compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
-    solana_builtins_default_costs::{BUILTIN_INSTRUCTION_COSTS, MAYBE_BUILTIN_KEY},
+    crate::builtin_auxiliary_data_store::BuiltinAuxiliaryDataStore,
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
@@ -34,23 +33,24 @@ impl InstructionDetails {
     pub fn try_from<'a>(
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
     ) -> Result<Self> {
-        let mut filter = ComputeBudgetProgramIdFilter::new();
+        let mut filter = BuiltinAuxiliaryDataStore::new();
 
         let mut compute_budget_instruction_details = InstructionDetails::default();
         for (i, (program_id, instruction)) in instructions.enumerate() {
-            if filter.is_compute_budget_program(instruction.program_id_index as usize, program_id)
+            if let Some((is_compute_budget, cost)) =
+                filter.get_auxiliary_data(instruction.program_id_index as usize, program_id)
             {
-                compute_budget_instruction_details.process_instruction(i as u8, &instruction)?;
-                saturating_add_assign!(
-                    compute_budget_instruction_details.num_compute_budget_instructions,
-                    1
-                );
-            }
-
-            if let Some(cost) = BUILTIN_INSTRUCTION_COSTS.get(program_id) {
+                if is_compute_budget {
+                    compute_budget_instruction_details
+                        .process_instruction(i as u8, &instruction)?;
+                    saturating_add_assign!(
+                        compute_budget_instruction_details.num_compute_budget_instructions,
+                        1
+                    );
+                }
                 saturating_add_assign!(
                     compute_budget_instruction_details.builtin_instructions_cost,
-                    *cost as u32
+                    cost
                 );
                 saturating_add_assign!(
                     compute_budget_instruction_details.num_builtin_instructions,
