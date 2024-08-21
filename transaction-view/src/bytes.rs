@@ -3,6 +3,9 @@ use crate::result::{Result, TransactionParsingError};
 /// Check that the buffer has at least `len` bytes remaining starting at
 /// `offset`. Returns Err if the buffer is too short.
 ///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Current offset into `bytes`.
+///
 /// Assumptions:
 /// - The current offset is not greater than `bytes.len()`.
 #[inline(always)]
@@ -28,6 +31,9 @@ pub fn read_byte(bytes: &[u8], offset: &mut usize) -> Result<u8> {
 /// Read a compressed u16 from `bytes` starting at `offset`.
 /// If the buffer is too short or the encoding is invalid, return Err.
 /// `offset` is updated to point to the byte after the compressed u16.
+///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Current offset into `bytes`.
 ///
 /// Assumptions:
 /// - The current offset is not greater than `bytes.len()`.
@@ -61,6 +67,7 @@ pub fn read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result<u16> {
 }
 
 /// Domain-specific optimization for reading a compressed u16.
+///
 /// The compressed u16's are only used for array-lengths in our transaction
 /// format. The transaction packet has a maximum size of 1232 bytes.
 /// This means that the maximum array length within a **valid** transaction is
@@ -70,6 +77,9 @@ pub fn read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result<u16> {
 /// case, and reads a maximum of 2 bytes.
 /// If the buffer is too short or the encoding is invalid, return Err.
 /// `offset` is updated to point to the byte after the compressed u16.
+///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Current offset into `bytes`.
 #[inline(always)]
 pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result<u16> {
     let mut result = 0u16;
@@ -98,6 +108,10 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 /// Update the `offset` to point to the byte after an array of length `len` and
 /// of type `T`. If the buffer is too short, return Err.
 ///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Curernt offset into `bytes`.
+/// * `num` - Number of `T` elements in the array.
+///
 /// Assumptions:
 /// 1. The current offset is not greater than `bytes.len()`.
 /// 2. The size of `T` is small enough such that a usize will not overflow if
@@ -106,9 +120,9 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 pub fn advance_offset_for_array<T: Sized>(
     bytes: &[u8],
     offset: &mut usize,
-    len: u16,
+    num: u16,
 ) -> Result<()> {
-    let array_len_bytes = usize::from(len).wrapping_mul(core::mem::size_of::<T>());
+    let array_len_bytes = usize::from(num).wrapping_mul(core::mem::size_of::<T>());
     check_remaining(bytes, *offset, array_len_bytes)?;
     *offset = offset.wrapping_add(array_len_bytes);
     Ok(())
@@ -116,6 +130,9 @@ pub fn advance_offset_for_array<T: Sized>(
 
 /// Update the `offset` to point t the byte after the `T`.
 /// If the buffer is too short, return Err.
+///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Curernt offset into `bytes`.
 ///
 /// Assumptions:
 /// 1. The current offset is not greater than `bytes.len()`.
@@ -132,6 +149,10 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 /// and advancing the offset.
 /// If the buffer is too short, return Err.
 ///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Curernt offset into `bytes`.
+/// * `num` - Number of `T` elements in the slice.
+///
 /// # Safety
 /// 1. `bytes` must be a valid slice of bytes.
 /// 2. `offset` must be a valid offset into `bytes`.
@@ -143,16 +164,19 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 pub unsafe fn read_slice_data<'a, T: Sized>(
     bytes: &'a [u8],
     offset: &mut usize,
-    len: u16,
+    num: u16,
 ) -> Result<&'a [T]> {
     let current_ptr = bytes.as_ptr().wrapping_add(*offset);
-    advance_offset_for_array::<T>(bytes, offset, len)?;
-    Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(len)) })
+    advance_offset_for_array::<T>(bytes, offset, num)?;
+    Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num)) })
 }
 
 /// Return a reference to the next `T` in the buffer, checking bounds and
 /// advancing the offset.
 /// If the buffer is too short, return Err.
+///
+/// * `bytes` - Slice of bytes to read from.
+/// * `offset` - Curernt offset into `bytes`.
 ///
 /// # Safety
 /// 1. `bytes` must be a valid slice of bytes.
