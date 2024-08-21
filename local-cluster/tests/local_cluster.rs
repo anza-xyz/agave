@@ -5,7 +5,7 @@ use {
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
-    rand::seq::IteratorRandom,
+    rand::seq::SliceRandom,
     serial_test::serial,
     solana_accounts_db::{
         hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
@@ -95,6 +95,7 @@ use {
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    strum::{EnumCount, IntoEnumIterator},
 };
 
 #[test]
@@ -2698,12 +2699,11 @@ fn test_oc_bad_signatures() {
                 // Add all recent vote slots on this fork to allow cluster to pass
                 // vote threshold checks in replay. Note this will instantly force a
                 // root by this validator.
-                let vote_slots: Vec<Slot> = vec![vote_slot];
+                let tower_sync = TowerSync::new_from_slots(vec![vote_slot], vote_hash, None);
 
                 let bad_authorized_signer_keypair = Keypair::new();
-                let mut vote_tx = vote_transaction::new_vote_transaction(
-                    vote_slots,
-                    vote_hash,
+                let mut vote_tx = vote_transaction::new_tower_sync_transaction(
+                    tower_sync,
                     leader_vote_tx.message.recent_blockhash,
                     &node_keypair,
                     &vote_keypair,
@@ -5711,20 +5711,19 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
          info",
     );
 
-    let num_nodes = 2;
+    let num_nodes = BlockVerificationMethod::COUNT;
     let mut config = ClusterConfig::new_with_equal_stakes(
         num_nodes,
         DEFAULT_CLUSTER_LAMPORTS,
         DEFAULT_NODE_STAKE,
     );
 
-    // Randomly switch to use unified scheduler
-    config
-        .validator_configs
-        .iter_mut()
-        .choose(&mut rand::thread_rng())
-        .unwrap()
-        .block_verification_method = BlockVerificationMethod::UnifiedScheduler;
+    // Overwrite block_verification_method with shuffled variants
+    let mut methods = BlockVerificationMethod::iter().collect::<Vec<_>>();
+    methods.shuffle(&mut rand::thread_rng());
+    for (validator_config, method) in config.validator_configs.iter_mut().zip_eq(methods) {
+        validator_config.block_verification_method = method;
+    }
 
     let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     cluster_tests::spend_and_verify_all_nodes(

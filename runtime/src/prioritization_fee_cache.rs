@@ -2,6 +2,7 @@ use {
     crate::{bank::Bank, prioritization_fee::*},
     crossbeam_channel::{unbounded, Receiver, Sender},
     log::*,
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
@@ -9,6 +10,7 @@ use {
         pubkey::Pubkey,
         transaction::SanitizedTransaction,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     std::{
         collections::{BTreeMap, HashMap},
         sync::{
@@ -203,12 +205,16 @@ impl PrioritizationFeeCache {
                 }
 
                 let compute_budget_limits = process_compute_budget_instructions(
-                    sanitized_transaction.message().program_instructions_iter(),
+                    SVMMessage::program_instructions_iter(sanitized_transaction),
                 );
-                let account_locks = sanitized_transaction
-                    .get_account_locks(bank.get_transaction_account_lock_limit());
 
-                if compute_budget_limits.is_err() || account_locks.is_err() {
+                let message = sanitized_transaction.message();
+                let lock_result = validate_account_locks(
+                    message.account_keys(),
+                    bank.get_transaction_account_lock_limit(),
+                );
+
+                if compute_budget_limits.is_err() || lock_result.is_err() {
                     continue;
                 }
                 let compute_budget_limits = compute_budget_limits.unwrap();
@@ -219,12 +225,13 @@ impl PrioritizationFeeCache {
                     continue;
                 }
 
-                let writable_accounts = account_locks
-                    .unwrap()
-                    .writable
+                let writable_accounts = message
+                    .account_keys()
                     .iter()
-                    .map(|key| **key)
-                    .collect::<Vec<_>>();
+                    .enumerate()
+                    .filter(|(index, _)| message.is_writable(*index))
+                    .map(|(_, key)| *key)
+                    .collect();
 
                 self.sender
                     .send(CacheServiceUpdate::TransactionUpdate {

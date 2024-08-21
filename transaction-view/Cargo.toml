@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 solana-sdk = { workspace = true }
+solana-svm-transaction = { workspace = true }
 
 [dev-dependencies]
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -23,4 +24,8 @@ dev-context-only-utils = []
 
 [[bench]]
 name = "bytes"
+harness = false
+
+[[bench]]
+name = "transaction_meta"
 harness = false
