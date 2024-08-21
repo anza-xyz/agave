@@ -94,13 +94,29 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // Read the number of account indexes, and then update the offset
             // to skip over the account indexes.
             let num_accounts = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
             let accounts =
-                read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts).ok()?;
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts) }
+                    .ok()?;
 
             // Read the length of the data, and then update the offset to skip
             // over the data.
             let data_len = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-            let data = read_slice_data::<u8>(self.bytes, &mut self.offset, data_len).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
+            let data =
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) }.ok()?;
 
             // Update the index to point to the next instruction.
             self.index = self.index.wrapping_add(1);

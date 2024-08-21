@@ -132,30 +132,35 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 /// and advancing the offset.
 /// If the buffer is too short, return Err.
 ///
-/// Assumptions:
-/// 1. The current offset is not greater than `bytes.len()`.
-/// 2. The size of `T` is small enough such that a usize will not overflow if
-///    given the maximum array size (u16::MAX).
+/// # Safety
+/// 1. `bytes` must be a valid slice of bytes.
+/// 2. `offset` must be a valid offset into `bytes`.
+/// 3. `bytes + offset` must be properly aligned for `T`.
+/// 4. `T` slice must be validly initialized.
+/// 5. The size of `T` is small enough such that a usize will not overflow if
+///    given the maximum slice size (u16::MAX).
 #[inline(always)]
-pub fn read_slice_data<'a, T: Sized>(
+pub unsafe fn read_slice_data<'a, T: Sized>(
     bytes: &'a [u8],
     offset: &mut usize,
     len: u16,
 ) -> Result<&'a [T]> {
     let current_ptr = bytes.as_ptr().wrapping_add(*offset);
     advance_offset_for_array::<T>(bytes, offset, len)?;
-    Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, len as usize) })
+    Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(len)) })
 }
 
 /// Return a reference to the next `T` in the buffer, checking bounds and
 /// advancing the offset.
 /// If the buffer is too short, return Err.
 ///
-/// Assumptions:
-/// 1. The current offset is not greater than `bytes.len()`.
-/// 2. The size of `T` is small enough such that a usize will not overflow.
+/// # Safety
+/// 1. `bytes` must be a valid slice of bytes.
+/// 2. `offset` must be a valid offset into `bytes`.
+/// 3. `bytes + offset` must be properly aligned for `T`.
+/// 4. `T` must be validly initialized.
 #[inline(always)]
-pub fn read_type<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a T> {
+pub unsafe fn read_type<'a, T: Sized>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a T> {
     let current_ptr = bytes.as_ptr().wrapping_add(*offset);
     advance_offset_for_type::<T>(bytes, offset)?;
     Ok(unsafe { &*(current_ptr as *const T) })

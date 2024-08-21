@@ -2,7 +2,7 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, advance_offset_for_type, check_remaining,
-            optimized_read_compressed_u16, read_slice_data, read_byte, read_type,
+            optimized_read_compressed_u16, read_byte, read_slice_data, read_type,
         },
         result::Result,
     },
@@ -122,19 +122,40 @@ impl<'a> Iterator for AddressTableLookupIterator<'a> {
             // 3. read indexes ([u8])
 
             // Advance offset for address of the lookup table.
-            let account_key = read_type::<Pubkey>(self.bytes, &mut self.offset).ok()?;
+            const _: () = assert!(core::mem::align_of::<Pubkey>() == 1, "Pubkey alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the slice.
+            // - The alignment of Pubkey is 1.
+            // - `Pubkey` is a byte array, it cannot be improperly initialized.
+            let account_key = unsafe { read_type::<Pubkey>(self.bytes, &mut self.offset) }.ok()?;
 
             // Read the number of write indexes, and then update the offset.
             let num_write_accounts =
                 optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
             let writable_indexes =
-                read_slice_data::<u8>(self.bytes, &mut self.offset, num_write_accounts).ok()?;
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_write_accounts) }
+                    .ok()?;
 
             // Read the number of read indexes, and then update the offset.
             let num_read_accounts =
                 optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
             let readonly_indexes =
-                read_slice_data::<u8>(self.bytes, &mut self.offset, num_read_accounts).ok()?;
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_read_accounts) }
+                    .ok()?;
 
             Some(SVMMessageAddressTableLookup {
                 account_key,
