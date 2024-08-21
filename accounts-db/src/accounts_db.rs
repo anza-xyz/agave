@@ -3979,6 +3979,7 @@ impl AccountsDb {
         }
     }
 
+    #[allow(dead_code)]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn set_storage_access(&mut self, storage_access: StorageAccess) {
         self.storage_access = storage_access;
