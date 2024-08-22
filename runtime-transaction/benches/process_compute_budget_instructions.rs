@@ -158,6 +158,38 @@ fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
         );
 }
 
+fn bench_process_compute_budget_and_transfer_only(c: &mut Criterion) {
+    let num_instructions = 355;
+    let pubkey = Pubkey::new_unique();
+    c.benchmark_group("bench_process_compute_budget_and_transfer_only")
+        .throughput(Throughput::Elements(NUM_TRANSACTIONS_PER_ITER as u64))
+        .bench_function(
+            format!("{num_instructions} transfer instructions and compute budget ixs"),
+            |bencher| {
+                let payer_keypair = Keypair::new();
+                let mut ixs: Vec<_> = (0..num_instructions - 4)
+                    .map(|i| system_instruction::transfer(&payer_keypair.pubkey(), &pubkey, i))
+                    .collect();
+                ixs.extend(vec![
+                    ComputeBudgetInstruction::request_heap_frame(40 * 1024),
+                    ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX),
+                    ComputeBudgetInstruction::set_compute_unit_price(u64::MAX),
+                    ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(u32::MAX),
+                ]);
+                let tx = build_sanitized_transaction(&payer_keypair, &ixs);
+
+                bencher.iter(|| {
+                    (0..NUM_TRANSACTIONS_PER_ITER).for_each(|_| {
+                        assert!(process_compute_budget_instructions(black_box(
+                            SVMMessage::program_instructions_iter(&tx)
+                        ))
+                        .is_ok())
+                    })
+                });
+            },
+        );
+}
+
 criterion_group!(
     benches,
     bench_process_compute_budget_instructions_empty,
@@ -165,5 +197,6 @@ criterion_group!(
     bench_process_compute_budget_instructions_compute_budgets,
     bench_process_compute_budget_instructions_builtins,
     bench_process_compute_budget_instructions_mixed,
+    bench_process_compute_budget_and_transfer_only,
 );
 criterion_main!(benches);

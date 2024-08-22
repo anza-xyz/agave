@@ -5,19 +5,25 @@ use {
     solana_sdk::pubkey::Pubkey,
 };
 
+#[derive(Default, PartialEq)]
+enum BuiltinCheckStatus {
+    #[default]
+    Unchecked,
+    NotBuiltin,
+    Builtin {
+        is_compute_budget: bool,
+        default_cost: u32,
+    },
+}
+
 pub(crate) struct BuiltinAuxiliaryDataStore {
-    // Array of auxiliary data for all possible static and sanitized program_id_index,
-    // Each possible value of data indicates:
-    //   None - un-checked
-    //   Some<None> - checked, not builtin
-    //   Some<Some<(bool, u32)>> - checked, is builtin and (is-compute-budget, default-cost)
-    auxiliary_data: [Option<Option<(bool, u32)>>; FILTER_SIZE as usize],
+    auxiliary_data: [BuiltinCheckStatus; FILTER_SIZE as usize],
 }
 
 impl BuiltinAuxiliaryDataStore {
     pub(crate) fn new() -> Self {
         BuiltinAuxiliaryDataStore {
-            auxiliary_data: [None; FILTER_SIZE as usize],
+            auxiliary_data: core::array::from_fn(|_| BuiltinCheckStatus::default()),
         }
     }
 
@@ -27,21 +33,37 @@ impl BuiltinAuxiliaryDataStore {
         index: usize,
         program_id: &Pubkey,
     ) -> Option<(bool, u32)> {
-        *self
+        let stat = self
             .auxiliary_data
             .get_mut(index)
-            .expect("program id index is sanitized")
-            .get_or_insert_with(|| {
-                if !MAYBE_BUILTIN_KEY[program_id.as_ref()[0] as usize] {
-                    return None;
-                }
+            .expect("program id index is sanitized");
+        if stat == &BuiltinCheckStatus::Unchecked {
+            *stat = Self::check_status(program_id)
+        }
 
-                BUILTIN_INSTRUCTION_COSTS.get(program_id).map(|cost| {
-                    (
-                        solana_sdk::compute_budget::check_id(program_id),
-                        *cost as u32,
-                    )
-                })
+        match stat {
+            BuiltinCheckStatus::NotBuiltin => None,
+            BuiltinCheckStatus::Builtin {
+                is_compute_budget,
+                default_cost,
+            } => Some((*is_compute_budget, *default_cost)),
+            _ => unreachable!("already checked"),
+        }
+    }
+
+    #[inline]
+    fn check_status(program_id: &Pubkey) -> BuiltinCheckStatus {
+        if !MAYBE_BUILTIN_KEY[program_id.as_ref()[0] as usize] {
+            return BuiltinCheckStatus::NotBuiltin;
+        }
+
+        BUILTIN_INSTRUCTION_COSTS
+            .get(program_id)
+            .map_or(BuiltinCheckStatus::NotBuiltin, |cost| {
+                BuiltinCheckStatus::Builtin {
+                    is_compute_budget: solana_sdk::compute_budget::check_id(program_id),
+                    default_cost: *cost as u32,
+                }
             })
     }
 }
@@ -57,15 +79,15 @@ mod test {
         let mut test_store = BuiltinAuxiliaryDataStore::new();
         let mut index = 9;
 
-        // initial state is Unchecked (eg, None)
-        assert!(test_store.auxiliary_data[index].is_none());
+        // initial state is Unchecked
+        assert!(test_store.auxiliary_data[index] == BuiltinCheckStatus::Unchecked);
 
         // non builtin returns None
         assert!(test_store
             .get_auxiliary_data(index, &DUMMY_PROGRAM_ID.parse().unwrap())
             .is_none());
         // but its state is now checked (eg, Some(...))
-        assert_eq!(test_store.auxiliary_data[index], Some(None));
+        assert!(test_store.auxiliary_data[index] == BuiltinCheckStatus::NotBuiltin);
         // lookup same `index` will return cached auxiliary data, will *not* lookup `program_id`
         // again
         assert!(test_store
