@@ -1831,7 +1831,7 @@ impl ReplayStage {
                 {
                     assert_eq!(
                         prev_hash, duplicate_confirmed_hash,
-                        "Additional duplicate confirmed notification with a different hash"
+                        "Additional duplicate confirmed notification for {confirmed_slot} with a different hash"
                     );
                     // Already processed this signal
                     continue;
@@ -4143,7 +4143,7 @@ impl ReplayStage {
             if let Some(prev_hash) = duplicate_confirmed_slots.insert(*slot, *frozen_hash) {
                 assert_eq!(
                     prev_hash, *frozen_hash,
-                    "Additional duplicate confirmed notification with a different hash"
+                    "Additional duplicate confirmed notification for {slot} with a different hash"
                 );
                 // Already processed this signal
                 continue;
@@ -9378,6 +9378,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Additional duplicate confirmed notification for 6")]
     fn test_mark_slots_duplicate_confirmed() {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
@@ -9474,29 +9475,24 @@ pub(crate) mod tests {
 
         // Mark 6 as duplicate confirmed again with a different hash, should panic
         let confirmed_slots = [(6, Hash::new_unique())];
-        assert!(
-            std::panic::catch_unwind(move || ReplayStage::mark_slots_duplicate_confirmed(
-                &confirmed_slots,
-                &blockstore,
-                &bank_forks,
-                &mut progress,
-                &mut DuplicateSlotsTracker::default(),
-                &mut heaviest_subtree_fork_choice,
-                &mut EpochSlotsFrozenSlots::default(),
-                &mut DuplicateSlotsToRepair::default(),
-                &ancestor_hashes_replay_update_sender,
-                &mut PurgeRepairSlotCounter::default(),
-                &mut duplicate_confirmed_slots,
-            ))
-            .unwrap_err()
-            .downcast_ref::<String>()
-            .unwrap()
-            .starts_with("assertion `left == right` failed: Additional duplicate confirmed notification with a different hash")
+        ReplayStage::mark_slots_duplicate_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
         );
     }
 
     #[test_case(true ; "same_batch")]
     #[test_case(false ; "seperate_batches")]
+    #[should_panic(expected = "Additional duplicate confirmed notification for 6")]
     fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
@@ -9603,24 +9599,18 @@ pub(crate) mod tests {
         // Mark 6 as duplicate confirmed again with a different hash, should panic
         sender.send(vec![(6, Hash::new_unique())]).unwrap();
 
-        assert!(
-            std::panic::catch_unwind(move || ReplayStage::process_duplicate_confirmed_slots(
-                &receiver,
-                &blockstore,
-                &mut DuplicateSlotsTracker::default(),
-                &mut duplicate_confirmed_slots,
-                &mut EpochSlotsFrozenSlots::default(),
-                &bank_forks,
-                &progress,
-                &mut heaviest_subtree_fork_choice,
-                &mut DuplicateSlotsToRepair::default(),
-                &ancestor_hashes_replay_update_sender,
-                &mut PurgeRepairSlotCounter::default(),
-            ))
-            .unwrap_err()
-            .downcast_ref::<String>()
-            .unwrap()
-            .starts_with("assertion `left == right` failed: Additional duplicate confirmed notification with a different hash")
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
         );
     }
 }
