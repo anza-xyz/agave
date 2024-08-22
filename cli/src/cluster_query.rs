@@ -1,7 +1,9 @@
 use {
     crate::{
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
-        compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
+        compute_budget::{
+            simulate_for_compute_unit_limit, ComputeUnitConfig, WithComputeUnitConfig,
+        },
         feature::get_feature_activation_epoch,
         spend_utils::{resolve_spend_tx_and_check_account_balance, SpendAmount},
     },
@@ -1458,6 +1460,20 @@ pub fn process_ping(
         }
     }
 
+    let to = config.signers[0].pubkey();
+    let ixs = vec![system_instruction::transfer(
+        &config.signers[0].pubkey(),
+        &to,
+        lamports,
+    )]
+    .with_compute_unit_config(&ComputeUnitConfig {
+        compute_unit_price,
+        compute_unit_limit: ComputeUnitLimit::Simulated,
+    });
+    let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
+    let compute_unit_limit =
+        ComputeUnitLimit::Static(simulate_for_compute_unit_limit(rpc_client, &message)?);
+
     'mainloop: for seq in 0..count.unwrap_or(u64::MAX) {
         let now = Instant::now();
         if fixed_blockhash.is_none() && now.duration_since(blockhash_acquired).as_secs() > 60 {
@@ -1468,10 +1484,8 @@ pub fn process_ping(
             blockhash_acquired = Instant::now();
         }
 
-        let to = config.signers[0].pubkey();
         lamports = lamports.saturating_add(1);
 
-        let compute_unit_limit = ComputeUnitLimit::Default;
         let build_message = |lamports| {
             let ixs = vec![system_instruction::transfer(
                 &config.signers[0].pubkey(),

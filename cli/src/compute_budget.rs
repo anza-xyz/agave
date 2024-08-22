@@ -20,6 +20,35 @@ pub(crate) enum UpdateComputeUnitLimitResult {
     NoInstructionFound,
 }
 
+// Returns the compute unit limit used during simulation
+pub(crate) fn simulate_for_compute_unit_limit(
+    rpc_client: &RpcClient,
+    message: &Message,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let transaction = Transaction::new_unsigned(message.clone());
+    let simulate_result = rpc_client
+        .simulate_transaction_with_config(
+            &transaction,
+            RpcSimulateTransactionConfig {
+                replace_recent_blockhash: true,
+                commitment: Some(rpc_client.commitment()),
+                ..RpcSimulateTransactionConfig::default()
+            },
+        )?
+        .value;
+
+    // Bail if the simulated transaction failed
+    if let Some(err) = simulate_result.err {
+        return Err(err.into());
+    }
+
+    let units_consumed = simulate_result
+        .units_consumed
+        .expect("compute units unavailable");
+
+    u32::try_from(units_consumed).map_err(Into::into)
+}
+
 // Returns the index of the compute unit limit instruction
 pub(crate) fn simulate_and_update_compute_unit_limit(
     rpc_client: &RpcClient,
@@ -46,29 +75,9 @@ pub(crate) fn simulate_and_update_compute_unit_limit(
         return Ok(UpdateComputeUnitLimitResult::NoInstructionFound);
     };
 
-    let transaction = Transaction::new_unsigned(message.clone());
-    let simulate_result = rpc_client
-        .simulate_transaction_with_config(
-            &transaction,
-            RpcSimulateTransactionConfig {
-                replace_recent_blockhash: true,
-                commitment: Some(rpc_client.commitment()),
-                ..RpcSimulateTransactionConfig::default()
-            },
-        )?
-        .value;
-
-    // Bail if the simulated transaction failed
-    if let Some(err) = simulate_result.err {
-        return Err(err.into());
-    }
-
-    let units_consumed = simulate_result
-        .units_consumed
-        .expect("compute units unavailable");
+    let compute_unit_limit = simulate_for_compute_unit_limit(rpc_client, message)?;
 
     // Overwrite the compute unit limit instruction with the actual units consumed
-    let compute_unit_limit = u32::try_from(units_consumed)?;
     message.instructions[compute_unit_limit_ix_index].data =
         ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit).data;
 
