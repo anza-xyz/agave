@@ -1831,7 +1831,7 @@ impl ReplayStage {
                 {
                     assert_eq!(prev_hash, duplicate_confirmed_hash);
                     // Already processed this signal
-                    return;
+                    continue;
                 }
 
                 let duplicate_confirmed_state = DuplicateConfirmedState::new_from_state(
@@ -4140,7 +4140,7 @@ impl ReplayStage {
             if let Some(prev_hash) = duplicate_confirmed_slots.insert(*slot, *frozen_hash) {
                 assert_eq!(prev_hash, *frozen_hash);
                 // Already processed this signal
-                return;
+                continue;
             }
 
             let duplicate_confirmed_state = DuplicateConfirmedState::new_from_state(
@@ -4531,6 +4531,7 @@ pub(crate) mod tests {
             sync::{atomic::AtomicU64, Arc, RwLock},
         },
         tempfile::tempdir,
+        test_case::test_case,
         trees::{tr, Tree},
     };
 
@@ -9368,5 +9369,193 @@ pub(crate) mod tests {
         // duplicate block.
         assert_eq!(working_bank.slot(), good_slot);
         assert_eq!(working_bank.parent_slot(), initial_slot);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion `left == right` failed")]
+    fn test_mark_slots_duplicate_confirmed() {
+        let generate_votes = |pubkeys: Vec<Pubkey>| {
+            pubkeys
+                .into_iter()
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .collect()
+        };
+        let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
+        let (vote_simulator, blockstore) =
+            setup_forks_from_tree(tree, 3, Some(Box::new(generate_votes)));
+        let VoteSimulator {
+            bank_forks,
+            mut heaviest_subtree_fork_choice,
+            mut progress,
+            ..
+        } = vote_simulator;
+
+        let (ancestor_hashes_replay_update_sender, _) = unbounded();
+        let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
+
+        // Mark 5 as duplicate confirmed
+        let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
+        let confirmed_slots = [(5, bank_hash_5)];
+
+        ReplayStage::mark_slots_duplicate_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+
+        // Mark 5 and 6 as duplicate confirmed
+        let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
+        let confirmed_slots = [(5, bank_hash_5), (6, bank_hash_6)];
+
+        ReplayStage::mark_slots_duplicate_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+        assert_eq!(*duplicate_confirmed_slots.get(&6).unwrap(), bank_hash_6);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(6, bank_hash_6))
+            .unwrap_or(false));
+
+        // Mark 6 as duplicate confirmed again with a different hash, we should panic
+        let confirmed_slots = [(6, Hash::new_unique())];
+        ReplayStage::mark_slots_duplicate_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+    }
+
+    #[test_case(true ; "same_batch")]
+    #[test_case(false ; "seperate_batches")]
+    #[should_panic(expected = "assertion `left == right` failed")]
+    fn test_process_duplicate_confirmed_slots(same_batch: bool) {
+        let generate_votes = |pubkeys: Vec<Pubkey>| {
+            pubkeys
+                .into_iter()
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .collect()
+        };
+        let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
+        let (vote_simulator, blockstore) =
+            setup_forks_from_tree(tree, 3, Some(Box::new(generate_votes)));
+        let VoteSimulator {
+            bank_forks,
+            mut heaviest_subtree_fork_choice,
+            progress,
+            ..
+        } = vote_simulator;
+
+        let (ancestor_hashes_replay_update_sender, _) = unbounded();
+        let (sender, receiver) = unbounded();
+        let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
+
+        // Mark 5 as duplicate confirmed
+        let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
+        sender.send(vec![(5, bank_hash_5)]).unwrap();
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+
+        // Mark 5 and 6 as duplicate confirmed
+        let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
+        if same_batch {
+            sender
+                .send(vec![(5, bank_hash_5), (6, bank_hash_6)])
+                .unwrap();
+        } else {
+            sender.send(vec![(5, bank_hash_5)]).unwrap();
+            sender.send(vec![(6, bank_hash_6)]).unwrap();
+        }
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+        assert_eq!(*duplicate_confirmed_slots.get(&6).unwrap(), bank_hash_6);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(6, bank_hash_6))
+            .unwrap_or(false));
+
+        // Mark 6 as duplicate confirmed again with a different hash
+        sender.send(vec![(6, Hash::new_unique())]).unwrap();
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
     }
 }
