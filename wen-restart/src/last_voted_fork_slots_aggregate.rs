@@ -19,7 +19,7 @@ use {
 // If at least 1/3 of the stake has voted for a slot in next Epoch, we think
 // the cluster's clock is in sync and everyone will enter the new Epoch soon.
 // So we require that we have >80% stake in the new Epoch to exit.
-const EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD: f64 = 33.33;
+const EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD: f64 = 1f64 / 3f64;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LastVotedForkSlotsEpochInfo {
@@ -231,7 +231,9 @@ impl LastVotedForkSlotsAggregate {
     pub(crate) fn min_active_percent(&self) -> f64 {
         self.epoch_info_vec
             .iter()
-            .filter(|info| info.voted_for_this_epoch_percent > EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD)
+            .filter(|info| {
+                info.voted_for_this_epoch_percent > 100.0 * EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD
+            })
             .map(|info| info.voted_percent)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0)
