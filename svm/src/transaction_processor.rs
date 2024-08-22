@@ -5,7 +5,7 @@ use {
         account_loader::{
             collect_rent_from_account, load_accounts, validate_fee_payer,
             CheckedTransactionDetails, LoadedTransaction, LoadedTransactionAccount,
-            TransactionCheckResult, TransactionLoadResult, TransactionValidationResult,
+            TransactionCheckResults, TransactionLoadResult, TransactionValidationResult,
             ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
@@ -227,7 +227,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         callbacks: &CB,
         sanitized_txs: &[impl SVMTransaction],
-        check_results: Vec<TransactionCheckResult>,
+        check_results: &mut dyn TransactionCheckResults,
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
@@ -373,7 +373,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         callbacks: &CB,
         account_overrides: Option<&AccountOverrides>,
         sanitized_txs: &[impl core::borrow::Borrow<T>],
-        check_results: Vec<TransactionCheckResult>,
+        check_results: &mut dyn TransactionCheckResults,
         feature_set: &FeatureSet,
         fee_structure: &FeeStructure,
         rent_collector: &RentCollector,
@@ -381,8 +381,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> Vec<TransactionValidationResult> {
         sanitized_txs
             .iter()
-            .zip(check_results)
-            .map(|(sanitized_tx, check_result)| {
+            .enumerate()
+            .map(|(idx, sanitized_tx)| {
+                let check_result = check_results.consume_check_result(idx);
                 check_result.and_then(|checked_details| {
                     let message = sanitized_tx.borrow();
                     self.validate_transaction_fee_payer(

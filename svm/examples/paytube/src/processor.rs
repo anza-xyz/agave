@@ -6,9 +6,9 @@ use {
     solana_program_runtime::loaded_programs::{
         BlockRelation, ForkGraph, LoadProgramMetrics, ProgramCacheEntry,
     },
-    solana_sdk::{account::ReadableAccount, clock::Slot, feature_set::FeatureSet, transaction},
+    solana_sdk::{account::ReadableAccount, clock::Slot, feature_set::FeatureSet},
     solana_svm::{
-        account_loader::CheckedTransactionDetails,
+        account_loader::TransactionCheckResults,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::TransactionBatchProcessor,
     },
@@ -105,18 +105,7 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
     processor
 }
 
-/// This function is also a mock. In the Agave validator, the bank pre-checks
-/// transactions before providing them to the SVM API. We mock this step in
-/// PayTube, since we don't need to perform such pre-checks.
-pub(crate) fn get_transaction_check_results(
-    len: usize,
-    lamports_per_signature: u64,
-) -> Vec<transaction::Result<CheckedTransactionDetails>> {
-    vec![
-        transaction::Result::Ok(CheckedTransactionDetails {
-            nonce: None,
-            lamports_per_signature,
-        });
-        len
-    ]
-}
+/// Use the default implementation of CheckResults
+#[derive(Default)]
+pub struct PayTubeCheckResults {}
+impl TransactionCheckResults for PayTubeCheckResults {}

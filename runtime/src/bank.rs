@@ -150,7 +150,7 @@ use {
         stake_state::StakeStateV2,
     },
     solana_svm::{
-        account_loader::{collect_rent_from_account, LoadedTransaction},
+        account_loader::{collect_rent_from_account, LoadedTransaction, TransactionCheckBatch},
         account_overrides::AccountOverrides,
         account_saver::collect_accounts_to_store,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
@@ -3486,12 +3486,13 @@ impl Bank {
             rent_collector: Some(&self.rent_collector),
         };
 
+        let mut transaction_check_batch = TransactionCheckBatch::new(check_results);
         let sanitized_output = self
             .transaction_processor
             .load_and_execute_sanitized_transactions(
                 self,
                 sanitized_txs,
-                check_results,
+                &mut transaction_check_batch,
                 &processing_environment,
                 &processing_config,
             );

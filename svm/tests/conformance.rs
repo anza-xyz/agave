@@ -1,6 +1,6 @@
 use {
     crate::{
-        mock_bank::{MockBankCallback, MockForkGraph},
+        mock_bank::{MockBankCallback, MockForkGraph, MockTransactionCheck},
         transaction_builder::SanitizedTransactionBuilder,
     },
     lazy_static::lazy_static,
@@ -33,7 +33,6 @@ use {
         },
     },
     solana_svm::{
-        account_loader::CheckedTransactionDetails,
         program_loader,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::TransactionProcessingResultExtensions,
@@ -230,10 +229,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
 
     let transactions = vec![transaction];
-    let transaction_check = vec![Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 30,
-    })];
 
     let compute_budget = ComputeBudget {
         compute_unit_limit: input.cu_avail,
@@ -302,7 +297,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        transaction_check,
+        &mut MockTransactionCheck::default(),
         &TransactionProcessingEnvironment {
             blockhash,
             lamports_per_signature,

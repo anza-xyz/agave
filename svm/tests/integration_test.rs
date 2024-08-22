@@ -19,7 +19,9 @@ use {
         transaction::{SanitizedTransaction, TransactionError},
     },
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
+        account_loader::{
+            CheckedTransactionDetails, TransactionCheckBatch, TransactionCheckResult,
+        },
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{
@@ -242,6 +244,8 @@ fn svm_integration() {
         HashSet::new(),
     );
 
+    let mut batch_check_results = TransactionCheckBatch::new(check_results);
+
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
 
     create_executable_environment(
@@ -266,7 +270,7 @@ fn svm_integration() {
     let result = batch_processor.load_and_execute_sanitized_transactions(
         &mock_bank,
         &transactions,
-        check_results,
+        &mut batch_check_results,
         &TransactionProcessingEnvironment::default(),
         &processing_config,
     );

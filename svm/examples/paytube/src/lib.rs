@@ -61,11 +61,10 @@ pub mod transaction;
 
 use {
     crate::{
-        loader::PayTubeAccountLoader, settler::PayTubeSettler, transaction::PayTubeTransaction,
+        loader::PayTubeAccountLoader, processor::PayTubeCheckResults, settler::PayTubeSettler,
+        transaction::PayTubeTransaction,
     },
-    processor::{
-        create_transaction_batch_processor, get_transaction_check_results, PayTubeForkGraph,
-    },
+    processor::{create_transaction_batch_processor, PayTubeForkGraph},
     solana_client::rpc_client::RpcClient,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_sdk::{
@@ -177,7 +176,7 @@ impl PayTubeChannel {
         let results = processor.load_and_execute_sanitized_transactions(
             &account_loader,
             &svm_transactions,
-            get_transaction_check_results(svm_transactions.len(), lamports_per_signature),
+            &mut PayTubeCheckResults::default(),
             &processing_environment,
             &processing_config,
         );

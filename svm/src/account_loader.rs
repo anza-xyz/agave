@@ -39,6 +39,41 @@ pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 
+/// This trait abstract the retrieval of transaction check results for a given transaction
+/// in the transaction batch passed to the SVM.
+pub trait TransactionCheckResults {
+    /// The function consumes a check result and returns it, meaning that once it is requested,
+    /// it is no longer available. `idx` is the index of a transaction in the batch.
+    fn consume_check_result(&mut self, _idx: usize) -> TransactionCheckResult {
+        // Return a dummy value so that all transactions will execute
+        Ok(CheckedTransactionDetails {
+            nonce: None,
+            lamports_per_signature: 20,
+        })
+    }
+}
+
+/// This struct holds the check results for each transaction to be processed in the SVM.
+pub struct TransactionCheckBatch {
+    batch_checks: Vec<TransactionCheckResult>,
+}
+
+impl TransactionCheckBatch {
+    pub fn new(check_results: Vec<TransactionCheckResult>) -> Self {
+        TransactionCheckBatch {
+            batch_checks: check_results,
+        }
+    }
+}
+
+impl TransactionCheckResults for TransactionCheckBatch {
+    fn consume_check_result(&mut self, idx: usize) -> TransactionCheckResult {
+        let mut result = Result::Err(TransactionError::AlreadyProcessed);
+        std::mem::swap(&mut self.batch_checks[idx], &mut result);
+        result
+    }
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum TransactionLoadResult {
     /// All transaction accounts were loaded successfully
