@@ -23,10 +23,11 @@ use {
     test_case::test_case,
 };
 
-#[test_case(None, false; "base")]
-#[test_case(Some(String::from("seed")), false; "with_seed")]
-#[test_case(None, true; "with_authority")]
-fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
+#[test_case(None, false, None; "base")]
+#[test_case(Some(String::from("seed")), false, None; "with_seed")]
+#[test_case(None, true, None; "with_authority")]
+#[test_case(None, false, Some(1_000_000); "with_compute_unit_price")]
+fn test_nonce(seed: Option<String>, use_nonce_authority: bool, compute_unit_price: Option<u64>) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
@@ -86,7 +87,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         nonce_authority: optional_authority,
         memo: None,
         amount: SpendAmount::Some(sol_to_lamports(1000.0)),
-        compute_unit_price: None,
+        compute_unit_price,
     };
 
     process_command(&config_payer).unwrap();
@@ -124,7 +125,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         nonce_account,
         nonce_authority: index,
         memo: None,
-        compute_unit_price: None,
+        compute_unit_price,
     };
     process_command(&config_payer).unwrap();
 
@@ -145,7 +146,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         memo: None,
         destination_account_pubkey: payee_pubkey,
         lamports: sol_to_lamports(100.0),
-        compute_unit_price: None,
+        compute_unit_price,
     };
     process_command(&config_payer).unwrap();
     check_balance!(
@@ -170,7 +171,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         nonce_authority: index,
         memo: None,
         new_authority: new_authority.pubkey(),
-        compute_unit_price: None,
+        compute_unit_price,
     };
     process_command(&config_payer).unwrap();
 
@@ -179,7 +180,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         nonce_account,
         nonce_authority: index,
         memo: None,
-        compute_unit_price: None,
+        compute_unit_price,
     };
     process_command(&config_payer).unwrap_err();
 
@@ -189,7 +190,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         nonce_account,
         nonce_authority: 1,
         memo: None,
-        compute_unit_price: None,
+        compute_unit_price,
     };
     process_command(&config_payer).unwrap();
 
@@ -200,7 +201,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
         memo: None,
         destination_account_pubkey: payee_pubkey,
         lamports: sol_to_lamports(100.0),
-        compute_unit_price: None,
+        compute_unit_price,
     };
     process_command(&config_payer).unwrap();
     check_balance!(
