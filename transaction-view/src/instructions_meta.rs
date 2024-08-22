@@ -83,6 +83,8 @@ impl<'a> Iterator for InstructionsIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.num_instructions {
+            self.index = self.index.wrapping_add(1);
+
             // Each instruction has 3 pieces:
             // 1. Program ID index (u8)
             // 2. Accounts indexes ([u8])
@@ -117,9 +119,6 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // - `u8` cannot be improperly initialized.
             let data =
                 unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) }.ok()?;
-
-            // Update the index to point to the next instruction.
-            self.index = self.index.wrapping_add(1);
 
             Some(SVMInstruction {
                 program_id_index,

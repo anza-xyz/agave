@@ -116,6 +116,8 @@ impl<'a> Iterator for AddressTableLookupIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.num_address_table_lookup {
+            self.index = self.index.wrapping_add(1);
+
             // Each ATL has 3 pieces:
             // 1. Address (Pubkey)
             // 2. write indexes ([u8])
