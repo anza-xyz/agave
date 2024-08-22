@@ -1831,7 +1831,7 @@ impl ReplayStage {
                 {
                     assert_eq!(
                         prev_hash, duplicate_confirmed_hash,
-                        "Additional duplicate confirmed notification for {confirmed_slot} with a different hash"
+                        "Additional duplicate confirmed notification for slot {confirmed_slot} with a different hash"
                     );
                     // Already processed this signal
                     continue;
@@ -4143,7 +4143,7 @@ impl ReplayStage {
             if let Some(prev_hash) = duplicate_confirmed_slots.insert(*slot, *frozen_hash) {
                 assert_eq!(
                     prev_hash, *frozen_hash,
-                    "Additional duplicate confirmed notification for {slot} with a different hash"
+                    "Additional duplicate confirmed notification for slot {slot} with a different hash"
                 );
                 // Already processed this signal
                 continue;
@@ -9378,7 +9378,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Additional duplicate confirmed notification for 6")]
+    #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
     fn test_mark_slots_duplicate_confirmed() {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
@@ -9492,7 +9492,7 @@ pub(crate) mod tests {
 
     #[test_case(true ; "same_batch")]
     #[test_case(false ; "seperate_batches")]
-    #[should_panic(expected = "Additional duplicate confirmed notification for 6")]
+    #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
     fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
