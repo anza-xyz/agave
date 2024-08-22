@@ -698,7 +698,7 @@ mod tests {
         rent_collector: &RentCollector,
         error_metrics: &mut TransactionErrorMetrics,
         feature_set: &mut FeatureSet,
-    ) -> Vec<TransactionLoadResult> {
+    ) -> TransactionLoadResult {
         feature_set.deactivate(&feature_set::disable_rent_fees_collection::id());
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let fee_payer_account = accounts[0].1.clone();
@@ -710,18 +710,23 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        load_accounts(
+        let loaded_accounts_map = load_accounts(
             &callbacks,
-            &[sanitized_tx],
-            vec![Ok(ValidatedTransactionDetails {
+            &[sanitized_tx.clone()],
+            &vec![Ok(CheckedTransactionDetails::default())],
+            None,
+        );
+        load_transaction(
+            &loaded_accounts_map,
+            &sanitized_tx,
+            Ok(ValidatedTransactionDetails {
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     account: fee_payer_account,
                     ..LoadedTransactionAccount::default()
                 },
                 ..ValidatedTransactionDetails::default()
-            })],
+            }),
             error_metrics,
-            None,
             feature_set,
             rent_collector,
             &ProgramCacheForTxBatch::default(),
@@ -750,13 +755,14 @@ mod tests {
         accounts: &[TransactionAccount],
         error_metrics: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionLoadResult> {
-        load_accounts_with_features_and_rent(
+        // XXX
+        vec![load_accounts_with_features_and_rent(
             tx,
             accounts,
             &RentCollector::default(),
             error_metrics,
             &mut FeatureSet::all_enabled(),
-        )
+        )]
     }
 
     fn load_accounts_with_excluded_features(
@@ -765,13 +771,14 @@ mod tests {
         error_metrics: &mut TransactionErrorMetrics,
         exclude_features: Option<&[Pubkey]>,
     ) -> Vec<TransactionLoadResult> {
-        load_accounts_with_features_and_rent(
+        // XXX
+        vec![load_accounts_with_features_and_rent(
             tx,
             accounts,
             &RentCollector::default(),
             error_metrics,
             &mut all_features_except(exclude_features),
-        )
+        )]
     }
 
     #[test]
@@ -1002,16 +1009,22 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        load_accounts(
+        let loaded_accounts_map = load_accounts(
             &callbacks,
-            &[tx],
-            vec![Ok(ValidatedTransactionDetails::default())],
-            &mut error_metrics,
+            &[tx.clone()],
+            &vec![Ok(CheckedTransactionDetails::default())],
             account_overrides,
+        );
+        // XXX
+        vec![load_transaction(
+            &loaded_accounts_map,
+            &tx,
+            Ok(ValidatedTransactionDetails::default()),
+            &mut error_metrics,
             &FeatureSet::all_enabled(),
             &RentCollector::default(),
             &ProgramCacheForTxBatch::default(),
-        )
+        )]
     }
 
     #[test]
@@ -2131,7 +2144,7 @@ mod tests {
             ..ValidatedTransactionDetails::default()
         });
 
-        let mut load_result = load_transaction(
+        let load_result = load_transaction(
             &mock_bank.accounts_map, // XXX
             &sanitized_transaction,
             validation_result,
