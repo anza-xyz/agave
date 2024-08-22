@@ -3429,7 +3429,7 @@ impl AccountsDb {
                             (purged_account_slots_new, removed_accounts_new),
                             pubkeys_removed_from_accounts_index_new,
                         ) = self.clean_accounts_older_than_root(
-                            &candidate_pubkey,
+                            candidate_pubkey,
                             max_clean_root_inclusive,
                             &ancient_account_cleans,
                             epoch_schedule,
