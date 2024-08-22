@@ -3100,13 +3100,13 @@ fn test_interleaving_locks() {
         .is_ok());
 }
 
-#[test_case(true; "disable fees-only transactions")]
-#[test_case(false; "enable fees-only transactions")]
-fn test_load_and_execute_commit_transactions_fees_only(disable_fees_only_txs: bool) {
+#[test_case(false; "disable fees-only transactions")]
+#[test_case(true; "enable fees-only transactions")]
+fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: bool) {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
-    if disable_fees_only_txs {
+    if !enable_fees_only_txs {
         genesis_config
             .accounts
             .remove(&solana_sdk::feature_set::enable_transaction_loading_failure_fees::id());
@@ -3172,12 +3172,7 @@ fn test_load_and_execute_commit_transactions_fees_only(disable_fees_only_txs: bo
         )
         .0;
 
-    if disable_fees_only_txs {
-        assert_eq!(
-            commit_results,
-            vec![Err(TransactionError::ProgramAccountNotFound)]
-        );
-    } else {
+    if enable_fees_only_txs {
         assert_eq!(
             commit_results,
             vec![Ok(CommittedTransaction {
@@ -3193,6 +3188,11 @@ fn test_load_and_execute_commit_transactions_fees_only(disable_fees_only_txs: bo
                     loaded_accounts_data_size: nonce_size as u32,
                 },
             })]
+        );
+    } else {
+        assert_eq!(
+            commit_results,
+            vec![Err(TransactionError::ProgramAccountNotFound)]
         );
     }
 }
@@ -7048,7 +7048,10 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         assert!(slot_versions.is_empty());
     }
 
-    // Advance bank to get a new last blockhash for duplicate transaction below
+    // Advance bank to get a new last blockhash so that when we retry invocation
+    // after creating the program, the new transaction created below with the
+    // same `invocation_message` as above doesn't return `AlreadyProcessed` when
+    // processed.
     goto_end_of_slot(bank.clone());
     let bank = bank_client
         .advance_slot(1, bank_forks.as_ref(), &mint_keypair.pubkey())
@@ -12933,9 +12936,9 @@ fn test_filter_program_errors_and_collect_fee_details() {
     //     |                             | (TX_FEE, PRIO_FEE) | RESULT
     // ---------------------------------------------------------------------------------
     // tx1 | not processed               | (0    , 0)         | Original Err
-    // tx2 | executed and no error       | (5_000, 1_000)     | Ok
+    // tx2 | processed but not executed  | (5_000, 1_000)     | Ok
     // tx3 | executed has error          | (5_000, 1_000)     | Ok
-    // tx4 | processed but not executed  | (5_000, 1_000)     | Ok
+    // tx4 | executed and no error       | (5_000, 1_000)     | Ok
     //
     let initial_payer_balance = 7_000;
     let tx_fee = 5000;
@@ -12955,14 +12958,6 @@ fn test_filter_program_errors_and_collect_fee_details() {
 
     let results = vec![
         Err(TransactionError::AccountNotFound),
-        new_executed_processing_result(Ok(()), fee_details),
-        new_executed_processing_result(
-            Err(TransactionError::InstructionError(
-                0,
-                SystemError::ResultWithNegativeLamports.into(),
-            )),
-            fee_details,
-        ),
         Ok(ProcessedTransaction::FeesOnly(Box::new(
             FeesOnlyTransaction {
                 load_error: TransactionError::InvalidProgramForExecution,
@@ -12970,6 +12965,14 @@ fn test_filter_program_errors_and_collect_fee_details() {
                 fee_details,
             },
         ))),
+        new_executed_processing_result(
+            Err(TransactionError::InstructionError(
+                0,
+                SystemError::ResultWithNegativeLamports.into(),
+            )),
+            fee_details,
+        ),
+        new_executed_processing_result(Ok(()), fee_details),
     ];
 
     bank.filter_program_errors_and_collect_fee_details(&results);
