@@ -127,6 +127,36 @@ macro_rules! entrypoint {
         /// # Safety
         #[no_mangle]
         pub unsafe extern "C" fn entrypoint(input: *mut u8) -> u64 {
+            let (program_id, accounts, instruction_data) =
+                unsafe { $crate::entrypoint::deserialize(input) };
+            match $process_instruction(&program_id, &accounts, &instruction_data) {
+                Ok(()) => $crate::entrypoint::SUCCESS,
+                Err(error) => error.into(),
+            }
+        }
+        $crate::custom_heap_default!();
+        $crate::custom_panic_default!();
+    };
+}
+
+/// Declare the program entrypoint and set up global handlers.
+///
+/// This is similar to the `entrypoint!` macro, except that it does not perform
+/// any dynamic allocations, and instead writes the input accounts into a pre-
+/// allocated array.
+///
+/// This version reduces compute unit usage by 20-30 compute units per unique
+/// account in the instruction. It may become the default option in a future
+/// release.
+///
+/// For more information about how the program entrypoint behaves and what it
+/// does, please see the documentation for [`entrypoint!`].
+#[macro_export]
+macro_rules! entrypoint_no_alloc {
+    ($process_instruction:ident) => {
+        /// # Safety
+        #[no_mangle]
+        pub unsafe extern "C" fn entrypoint(input: *mut u8) -> u64 {
             use std::mem::MaybeUninit;
             // Clippy complains about this because a `const` with interior
             // mutability `RefCell` should use `static` instead to make it
