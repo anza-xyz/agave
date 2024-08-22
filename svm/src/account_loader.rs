@@ -193,6 +193,10 @@ pub fn validate_fee_payer(
 // then runs each account_key through load_transaction_account (new fn) which does what the first stage used to
 // yea reading through it its functionally identical. note i can remove the override tho
 // and then yup second stage is 100% unchanged. this is not a hard merge, just too complicated to read with inline diffs
+//
+// XXX TODO OK i have to fix the integration test pr and then rebase this on that
+// which is going to break again because theres a new feature gate for changing fees for load failure for simd82...
+// then... add account change carryover and write tests! basic fee/nonce/normal account, plus the program cache gauntlet
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
@@ -248,6 +252,8 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 continue;
             };
 
+            // XXX FIXME im like 80% sure we have to remove this to preserve old behavior
+            // but we may want to feature gate this whole pr anyway to be safe
             if !program_account.executable() {
                 continue;
             }
