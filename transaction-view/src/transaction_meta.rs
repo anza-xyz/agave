@@ -275,6 +275,20 @@ mod tests {
         }
     }
 
+    fn multiple_transfers() -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        VersionedTransaction {
+            signatures: vec![Signature::default()], // 1 signature to be valid.
+            message: VersionedMessage::Legacy(Message::new(
+                &[
+                    system_instruction::transfer(&payer, &Pubkey::new_unique(), 1),
+                    system_instruction::transfer(&payer, &Pubkey::new_unique(), 1),
+                ],
+                Some(&payer),
+            )),
+        }
+    }
+
     fn v0_with_lookup() -> VersionedTransaction {
         let payer = Pubkey::new_unique();
         let to = Pubkey::new_unique();
@@ -435,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn test_instructions_iter() {
+    fn test_instructions_iter_single() {
         let tx = simple_transfer();
         let bytes = bincode::serialize(&tx).unwrap();
         let meta = TransactionMeta::try_new(&bytes).unwrap();
@@ -446,6 +460,33 @@ mod tests {
             let ix = iter.next().unwrap();
             assert_eq!(ix.program_id_index, 2);
             assert_eq!(ix.accounts, &[0, 1]);
+            assert_eq!(
+                ix.data,
+                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+            );
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_instructions_iter_multiple() {
+        let tx = multiple_transfers();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.instructions_iter(&bytes);
+            let ix = iter.next().unwrap();
+            assert_eq!(ix.program_id_index, 3);
+            assert_eq!(ix.accounts, &[0, 1]);
+            assert_eq!(
+                ix.data,
+                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+            );
+            let ix = iter.next().unwrap();
+            assert_eq!(ix.program_id_index, 3);
+            assert_eq!(ix.accounts, &[0, 2]);
             assert_eq!(
                 ix.data,
                 &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
