@@ -9372,7 +9372,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "assertion `left == right` failed")]
     fn test_mark_slots_duplicate_confirmed() {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
@@ -9392,8 +9391,32 @@ pub(crate) mod tests {
 
         let (ancestor_hashes_replay_update_sender, _) = unbounded();
         let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
+        let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(1, &AbsRequestSender::default(), None)
+            .unwrap();
 
-        // Mark 5 as duplicate confirmed
+        // Mark 0 as duplicate confirmed, should fail as it is 0 < root
+        let confirmed_slots = [(0, bank_hash_0)];
+        ReplayStage::mark_slots_duplicate_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+
+        assert!(!duplicate_confirmed_slots.contains_key(&0));
+
+        // Mark 5 as duplicate confirmed, should suceed
         let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
         let confirmed_slots = [(5, bank_hash_5)];
 
@@ -9416,7 +9439,7 @@ pub(crate) mod tests {
             .is_duplicate_confirmed(&(5, bank_hash_5))
             .unwrap_or(false));
 
-        // Mark 5 and 6 as duplicate confirmed
+        // Mark 5 and 6 as duplicate confirmed, should succeed
         let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
         let confirmed_slots = [(5, bank_hash_5), (6, bank_hash_6)];
 
@@ -9443,26 +9466,28 @@ pub(crate) mod tests {
             .is_duplicate_confirmed(&(6, bank_hash_6))
             .unwrap_or(false));
 
-        // Mark 6 as duplicate confirmed again with a different hash, we should panic
+        // Mark 6 as duplicate confirmed again with a different hash, should panic
         let confirmed_slots = [(6, Hash::new_unique())];
-        ReplayStage::mark_slots_duplicate_confirmed(
-            &confirmed_slots,
-            &blockstore,
-            &bank_forks,
-            &mut progress,
-            &mut DuplicateSlotsTracker::default(),
-            &mut heaviest_subtree_fork_choice,
-            &mut EpochSlotsFrozenSlots::default(),
-            &mut DuplicateSlotsToRepair::default(),
-            &ancestor_hashes_replay_update_sender,
-            &mut PurgeRepairSlotCounter::default(),
-            &mut duplicate_confirmed_slots,
+        assert!(
+            std::panic::catch_unwind(move || ReplayStage::mark_slots_duplicate_confirmed(
+                &confirmed_slots,
+                &blockstore,
+                &bank_forks,
+                &mut progress,
+                &mut DuplicateSlotsTracker::default(),
+                &mut heaviest_subtree_fork_choice,
+                &mut EpochSlotsFrozenSlots::default(),
+                &mut DuplicateSlotsToRepair::default(),
+                &ancestor_hashes_replay_update_sender,
+                &mut PurgeRepairSlotCounter::default(),
+                &mut duplicate_confirmed_slots,
+            ))
+            .is_err()
         );
     }
 
     #[test_case(true ; "same_batch")]
     #[test_case(false ; "seperate_batches")]
-    #[should_panic(expected = "assertion `left == right` failed")]
     fn test_process_duplicate_confirmed_slots(same_batch: bool) {
         let generate_votes = |pubkeys: Vec<Pubkey>| {
             pubkeys
@@ -9483,8 +9508,33 @@ pub(crate) mod tests {
         let (ancestor_hashes_replay_update_sender, _) = unbounded();
         let (sender, receiver) = unbounded();
         let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
+        let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(1, &AbsRequestSender::default(), None)
+            .unwrap();
 
-        // Mark 5 as duplicate confirmed
+        // Mark 0 as duplicate confirmed, should fail as it is 0 < root
+        sender.send(vec![(0, bank_hash_0)]).unwrap();
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
+
+        assert!(!duplicate_confirmed_slots.contains_key(&0));
+
+        // Mark 5 as duplicate confirmed, should succed
         let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
         sender.send(vec![(5, bank_hash_5)]).unwrap();
 
@@ -9507,7 +9557,7 @@ pub(crate) mod tests {
             .is_duplicate_confirmed(&(5, bank_hash_5))
             .unwrap_or(false));
 
-        // Mark 5 and 6 as duplicate confirmed
+        // Mark 5 and 6 as duplicate confirmed, should suceed
         let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
         if same_batch {
             sender
@@ -9541,21 +9591,24 @@ pub(crate) mod tests {
             .is_duplicate_confirmed(&(6, bank_hash_6))
             .unwrap_or(false));
 
-        // Mark 6 as duplicate confirmed again with a different hash
+        // Mark 6 as duplicate confirmed again with a different hash, should panic
         sender.send(vec![(6, Hash::new_unique())]).unwrap();
 
-        ReplayStage::process_duplicate_confirmed_slots(
-            &receiver,
-            &blockstore,
-            &mut DuplicateSlotsTracker::default(),
-            &mut duplicate_confirmed_slots,
-            &mut EpochSlotsFrozenSlots::default(),
-            &bank_forks,
-            &progress,
-            &mut heaviest_subtree_fork_choice,
-            &mut DuplicateSlotsToRepair::default(),
-            &ancestor_hashes_replay_update_sender,
-            &mut PurgeRepairSlotCounter::default(),
+        assert!(
+            std::panic::catch_unwind(move || ReplayStage::process_duplicate_confirmed_slots(
+                &receiver,
+                &blockstore,
+                &mut DuplicateSlotsTracker::default(),
+                &mut duplicate_confirmed_slots,
+                &mut EpochSlotsFrozenSlots::default(),
+                &bank_forks,
+                &progress,
+                &mut heaviest_subtree_fork_choice,
+                &mut DuplicateSlotsToRepair::default(),
+                &ancestor_hashes_replay_update_sender,
+                &mut PurgeRepairSlotCounter::default(),
+            ))
+            .is_err()
         );
     }
 }
