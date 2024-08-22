@@ -81,7 +81,7 @@ impl SvmTestEntry {
     }
 
     // edit an existing account to reflect changes you expect the transaction to make to it
-    pub fn update_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
+    pub fn update_expected_account_data(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
         let mut account = account.clone();
         account.set_rent_epoch(u64::MAX);
 
@@ -171,7 +171,6 @@ impl Default for TransactionBatchItem {
 // asserts for a given transaction in a batch
 // we can automatically check whether it executed, whether it succeeded
 // log items we expect to see (exect match only), and rodata
-// rodata is a doubly-nested Option. None means no check is performed, Some(None) means we assert no rodata
 #[derive(Clone, Debug)]
 pub struct TransactionBatchItemAsserts {
     pub executed: bool,
@@ -219,26 +218,30 @@ impl TransactionBatchItemAsserts {
             }
         }
 
-        match (&self.return_data, &execution_details.return_data) {
-            (ReturnDataAssert::Some(expected_ro_data), Some(actual_ro_data)) => {
-                assert_eq!(expected_ro_data, actual_ro_data)
-            }
-            (ReturnDataAssert::None, None) => {}
-            (ReturnDataAssert::Skip, _) => {}
-            (left, right) => panic!(
-                "assertion `left == right` failed\n  {:?}\n  {:?}",
-                left, right
-            ),
+        if self.return_data != ReturnDataAssert::Skip {
+            assert_eq!(
+                self.return_data,
+                execution_details.return_data.clone().into()
+            );
         }
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum ReturnDataAssert {
     Some(TransactionReturnData),
     None,
     #[default]
     Skip,
+}
+
+impl From<Option<TransactionReturnData>> for ReturnDataAssert {
+    fn from(option_ro_data: Option<TransactionReturnData>) -> Self {
+        match option_ro_data {
+            Some(ro_data) => Self::Some(ro_data),
+            None => Self::None,
+        }
+    }
 }
 
 fn program_medley() -> Vec<SvmTestEntry> {
