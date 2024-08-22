@@ -5,12 +5,13 @@ use crate::result::{Result, TransactionParsingError};
 ///
 /// * `bytes` - Slice of bytes to read from.
 /// * `offset` - Current offset into `bytes`.
+/// * `num_bytes` - Number of bytes that must be remaining.
 ///
 /// Assumptions:
 /// - The current offset is not greater than `bytes.len()`.
 #[inline(always)]
-pub fn check_remaining(bytes: &[u8], offset: usize, len: usize) -> Result<()> {
-    if len > bytes.len().wrapping_sub(offset) {
+pub fn check_remaining(bytes: &[u8], offset: usize, num_bytes: usize) -> Result<()> {
+    if num_bytes > bytes.len().wrapping_sub(offset) {
         Err(TransactionParsingError)
     } else {
         Ok(())
@@ -110,7 +111,7 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 ///
 /// * `bytes` - Slice of bytes to read from.
 /// * `offset` - Curernt offset into `bytes`.
-/// * `num` - Number of `T` elements in the array.
+/// * `num_elements` - Number of `T` elements in the array.
 ///
 /// Assumptions:
 /// 1. The current offset is not greater than `bytes.len()`.
@@ -120,9 +121,9 @@ pub fn optimized_read_compressed_u16(bytes: &[u8], offset: &mut usize) -> Result
 pub fn advance_offset_for_array<T: Sized>(
     bytes: &[u8],
     offset: &mut usize,
-    num: u16,
+    num_elements: u16,
 ) -> Result<()> {
-    let array_len_bytes = usize::from(num).wrapping_mul(core::mem::size_of::<T>());
+    let array_len_bytes = usize::from(num_elements).wrapping_mul(core::mem::size_of::<T>());
     check_remaining(bytes, *offset, array_len_bytes)?;
     *offset = offset.wrapping_add(array_len_bytes);
     Ok(())
@@ -151,7 +152,7 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 ///
 /// * `bytes` - Slice of bytes to read from.
 /// * `offset` - Curernt offset into `bytes`.
-/// * `num` - Number of `T` elements in the slice.
+/// * `num_elements` - Number of `T` elements in the slice.
 ///
 /// # Safety
 /// 1. `bytes` must be a valid slice of bytes.
@@ -164,11 +165,11 @@ pub fn advance_offset_for_type<T: Sized>(bytes: &[u8], offset: &mut usize) -> Re
 pub unsafe fn read_slice_data<'a, T: Sized>(
     bytes: &'a [u8],
     offset: &mut usize,
-    num: u16,
+    num_elements: u16,
 ) -> Result<&'a [T]> {
     let current_ptr = bytes.as_ptr().wrapping_add(*offset);
-    advance_offset_for_array::<T>(bytes, offset, num)?;
-    Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num)) })
+    advance_offset_for_array::<T>(bytes, offset, num_elements)?;
+    Ok(unsafe { core::slice::from_raw_parts(current_ptr as *const T, usize::from(num_elements)) })
 }
 
 /// Return a reference to the next `T` in the buffer, checking bounds and

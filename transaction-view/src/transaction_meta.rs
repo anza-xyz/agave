@@ -44,7 +44,7 @@ impl TransactionMeta {
         let instructions = InstructionsMeta::try_new(bytes, &mut offset)?;
         let address_table_lookup = match message_header.version {
             TransactionVersion::Legacy => AddressTableLookupMeta {
-                num_address_table_lookup: 0,
+                num_address_table_lookups: 0,
                 offset: 0,
             },
             TransactionVersion::V0 => AddressTableLookupMeta::try_new(bytes, &mut offset)?,
@@ -102,7 +102,7 @@ impl TransactionMeta {
 
     /// Return the number of address table lookups in the transaction.
     pub fn num_address_table_lookups(&self) -> u8 {
-        self.address_table_lookup.num_address_table_lookup
+        self.address_table_lookup.num_address_table_lookups
     }
 }
 
@@ -167,7 +167,7 @@ impl TransactionMeta {
         AddressTableLookupIterator {
             bytes,
             offset: usize::from(self.address_table_lookup.offset),
-            num_address_table_lookup: self.address_table_lookup.num_address_table_lookup,
+            num_address_table_lookups: self.address_table_lookup.num_address_table_lookups,
             index: 0,
         }
     }
@@ -216,7 +216,7 @@ mod tests {
             tx.message.instructions().len() as u16
         );
         assert_eq!(
-            meta.address_table_lookup.num_address_table_lookup,
+            meta.address_table_lookup.num_address_table_lookups,
             tx.message
                 .address_table_lookups()
                 .map(|x| x.len() as u8)
