@@ -7130,6 +7130,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         invocation_message.clone(),
         bank.last_blockhash(),
     );
+    // XXX HANA this error changes to `ProgramAccountNotFound`... why? is my version stricter or looser?
     assert_eq!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(

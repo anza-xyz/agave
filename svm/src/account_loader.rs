@@ -30,8 +30,10 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroU32,
+    std::{collections::HashMap, num::NonZeroU32},
 };
+
+pub(crate) type AccountsMap = HashMap<Pubkey, AccountSharedData>;
 
 // for the load instructions
 pub(crate) type TransactionRent = u64;
@@ -53,6 +55,7 @@ pub enum TransactionLoadResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct CheckedTransactionDetails {
     pub nonce: Option<NonceInfo>,
     pub lamports_per_signature: u64,
@@ -181,44 +184,98 @@ pub fn validate_fee_payer(
     )
 }
 
-/// Collect information about accounts used in txs transactions and
-/// return vector of tuples, one for each transaction in the
-/// batch. Each tuple contains struct of information about accounts as
-/// its first element and an optional transaction nonce info as its
-/// second element.
+// XXX HANA ok what changed
+// load_accounts and others take a SVMMessage trait object now
+// load_accounts passes through the validation results instead of unwrapping it
+// the point of this is starry added a new TransactionLoadResult which describes outcome explicitly
+// not executed, pay fees only, or execute
+// load_transaction_accounts starts by "collecting" the fee payer without loading
+// then runs each account_key through load_transaction_account (new fn) which does what the first stage used to
+// yea reading through it its functionally identical. note i can remove the override tho
+// and then yup second stage is 100% unchanged. this is not a hard merge, just too complicated to read with inline diffs
+
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[impl SVMMessage],
-    validation_results: Vec<TransactionValidationResult>,
-    error_metrics: &mut TransactionErrorMetrics,
+    check_results: &Vec<TransactionCheckResult>,
     account_overrides: Option<&AccountOverrides>,
-    feature_set: &FeatureSet,
-    rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
-) -> Vec<TransactionLoadResult> {
-    txs.iter()
-        .zip(validation_results)
-        .map(|(transaction, validation_result)| {
-            load_transaction(
-                callbacks,
-                transaction,
-                validation_result,
-                error_metrics,
-                account_overrides,
-                feature_set,
-                rent_collector,
-                loaded_programs,
-            )
-        })
-        .collect()
+) -> AccountsMap {
+    let mut accounts_map = HashMap::new();
+
+    let checked_messages: Vec<_> = txs
+        .iter()
+        .zip(check_results)
+        .filter(|(_, tx_details)| tx_details.is_ok())
+        .map(|(tx, _)| tx)
+        .collect();
+
+    let account_keys: Vec<_> = checked_messages
+        .iter()
+        .flat_map(|m| m.account_keys().iter())
+        .unique()
+        .collect();
+
+    for key in account_keys {
+        if solana_sdk::sysvar::instructions::check_id(key) {
+            continue;
+        } else if let Some(account_override) =
+            account_overrides.and_then(|overrides| overrides.get(key))
+        {
+            accounts_map.insert(*key, account_override.clone());
+        } else if let Some(account) = callbacks.get_account_shared_data(key) {
+            accounts_map.insert(*key, account);
+        }
+        // XXX we do not insert the default account here because we need to know if its not found later
+        // it raises the question however of whether we need to track if a program account is created in the batch
+    }
+
+    // XXX it is possible we want to fully validate programs for messages here
+    // that depends on the question re: what if a program account is created mid-batch
+    // current plan is impl all this, see what the current behavior actually is, then decide what to do
+    // also note we have discussed redefining "valid loader" from "native or exec and owned by loader"
+    // to just a list of allowed ids (native and v1-3). in which case this all collapses to a single account_matches_owners
+    // FIXME program_instructions_iter ? neat
+    for message in checked_messages {
+        for instruction in message.instructions_iter() {
+            let program_index = instruction.program_id_index as usize;
+            let program_id = message.account_keys()[program_index];
+
+            if native_loader::check_id(&program_id) {
+                continue;
+            }
+
+            let Some(program_account) = accounts_map.get(&program_id) else {
+                continue;
+            };
+
+            if !program_account.executable() {
+                continue;
+            }
+
+            let owner_id = program_account.owner();
+            if native_loader::check_id(owner_id) {
+                continue;
+            }
+
+            if !accounts_map.contains_key(owner_id) {
+                if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                    if native_loader::check_id(owner_account.owner()) && owner_account.executable()
+                    {
+                        accounts_map.insert(*owner_id, owner_account);
+                    }
+                }
+            }
+        }
+    }
+
+    accounts_map
 }
 
-fn load_transaction<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
+pub(crate) fn load_transaction(
+    accounts_map: &AccountsMap,
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
-    account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
@@ -227,12 +284,11 @@ fn load_transaction<CB: TransactionProcessingCallback>(
         Err(e) => TransactionLoadResult::NotLoaded(e),
         Ok(tx_details) => {
             let load_result = load_transaction_accounts(
-                callbacks,
+                accounts_map,
                 message,
                 tx_details.loaded_fee_payer_account,
                 &tx_details.compute_budget_limits,
                 error_metrics,
-                account_overrides,
                 feature_set,
                 rent_collector,
                 loaded_programs,
@@ -268,13 +324,12 @@ struct LoadedTransactionAccounts {
     pub loaded_accounts_data_size: u32,
 }
 
-fn load_transaction_accounts<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
+fn load_transaction_accounts(
+    accounts_map: &AccountsMap,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
     compute_budget_limits: &ComputeBudgetLimits,
     error_metrics: &mut TransactionErrorMetrics,
-    account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
@@ -323,12 +378,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
         let (loaded_account, account_found) = load_transaction_account(
-            callbacks,
+            accounts_map,
             message,
             account_key,
             account_index,
             &instruction_accounts[..],
-            account_overrides,
             feature_set,
             rent_collector,
             loaded_programs,
@@ -371,7 +425,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                if let Some(owner_account) = accounts_map.get(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {
@@ -384,7 +438,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                         compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
-                    accounts.push((*owner_id, owner_account));
+                    accounts.push((*owner_id, owner_account.clone())); // XXX new clone
                 } else {
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
@@ -403,13 +457,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     })
 }
 
-fn load_transaction_account<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
+fn load_transaction_account(
+    accounts_map: &AccountsMap,
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
     instruction_accounts: &[&u8],
-    account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
@@ -428,21 +481,13 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             account: construct_instructions_account(message),
             rent_collected: 0,
         }
-    } else if let Some(account_override) =
-        account_overrides.and_then(|overrides| overrides.get(account_key))
-    {
-        LoadedTransactionAccount {
-            loaded_size: account_override.data().len(),
-            account: account_override.clone(),
-            rent_collected: 0,
-        }
-    } else if let Some(program) = (!is_instruction_account && !is_writable)
+    } else if let Some(program) = (!is_instruction_account && !message.is_writable(account_index))
         .then_some(())
         .and_then(|_| loaded_programs.find(account_key))
     {
-        callbacks
-            .get_account_shared_data(account_key)
-            .ok_or(TransactionError::AccountNotFound)?;
+        if !accounts_map.contains_key(account_key) {
+            return Err(TransactionError::AccountNotFound);
+        }
         // Optimization to skip loading of accounts which are only used as
         // programs in top-level instructions and not passed as instruction accounts.
         LoadedTransactionAccount {
@@ -451,8 +496,9 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             rent_collected: 0,
         }
     } else {
-        callbacks
-            .get_account_shared_data(account_key)
+        accounts_map
+            .get(account_key)
+            .cloned() // XXX new clone
             .map(|mut account| {
                 let rent_collected = if is_writable {
                     // Inspect the account prior to collecting rent, since
