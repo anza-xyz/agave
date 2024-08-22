@@ -421,7 +421,7 @@ pub fn process_authorize_nonce_account(
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Default,
+        compute_unit_limit: ComputeUnitLimit::Simulated,
     });
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
@@ -469,7 +469,7 @@ pub fn process_create_nonce_account(
 
     let nonce_authority = nonce_authority.unwrap_or_else(|| config.signers[0].pubkey());
 
-    let compute_unit_limit = ComputeUnitLimit::Default;
+    let compute_unit_limit = ComputeUnitLimit::Simulated;
     let build_message = |lamports| {
         let ixs = if let Some(seed) = seed.clone() {
             create_nonce_account_with_seed(
@@ -579,7 +579,7 @@ pub fn process_new_nonce(
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Default,
+        compute_unit_limit: ComputeUnitLimit::Simulated,
     });
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
@@ -648,7 +648,7 @@ pub fn process_withdraw_from_nonce_account(
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Default,
+        compute_unit_limit: ComputeUnitLimit::Simulated,
     });
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
@@ -676,7 +676,7 @@ pub(crate) fn process_upgrade_nonce_account(
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_limit: ComputeUnitLimit::Simulated,
         });
     let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
     let mut tx = Transaction::new_unsigned(message);
