@@ -1430,7 +1430,6 @@ fn test_stake_set_lockup(compute_unit_price: Option<u64>) {
     };
     process_command(&config).unwrap();
     check_balance!(10 * stake_balance, &rpc_client, &stake_account_pubkey,);
-    check_balance!(10 * stake_balance, &rpc_client, &stake_account_pubkey,);
 
     // Online set lockup
     let lockup = LockupArgs {
