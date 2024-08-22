@@ -20,6 +20,8 @@ pub enum SpendAmount {
     All,
     Some(u64),
     RentExempt,
+    // will move all, but use a minimum for simulation
+    AllWithMinimum(u64),
 }
 
 impl Default for SpendAmount {
@@ -166,7 +168,25 @@ where
 {
     let (fee, compute_unit_info) = match blockhash {
         Some(blockhash) => {
-            let mut dummy_message = build_message(0);
+            // If the from account is the same as the fee payer, it's impossible
+            // to give a correct amount for the simulation with `SpendAmount::All`
+            // or `SpendAmount::RentExempt`.
+            // To know how much to transfer, we need to know the transaction fee,
+            // but the transaction fee is dependent on the amount of compute
+            // units used, which requires simulation.
+            // To get around this limitation, we simulate against an amount of
+            // `0`, since there are few situations in which `SpendAmount` can
+            // be `All` or `RentExempt` *and also* the from account is the fee
+            // payer.
+            let lamports = match amount {
+                SpendAmount::Some(lamports) => lamports,
+                SpendAmount::AllWithMinimum(lamports) => lamports,
+                SpendAmount::All | SpendAmount::RentExempt if from_pubkey == fee_pubkey => 0,
+                SpendAmount::All => from_balance,
+                SpendAmount::RentExempt => from_balance.saturating_sub(from_rent_exempt_minimum),
+            };
+            let mut dummy_message = build_message(lamports);
+
             dummy_message.recent_blockhash = *blockhash;
             let compute_unit_info = if compute_unit_limit == ComputeUnitLimit::Simulated {
                 // Simulate for correct compute units
@@ -196,7 +216,7 @@ where
                 fee,
             },
         ),
-        SpendAmount::All => {
+        SpendAmount::All | SpendAmount::AllWithMinimum(_) => {
             let lamports = if from_pubkey == fee_pubkey {
                 from_balance.saturating_sub(fee)
             } else {
