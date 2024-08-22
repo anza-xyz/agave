@@ -1417,9 +1417,9 @@ mod tests {
             sanitized_transaction_2.clone(),
             sanitized_transaction_1,
         ];
-        let validation_results = vec![
-            Ok(ValidatedTransactionDetails::default()),
-            Ok(ValidatedTransactionDetails::default()),
+        let check_results = vec![
+            Ok(CheckedTransactionDetails::default()),
+            Ok(CheckedTransactionDetails::default()),
             Err(TransactionError::ProgramAccountNotFound),
         ];
         let owners = vec![owner1, owner2];
@@ -1427,7 +1427,7 @@ mod tests {
         let result = TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
             &mock_bank,
             &transactions,
-            &validation_results,
+            &check_results,
             &owners,
         );
 
@@ -1510,8 +1510,8 @@ mod tests {
                 &bank,
                 &[sanitized_tx1, sanitized_tx2],
                 &[
-                    Ok(ValidatedTransactionDetails::default()),
-                    Ok(ValidatedTransactionDetails::default()),
+                    Ok(CheckedTransactionDetails::default()),
+                    Ok(CheckedTransactionDetails::default()),
                 ],
                 owners,
             );
@@ -1602,15 +1602,15 @@ mod tests {
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
         let owners = &[program1_pubkey, program2_pubkey];
-        let validation_results = vec![
-            Ok(ValidatedTransactionDetails::default()),
+        let check_results = vec![
+            Ok(CheckedTransactionDetails::default()),
             Err(TransactionError::BlockhashNotFound),
         ];
         let programs =
             TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
                 &bank,
                 &[sanitized_tx1, sanitized_tx2],
-                &validation_results,
+                &check_results,
                 owners,
             );
 
