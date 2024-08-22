@@ -37,6 +37,7 @@ use {
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_tracing::maybe_trace_packet,
     std::{
         sync::{Arc, RwLock},
         time::{Duration, Instant},
@@ -518,6 +519,7 @@ impl SchedulerController {
             chunk
                 .iter()
                 .filter_map(|packet| {
+                    maybe_trace_packet("bank-build-sanitized-txn", &packet.original_packet());
                     packet
                         .build_sanitized_transaction(
                             vote_only,

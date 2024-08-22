@@ -79,6 +79,7 @@ solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-transaction-tracing = { workspace = true }
 solana-turbine = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }

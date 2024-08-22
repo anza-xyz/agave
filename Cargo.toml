@@ -130,6 +130,7 @@ members = [
     "transaction-dos",
     "transaction-metrics-tracker",
     "transaction-status",
+    "transaction-tracing",
     "transaction-view",
     "turbine",
     "type-overrides",
@@ -439,8 +440,9 @@ solana-system-program = { path = "programs/system", version = "=2.1.0" }
 solana-test-validator = { path = "test-validator", version = "=2.1.0" }
 solana-thin-client = { path = "thin-client", version = "=2.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.1.0", default-features = false }
-solana-transaction-status = { path = "transaction-status", version = "=2.1.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.1.0" }
+solana-transaction-status = { path = "transaction-status", version = "=2.1.0" }
+solana-transaction-tracing = { path = "transaction-tracing", version = "=2.1.0" }
 solana-turbine = { path = "turbine", version = "=2.1.0" }
 solana-type-overrides = { path = "type-overrides", version = "=2.1.0" }
 solana-udp-client = { path = "udp-client", version = "=2.1.0" }
