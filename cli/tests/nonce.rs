@@ -20,46 +20,19 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
+    test_case::test_case,
 };
 
-#[test]
-fn test_nonce() {
+#[test_case(None, false; "base")]
+#[test_case(Some(String::from("seed")), false; "with_seed")]
+#[test_case(None, true; "with_authority")]
+fn test_nonce(seed: Option<String>, use_nonce_authority: bool) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
     let test_validator =
         TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
-    full_battery_tests(test_validator, None, false);
-}
-
-#[test]
-fn test_nonce_with_seed() {
-    let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
-
-    full_battery_tests(test_validator, Some(String::from("seed")), false);
-}
-
-#[test]
-fn test_nonce_with_authority() {
-    let mint_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-    let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
-
-    full_battery_tests(test_validator, None, true);
-}
-
-fn full_battery_tests(
-    test_validator: TestValidator,
-    seed: Option<String>,
-    use_nonce_authority: bool,
-) {
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
     let json_rpc_url = test_validator.rpc_url();
