@@ -1829,7 +1829,10 @@ impl ReplayStage {
                 } else if let Some(prev_hash) =
                     duplicate_confirmed_slots.insert(confirmed_slot, duplicate_confirmed_hash)
                 {
-                    assert_eq!(prev_hash, duplicate_confirmed_hash);
+                    assert_eq!(
+                        prev_hash, duplicate_confirmed_hash,
+                        "Additional duplicate confirmed notification with a different hash"
+                    );
                     // Already processed this signal
                     continue;
                 }
@@ -4138,7 +4141,10 @@ impl ReplayStage {
 
             progress.set_duplicate_confirmed_hash(*slot, *frozen_hash);
             if let Some(prev_hash) = duplicate_confirmed_slots.insert(*slot, *frozen_hash) {
-                assert_eq!(prev_hash, *frozen_hash);
+                assert_eq!(
+                    prev_hash, *frozen_hash,
+                    "Additional duplicate confirmed notification with a different hash"
+                );
                 // Already processed this signal
                 continue;
             }
@@ -9482,7 +9488,10 @@ pub(crate) mod tests {
                 &mut PurgeRepairSlotCounter::default(),
                 &mut duplicate_confirmed_slots,
             ))
-            .is_err()
+            .unwrap_err()
+            .downcast_ref::<String>()
+            .unwrap()
+            .starts_with("assertion `left == right` failed: Additional duplicate confirmed notification with a different hash")
         );
     }
 
@@ -9608,7 +9617,10 @@ pub(crate) mod tests {
                 &ancestor_hashes_replay_update_sender,
                 &mut PurgeRepairSlotCounter::default(),
             ))
-            .is_err()
+            .unwrap_err()
+            .downcast_ref::<String>()
+            .unwrap()
+            .starts_with("assertion `left == right` failed: Additional duplicate confirmed notification with a different hash")
         );
     }
 }
