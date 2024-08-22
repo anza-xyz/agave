@@ -1293,7 +1293,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 loaded_size: fee_payer_account.data().len(),
@@ -1302,7 +1302,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1359,7 +1358,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1367,7 +1366,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1423,12 +1421,11 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1610,12 +1607,11 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1655,12 +1651,11 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1709,7 +1704,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1717,7 +1712,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1775,12 +1769,11 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1829,12 +1822,11 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1890,7 +1882,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1898,7 +1890,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1978,7 +1969,7 @@ mod tests {
             false,
         );
         let result = load_transaction_accounts(
-            &mock_bank,
+            &mock_bank.accounts_map, // XXX
             sanitized_transaction.message(),
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
@@ -1986,7 +1977,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -2046,18 +2036,17 @@ mod tests {
         let num_accounts = tx.message().account_keys.len();
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let mut error_metrics = TransactionErrorMetrics::default();
-        let mut load_results = load_accounts(
-            &bank,
-            &[sanitized_tx.clone()],
-            vec![Ok(ValidatedTransactionDetails::default())],
+        let load_result = load_transaction(
+            &bank.accounts_map, // XXX
+            &sanitized_tx,
+            Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &ProgramCacheForTxBatch::default(),
         );
 
-        let TransactionLoadResult::Loaded(loaded_transaction) = load_results.swap_remove(0) else {
+        let TransactionLoadResult::Loaded(loaded_transaction) = load_result else {
             panic!("transaction loading failed");
         };
 
@@ -2142,12 +2131,11 @@ mod tests {
             ..ValidatedTransactionDetails::default()
         });
 
-        let mut load_results = load_accounts(
-            &mock_bank,
-            &[sanitized_transaction],
-            vec![validation_result],
+        let mut load_result = load_transaction(
+            &mock_bank.accounts_map, // XXX
+            &sanitized_transaction,
+            validation_result,
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -2156,8 +2144,7 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
 
-        assert_eq!(load_results.len(), 1);
-        let TransactionLoadResult::Loaded(loaded_transaction) = load_results.swap_remove(0) else {
+        let TransactionLoadResult::Loaded(loaded_transaction) = load_result else {
             panic!("transaction loading failed");
         };
         assert_eq!(
@@ -2214,19 +2201,18 @@ mod tests {
         );
 
         let validation_result = Ok(ValidatedTransactionDetails::default());
-        let load_results = load_accounts(
-            &mock_bank,
-            &[sanitized_transaction.clone()],
-            vec![validation_result.clone()],
+        let load_result = load_transaction(
+            &mock_bank.accounts_map, // XXX
+            &sanitized_transaction,
+            validation_result,
             &mut TransactionErrorMetrics::default(),
-            None,
             &feature_set,
             &rent_collector,
             &ProgramCacheForTxBatch::default(),
         );
 
         assert!(matches!(
-            load_results[0],
+            load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                 load_error: TransactionError::InvalidProgramForExecution,
                 ..
@@ -2235,19 +2221,18 @@ mod tests {
 
         let validation_result = Err(TransactionError::InvalidWritableAccount);
 
-        let load_results = load_accounts(
-            &mock_bank,
-            &[sanitized_transaction.clone()],
-            vec![validation_result],
+        let load_result = load_transaction(
+            &mock_bank.accounts_map, // XXX
+            &sanitized_transaction,
+            validation_result,
             &mut TransactionErrorMetrics::default(),
-            None,
             &feature_set,
             &rent_collector,
             &ProgramCacheForTxBatch::default(),
         );
 
         assert!(matches!(
-            load_results[0],
+            load_result,
             TransactionLoadResult::NotLoaded(TransactionError::InvalidWritableAccount),
         ));
     }
