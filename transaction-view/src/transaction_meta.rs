@@ -289,7 +289,7 @@ mod tests {
         }
     }
 
-    fn v0_with_lookup() -> VersionedTransaction {
+    fn v0_with_single_lookup() -> VersionedTransaction {
         let payer = Pubkey::new_unique();
         let to = Pubkey::new_unique();
         VersionedTransaction {
@@ -302,6 +302,36 @@ mod tests {
                         key: Pubkey::new_unique(),
                         addresses: vec![to],
                     }],
+                    Hash::default(),
+                )
+                .unwrap(),
+            ),
+        }
+    }
+
+    fn v0_with_multiple_lookups() -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let to1 = Pubkey::new_unique();
+        let to2 = Pubkey::new_unique();
+        VersionedTransaction {
+            signatures: vec![Signature::default()], // 1 signature to be valid.
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &payer,
+                    &[
+                        system_instruction::transfer(&payer, &to1, 1),
+                        system_instruction::transfer(&payer, &to2, 1),
+                    ],
+                    &[
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![to1],
+                        },
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![to2],
+                        },
+                    ],
                     Hash::default(),
                 )
                 .unwrap(),
@@ -326,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_v0_with_lookup() {
-        verify_transaction_view_meta(&v0_with_lookup());
+        verify_transaction_view_meta(&v0_with_single_lookup());
     }
 
     #[test]
@@ -509,27 +539,44 @@ mod tests {
     }
 
     #[test]
-    fn test_address_table_lookup_iter() {
-        let tx = v0_with_lookup();
+    fn test_address_table_lookup_iter_single() {
+        let tx = v0_with_single_lookup();
         let bytes = bincode::serialize(&tx).unwrap();
         let meta = TransactionMeta::try_new(&bytes).unwrap();
 
+        let atls_actual = tx.message.address_table_lookups().unwrap();
         // SAFETY: `bytes` is the same slice used to create `meta`.
         unsafe {
             let mut iter = meta.address_table_lookup_iter(&bytes);
             let lookup = iter.next().unwrap();
-            assert_eq!(
-                lookup.account_key,
-                &tx.message.address_table_lookups().unwrap()[0].account_key
-            );
-            assert_eq!(
-                lookup.writable_indexes,
-                tx.message.address_table_lookups().unwrap()[0].writable_indexes
-            );
-            assert_eq!(
-                lookup.readonly_indexes,
-                tx.message.address_table_lookups().unwrap()[0].readonly_indexes
-            );
+            assert_eq!(lookup.account_key, &atls_actual[0].account_key);
+            assert_eq!(lookup.writable_indexes, atls_actual[0].writable_indexes);
+            assert_eq!(lookup.readonly_indexes, atls_actual[0].readonly_indexes);
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_address_table_lookup_iter_multiple() {
+        let tx = v0_with_multiple_lookups();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        let atls_actual = tx.message.address_table_lookups().unwrap();
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.address_table_lookup_iter(&bytes);
+
+            let lookup = iter.next().unwrap();
+            assert_eq!(lookup.account_key, &atls_actual[0].account_key);
+            assert_eq!(lookup.writable_indexes, atls_actual[0].writable_indexes);
+            assert_eq!(lookup.readonly_indexes, atls_actual[0].readonly_indexes);
+
+            let lookup = iter.next().unwrap();
+            assert_eq!(lookup.account_key, &atls_actual[1].account_key);
+            assert_eq!(lookup.writable_indexes, atls_actual[1].writable_indexes);
+            assert_eq!(lookup.readonly_indexes, atls_actual[1].readonly_indexes);
+
             assert!(iter.next().is_none());
         }
     }
