@@ -14,7 +14,7 @@ use {
         pubkey::Pubkey,
         signature::Signer,
         signer::keypair::Keypair,
-        system_program, system_transaction,
+        system_instruction, system_program, system_transaction,
         transaction::{SanitizedTransaction, Transaction, TransactionError},
         transaction_context::TransactionReturnData,
     },
@@ -497,13 +497,45 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
         });
     }
 
-    // 3: a non-executable transfer that fails during loading
+    // 3: a non-executable transfer that fails loading the fee-payer
+    // NOTE when we support the processed/executed distinction, this is NOT processed
     {
         test_entry.transaction_batch.push(TransactionBatchItem {
             transaction: system_transaction::transfer(
                 &Keypair::new(),
                 &Pubkey::new_unique(),
                 transfer_amount,
+                Hash::default(),
+            ),
+            asserts: TransactionBatchItemAsserts::not_executed(),
+            ..TransactionBatchItem::default()
+        });
+    }
+
+    // 4: a non-executable transfer that fails loading the program
+    // NOTE when we support the processed/executed distinction, this IS processed
+    // thus this test case will fail with the feature enabled
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+
+        let mut source_data = AccountSharedData::default();
+
+        source_data.set_lamports(transfer_amount * 10);
+        test_entry
+            .initial_accounts
+            .insert(source, source_data.clone());
+        test_entry.final_accounts.insert(source, source_data);
+
+        let mut instruction =
+            system_instruction::transfer(&source, &Pubkey::new_unique(), transfer_amount);
+        instruction.program_id = Pubkey::new_unique();
+
+        test_entry.transaction_batch.push(TransactionBatchItem {
+            transaction: Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&source),
+                &[&source_keypair],
                 Hash::default(),
             ),
             asserts: TransactionBatchItemAsserts::not_executed(),
@@ -574,9 +606,9 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         &processing_config,
     );
 
-    // build a hashmap of final account states incrementally
-    // NOTE with SIMD-83 an account may appear multiple times, thus we need the final state
-    let mut final_accounts_actual = AccountMap::default();
+    // build a hashmap of final account states incrementally, starting with all initial states, updating to all final states
+    // NOTE with SIMD-83 an account may appear multiple times in the same batch
+    let mut final_accounts_actual = test_entry.initial_accounts.clone();
     for processed_transaction in batch_output
         .processing_results
         .iter()
@@ -601,7 +633,12 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     // check that all the account states we care about are present and correct
     for (pubkey, expected_account_data) in test_entry.final_accounts.iter() {
         let actual_account_data = final_accounts_actual.get(pubkey);
-        assert_eq!(Some(expected_account_data), actual_account_data);
+        assert_eq!(
+            Some(expected_account_data),
+            actual_account_data,
+            "mismatch on account {}",
+            pubkey
+        );
     }
 
     // now run our transaction-by-transaction checks
