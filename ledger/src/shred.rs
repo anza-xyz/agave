@@ -52,8 +52,6 @@
 pub(crate) use self::merkle::SIZE_OF_MERKLE_ROOT;
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     self::{shred_code::ShredCode, traits::Shred as _},
     crate::blockstore::{self, MAX_DATA_SHREDS_PER_SLOT},
@@ -835,8 +833,7 @@ pub mod layout {
         }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn set_retransmitter_signature(
+    pub fn set_retransmitter_signature(
         shred: &mut [u8],
         signature: &Signature,
     ) -> Result<(), Error> {
