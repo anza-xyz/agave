@@ -47,10 +47,10 @@ use {
     solana_rpc_client_api::{
         client_error::ErrorKind as ClientErrorKind,
         config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
-        filter::{Memcmp, RpcFilterType},
         request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
+    solana_rpc_filter::{Memcmp, RpcFilterType},
     solana_sdk::{
         account::Account,
         account_utils::StateMut,

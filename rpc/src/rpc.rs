@@ -39,7 +39,6 @@ use {
     solana_rpc_client_api::{
         config::*,
         custom_error::RpcCustomError,
-        filter::{Memcmp, RpcFilterType},
         request::{
             TokenAccountsFilter, DELINQUENT_VALIDATOR_SLOT_DISTANCE,
             MAX_GET_CONFIRMED_BLOCKS_RANGE, MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
@@ -49,6 +48,7 @@ use {
         },
         response::{Response as RpcResponse, *},
     },
+    solana_rpc_filter::{Memcmp, RpcFilterType},
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
@@ -4324,14 +4324,12 @@ pub mod tests {
             blockstore_processor::fill_blockstore_slot_with_ticks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        solana_rpc_client_api::{
-            custom_error::{
-                JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
-                JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
-                JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
-            },
-            filter::MemcmpEncodedBytes,
+        solana_rpc_client_api::custom_error::{
+            JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+            JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
+            JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
         },
+        solana_rpc_filter::MemcmpEncodedBytes,
         solana_runtime::{
             accounts_background_service::AbsRequestSender, bank::BankTestConfig,
             commitment::BlockCommitment, non_circulating_supply::non_circulating_accounts,

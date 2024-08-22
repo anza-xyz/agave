@@ -34,10 +34,10 @@ use {
             RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
             RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
         },
-        filter::{Memcmp, RpcFilterType},
         request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
         response::{RpcPerfSample, RpcPrioritizationFee, SlotInfo},
     },
+    solana_rpc_filter::{Memcmp, RpcFilterType},
     solana_sdk::{
         account::from_account,
         account_utils::StateMut,
