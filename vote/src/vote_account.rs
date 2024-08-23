@@ -1,6 +1,9 @@
 use {
     itertools::Itertools,
-    serde::ser::{Serialize, Serializer},
+    serde::{
+        de::{MapAccess, Visitor},
+        ser::{Serialize, Serializer},
+    },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         instruction::InstructionError,
@@ -10,6 +13,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
+        fmt,
         iter::FromIterator,
         mem,
         sync::{Arc, OnceLock},
@@ -38,13 +42,13 @@ struct VoteAccountInner {
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
-
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, Deserialize)]
-#[serde(from = "Arc<VoteAccountsHashMap>")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VoteAccounts {
+    #[serde(deserialize_with = "deserialize_accounts_hash_map")]
     vote_accounts: Arc<VoteAccountsHashMap>,
     // Inner Arc is meant to implement copy-on-write semantics.
+    #[serde(skip)]
     staked_nodes: OnceLock<
         Arc<
             HashMap<
@@ -385,13 +389,51 @@ impl FromIterator<(Pubkey, (/*stake:*/ u64, VoteAccount))> for VoteAccounts {
     }
 }
 
-impl Serialize for VoteAccounts {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.vote_accounts.serialize(serializer)
+// This custom deserializer is needed to ensure compatibility at snapshot loading with versions
+// before https://github.com/anza-xyz/agave/pull/2659 which would theoretically allow invalid vote
+// accounts in VoteAccounts.
+//
+// In the (near) future we should remove this custom deserializer and make it a hard error when we
+// find invalid vote accounts in snapshots.
+fn deserialize_accounts_hash_map<'de, D>(
+    deserializer: D,
+) -> Result<Arc<VoteAccountsHashMap>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct VoteAccountsVisitor;
+
+    impl<'de> Visitor<'de> for VoteAccountsVisitor {
+        type Value = Arc<VoteAccountsHashMap>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a map of vote accounts")
+        }
+
+        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut accounts = HashMap::new();
+
+            while let Some((pubkey, (stake, account))) =
+                access.next_entry::<Pubkey, (u64, AccountSharedData)>()?
+            {
+                match VoteAccount::try_from(account) {
+                    Ok(vote_account) => {
+                        accounts.insert(pubkey, (stake, vote_account));
+                    }
+                    Err(e) => {
+                        log::warn!("failed to deserialize vote account: {e}");
+                    }
+                }
+            }
+
+            Ok(Arc::new(accounts))
+        }
     }
+
+    deserializer.deserialize_map(VoteAccountsVisitor)
 }
 
 #[cfg(test)]
@@ -547,6 +589,40 @@ mod tests {
             .unwrap();
         let vote_accounts: VoteAccounts = bincode::options().deserialize(&data).unwrap();
         assert_eq!(*vote_accounts.vote_accounts, vote_accounts_hash_map);
+    }
+
+    #[test]
+    fn test_vote_accounts_deserialize_invalid_account() {
+        let mut rng = rand::thread_rng();
+        // we'll populate the map with 1 valid and 2 invalid accounts, then ensure that we only get
+        // the valid one after deserialiation
+        let mut vote_accounts_hash_map = HashMap::<Pubkey, (u64, AccountSharedData)>::new();
+
+        let (valid_account, _) = new_rand_vote_account(&mut rng, None);
+        vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xAA, valid_account.clone()));
+
+        // bad data
+        let invalid_account_data =
+            AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk::vote::program::id())
+                .unwrap();
+        vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xBB, invalid_account_data));
+
+        // wrong owner
+        let invalid_account_key =
+            AccountSharedData::new_data(42, &valid_account.data().to_vec(), &Pubkey::new_unique())
+                .unwrap();
+        vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xCC, invalid_account_key));
+
+        let data = bincode::serialize(&vote_accounts_hash_map).unwrap();
+        let options = bincode::options()
+            .with_fixint_encoding()
+            .allow_trailing_bytes();
+        let mut deserializer = bincode::de::Deserializer::from_slice(&data, options);
+        let vote_accounts = deserialize_accounts_hash_map(&mut deserializer).unwrap();
+
+        assert_eq!(vote_accounts.len(), 1);
+        let (stake, _account) = vote_accounts.values().next().unwrap();
+        assert_eq!(*stake, 0xAA);
     }
 
     #[test]
