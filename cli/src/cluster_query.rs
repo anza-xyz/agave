@@ -2285,7 +2285,7 @@ pub fn process_calculate_rent(
     let rent_account = rpc_client.get_account(&sysvar::rent::id())?;
     let rent: Rent = rent_account.deserialize_data()?;
     let rent_exempt_minimum_lamports = if no_header {
-        rent.minimum_balance(data_length) - rent.minimum_balance(0)
+        ((data_length as u64 * rent.lamports_per_byte_year) as f64 * rent.exemption_threshold) as u64
     } else {
         rent.minimum_balance(data_length)
     };
