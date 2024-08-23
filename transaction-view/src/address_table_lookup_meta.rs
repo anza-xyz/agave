@@ -4,7 +4,7 @@ use {
             advance_offset_for_array, advance_offset_for_type, check_remaining,
             optimized_read_compressed_u16, read_byte, read_slice_data, read_type,
         },
-        result::Result,
+        result::{Result, TransactionParsingError},
     },
     solana_sdk::{hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Signature},
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
@@ -42,7 +42,8 @@ const MIN_SIZED_PACKET_WITH_ATLS: usize = {
 };
 
 /// The maximum number of ATLS that can fit in a valid packet.
-const MAX_ATLS_PER_PACKET: usize = (PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL;
+const MAX_ATLS_PER_PACKET: u8 =
+    ((PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL) as u8;
 
 /// Contains metadata about the address table lookups in a transaction packet.
 pub struct AddressTableLookupMeta {
@@ -64,6 +65,9 @@ impl AddressTableLookupMeta {
         // thus the MSB should not be set.
         const _: () = assert!(MAX_ATLS_PER_PACKET & 0b1000_0000 == 0);
         let num_address_table_lookups = read_byte(bytes, offset)?;
+        if num_address_table_lookups > MAX_ATLS_PER_PACKET {
+            return Err(TransactionParsingError);
+        }
 
         // Check that the remaining bytes are enough to hold the ATLs.
         check_remaining(
