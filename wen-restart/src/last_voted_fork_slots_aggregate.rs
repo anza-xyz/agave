@@ -25,12 +25,11 @@ const EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD: f64 = 1f64 / 3f64;
 pub(crate) struct LastVotedForkSlotsEpochInfo {
     pub epoch: Epoch,
     pub total_stake: u64,
-    // Percentage (0 to 100) of total stake of active peers in this epoch,
-    // no matter they voted for a slot in this epoch or not.
-    pub voted_percent: f64,
-    // Percentage (0 to 100) of total stake of active peers which has voted for
-    // a slot in this epoch.
-    pub voted_for_this_epoch_percent: f64,
+    // Total stake of active peers in this epoch, no matter they voted for a slot
+    // in this epoch or not.
+    pub actively_voting_stake: u64,
+    // Total stake of active peers which has voted for a slot in this epoch.
+    pub actively_voting_for_this_epoch_stake: u64,
 }
 
 pub(crate) struct LastVotedForkSlotsAggregate {
@@ -55,30 +54,33 @@ impl LastVotedForkSlotsAggregate {
     pub(crate) fn new(
         root_bank: Arc<Bank>,
         repair_threshold: f64,
-        last_voted_fork_slots: &Vec<Slot>,
+        my_last_voted_fork_slots: &Vec<Slot>,
         my_pubkey: &Pubkey,
     ) -> Self {
         let mut slots_stake_map = HashMap::new();
         let root_slot = root_bank.slot();
         let root_epoch = root_bank.epoch();
-        for slot in last_voted_fork_slots {
+        for slot in my_last_voted_fork_slots {
             if slot >= &root_slot {
-                if let Some(sender_stake) = root_bank.epoch_node_id_to_stake(root_epoch, my_pubkey)
-                {
+                let epoch = root_bank.epoch_schedule().get_epoch(*slot);
+                if let Some(sender_stake) = root_bank.epoch_node_id_to_stake(epoch, my_pubkey) {
                     slots_stake_map.insert(*slot, sender_stake);
                 } else {
-                    warn!(
-                        "The root bank {} does not have the stake for slot {}",
-                        root_slot, slot
-                    );
+                    warn!("The root bank {root_slot} does not have the stake for slot {slot}");
                 }
             }
         }
-        let last_vote_epoch = root_bank
-            .get_epoch_and_slot_index(last_voted_fork_slots[0])
+
+        let my_last_vote_epoch = root_bank
+            .get_epoch_and_slot_index(
+                *my_last_voted_fork_slots
+                    .iter()
+                    .max()
+                    .expect("my voted slots should not be empty"),
+            )
             .0;
         let mut node_to_last_vote_epoch_map = HashMap::new();
-        node_to_last_vote_epoch_map.insert(*my_pubkey, last_vote_epoch);
+        node_to_last_vote_epoch_map.insert(*my_pubkey, my_last_vote_epoch);
         // We would only consider slots in root_epoch and the next epoch.
         let epoch_info_vec: Vec<LastVotedForkSlotsEpochInfo> = (root_epoch
             ..root_epoch
@@ -88,21 +90,19 @@ impl LastVotedForkSlotsAggregate {
                 let total_stake = root_bank
                     .epoch_total_stake(epoch)
                     .expect("epoch stake not found");
-                let my_percent = root_bank
+                let my_stake = root_bank
                     .epoch_node_id_to_stake(epoch, my_pubkey)
-                    .unwrap_or(0) as f64
-                    / total_stake as f64
-                    * 100.0;
-                let voted_for_this_epoch_percent = if epoch <= last_vote_epoch {
-                    my_percent
+                    .unwrap_or(0);
+                let actively_voting_for_this_epoch_stake = if epoch <= my_last_vote_epoch {
+                    my_stake
                 } else {
-                    0.0
+                    0
                 };
                 LastVotedForkSlotsEpochInfo {
                     epoch,
                     total_stake,
-                    voted_percent: my_percent,
-                    voted_for_this_epoch_percent,
+                    actively_voting_stake: my_stake,
+                    actively_voting_for_this_epoch_stake,
                 }
             })
             .collect();
@@ -230,18 +230,23 @@ impl LastVotedForkSlotsAggregate {
             // We only have two entries so old epoch must be the second one.
             let entry = self.epoch_info_vec.last_mut().unwrap();
             if let Some(stake) = self.root_bank.epoch_node_id_to_stake(entry.epoch, from) {
-                entry.voted_for_this_epoch_percent -=
-                    stake as f64 / entry.total_stake as f64 * 100.0;
+                entry.actively_voting_for_this_epoch_stake = entry
+                    .actively_voting_for_this_epoch_stake
+                    .checked_sub(stake)
+                    .unwrap();
             }
         } else {
             for entry in self.epoch_info_vec.iter_mut() {
                 if let Some(stake) = self.root_bank.epoch_node_id_to_stake(entry.epoch, from) {
-                    let my_percent = stake as f64 / entry.total_stake as f64 * 100.0;
                     if old_last_vote_epoch.is_none() {
-                        entry.voted_percent += my_percent;
+                        entry.actively_voting_stake =
+                            entry.actively_voting_stake.checked_add(stake).unwrap();
                     }
                     if Some(entry.epoch) > old_last_vote_epoch && entry.epoch <= last_vote_epoch {
-                        entry.voted_for_this_epoch_percent += my_percent;
+                        entry.actively_voting_for_this_epoch_stake = entry
+                            .actively_voting_for_this_epoch_stake
+                            .checked_add(stake)
+                            .unwrap();
                     }
                 }
             }
@@ -252,9 +257,10 @@ impl LastVotedForkSlotsAggregate {
         self.epoch_info_vec
             .iter()
             .filter(|info| {
-                info.voted_for_this_epoch_percent > 100.0 * EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD
+                info.actively_voting_for_this_epoch_stake as f64 / info.total_stake as f64
+                    > EPOCH_CONSIDERED_FOR_EXIT_THRESHOLD
             })
-            .map(|info| info.voted_percent)
+            .map(|info| info.actively_voting_stake as f64 / info.total_stake as f64 * 100.0)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0)
     }
@@ -281,11 +287,14 @@ mod tests {
         solana_program::clock::Slot,
         solana_runtime::{
             bank::Bank,
+            epoch_stakes::EpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
         },
         solana_sdk::{hash::Hash, signature::Signer, timing::timestamp},
+        solana_vote::vote_account::VoteAccount,
+        solana_vote_program::vote_state::create_account_with_authorized,
     };
 
     const TOTAL_VALIDATOR_COUNT: u16 = 10;
@@ -512,14 +521,14 @@ mod tests {
                     LastVotedForkSlotsEpochInfo {
                         epoch: 0,
                         total_stake: 1000,
-                        voted_percent: 50.0,
-                        voted_for_this_epoch_percent: 50.0,
+                        actively_voting_stake: 500,
+                        actively_voting_for_this_epoch_stake: 500,
                     },
                     LastVotedForkSlotsEpochInfo {
                         epoch: 1,
                         total_stake: 1000,
-                        voted_percent: 50.0,
-                        voted_for_this_epoch_percent: 0.0,
+                        actively_voting_stake: 500,
+                        actively_voting_for_this_epoch_stake: 0,
                     }
                 ],
             },
@@ -658,14 +667,14 @@ mod tests {
                     LastVotedForkSlotsEpochInfo {
                         epoch: 0,
                         total_stake: 1000,
-                        voted_percent: 40.0,
-                        voted_for_this_epoch_percent: 40.0,
+                        actively_voting_stake: 400,
+                        actively_voting_for_this_epoch_stake: 400,
                     },
                     LastVotedForkSlotsEpochInfo {
                         epoch: 1,
                         total_stake: 1000,
-                        voted_percent: 40.0,
-                        voted_for_this_epoch_percent: 0.0,
+                        actively_voting_stake: 400,
+                        actively_voting_for_this_epoch_stake: 0,
                     }
                 ],
             },
@@ -732,5 +741,85 @@ mod tests {
                 &last_voted_fork_slots_record,
             )
             .is_err());
+    }
+
+    #[test]
+    fn test_aggregate_init_across_epoch() {
+        let validator_voting_keypairs: Vec<_> = (0..TOTAL_VALIDATOR_COUNT)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+            10_000,
+            &validator_voting_keypairs,
+            vec![100; validator_voting_keypairs.len()],
+        );
+        let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        // Add bank 1 linking directly to 0, tweak its epoch_stakes, and then add it to bank_forks.
+        let mut new_root_bank = Bank::new_from_parent(root_bank.clone(), &Pubkey::default(), 1);
+
+        // For epoch 1, let our validator have 90% of the stake.
+        let vote_accounts_hash_map = validator_voting_keypairs
+            .iter()
+            .enumerate()
+            .map(|(i, keypairs)| {
+                let stake = if i == MY_INDEX {
+                    900 * (TOTAL_VALIDATOR_COUNT - 1) as u64
+                } else {
+                    100
+                };
+                let authorized_voter = keypairs.vote_keypair.pubkey();
+                let node_id = keypairs.node_keypair.pubkey();
+                (
+                    authorized_voter,
+                    (
+                        stake,
+                        VoteAccount::try_from(create_account_with_authorized(
+                            &node_id,
+                            &authorized_voter,
+                            &node_id,
+                            0,
+                            100,
+                        ))
+                        .unwrap(),
+                    ),
+                )
+            })
+            .collect();
+        let epoch1_eopch_stakes = EpochStakes::new_for_tests(vote_accounts_hash_map, 1);
+        new_root_bank.set_epoch_stakes_for_test(1, epoch1_eopch_stakes);
+
+        let last_voted_fork_slots = vec![root_bank.slot() + 1, root_bank.get_slots_in_epoch(0) + 1];
+        let slots_aggregate = LastVotedForkSlotsAggregate::new(
+            Arc::new(new_root_bank),
+            REPAIR_THRESHOLD,
+            &last_voted_fork_slots,
+            &validator_voting_keypairs[MY_INDEX].node_keypair.pubkey(),
+        );
+        assert_eq!(
+            slots_aggregate.get_final_result(),
+            LastVotedForkSlotsFinalResult {
+                slots_stake_map: vec![
+                    (root_bank.slot() + 1, 100),
+                    (root_bank.get_slots_in_epoch(0) + 1, 8100),
+                ]
+                .into_iter()
+                .collect(),
+                epoch_info_vec: vec![
+                    LastVotedForkSlotsEpochInfo {
+                        epoch: 0,
+                        total_stake: 1000,
+                        actively_voting_stake: 100,
+                        actively_voting_for_this_epoch_stake: 100,
+                    },
+                    LastVotedForkSlotsEpochInfo {
+                        epoch: 1,
+                        total_stake: 9000,
+                        actively_voting_stake: 8100,
+                        actively_voting_for_this_epoch_stake: 8100,
+                    }
+                ],
+            }
+        );
     }
 }
