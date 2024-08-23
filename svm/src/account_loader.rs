@@ -4,7 +4,7 @@ use {
         nonce_info::NonceInfo,
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
+        transaction_processing_callback::{/* XXX AccountState, */ TransactionProcessingCallback,},
     },
     itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
@@ -474,7 +474,7 @@ fn load_transaction_account(
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<(LoadedTransactionAccount, bool)> {
     let mut account_found = true;
-    let mut was_inspected = false;
+    let mut _was_inspected = false;
     let is_instruction_account = u8::try_from(account_index)
         .map(|i| instruction_accounts.contains(&&i))
         .unwrap_or(false);
@@ -509,6 +509,7 @@ fn load_transaction_account(
                 let rent_collected = if is_writable {
                     // Inspect the account prior to collecting rent, since
                     // rent collection can modify the account.
+                    /* XXX HANA i messaged brooks asking what this is... newly added yesterday 8/22
                     debug_assert!(!was_inspected);
                     callbacks.inspect_account(
                         account_key,
@@ -516,6 +517,7 @@ fn load_transaction_account(
                         is_writable,
                     );
                     was_inspected = true;
+                    */
 
                     collect_rent_from_account(
                         feature_set,
@@ -549,6 +551,7 @@ fn load_transaction_account(
             })
     };
 
+    /* XXX as noted above
     if !was_inspected {
         let account_state = if account_found {
             AccountState::Alive(&loaded_account.account)
@@ -557,6 +560,7 @@ fn load_transaction_account(
         };
         callbacks.inspect_account(account_key, account_state, is_writable);
     }
+    */
 
     Ok((loaded_account, account_found))
 }

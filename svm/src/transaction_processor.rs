@@ -321,7 +321,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     } else {
                         Err(fees_only_tx.load_error)
                     }
-                },
+                }
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let executed_tx = self.execute_loaded_transaction(
                         tx,
@@ -341,7 +341,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
                     }
 
-                    Ok(executed_tx)
+                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
             };
 
