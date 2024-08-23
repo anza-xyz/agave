@@ -45,7 +45,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     processing_results: &'a mut [TransactionProcessingResult],
     durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
-) -> (Vec<(&'a Pubkey, &'a AccountSharedData)>, Vec<&'a T>) {
+) -> (Vec<(&'a Pubkey, &'a AccountSharedData)>, Option<Vec<&'a T>>) {
     let collect_capacity = max_number_of_accounts_to_collect(txs, processing_results);
     let mut accounts = Vec::with_capacity(collect_capacity);
     let mut transactions = Vec::with_capacity(collect_capacity);
@@ -87,7 +87,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
             }
         }
     }
-    (accounts, transactions)
+    (accounts, Some(transactions))
 }
 
 fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
@@ -294,6 +294,7 @@ mod tests {
             .iter()
             .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey()));
 
+        let transactions = transactions.unwrap();
         assert_eq!(transactions.len(), 2);
         assert!(transactions.iter().any(|txn| (*txn).eq(&tx0)));
         assert!(transactions.iter().any(|txn| (*txn).eq(&tx1)));
