@@ -161,16 +161,16 @@ impl LastVotedForkSlotsAggregate {
         if old_last_vote_epoch != Some(last_vote_epoch) {
             self.update_epoch_info(from, last_vote_epoch, old_last_vote_epoch);
         }
-        let record = LastVotedForkSlotsRecord {
-            last_voted_fork_slots: new_slots_vec.clone(),
+        if self.update_and_check_if_message_already_saved(new_slots.clone(), new_slots_vec.clone())
+        {
+            return None;
+        }
+        Some(LastVotedForkSlotsRecord {
+            last_voted_fork_slots: new_slots_vec,
             last_vote_bankhash: new_slots.last_voted_hash.to_string(),
             shred_version: new_slots.shred_version as u32,
             wallclock: new_slots.wallclock,
-        };
-        if self.update_and_check_if_message_already_saved(new_slots, new_slots_vec) {
-            return None;
-        }
-        Some(record)
+        })
     }
 
     // Return true if the message has already been saved, so we can skip the rest of the processing.
