@@ -980,13 +980,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         thread_rng().gen_range(0..N) == 0
     }
 
-    /// assumes 1 entry in the slot list. Ignores overhead of the HashMap and such
-    fn approx_size_of_one_entry() -> usize {
-        std::mem::size_of::<T>()
-            + std::mem::size_of::<Pubkey>()
-            + std::mem::size_of::<AccountMapEntry<T>>()
-    }
-
     fn should_evict_based_on_age(
         current_age: Age,
         entry: &AccountMapEntry<T>,
@@ -1195,9 +1188,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if !evictions_age_possible.is_empty() || !evictions_random.is_empty() {
                 let disk = self.bucket.as_ref().unwrap();
                 let mut flush_entries_updated_on_disk = 0;
-                if self.get_exceeds_budget() {
-                    panic!("Accounts-db in-memory index has exceeded the budget.");
-                }
 
                 let mut flush_should_evict_us = 0;
                 // we don't care about lock time in this metric - bg threads can wait
@@ -1317,21 +1307,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 self.set_has_aged(current_age, can_advance_age);
             }
         }
-    }
-
-    /// calculate the estimated size of the in-mem index
-    /// return whether the size exceeds the specified budget
-    fn get_exceeds_budget(&self) -> bool {
-        let in_mem_count = self.stats().count_in_mem.load(Ordering::Relaxed);
-        let limit = self.storage.mem_budget_mb;
-        let estimate_mem = in_mem_count * Self::approx_size_of_one_entry();
-        let exceeds_budget = limit
-            .map(|limit| estimate_mem >= limit * 1024 * 1024)
-            .unwrap_or_default();
-        self.stats()
-            .estimate_mem
-            .store(estimate_mem as u64, Ordering::Relaxed);
-        exceeds_budget
     }
 
     /// for each key in 'keys', look up in map, set age to the future
@@ -1552,7 +1527,7 @@ impl Drop for EvictionsGuard<'_> {
 mod tests {
     use {
         super::*,
-        crate::accounts_index::{AccountsIndexConfig, IndexLimitMb, BINS_FOR_TESTING},
+        crate::accounts_index::{AccountsIndexConfig, BINS_FOR_TESTING},
         assert_matches::assert_matches,
         itertools::Itertools,
     };
@@ -1570,10 +1545,7 @@ mod tests {
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let holder = Arc::new(BucketMapHolder::new(
             BINS_FOR_TESTING,
-            &Some(AccountsIndexConfig {
-                index_limit_mb: IndexLimitMb::Limit(1),
-                ..AccountsIndexConfig::default()
-            }),
+            &Some(AccountsIndexConfig::default()),
             1,
         ));
         let bin = 0;
