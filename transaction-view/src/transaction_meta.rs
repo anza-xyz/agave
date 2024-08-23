@@ -1,6 +1,6 @@
 use {
     crate::{
-        address_table_lookup_meta::AddressTableLookupMeta,
+        address_table_lookup_meta::{AddressTableLookupIterator, AddressTableLookupMeta},
         bytes::advance_offset_for_type,
         instructions_meta::{InstructionsIterator, InstructionsMeta},
         message_header_meta::{MessageHeaderMeta, TransactionVersion},
@@ -44,7 +44,7 @@ impl TransactionMeta {
         let instructions = InstructionsMeta::try_new(bytes, &mut offset)?;
         let address_table_lookup = match message_header.version {
             TransactionVersion::Legacy => AddressTableLookupMeta {
-                num_address_table_lookup: 0,
+                num_address_table_lookups: 0,
                 offset: 0,
             },
             TransactionVersion::V0 => AddressTableLookupMeta::try_new(bytes, &mut offset)?,
@@ -102,7 +102,7 @@ impl TransactionMeta {
 
     /// Return the number of address table lookups in the transaction.
     pub fn num_address_table_lookups(&self) -> u8 {
-        self.address_table_lookup.num_address_table_lookup
+        self.address_table_lookup.num_address_table_lookups
     }
 }
 
@@ -112,7 +112,27 @@ impl TransactionMeta {
     /// # Safety
     ///   - This function must be called with the same `bytes` slice that was
     ///     used to create the `TransactionMeta` instance.
-    pub unsafe fn signatures(&self, bytes: &[u8]) -> &[Signature] {
+    pub unsafe fn signatures<'a>(&self, bytes: &'a [u8]) -> &'a [Signature] {
+        // Verify at compile time there are no alignment constraints.
+        const _: () = assert!(
+            core::mem::align_of::<Signature>() == 1,
+            "Signature alignment"
+        );
+        // The length of the slice is not greater than isize::MAX.
+        const _: () =
+            assert!(u8::MAX as usize * core::mem::size_of::<Signature>() <= isize::MAX as usize);
+
+        // SAFETY:
+        // - If this `TransactionMeta` was created from `bytes`:
+        //     - the pointer is valid for the range and is properly aligned.
+        // - `num_signatures` has been verified against the bounds if
+        //   `TransactionMeta` was created successfully.
+        // - `Signature` are just byte arrays; there is no possibility the
+        //   `Signature` are not initialized properly.
+        // - The lifetime of the returned slice is the same as the input
+        //   `bytes`. This means it will not be mutated or deallocated while
+        //   holding the slice.
+        // - The length does not overflow `isize`.
         core::slice::from_raw_parts(
             bytes.as_ptr().add(usize::from(self.signature.offset)) as *const Signature,
             usize::from(self.signature.num_signatures),
@@ -124,7 +144,24 @@ impl TransactionMeta {
     /// # Safety
     ///  - This function must be called with the same `bytes` slice that was
     ///    used to create the `TransactionMeta` instance.
-    pub unsafe fn static_account_keys(&self, bytes: &[u8]) -> &[Pubkey] {
+    pub unsafe fn static_account_keys<'a>(&self, bytes: &'a [u8]) -> &'a [Pubkey] {
+        // Verify at compile time there are no alignment constraints.
+        const _: () = assert!(core::mem::align_of::<Pubkey>() == 1, "Pubkey alignment");
+        // The length of the slice is not greater than isize::MAX.
+        const _: () =
+            assert!(u8::MAX as usize * core::mem::size_of::<Pubkey>() <= isize::MAX as usize);
+
+        // SAFETY:
+        // - If this `TransactionMeta` was created from `bytes`:
+        //     - the pointer is valid for the range and is properly aligned.
+        // - `num_static_accounts` has been verified against the bounds if
+        //   `TransactionMeta` was created successfully.
+        // - `Pubkey` are just byte arrays; there is no possibility the
+        //   `Pubkey` are not initialized properly.
+        // - The lifetime of the returned slice is the same as the input
+        //   `bytes`. This means it will not be mutated or deallocated while
+        //   holding the slice.
+        // - The length does not overflow `isize`.
         core::slice::from_raw_parts(
             bytes
                 .as_ptr()
@@ -137,7 +174,16 @@ impl TransactionMeta {
     /// # Safety
     /// - This function must be called with the same `bytes` slice that was
     ///   used to create the `TransactionMeta` instance.
-    pub unsafe fn recent_blockhash(&self, bytes: &[u8]) -> &Hash {
+    pub unsafe fn recent_blockhash<'a>(&self, bytes: &'a [u8]) -> &'a Hash {
+        // Verify at compile time there are no alignment constraints.
+        const _: () = assert!(core::mem::align_of::<Hash>() == 1, "Hash alignment");
+
+        // SAFETY:
+        // - The pointer is correctly aligned (no alignment constraints).
+        // - `Hash` is just a byte array; there is no possibility the `Hash`
+        //   is not initialized properly.
+        // - Aliasing rules are respected because the lifetime of the returned
+        //   reference is the same as the input/source `bytes`.
         &*(bytes
             .as_ptr()
             .add(usize::from(self.recent_blockhash_offset)) as *const Hash)
@@ -152,6 +198,22 @@ impl TransactionMeta {
             bytes,
             offset: usize::from(self.instructions.offset),
             num_instructions: self.instructions.num_instructions,
+            index: 0,
+        }
+    }
+
+    /// Return an iterator over the address table lookups in the transaction.
+    /// # Safety
+    /// - This function must be called with the same `bytes` slice that was
+    ///   used to create the `TransactionMeta` instance.
+    pub unsafe fn address_table_lookup_iter<'a>(
+        &self,
+        bytes: &'a [u8],
+    ) -> AddressTableLookupIterator<'a> {
+        AddressTableLookupIterator {
+            bytes,
+            offset: usize::from(self.address_table_lookup.offset),
+            num_address_table_lookups: self.address_table_lookup.num_address_table_lookups,
             index: 0,
         }
     }
@@ -200,7 +262,7 @@ mod tests {
             tx.message.instructions().len() as u16
         );
         assert_eq!(
-            meta.address_table_lookup.num_address_table_lookup,
+            meta.address_table_lookup.num_address_table_lookups,
             tx.message
                 .address_table_lookups()
                 .map(|x| x.len() as u8)
@@ -259,7 +321,21 @@ mod tests {
         }
     }
 
-    fn v0_with_lookup() -> VersionedTransaction {
+    fn multiple_transfers() -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        VersionedTransaction {
+            signatures: vec![Signature::default()], // 1 signature to be valid.
+            message: VersionedMessage::Legacy(Message::new(
+                &[
+                    system_instruction::transfer(&payer, &Pubkey::new_unique(), 1),
+                    system_instruction::transfer(&payer, &Pubkey::new_unique(), 1),
+                ],
+                Some(&payer),
+            )),
+        }
+    }
+
+    fn v0_with_single_lookup() -> VersionedTransaction {
         let payer = Pubkey::new_unique();
         let to = Pubkey::new_unique();
         VersionedTransaction {
@@ -272,6 +348,36 @@ mod tests {
                         key: Pubkey::new_unique(),
                         addresses: vec![to],
                     }],
+                    Hash::default(),
+                )
+                .unwrap(),
+            ),
+        }
+    }
+
+    fn v0_with_multiple_lookups() -> VersionedTransaction {
+        let payer = Pubkey::new_unique();
+        let to1 = Pubkey::new_unique();
+        let to2 = Pubkey::new_unique();
+        VersionedTransaction {
+            signatures: vec![Signature::default()], // 1 signature to be valid.
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &payer,
+                    &[
+                        system_instruction::transfer(&payer, &to1, 1),
+                        system_instruction::transfer(&payer, &to2, 1),
+                    ],
+                    &[
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![to1],
+                        },
+                        AddressLookupTableAccount {
+                            key: Pubkey::new_unique(),
+                            addresses: vec![to2],
+                        },
+                    ],
                     Hash::default(),
                 )
                 .unwrap(),
@@ -296,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_v0_with_lookup() {
-        verify_transaction_view_meta(&v0_with_lookup());
+        verify_transaction_view_meta(&v0_with_single_lookup());
     }
 
     #[test]
@@ -406,7 +512,20 @@ mod tests {
     }
 
     #[test]
-    fn test_instructions_iter() {
+    fn test_instructions_iter_empty() {
+        let tx = minimally_sized_transaction();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.instructions_iter(&bytes);
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_instructions_iter_single() {
         let tx = simple_transfer();
         let bytes = bincode::serialize(&tx).unwrap();
         let meta = TransactionMeta::try_new(&bytes).unwrap();
@@ -421,6 +540,89 @@ mod tests {
                 ix.data,
                 &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
             );
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_instructions_iter_multiple() {
+        let tx = multiple_transfers();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.instructions_iter(&bytes);
+            let ix = iter.next().unwrap();
+            assert_eq!(ix.program_id_index, 3);
+            assert_eq!(ix.accounts, &[0, 1]);
+            assert_eq!(
+                ix.data,
+                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+            );
+            let ix = iter.next().unwrap();
+            assert_eq!(ix.program_id_index, 3);
+            assert_eq!(ix.accounts, &[0, 2]);
+            assert_eq!(
+                ix.data,
+                &bincode::serialize(&SystemInstruction::Transfer { lamports: 1 }).unwrap()
+            );
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_address_table_lookup_iter_empty() {
+        let tx = simple_transfer();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.address_table_lookup_iter(&bytes);
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_address_table_lookup_iter_single() {
+        let tx = v0_with_single_lookup();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        let atls_actual = tx.message.address_table_lookups().unwrap();
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.address_table_lookup_iter(&bytes);
+            let lookup = iter.next().unwrap();
+            assert_eq!(lookup.account_key, &atls_actual[0].account_key);
+            assert_eq!(lookup.writable_indexes, atls_actual[0].writable_indexes);
+            assert_eq!(lookup.readonly_indexes, atls_actual[0].readonly_indexes);
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_address_table_lookup_iter_multiple() {
+        let tx = v0_with_multiple_lookups();
+        let bytes = bincode::serialize(&tx).unwrap();
+        let meta = TransactionMeta::try_new(&bytes).unwrap();
+
+        let atls_actual = tx.message.address_table_lookups().unwrap();
+        // SAFETY: `bytes` is the same slice used to create `meta`.
+        unsafe {
+            let mut iter = meta.address_table_lookup_iter(&bytes);
+
+            let lookup = iter.next().unwrap();
+            assert_eq!(lookup.account_key, &atls_actual[0].account_key);
+            assert_eq!(lookup.writable_indexes, atls_actual[0].writable_indexes);
+            assert_eq!(lookup.readonly_indexes, atls_actual[0].readonly_indexes);
+
+            let lookup = iter.next().unwrap();
+            assert_eq!(lookup.account_key, &atls_actual[1].account_key);
+            assert_eq!(lookup.writable_indexes, atls_actual[1].writable_indexes);
+            assert_eq!(lookup.readonly_indexes, atls_actual[1].readonly_indexes);
+
             assert!(iter.next().is_none());
         }
     }

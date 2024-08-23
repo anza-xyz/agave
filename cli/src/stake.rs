@@ -1368,7 +1368,7 @@ pub fn process_create_stake_account(
     withdrawer: &Option<Pubkey>,
     withdrawer_signer: Option<SignerIndex>,
     lockup: &Lockup,
-    amount: SpendAmount,
+    mut amount: SpendAmount,
     sign_only: bool,
     dump_transaction_message: bool,
     blockhash_query: &BlockhashQuery,
@@ -1394,6 +1394,7 @@ pub fn process_create_stake_account(
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
 
+    let compute_unit_limit = ComputeUnitLimit::Default;
     let build_message = |lamports| {
         let authorized = Authorized {
             staker: staker.unwrap_or(from.pubkey()),
@@ -1437,7 +1438,7 @@ pub fn process_create_stake_account(
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_limit,
         });
         if let Some(nonce_account) = &nonce_account {
             Message::new_with_nonce(
@@ -1453,6 +1454,14 @@ pub fn process_create_stake_account(
 
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
+    if !sign_only && amount == SpendAmount::All {
+        let minimum_balance =
+            rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
+        amount = SpendAmount::AllForAccountCreation {
+            create_account_min_balance: minimum_balance,
+        };
+    }
+
     let (message, lamports) = resolve_spend_tx_and_check_account_balances(
         rpc_client,
         sign_only,
@@ -1460,6 +1469,7 @@ pub fn process_create_stake_account(
         &recent_blockhash,
         &from.pubkey(),
         &fee_payer.pubkey(),
+        compute_unit_limit,
         build_message,
         config.commitment,
     )?;
@@ -1476,7 +1486,6 @@ pub fn process_create_stake_account(
 
         let minimum_balance =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
-
         if lamports < minimum_balance {
             return Err(CliError::BadParameter(format!(
                 "need at least {minimum_balance} lamports for stake account to be rent exempt, \
@@ -1826,6 +1835,7 @@ pub fn process_withdraw_stake(
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
 
+    let compute_unit_limit = ComputeUnitLimit::Default;
     let build_message = |lamports| {
         let ixs = vec![stake_instruction::withdraw(
             &stake_account_address,
@@ -1837,7 +1847,7 @@ pub fn process_withdraw_stake(
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_limit,
         });
 
         if let Some(nonce_account) = &nonce_account {
@@ -1859,6 +1869,7 @@ pub fn process_withdraw_stake(
         &recent_blockhash,
         &stake_account_address,
         &fee_payer.pubkey(),
+        compute_unit_limit,
         build_message,
         config.commitment,
     )?;

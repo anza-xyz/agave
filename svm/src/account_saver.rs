@@ -2,20 +2,22 @@ use {
     crate::{
         rollback_accounts::RollbackAccounts,
         transaction_processing_result::{
-            TransactionProcessingResult, TransactionProcessingResultExtensions,
+            ProcessedTransaction, TransactionProcessingResult,
+            TransactionProcessingResultExtensions,
         },
     },
     solana_sdk::{
         account::AccountSharedData, nonce::state::DurableNonce, pubkey::Pubkey,
-        transaction::SanitizedTransaction, transaction_context::TransactionAccount,
+        transaction_context::TransactionAccount,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 // Used to approximate how many accounts will be calculated for storage so that
 // vectors are allocated with an appropriate capacity. Doesn't account for some
 // optimization edge cases where some write locked accounts have skip storage.
 fn max_number_of_accounts_to_collect(
-    txs: &[SanitizedTransaction],
+    txs: &[impl SVMMessage],
     processing_results: &[TransactionProcessingResult],
 ) -> usize {
     processing_results
@@ -26,24 +28,24 @@ fn max_number_of_accounts_to_collect(
                 .processed_transaction()
                 .map(|processed_tx| (processed_tx, tx))
         })
-        .map(
-            |(processed_tx, tx)| match processed_tx.execution_details.status {
-                Ok(_) => tx.message().num_write_locks() as usize,
-                Err(_) => processed_tx.loaded_transaction.rollback_accounts.count(),
-            },
-        )
+        .map(|(processed_tx, tx)| match processed_tx {
+            ProcessedTransaction::Executed(executed_tx) => {
+                match executed_tx.execution_details.status {
+                    Ok(_) => tx.num_write_locks() as usize,
+                    Err(_) => executed_tx.loaded_transaction.rollback_accounts.count(),
+                }
+            }
+            ProcessedTransaction::FeesOnly(fees_only_tx) => fees_only_tx.rollback_accounts.count(),
+        })
         .sum()
 }
 
-pub fn collect_accounts_to_store<'a>(
-    txs: &'a [SanitizedTransaction],
+pub fn collect_accounts_to_store<'a, T: SVMMessage>(
+    txs: &'a [T],
     processing_results: &'a mut [TransactionProcessingResult],
     durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
-) -> (
-    Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    Vec<Option<&'a SanitizedTransaction>>,
-) {
+) -> (Vec<(&'a Pubkey, &'a AccountSharedData)>, Vec<Option<&'a T>>) {
     let collect_capacity = max_number_of_accounts_to_collect(txs, processing_results);
     let mut accounts = Vec::with_capacity(collect_capacity);
     let mut transactions = Vec::with_capacity(collect_capacity);
@@ -53,43 +55,56 @@ pub fn collect_accounts_to_store<'a>(
             continue;
         };
 
-        if processed_tx.execution_details.status.is_ok() {
-            collect_accounts_for_successful_tx(
-                &mut accounts,
-                &mut transactions,
-                transaction,
-                &processed_tx.loaded_transaction.accounts,
-            );
-        } else {
-            collect_accounts_for_failed_tx(
-                &mut accounts,
-                &mut transactions,
-                transaction,
-                &mut processed_tx.loaded_transaction.rollback_accounts,
-                durable_nonce,
-                lamports_per_signature,
-            );
+        match processed_tx {
+            ProcessedTransaction::Executed(executed_tx) => {
+                if executed_tx.execution_details.status.is_ok() {
+                    collect_accounts_for_successful_tx(
+                        &mut accounts,
+                        &mut transactions,
+                        transaction,
+                        &executed_tx.loaded_transaction.accounts,
+                    );
+                } else {
+                    collect_accounts_for_failed_tx(
+                        &mut accounts,
+                        &mut transactions,
+                        transaction,
+                        &mut executed_tx.loaded_transaction.rollback_accounts,
+                        durable_nonce,
+                        lamports_per_signature,
+                    );
+                }
+            }
+            ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                collect_accounts_for_failed_tx(
+                    &mut accounts,
+                    &mut transactions,
+                    transaction,
+                    &mut fees_only_tx.rollback_accounts,
+                    durable_nonce,
+                    lamports_per_signature,
+                );
+            }
         }
     }
     (accounts, transactions)
 }
 
-fn collect_accounts_for_successful_tx<'a>(
+fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    collected_account_transactions: &mut Vec<Option<&'a SanitizedTransaction>>,
-    transaction: &'a SanitizedTransaction,
+    collected_account_transactions: &mut Vec<Option<&'a T>>,
+    transaction: &'a T,
     transaction_accounts: &'a [TransactionAccount],
 ) {
-    let message = transaction.message();
-    for (_, (address, account)) in (0..message.account_keys().len())
+    for (_, (address, account)) in (0..transaction.account_keys().len())
         .zip(transaction_accounts)
         .filter(|(i, _)| {
-            message.is_writable(*i) && {
+            transaction.is_writable(*i) && {
                 // Accounts that are invoked and also not passed as an instruction
                 // account to a program don't need to be stored because it's assumed
                 // to be impossible for a committable transaction to modify an
                 // invoked account if said account isn't passed to some program.
-                !message.is_invoked(*i) || message.is_instruction_account(*i)
+                !transaction.is_invoked(*i) || transaction.is_instruction_account(*i)
             }
         })
     {
@@ -98,16 +113,15 @@ fn collect_accounts_for_successful_tx<'a>(
     }
 }
 
-fn collect_accounts_for_failed_tx<'a>(
+fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    collected_account_transactions: &mut Vec<Option<&'a SanitizedTransaction>>,
-    transaction: &'a SanitizedTransaction,
+    collected_account_transactions: &mut Vec<Option<&'a T>>,
+    transaction: &'a T,
     rollback_accounts: &'a mut RollbackAccounts,
     durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
 ) {
-    let message = transaction.message();
-    let fee_payer_address = message.fee_payer();
+    let fee_payer_address = transaction.fee_payer();
     match rollback_accounts {
         RollbackAccounts::FeePayerOnly { fee_payer_account } => {
             collected_accounts.push((fee_payer_address, &*fee_payer_account));
@@ -145,7 +159,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            account_loader::LoadedTransaction,
+            account_loader::{FeesOnlyTransaction, LoadedTransaction},
             nonce_info::NonceInfo,
             transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         },
@@ -165,7 +179,7 @@ mod tests {
             rent_debits::RentDebits,
             signature::{keypair_from_seed, signers::Signers, Keypair, Signer},
             system_instruction, system_program,
-            transaction::{Result, Transaction, TransactionError},
+            transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
         },
         std::collections::HashMap,
     };
@@ -182,22 +196,24 @@ mod tests {
         ))
     }
 
-    fn new_processing_result(
+    fn new_executed_processing_result(
         status: Result<()>,
         loaded_transaction: LoadedTransaction,
     ) -> TransactionProcessingResult {
-        Ok(ExecutedTransaction {
-            execution_details: TransactionExecutionDetails {
-                status,
-                log_messages: None,
-                inner_instructions: None,
-                return_data: None,
-                executed_units: 0,
-                accounts_data_len_delta: 0,
+        Ok(ProcessedTransaction::Executed(Box::new(
+            ExecutedTransaction {
+                execution_details: TransactionExecutionDetails {
+                    status,
+                    log_messages: None,
+                    inner_instructions: None,
+                    return_data: None,
+                    executed_units: 0,
+                    accounts_data_len_delta: 0,
+                },
+                loaded_transaction,
+                programs_modified_by_tx: HashMap::new(),
             },
-            loaded_transaction,
-            programs_modified_by_tx: HashMap::new(),
-        })
+        )))
     }
 
     #[test]
@@ -263,8 +279,8 @@ mod tests {
 
         let txs = vec![tx0.clone(), tx1.clone()];
         let mut processing_results = vec![
-            new_processing_result(Ok(()), loaded0),
-            new_processing_result(Ok(()), loaded1),
+            new_executed_processing_result(Ok(()), loaded0),
+            new_executed_processing_result(Ok(()), loaded1),
         ];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 2);
@@ -284,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nonced_failure_accounts_rollback_fee_payer_only() {
+    fn test_collect_accounts_for_failed_tx_rollback_fee_payer_only() {
         let from = keypair_from_seed(&[1; 32]).unwrap();
         let from_address = from.pubkey();
         let to_address = Pubkey::new_unique();
@@ -316,7 +332,7 @@ mod tests {
         };
 
         let txs = vec![tx];
-        let mut processing_results = vec![new_processing_result(
+        let mut processing_results = vec![new_executed_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
@@ -341,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nonced_failure_accounts_rollback_separate_nonce_and_fee_payer() {
+    fn test_collect_accounts_for_failed_tx_rollback_separate_nonce_and_fee_payer() {
         let nonce_address = Pubkey::new_unique();
         let nonce_authority = keypair_from_seed(&[0; 32]).unwrap();
         let from = keypair_from_seed(&[1; 32]).unwrap();
@@ -402,7 +418,7 @@ mod tests {
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let txs = vec![tx];
-        let mut processing_results = vec![new_processing_result(
+        let mut processing_results = vec![new_executed_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
@@ -441,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nonced_failure_accounts_rollback_same_nonce_and_fee_payer() {
+    fn test_collect_accounts_for_failed_tx_rollback_same_nonce_and_fee_payer() {
         let nonce_authority = keypair_from_seed(&[0; 32]).unwrap();
         let nonce_address = nonce_authority.pubkey();
         let from = keypair_from_seed(&[1; 32]).unwrap();
@@ -500,7 +516,7 @@ mod tests {
 
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let txs = vec![tx];
-        let mut processing_results = vec![new_processing_result(
+        let mut processing_results = vec![new_executed_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
@@ -527,5 +543,45 @@ mod tests {
             durable_nonce.as_hash()
         )
         .is_some());
+    }
+
+    #[test]
+    fn test_collect_accounts_for_failed_fees_only_tx() {
+        let from = keypair_from_seed(&[1; 32]).unwrap();
+        let from_address = from.pubkey();
+        let to_address = Pubkey::new_unique();
+
+        let instructions = vec![system_instruction::transfer(&from_address, &to_address, 42)];
+        let message = Message::new(&instructions, Some(&from_address));
+        let blockhash = Hash::new_unique();
+        let tx = new_sanitized_tx(&[&from], message, blockhash);
+
+        let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
+
+        let txs = vec![tx];
+        let mut processing_results = vec![Ok(ProcessedTransaction::FeesOnly(Box::new(
+            FeesOnlyTransaction {
+                load_error: TransactionError::InvalidProgramForExecution,
+                fee_details: FeeDetails::default(),
+                rollback_accounts: RollbackAccounts::FeePayerOnly {
+                    fee_payer_account: from_account_pre.clone(),
+                },
+            },
+        )))];
+        let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
+        assert_eq!(max_collected_accounts, 1);
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
+        let (collected_accounts, _) =
+            collect_accounts_to_store(&txs, &mut processing_results, &durable_nonce, 0);
+        assert_eq!(collected_accounts.len(), 1);
+        assert_eq!(
+            collected_accounts
+                .iter()
+                .find(|(pubkey, _account)| *pubkey == &from_address)
+                .map(|(_pubkey, account)| *account)
+                .cloned()
+                .unwrap(),
+            from_account_pre,
+        );
     }
 }

@@ -445,7 +445,7 @@ pub fn process_create_nonce_account(
     seed: Option<String>,
     nonce_authority: Option<Pubkey>,
     memo: Option<&String>,
-    amount: SpendAmount,
+    mut amount: SpendAmount,
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let nonce_account_pubkey = config.signers[nonce_account].pubkey();
@@ -460,8 +460,16 @@ pub fn process_create_nonce_account(
         (&nonce_account_address, "nonce_account".to_string()),
     )?;
 
+    let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(State::size())?;
+    if amount == SpendAmount::All {
+        amount = SpendAmount::AllForAccountCreation {
+            create_account_min_balance: minimum_balance,
+        };
+    }
+
     let nonce_authority = nonce_authority.unwrap_or_else(|| config.signers[0].pubkey());
 
+    let compute_unit_limit = ComputeUnitLimit::Default;
     let build_message = |lamports| {
         let ixs = if let Some(seed) = seed.clone() {
             create_nonce_account_with_seed(
@@ -475,7 +483,7 @@ pub fn process_create_nonce_account(
             .with_memo(memo)
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
-                compute_unit_limit: ComputeUnitLimit::Default,
+                compute_unit_limit,
             })
         } else {
             create_nonce_account(
@@ -487,7 +495,7 @@ pub fn process_create_nonce_account(
             .with_memo(memo)
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
-                compute_unit_limit: ComputeUnitLimit::Default,
+                compute_unit_limit,
             })
         };
         Message::new(&ixs, Some(&config.signers[0].pubkey()))
@@ -501,6 +509,7 @@ pub fn process_create_nonce_account(
         amount,
         &latest_blockhash,
         &config.signers[0].pubkey(),
+        compute_unit_limit,
         build_message,
         config.commitment,
     )?;
@@ -514,7 +523,6 @@ pub fn process_create_nonce_account(
         return Err(CliError::BadParameter(err_msg).into());
     }
 
-    let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(State::size())?;
     if lamports < minimum_balance {
         return Err(CliError::BadParameter(format!(
             "need at least {minimum_balance} lamports for nonce account to be rent exempt, \

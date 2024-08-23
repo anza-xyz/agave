@@ -841,8 +841,16 @@ pub mod vote_only_retransmitter_signed_fec_sets {
     solana_sdk::declare_id!("RfEcA95xnhuwooVAhUUksEJLZBF7xKCLuqrJoqk4Zph");
 }
 
+pub mod enable_transaction_loading_failure_fees {
+    solana_sdk::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
+}
+
 pub mod enable_turbine_extended_fanout_experiments {
     solana_sdk::declare_id!("BZn14Liea52wtBwrXUxTv6vojuTTmfc7XGEDTXrvMD7b");
+}
+
+pub mod deprecate_legacy_vote_ixs {
+    solana_sdk::declare_id!("depVvnQ2UysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
 
 lazy_static! {
@@ -1050,7 +1058,9 @@ lazy_static! {
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
         (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
         (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
+        (enable_transaction_loading_failure_fees::id(), "Enable fees for some additional transaction failures SIMD-0082"),
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
+        (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

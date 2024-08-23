@@ -1959,6 +1959,7 @@ struct CleanAccountsStats {
     remove_dead_accounts_shrink_us: AtomicU64,
     clean_stored_dead_slots_us: AtomicU64,
     uncleaned_roots_slot_list_1: AtomicU64,
+    get_account_sizes_us: AtomicU64,
 }
 
 impl CleanAccountsStats {
@@ -2030,6 +2031,7 @@ pub struct ShrinkStats {
     alive_accounts: AtomicU64,
     accounts_loaded: AtomicU64,
     purged_zero_lamports: AtomicU64,
+    accounts_not_found_in_index: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -2131,6 +2133,11 @@ impl ShrinkStats {
                 (
                     "purged_zero_lamports_count",
                     self.purged_zero_lamports.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "accounts_not_found_in_index",
+                    self.accounts_not_found_in_index.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -2337,6 +2344,13 @@ impl ShrinkAncientStats {
                 "purged_zero_lamports_count",
                 self.shrink_stats
                     .purged_zero_lamports
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "accounts_not_found_in_index",
+                self.shrink_stats
+                    .accounts_not_found_in_index
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -3258,6 +3272,7 @@ impl AccountsDb {
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
 
         let ancient_account_cleans = AtomicU64::default();
+        let purges_old_accounts_count = AtomicU64::default();
 
         let mut measure_all = Measure::start("clean_accounts");
         let max_clean_root_inclusive = self.max_clean_root(max_clean_root_inclusive);
@@ -3287,6 +3302,7 @@ impl AccountsDb {
                 let mut not_found_on_fork = 0;
                 let mut missing = 0;
                 let mut useful = 0;
+                let mut purges_old_accounts_local = 0;
                 let mut candidates_bin = candidates_bin.write().unwrap();
                 // Iterate over each HashMap entry to
                 // avoid capturing the HashMap in the
@@ -3337,6 +3353,7 @@ impl AccountsDb {
                                                 if slot_list.len() > 1 {
                                                     // no need to purge old accounts if there is only 1 slot in the slot list
                                                     candidate_info.should_purge = true;
+                                                    purges_old_accounts_local += 1;
                                                     useless = false;
                                                 } else {
                                                     self.clean_accounts_stats
@@ -3354,6 +3371,7 @@ impl AccountsDb {
                                             // touched in must be unrooted.
                                             not_found_on_fork += 1;
                                             candidate_info.should_purge = true;
+                                            purges_old_accounts_local += 1;
                                             useless = false;
                                         }
                                     }
@@ -3373,6 +3391,7 @@ impl AccountsDb {
                 not_found_on_fork_accum.fetch_add(not_found_on_fork, Ordering::Relaxed);
                 missing_accum.fetch_add(missing, Ordering::Relaxed);
                 useful_accum.fetch_add(useful, Ordering::Relaxed);
+                purges_old_accounts_count.fetch_add(purges_old_accounts_local, Ordering::Relaxed);
             });
         };
         if is_startup {
@@ -3576,6 +3595,13 @@ impl AccountsDb {
                 i64
             ),
             (
+                "get_account_sizes_us",
+                self.clean_accounts_stats
+                    .get_account_sizes_us
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
                 "clean_old_root_us",
                 self.clean_accounts_stats
                     .clean_old_root_us
@@ -3649,6 +3675,11 @@ impl AccountsDb {
             (
                 "ancient_account_cleans",
                 ancient_account_cleans.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "purges_old_accounts_count",
+                purges_old_accounts_count.load(Ordering::Relaxed),
                 i64
             ),
             ("next_store_id", self.next_id.load(Ordering::Relaxed), i64),
@@ -3918,6 +3949,10 @@ impl AccountsDb {
                         alive_accounts.add(ref_count, stored_account, slot_list);
                         alive += 1;
                     }
+                } else {
+                    stats
+                        .accounts_not_found_in_index
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 index += 1;
                 result
@@ -3967,6 +4002,11 @@ impl AccountsDb {
             capacity,
             num_duplicated_accounts,
         }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn set_storage_access(&mut self, storage_access: StorageAccess) {
+        self.storage_access = storage_access;
     }
 
     /// Sort `accounts` by pubkey and removes all but the *last* of consecutive
@@ -8011,20 +8051,25 @@ impl AccountsDb {
                     dead_slots.insert(*slot);
                 }
                 else {
-                    let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
-                    // sort so offsets are in order. This improves efficiency of loading the accounts.
-                    offsets.sort_unstable();
-                    let dead_bytes = store.accounts.get_account_sizes(&offsets).iter().sum();
-                    store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
-                    if Self::is_shrinking_productive(*slot, &store)
-                        && self.is_candidate_for_shrink(&store)
-                    {
-                        // Checking that this single storage entry is ready for shrinking,
-                        // should be a sufficient indication that the slot is ready to be shrunk
-                        // because slots should only have one storage entry, namely the one that was
-                        // created by `flush_slot_cache()`.
-                        new_shrink_candidates.insert(*slot);
-                    }
+                    let (_, us) = measure_us!({
+                        let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
+                        // sort so offsets are in order. This improves efficiency of loading the accounts.
+                        offsets.sort_unstable();
+                        let dead_bytes = store.accounts.get_account_sizes(&offsets).iter().sum();
+                        store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
+                        if Self::is_shrinking_productive(*slot, &store)
+                            && self.is_candidate_for_shrink(&store)
+                        {
+                            // Checking that this single storage entry is ready for shrinking,
+                            // should be a sufficient indication that the slot is ready to be shrunk
+                            // because slots should only have one storage entry, namely the one that was
+                            // created by `flush_slot_cache()`.
+                            new_shrink_candidates.insert(*slot);
+                        }
+                    });
+                    self.clean_accounts_stats
+                        .get_account_sizes_us
+                        .fetch_add(us, Ordering::Relaxed);
                 }
             }
         });

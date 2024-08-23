@@ -5,7 +5,7 @@ pub mod bytes;
 mod bytes;
 
 #[allow(dead_code)]
-mod address_table_lookup_meta;
+pub mod address_table_lookup_meta;
 #[allow(dead_code)]
 mod instructions_meta;
 #[allow(dead_code)]
@@ -14,6 +14,6 @@ pub mod result;
 #[allow(dead_code)]
 mod signature_meta;
 #[allow(dead_code)]
-mod static_account_keys_meta;
+pub mod static_account_keys_meta;
 #[allow(dead_code)]
 pub mod transaction_meta;

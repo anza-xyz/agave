@@ -2247,7 +2247,7 @@ pub mod tests {
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
             self,
-            vote_state::{VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
             vote_transaction,
         },
         std::{collections::BTreeSet, sync::RwLock},
@@ -3801,13 +3801,14 @@ pub mod tests {
 
     #[test]
     fn test_update_transaction_statuses() {
-        // Make sure instruction errors still update the signature cache
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        // Make sure instruction errors still update the signature cache
         let pubkey = solana_sdk::pubkey::new_rand();
         bank.transfer(1_000, &mint_keypair, &pubkey).unwrap();
         assert_eq!(bank.transaction_count(), 1);
@@ -3821,6 +3822,29 @@ pub mod tests {
         );
         assert_eq!(
             bank.transfer(10_001, &mint_keypair, &pubkey),
+            Err(TransactionError::AlreadyProcessed)
+        );
+
+        // Make sure fees-only transactions still update the signature cache
+        let missing_program_id = Pubkey::new_unique();
+        let tx = Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bincode(
+                missing_program_id,
+                &10,
+                Vec::new(),
+            )],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair],
+            bank.last_blockhash(),
+        );
+        // First process attempt will fail but still update status cache
+        assert_eq!(
+            bank.process_transaction(&tx),
+            Err(TransactionError::ProgramAccountNotFound)
+        );
+        // Second attempt will be rejected since tx was already in status cache
+        assert_eq!(
+            bank.process_transaction(&tx),
             Err(TransactionError::AlreadyProcessed)
         );
 
@@ -4286,13 +4310,13 @@ pub mod tests {
             .iter()
             .enumerate()
             .map(|(i, validator_keypairs)| {
+                let tower_sync = TowerSync::new_from_slots(vec![0], bank0.hash(), None);
                 if i % 3 == 0 {
                     // These votes are correct
                     expected_successful_voter_pubkeys
                         .insert(validator_keypairs.vote_keypair.pubkey());
-                    vote_transaction::new_vote_transaction(
-                        vec![0],
-                        bank0.hash(),
+                    vote_transaction::new_tower_sync_transaction(
+                        tower_sync,
                         bank_1_blockhash,
                         &validator_keypairs.node_keypair,
                         &validator_keypairs.vote_keypair,
@@ -4301,9 +4325,8 @@ pub mod tests {
                     )
                 } else if i % 3 == 1 {
                     // These have the wrong authorized voter
-                    vote_transaction::new_vote_transaction(
-                        vec![0],
-                        bank0.hash(),
+                    vote_transaction::new_tower_sync_transaction(
+                        tower_sync,
                         bank_1_blockhash,
                         &validator_keypairs.node_keypair,
                         &validator_keypairs.vote_keypair,
@@ -4312,9 +4335,8 @@ pub mod tests {
                     )
                 } else {
                     // These have an invalid vote for non-existent bank 2
-                    vote_transaction::new_vote_transaction(
-                        vec![bank1.slot() + 1],
-                        bank0.hash(),
+                    vote_transaction::new_tower_sync_transaction(
+                        TowerSync::from(vec![(bank1.slot() + 1, 1)]),
                         bank_1_blockhash,
                         &validator_keypairs.node_keypair,
                         &validator_keypairs.vote_keypair,
@@ -4452,10 +4474,9 @@ pub mod tests {
             .get(last_main_fork_slot - 1)
             .unwrap()
             .last_blockhash();
-        let slots: Vec<_> = (expected_root_slot..last_main_fork_slot).collect();
-        let vote_tx = vote_transaction::new_vote_transaction(
-            slots,
-            last_vote_bank_hash,
+        let tower_sync = TowerSync::new_from_slot(last_main_fork_slot - 1, last_vote_bank_hash);
+        let vote_tx = vote_transaction::new_tower_sync_transaction(
+            tower_sync,
             last_vote_blockhash,
             &validator_keypairs.node_keypair,
             &validator_keypairs.vote_keypair,
@@ -4513,10 +4534,9 @@ pub mod tests {
             .get(last_main_fork_slot)
             .unwrap()
             .last_blockhash();
-        let slots: Vec<_> = vec![last_main_fork_slot];
-        let vote_tx = vote_transaction::new_vote_transaction(
-            slots,
-            last_vote_bank_hash,
+        let tower_sync = TowerSync::new_from_slot(last_main_fork_slot, last_vote_bank_hash);
+        let vote_tx = vote_transaction::new_tower_sync_transaction(
+            tower_sync,
             last_vote_blockhash,
             &leader_keypair,
             &validator_keypairs.vote_keypair,

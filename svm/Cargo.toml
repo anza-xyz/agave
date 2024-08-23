@@ -40,6 +40,7 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [dev-dependencies]
+assert_matches = { workspace = true }
 bincode = { workspace = true }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true }
@@ -76,3 +77,6 @@ shuttle-test = [
     "solana-bpf-loader-program/shuttle-test",
     "solana-loader-v4-program/shuttle-test",
 ]
+
+[lints]
+workspace = true

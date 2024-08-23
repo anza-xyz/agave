@@ -10,9 +10,12 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-transaction-view = { workspace = true }
 log = { workspace = true }
+solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-sdk = { workspace = true }
+solana-svm-transaction = { workspace = true }
 thiserror = { workspace = true }
 
 [lib]
@@ -23,7 +26,6 @@ name = "solana_runtime_transaction"
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-builtins-default-costs = { workspace = true }
 solana-program = { workspace = true }
 
 [package.metadata.docs.rs]
@@ -35,3 +37,6 @@ rustc_version = { workspace = true, optional = true }
 [[bench]]
 name = "process_compute_budget_instructions"
 harness = false
+
+[lints]
+workspace = true

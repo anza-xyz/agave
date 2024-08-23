@@ -62,10 +62,11 @@ use {
         transaction::{SanitizedTransaction, Transaction, TransactionError, VersionedTransaction},
     },
     solana_svm::{
-        transaction_commit_result::CommittedTransaction,
+        transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_execution_result::InnerInstruction,
         transaction_processor::ExecutionRecordingConfig,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     solana_transaction_status::{
         map_inner_instructions, ConfirmedTransactionWithStatusMeta, TransactionStatusMeta,
@@ -91,6 +92,20 @@ fn process_transaction_and_record_inner(
     Vec<Vec<InnerInstruction>>,
     Vec<String>,
 ) {
+    let commit_result = load_execute_and_commit_transaction(bank, tx);
+    let CommittedTransaction {
+        inner_instructions,
+        log_messages,
+        status,
+        ..
+    } = commit_result.unwrap();
+    let inner_instructions = inner_instructions.expect("cpi recording should be enabled");
+    let log_messages = log_messages.expect("log recording should be enabled");
+    (status, inner_instructions, log_messages)
+}
+
+#[cfg(feature = "sbf_rust")]
+fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> TransactionCommitResult {
     let txs = vec![tx];
     let tx_batch = bank.prepare_batch_for_tests(txs);
     let mut commit_results = bank
@@ -107,15 +122,7 @@ fn process_transaction_and_record_inner(
             None,
         )
         .0;
-    let CommittedTransaction {
-        inner_instructions,
-        log_messages,
-        status,
-        ..
-    } = commit_results.swap_remove(0).unwrap();
-    let inner_instructions = inner_instructions.expect("cpi recording should be enabled");
-    let log_messages = log_messages.expect("log recording should be enabled");
-    (status, inner_instructions, log_messages)
+    commit_results.pop().unwrap()
 }
 
 #[cfg(feature = "sbf_rust")]
@@ -1879,10 +1886,10 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
             bank.last_blockhash(),
         );
         if index == 0 {
-            let results = execute_transactions(&bank, vec![tx]);
+            let result = load_execute_and_commit_transaction(&bank, tx);
             assert_eq!(
-                results[0].as_ref().unwrap_err(),
-                &TransactionError::ProgramAccountNotFound,
+                result.unwrap().status,
+                Err(TransactionError::ProgramAccountNotFound),
             );
         } else {
             let (result, _, _) = process_transaction_and_record_inner(&bank, tx);
@@ -3874,8 +3881,10 @@ fn test_program_fees() {
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default(),
+        process_compute_budget_instructions(SVMMessage::program_instructions_iter(
+            &sanitized_message,
+        ))
+        .unwrap_or_default(),
     );
     let expected_normal_fee = solana_fee::calculate_fee(
         &sanitized_message,
@@ -3904,8 +3913,10 @@ fn test_program_fees() {
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default(),
+        process_compute_budget_instructions(SVMMessage::program_instructions_iter(
+            &sanitized_message,
+        ))
+        .unwrap_or_default(),
     );
     let expected_prioritized_fee = solana_fee::calculate_fee(
         &sanitized_message,
