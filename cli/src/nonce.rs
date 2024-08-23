@@ -462,7 +462,9 @@ pub fn process_create_nonce_account(
 
     let minimum_balance = rpc_client.get_minimum_balance_for_rent_exemption(State::size())?;
     if amount == SpendAmount::All {
-        amount = SpendAmount::AllWithMinimum(minimum_balance);
+        amount = SpendAmount::AllForAccountCreation {
+            create_account_min_balance: minimum_balance,
+        };
     }
 
     let nonce_authority = nonce_authority.unwrap_or_else(|| config.signers[0].pubkey());

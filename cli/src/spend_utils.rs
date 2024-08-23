@@ -20,8 +20,7 @@ pub enum SpendAmount {
     All,
     Some(u64),
     RentExempt,
-    // will move all, but use a minimum for simulation
-    AllWithMinimum(u64),
+    AllForAccountCreation { create_account_min_balance: u64 },
 }
 
 impl Default for SpendAmount {
@@ -178,12 +177,22 @@ where
             // `0`, since there are few situations in which `SpendAmount` can
             // be `All` or `RentExempt` *and also* the from account is the fee
             // payer.
-            let lamports = match amount {
-                SpendAmount::Some(lamports) => lamports,
-                SpendAmount::AllWithMinimum(lamports) => lamports,
-                SpendAmount::All | SpendAmount::RentExempt if from_pubkey == fee_pubkey => 0,
-                SpendAmount::All => from_balance,
-                SpendAmount::RentExempt => from_balance.saturating_sub(from_rent_exempt_minimum),
+            let lamports = if from_pubkey == fee_pubkey {
+                match amount {
+                    SpendAmount::Some(lamports) => lamports,
+                    SpendAmount::AllForAccountCreation {
+                        create_account_min_balance,
+                    } => create_account_min_balance,
+                    SpendAmount::All | SpendAmount::RentExempt => 0,
+                }
+            } else {
+                match amount {
+                    SpendAmount::Some(lamports) => lamports,
+                    SpendAmount::AllForAccountCreation { .. } | SpendAmount::All => from_balance,
+                    SpendAmount::RentExempt => {
+                        from_balance.saturating_sub(from_rent_exempt_minimum)
+                    }
+                }
             };
             let mut dummy_message = build_message(lamports);
 
@@ -216,7 +225,7 @@ where
                 fee,
             },
         ),
-        SpendAmount::All | SpendAmount::AllWithMinimum(_) => {
+        SpendAmount::All | SpendAmount::AllForAccountCreation { .. } => {
             let lamports = if from_pubkey == fee_pubkey {
                 from_balance.saturating_sub(fee)
             } else {

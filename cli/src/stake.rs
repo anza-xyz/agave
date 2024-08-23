@@ -1457,7 +1457,9 @@ pub fn process_create_stake_account(
     if !sign_only && amount == SpendAmount::All {
         let minimum_balance =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
-        amount = SpendAmount::AllWithMinimum(minimum_balance);
+        amount = SpendAmount::AllForAccountCreation {
+            create_account_min_balance: minimum_balance,
+        };
     }
 
     let (message, lamports) = resolve_spend_tx_and_check_account_balances(
