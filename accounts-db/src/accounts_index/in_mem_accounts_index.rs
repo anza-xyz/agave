@@ -1003,16 +1003,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         entry: &'a AccountMapEntry<T>,
         startup: bool,
         update_stats: bool,
-        exceeds_budget: bool,
         ages_flushing_now: Age,
     ) -> (bool, Option<std::sync::RwLockReadGuard<'a, SlotList<T>>>) {
         // this could be tunable dynamically based on memory pressure
         // we could look at more ages or we could throw out more items we are choosing to keep in the cache
         if Self::should_evict_based_on_age(current_age, entry, startup, ages_flushing_now) {
-            if exceeds_budget {
-                // if we are already holding too many items in-mem, then we need to be more aggressive at kicking things out
-                (true, None)
-            } else if entry.ref_count() != 1 {
+            if entry.ref_count() != 1 {
                 Self::update_stat(&self.stats().held_in_mem.ref_count, 1);
                 (false, None)
             } else {
@@ -1199,7 +1195,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if !evictions_age_possible.is_empty() || !evictions_random.is_empty() {
                 let disk = self.bucket.as_ref().unwrap();
                 let mut flush_entries_updated_on_disk = 0;
-                let exceeds_budget = self.get_exceeds_budget();
+                if self.get_exceeds_budget() {
+                    panic!("Accounts-db in-memory index has exceeded the budget.");
+                }
+
                 let mut flush_should_evict_us = 0;
                 // we don't care about lock time in this metric - bg threads can wait
                 let m = Measure::start("flush_update");
@@ -1218,7 +1217,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                 &v,
                                 startup,
                                 true,
-                                exceeds_budget,
                                 ages_flushing_now,
                             );
                             slot_list = slot_list_temp;
@@ -1605,7 +1603,6 @@ mod tests {
                         &one_element_slot_list_entry,
                         startup,
                         false,
-                        false,
                         1,
                     )
                     .0,
@@ -1685,23 +1682,6 @@ mod tests {
             AccountMapEntryMeta::default(),
         ));
 
-        // exceeded budget
-        assert!(
-            bucket
-                .should_evict_from_mem(
-                    current_age,
-                    &Arc::new(AccountMapEntryInner::new(
-                        vec![],
-                        ref_count,
-                        AccountMapEntryMeta::default()
-                    )),
-                    startup,
-                    false,
-                    true,
-                    0,
-                )
-                .0
-        );
         // empty slot list
         assert!(
             !bucket
@@ -1714,7 +1694,6 @@ mod tests {
                     )),
                     startup,
                     false,
-                    false,
                     0,
                 )
                 .0
@@ -1726,7 +1705,6 @@ mod tests {
                     current_age,
                     &one_element_slot_list_entry,
                     startup,
-                    false,
                     false,
                     0,
                 )
@@ -1743,7 +1721,6 @@ mod tests {
                         AccountMapEntryMeta::default()
                     )),
                     startup,
-                    false,
                     false,
                     0,
                 )
@@ -1764,7 +1741,6 @@ mod tests {
                         )),
                         startup,
                         false,
-                        false,
                         0,
                     )
                     .0
@@ -1778,7 +1754,6 @@ mod tests {
                     current_age,
                     &one_element_slot_list_entry,
                     startup,
-                    false,
                     false,
                     0,
                 )
@@ -1794,7 +1769,6 @@ mod tests {
                     &one_element_slot_list_entry,
                     startup,
                     false,
-                    false,
                     0,
                 )
                 .0
@@ -1808,7 +1782,6 @@ mod tests {
                     current_age,
                     &one_element_slot_list_entry,
                     startup,
-                    false,
                     false,
                     0,
                 )
