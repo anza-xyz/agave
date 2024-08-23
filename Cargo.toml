@@ -182,7 +182,7 @@ ark-ff = "0.4.0"
 ark-serialize = "0.4.0"
 array-bytes = "=1.4.1"
 arrayref = "0.3.8"
-arrayvec = "0.7.4"
+arrayvec = "0.7.6"
 assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
@@ -200,7 +200,7 @@ bv = "0.11.1"
 byte-unit = "4.0.19"
 bytecount = "0.6.8"
 bytemuck = "1.17.0"
-bytemuck_derive = "1.7.0"
+bytemuck_derive = "1.7.1"
 byteorder = "1.5.0"
 bytes = "1.7"
 bzip2 = "0.4.4"
@@ -329,9 +329,9 @@ rustls = { version = "0.21.12", default-features = false, features = ["quic"] }
 scopeguard = "1.2.0"
 semver = "1.0.23"
 seqlock = "0.2.0"
-serde = "1.0.207" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = "1.0.208" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_bytes = "0.11.15"
-serde_derive = "1.0.207" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde_derive = "1.0.208" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_json = "1.0.125"
 serde_with = { version = "2.3.3", default-features = false }
 serde_yaml = "0.9.34"
