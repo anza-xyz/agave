@@ -15,7 +15,7 @@ use {
         transaction_account_state_info::TransactionAccountStateInfo,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
-        transaction_processing_callback::TransactionProcessingCallback,
+        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
@@ -433,6 +433,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
         };
+
+        callbacks.inspect_account(
+            fee_payer_address,
+            AccountState::Alive(&fee_payer_account),
+            true,
+        );
 
         let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
         let fee_payer_rent_debit = collect_rent_from_account(
