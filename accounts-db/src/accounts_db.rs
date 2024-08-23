@@ -6811,19 +6811,14 @@ impl AccountsDb {
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         mut txn_iter: impl Iterator<Item = &'a SanitizedTransaction>,
     ) -> Vec<AccountInfo> {
-        let mut write_version_producer: Box<dyn Iterator<Item = u64>> =
-            if self.accounts_update_notifier.is_some() {
-                let mut current_version = self
-                    .write_version
-                    .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel);
-                Box::new(std::iter::from_fn(move || {
-                    let ret = current_version;
-                    current_version += 1;
-                    Some(ret)
-                }))
-            } else {
-                Box::new(std::iter::empty())
-            };
+        let mut write_version_producer = if self.accounts_update_notifier.is_some() {
+            let current_version = self
+                .write_version
+                .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel);
+            current_version..current_version + accounts_and_meta_to_store.len() as u64
+        } else {
+            0..0 // dummy empty iterator
+        };
 
         let (account_infos, cached_accounts) = (0..accounts_and_meta_to_store.len())
             .map(|index| {
