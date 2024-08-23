@@ -84,13 +84,26 @@ impl LastVotedForkSlotsAggregate {
             ..root_epoch
                 .checked_add(2)
                 .expect("root_epoch should not be so big"))
-            .map(|epoch| LastVotedForkSlotsEpochInfo {
-                epoch,
-                total_stake: root_bank
+            .map(|epoch| {
+                let total_stake = root_bank
                     .epoch_total_stake(epoch)
-                    .expect("epoch stake not found"),
-                voted_percent: 0.0,
-                voted_for_this_epoch_percent: 0.0,
+                    .expect("epoch stake not found");
+                let my_percent = root_bank
+                    .epoch_node_id_to_stake(epoch, my_pubkey)
+                    .unwrap_or(0) as f64
+                    / total_stake as f64
+                    * 100.0;
+                let voted_for_this_epoch_percent = if epoch <= last_vote_epoch {
+                    my_percent
+                } else {
+                    0.0
+                };
+                LastVotedForkSlotsEpochInfo {
+                    epoch,
+                    total_stake,
+                    voted_percent: my_percent,
+                    voted_for_this_epoch_percent,
+                }
             })
             .collect();
         Self {
@@ -142,12 +155,11 @@ impl LastVotedForkSlotsAggregate {
             .root_bank
             .get_epoch_and_slot_index(*new_slots_vec.last().unwrap())
             .0;
-        if self
+        let old_last_vote_epoch = self
             .node_to_last_vote_epoch_map
-            .insert(*from, last_vote_epoch)
-            != Some(last_vote_epoch)
-        {
-            self.update_epoch_info();
+            .insert(*from, last_vote_epoch);
+        if old_last_vote_epoch != Some(last_vote_epoch) {
+            self.update_epoch_info(from, last_vote_epoch, old_last_vote_epoch);
         }
         let record = LastVotedForkSlotsRecord {
             last_voted_fork_slots: new_slots_vec.clone(),
@@ -208,23 +220,31 @@ impl LastVotedForkSlotsAggregate {
         false
     }
 
-    fn update_epoch_info(&mut self) {
-        for entry in self.epoch_info_vec.iter_mut() {
-            let mut voted_stake: u64 = 0;
-            let mut voted_for_this_epoch_stake: u64 = 0;
-            for (node_id, last_vote_epoch) in self.node_to_last_vote_epoch_map.iter() {
-                if let Some(stake) = self.root_bank.epoch_node_id_to_stake(entry.epoch, node_id) {
-                    voted_stake = voted_stake.checked_add(stake).expect("overflow");
-                    if *last_vote_epoch >= entry.epoch {
-                        voted_for_this_epoch_stake = voted_for_this_epoch_stake
-                            .checked_add(stake)
-                            .expect("overflow");
+    fn update_epoch_info(
+        &mut self,
+        from: &Pubkey,
+        last_vote_epoch: Epoch,
+        old_last_vote_epoch: Option<Epoch>,
+    ) {
+        if Some(last_vote_epoch) < old_last_vote_epoch {
+            // We only have two entries so old epoch must be the second one.
+            let entry = self.epoch_info_vec.last_mut().unwrap();
+            if let Some(stake) = self.root_bank.epoch_node_id_to_stake(entry.epoch, from) {
+                entry.voted_for_this_epoch_percent -=
+                    stake as f64 / entry.total_stake as f64 * 100.0;
+            }
+        } else {
+            for entry in self.epoch_info_vec.iter_mut() {
+                if let Some(stake) = self.root_bank.epoch_node_id_to_stake(entry.epoch, from) {
+                    let my_percent = stake as f64 / entry.total_stake as f64 * 100.0;
+                    if old_last_vote_epoch.is_none() {
+                        entry.voted_percent += my_percent;
+                    }
+                    if Some(entry.epoch) > old_last_vote_epoch && entry.epoch <= last_vote_epoch {
+                        entry.voted_for_this_epoch_percent += my_percent;
                     }
                 }
             }
-            entry.voted_percent = voted_stake as f64 / entry.total_stake as f64 * 100.0;
-            entry.voted_for_this_epoch_percent =
-                voted_for_this_epoch_stake as f64 / entry.total_stake as f64 * 100.0;
         }
     }
 
