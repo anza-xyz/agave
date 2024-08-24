@@ -850,7 +850,6 @@ impl Validator {
             BlockVerificationMethod::UnifiedScheduler => {
                 let scheduler_pool = DefaultSchedulerPool::new_dyn(
                     config.unified_scheduler_handler_threads,
-                    config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
                     Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
@@ -1366,7 +1365,6 @@ impl Validator {
             block_metadata_notifier,
             config.wait_to_vote_slot,
             accounts_background_request_sender.clone(),
-            config.runtime_config.log_messages_bytes_limit,
             json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
             &prioritization_fee_cache,
             banking_tracer.clone(),
@@ -1430,7 +1428,6 @@ impl Validator {
             &connection_cache,
             turbine_quic_endpoint_sender,
             &identity_keypair,
-            config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
             config.staked_nodes_overrides.clone(),
             banking_tracer,

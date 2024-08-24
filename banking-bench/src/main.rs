@@ -470,7 +470,6 @@ fn main() {
         num_banking_threads,
         None,
         replay_vote_sender,
-        None,
         Arc::new(connection_cache),
         bank_forks.clone(),
         &Arc::new(PrioritizationFeeCache::new(0u64)),
