@@ -22,8 +22,7 @@ use {
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(try_from = "AccountSharedData")]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoteAccount(Arc<VoteAccountInner>);
 
 #[derive(Debug, Error)]
@@ -529,31 +528,6 @@ mod tests {
             bincode::serialize(&account).unwrap(),
             bincode::serialize(&vote_account).unwrap()
         );
-    }
-
-    #[test]
-    fn test_vote_account_deserialize() {
-        let mut rng = rand::thread_rng();
-        let (account, vote_state) = new_rand_vote_account(&mut rng, None);
-        let data = bincode::serialize(&account).unwrap();
-        let vote_account = VoteAccount::try_from(account).unwrap();
-        assert_eq!(vote_state, *vote_account.vote_state());
-        let other_vote_account: VoteAccount = bincode::deserialize(&data).unwrap();
-        assert_eq!(vote_account, other_vote_account);
-        assert_eq!(vote_state, *other_vote_account.vote_state());
-    }
-
-    #[test]
-    fn test_vote_account_round_trip() {
-        let mut rng = rand::thread_rng();
-        let (account, vote_state) = new_rand_vote_account(&mut rng, None);
-        let vote_account = VoteAccount::try_from(account).unwrap();
-        assert_eq!(vote_state, *vote_account.vote_state());
-        let data = bincode::serialize(&vote_account).unwrap();
-        let other_vote_account: VoteAccount = bincode::deserialize(&data).unwrap();
-        // Assert that serialize->deserialized returns the same VoteAccount.
-        assert_eq!(vote_account, other_vote_account);
-        assert_eq!(vote_state, *other_vote_account.vote_state());
     }
 
     #[test]
