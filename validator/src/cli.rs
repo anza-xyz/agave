@@ -2121,6 +2121,17 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("Skip ledger verification at validator bootup."),
         replaced_by: "skip-startup-ledger-verification",
     );
+    add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
+        .long("accounts-index-memory-limit-mb")
+        .value_name("MEGABYTES")
+        .validator(is_parsable::<usize>)
+        .takes_value(true)
+        .help(
+            "How much memory the accounts index can consume. If this is exceeded, some \
+         account index entries will be stored on disk.",
+        ),
+        usage_warning: "index memory limit has been deprecated. The limit arg has no effect now.",
+    );
 
     res
 }
