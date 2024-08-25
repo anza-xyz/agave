@@ -722,7 +722,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 .total_active_stake = current_total_active_stake;
             progress_changed = true;
         }
-        if progress_changed {
+        if progress_changed || first_time_entering_loop {
             progress_changed = false;
             let total_active_stake_seen_supermajority =
                 heaviest_fork_aggregate.total_active_stake_seen_supermajority();
@@ -3014,6 +3014,22 @@ mod tests {
             exit.clone(),
             Some(WenRestartError::Exiting),
         );
+        // Find the first HeaviestFork message sent out entering the loop.
+        let my_pubkey = test_state.cluster_info.id();
+        let mut found_myself = false;
+        while !found_myself {
+            sleep(Duration::from_millis(100));
+            test_state.cluster_info.flush_push_queue();
+            for gossip_record in test_state
+                .cluster_info
+                .get_restart_heaviest_fork(&mut cursor)
+            {
+                if gossip_record.from == my_pubkey && gossip_record.observed_stake > 0 {
+                    found_myself = true;
+                    break;
+                }
+            }
+        }
         // Simulating everyone sending out the first RestartHeaviestFork message, Gossip propagation takes
         // time, so the observed_stake is probably smaller than actual active stake. We should send out
         // heaviest fork indicating we have active stake exceeding supermajority.
@@ -3042,7 +3058,6 @@ mod tests {
                 now,
             );
         }
-        let my_pubkey = test_state.cluster_info.id();
         let mut found_myself = false;
         let expected_active_stake = (WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT
             - NON_CONFORMING_VALIDATOR_PERCENT)
@@ -3086,6 +3101,7 @@ mod tests {
             }),
             ..Default::default()
         };
+
         let different_bankhash = Hash::new_unique();
         let validators_to_take: usize = ((WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT
             - NON_CONFORMING_VALIDATOR_PERCENT)
