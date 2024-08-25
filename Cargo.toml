@@ -119,6 +119,7 @@ members = [
     "streamer",
     "svm",
     "svm-conformance",
+    "svm-rent-collector",
     "svm-transaction",
     "svm/examples/paytube",
     "test-validator",
@@ -182,7 +183,7 @@ ark-ff = "0.4.0"
 ark-serialize = "0.4.0"
 array-bytes = "=1.4.1"
 arrayref = "0.3.8"
-arrayvec = "0.7.4"
+arrayvec = "0.7.6"
 assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
@@ -200,7 +201,7 @@ bv = "0.11.1"
 byte-unit = "4.0.19"
 bytecount = "0.6.8"
 bytemuck = "1.17.0"
-bytemuck_derive = "1.7.0"
+bytemuck_derive = "1.7.1"
 byteorder = "1.5.0"
 bytes = "1.7"
 bzip2 = "0.4.4"
@@ -434,6 +435,7 @@ solana-streamer = { path = "streamer", version = "=2.1.0" }
 solana-svm = { path = "svm", version = "=2.1.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.1.0" }
 solana-svm-example-paytube = { path = "svm/examples/paytube", version = "=2.1.0" }
+solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.1.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.1.0" }
 solana-system-program = { path = "programs/system", version = "=2.1.0" }
 solana-test-validator = { path = "test-validator", version = "=2.1.0" }

@@ -138,7 +138,7 @@ use {
         time::{Duration, Instant},
     },
     strum::VariantNames,
-    strum_macros::{Display, EnumString, EnumVariantNames, IntoStaticStr},
+    strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
     thiserror::Error,
     tokio::runtime::Runtime as TokioRuntime,
 };
@@ -151,11 +151,13 @@ const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
     WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT;
 
-#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[derive(
+    Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
+)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
-    #[default]
     BlockstoreProcessor,
+    #[default]
     UnifiedScheduler,
 }
 
@@ -2486,7 +2488,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         if activated_stake == 0 {
             continue;
         }
-        let vote_state_node_pubkey = vote_account.node_pubkey().copied().unwrap_or_default();
+        let vote_state_node_pubkey = *vote_account.node_pubkey();
 
         if let Some(peer) = peers.get(&vote_state_node_pubkey) {
             if peer.shred_version() == my_shred_version {

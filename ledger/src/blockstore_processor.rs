@@ -1870,7 +1870,6 @@ fn load_frozen_forks(
             let new_root_bank = {
                 if bank_forks.read().unwrap().root() >= max_root {
                     supermajority_root_from_vote_accounts(
-                        bank.slot(),
                         bank.total_epoch_stake(),
                         &bank.vote_accounts(),
                     ).and_then(|supermajority_root| {
@@ -2005,27 +2004,17 @@ fn supermajority_root(roots: &[(Slot, u64)], total_epoch_stake: u64) -> Option<S
 }
 
 fn supermajority_root_from_vote_accounts(
-    bank_slot: Slot,
     total_epoch_stake: u64,
     vote_accounts: &VoteAccountsHashMap,
 ) -> Option<Slot> {
     let mut roots_stakes: Vec<(Slot, u64)> = vote_accounts
-        .iter()
-        .filter_map(|(key, (stake, account))| {
+        .values()
+        .filter_map(|(stake, account)| {
             if *stake == 0 {
                 return None;
             }
 
-            match account.vote_state().as_ref() {
-                Err(_) => {
-                    warn!(
-                        "Unable to get vote_state from account {} in bank: {}",
-                        key, bank_slot
-                    );
-                    None
-                }
-                Ok(vote_state) => Some((vote_state.root_slot?, *stake)),
-            }
+            Some((account.vote_state().root_slot?, *stake))
         })
         .collect();
 
@@ -3801,13 +3790,14 @@ pub mod tests {
 
     #[test]
     fn test_update_transaction_statuses() {
-        // Make sure instruction errors still update the signature cache
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        // Make sure instruction errors still update the signature cache
         let pubkey = solana_sdk::pubkey::new_rand();
         bank.transfer(1_000, &mint_keypair, &pubkey).unwrap();
         assert_eq!(bank.transaction_count(), 1);
@@ -3821,6 +3811,29 @@ pub mod tests {
         );
         assert_eq!(
             bank.transfer(10_001, &mint_keypair, &pubkey),
+            Err(TransactionError::AlreadyProcessed)
+        );
+
+        // Make sure fees-only transactions still update the signature cache
+        let missing_program_id = Pubkey::new_unique();
+        let tx = Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bincode(
+                missing_program_id,
+                &10,
+                Vec::new(),
+            )],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair],
+            bank.last_blockhash(),
+        );
+        // First process attempt will fail but still update status cache
+        assert_eq!(
+            bank.process_transaction(&tx),
+            Err(TransactionError::ProgramAccountNotFound)
+        );
+        // Second attempt will be rejected since tx was already in status cache
+        assert_eq!(
+            bank.process_transaction(&tx),
             Err(TransactionError::AlreadyProcessed)
         );
 
@@ -4579,23 +4592,20 @@ pub mod tests {
         };
 
         let total_stake = 10;
-        let slot = 100;
 
         // Supermajority root should be None
-        assert!(
-            supermajority_root_from_vote_accounts(slot, total_stake, &HashMap::default()).is_none()
-        );
+        assert!(supermajority_root_from_vote_accounts(total_stake, &HashMap::default()).is_none());
 
         // Supermajority root should be None
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 1)];
         let accounts = convert_to_vote_accounts(roots_stakes);
-        assert!(supermajority_root_from_vote_accounts(slot, total_stake, &accounts).is_none());
+        assert!(supermajority_root_from_vote_accounts(total_stake, &accounts).is_none());
 
         // Supermajority root should be 4, has 7/10 of the stake
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 5)];
         let accounts = convert_to_vote_accounts(roots_stakes);
         assert_eq!(
-            supermajority_root_from_vote_accounts(slot, total_stake, &accounts).unwrap(),
+            supermajority_root_from_vote_accounts(total_stake, &accounts).unwrap(),
             4
         );
 
@@ -4603,7 +4613,7 @@ pub mod tests {
         let roots_stakes = vec![(8, 1), (3, 1), (4, 1), (8, 6)];
         let accounts = convert_to_vote_accounts(roots_stakes);
         assert_eq!(
-            supermajority_root_from_vote_accounts(slot, total_stake, &accounts).unwrap(),
+            supermajority_root_from_vote_accounts(total_stake, &accounts).unwrap(),
             8
         );
     }
