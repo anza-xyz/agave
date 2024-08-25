@@ -990,6 +990,7 @@ while [[ -n $1 ]]; do
       maybeUseUnstakedConnection="$1"
       shift 1
     elif [[ $1 = --wen-restart ]]; then
+      skipSetup=true
       maybeWenRestart="$2"
       shift 2
     else
