@@ -936,6 +936,17 @@ pub fn main() {
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
 
+    // init metrics
+    let metrics = if matches.is_present("prometheus") {
+        Some(Arc::new(agave_metrics::metrics::Metrics::new()))
+    } else {
+        None
+    };
+    agave_metrics::singleton_metrics::initialize_metrics(metrics).unwrap_or_else(|e| {
+        eprintln!("failed to init metrics");
+        exit(1);
+    });
+
     let cuda = matches.is_present("cuda");
     if cuda {
         solana_perf::perf_libs::init_cuda();
@@ -1523,6 +1534,9 @@ pub fn main() {
         replay_transactions_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
+        prometheus_addrs: value_t!(matches, "prometheus_port", u16)
+            .ok()
+            .map(|port| (SocketAddr::new(bind_address, port))),
         ..ValidatorConfig::default()
     };
 

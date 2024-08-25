@@ -12,6 +12,7 @@ edition = { workspace = true }
 
 [dependencies]
 agave-geyser-plugin-interface = { workspace = true }
+agave-metrics = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 clap = { workspace = true }
 console = { workspace = true }

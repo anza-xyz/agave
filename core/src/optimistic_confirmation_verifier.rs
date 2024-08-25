@@ -85,6 +85,9 @@ impl OptimisticConfirmationVerifier {
                     );
                 }
                 datapoint_info!("optimistic_slot", ("slot", new_optimistic_slot, i64),);
+                if let Some(metrics) = agave_metrics::singleton_metrics::get_metrics() {
+                    metrics.core.optimistic_slot.set(new_optimistic_slot as i64);
+                }
                 self.unchecked_slots.insert((new_optimistic_slot, hash));
             }
         }

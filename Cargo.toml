@@ -61,6 +61,7 @@ members = [
     "merkle-root-bench",
     "merkle-tree",
     "metrics",
+    "metrics-next",
     "net-shaper",
     "net-utils",
     "notifier",
@@ -172,6 +173,7 @@ check-cfg = [
 [workspace.dependencies]
 Inflector = "0.11.4"
 agave-transaction-view = { path = "transaction-view", version = "=2.1.0" }
+agave-metrics = { path = "metrics-next", version = "=2.1.0" }
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.10"
@@ -306,6 +308,7 @@ predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.2.1"
 proc-macro2 = "1.0.86"
+prometheus-client = "0.22.3"
 proptest = "1.5"
 prost = "0.11.9"
 prost-build = "0.11.9"

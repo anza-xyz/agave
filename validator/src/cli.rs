@@ -1600,6 +1600,24 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     further debugging.",
                 ),
         )
+        .arg(
+            Arg::with_name("prometheus")
+                .long("prometheus")
+                .takes_value(false)
+                .help(
+                    "enable prometheus metrics"
+                ),
+        )
+        .arg(
+            Arg::with_name("prometheus_port")
+                .long("prometheus-port")
+                .value_name("PORT")
+                .takes_value(true)
+                .validator(port_validator)
+                .help(
+                    "expose prometheus metrics on this port"
+                ),
+        )
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")

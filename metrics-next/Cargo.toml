@@ -1,0 +1,17 @@
+[package]
+name = "agave-metrics"
+description = "Agave Metrics"
+documentation = "https://docs.rs/agave-metrics"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+prometheus-client = { workspace = true }
+# metrics endpoint
+log = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+axum = "0.7.5"

@@ -27,6 +27,7 @@ use {
         tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
+    agave_metrics::{self, metrics},
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     lazy_static::lazy_static,
@@ -281,6 +282,7 @@ pub struct ValidatorConfig {
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
+    pub prometheus_addrs: Option<SocketAddr>,
 }
 
 impl Default for ValidatorConfig {
@@ -353,6 +355,7 @@ impl Default for ValidatorConfig {
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
+            prometheus_addrs: None,
         }
     }
 }
@@ -501,6 +504,7 @@ pub struct Validator {
     repair_quic_endpoint: Option<Endpoint>,
     repair_quic_endpoint_runtime: Option<TokioRuntime>,
     repair_quic_endpoint_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    prometheus_metrics_service: Option<agave_metrics::service::PrometheusMetricsService>,
 }
 
 impl Validator {
@@ -540,6 +544,15 @@ impl Validator {
         let mut bank_notification_senders = Vec::new();
 
         let exit = Arc::new(AtomicBool::new(false));
+
+        let prometheus_metrics_service = if let Some(addr) = config.prometheus_addrs {
+            Some(agave_metrics::service::PrometheusMetricsService::new(
+                addr,
+                agave_metrics::singleton_metrics::get_metrics(),
+            ))
+        } else {
+            None
+        };
 
         let geyser_plugin_service =
             if let Some(geyser_plugin_config_files) = &config.on_start_geyser_plugin_config_files {
@@ -1503,6 +1516,7 @@ impl Validator {
             repair_quic_endpoint,
             repair_quic_endpoint_runtime,
             repair_quic_endpoint_join_handle,
+            prometheus_metrics_service,
         })
     }
 
@@ -1660,6 +1674,12 @@ impl Validator {
 
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
             geyser_plugin_service.join().expect("geyser_plugin_service");
+        }
+
+        if let Some(prometheus_metrics_service) = self.prometheus_metrics_service {
+            prometheus_metrics_service
+                .join()
+                .expect("prometheus_metrics_service")
         }
 
         self.poh_timing_report_service

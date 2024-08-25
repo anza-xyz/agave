@@ -14,6 +14,7 @@ edition = { workspace = true }
 codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
 
 [dependencies]
+agave-metrics = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
