@@ -13,11 +13,7 @@ use {
     log::*,
     solana_measure::measure::Measure,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        hash::Hash,
-        timing,
-    },
+    solana_sdk::{clock::Slot, hash::Hash},
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
@@ -494,7 +490,7 @@ impl BankForks {
             "bank-forks_set_root",
             (
                 "elapsed_ms",
-                timing::duration_as_ms(&set_root_start.elapsed()) as usize,
+                set_root_start.elapsed().as_millis() as usize,
                 i64
             ),
             ("slot", root, i64),
@@ -569,7 +565,7 @@ impl BankForks {
             ),
             (
                 "program_cache_prune_ms",
-                timing::duration_as_ms(&program_cache_prune_start.elapsed()),
+                program_cache_prune_start.elapsed().as_millis() as i64,
                 i64
             ),
             ("dropped_banks_len", set_root_metrics.dropped_banks_len, i64),
@@ -721,10 +717,6 @@ impl ForkGraph for BankForks {
                     .unwrap_or(BlockRelation::Unrelated)
             })
             .unwrap_or(BlockRelation::Unknown)
-    }
-
-    fn slot_epoch(&self, slot: Slot) -> Option<Epoch> {
-        self.banks.get(&slot).map(|bank| bank.epoch())
     }
 }
 

@@ -17,6 +17,7 @@ use {
     },
     itertools::Itertools,
     min_max_heap::MinMaxHeap,
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
     solana_runtime::bank::Bank,
     solana_sdk::{
@@ -171,8 +172,8 @@ fn consume_scan_should_process_packet(
         let message = sanitized_transaction.message();
 
         // Check the number of locks and whether there are duplicates
-        if SanitizedTransaction::validate_account_locks(
-            message,
+        if validate_account_locks(
+            message.account_keys(),
             bank.get_transaction_account_lock_limit(),
         )
         .is_err()
@@ -442,18 +443,18 @@ impl VoteStorage {
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
     ) -> VoteBatchInsertionMetrics {
-        self.latest_unprocessed_votes
-            .insert_batch(
-                deserialized_packets
-                    .into_iter()
-                    .filter_map(|deserialized_packet| {
-                        LatestValidatorVotePacket::new_from_immutable(
-                            Arc::new(deserialized_packet),
-                            self.vote_source,
-                        )
-                        .ok()
-                    }),
-            )
+        self.latest_unprocessed_votes.insert_batch(
+            deserialized_packets
+                .into_iter()
+                .filter_map(|deserialized_packet| {
+                    LatestValidatorVotePacket::new_from_immutable(
+                        Arc::new(deserialized_packet),
+                        self.vote_source,
+                    )
+                    .ok()
+                }),
+            false, // should_replenish_taken_votes
+        )
     }
 
     fn filter_forwardable_packets_and_add_batches(
@@ -524,12 +525,15 @@ impl VoteStorage {
                         )
                         .ok()
                     }),
+                    true, // should_replenish_taken_votes
                 );
             } else {
-                self.latest_unprocessed_votes
-                    .insert_batch(vote_packets.into_iter().filter_map(|packet| {
+                self.latest_unprocessed_votes.insert_batch(
+                    vote_packets.into_iter().filter_map(|packet| {
                         LatestValidatorVotePacket::new_from_immutable(packet, self.vote_source).ok()
-                    }));
+                    }),
+                    true, // should_replenish_taken_votes
+                );
             }
         }
 
@@ -987,6 +991,7 @@ mod tests {
         super::*,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_perf::packet::{Packet, PacketFlags},
+        solana_runtime::genesis_utils,
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
@@ -1252,6 +1257,58 @@ mod tests {
             ]);
             assert_eq!(1, transaction_storage.len());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_process_packets_retryable_indexes_reinserted() -> Result<(), Box<dyn Error>> {
+        let node_keypair = Keypair::new();
+        let genesis_config =
+            genesis_utils::create_genesis_config_with_leader(100, &node_keypair.pubkey(), 200)
+                .genesis_config;
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let vote_keypair = Keypair::new();
+        let mut vote = Packet::from_data(
+            None,
+            new_tower_sync_transaction(
+                TowerSync::default(),
+                Hash::new_unique(),
+                &node_keypair,
+                &vote_keypair,
+                &vote_keypair,
+                None,
+            ),
+        )?;
+        vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
+
+        let mut transaction_storage = UnprocessedTransactionStorage::new_vote_storage(
+            Arc::new(LatestUnprocessedVotes::new()),
+            VoteSource::Tpu,
+        );
+
+        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
+        assert_eq!(1, transaction_storage.len());
+
+        // When processing packets, return all packets as retryable so that they
+        // are reinserted into storage
+        let _ = transaction_storage.process_packets(
+            bank.clone(),
+            &BankingStageStats::default(),
+            &mut LeaderSlotMetricsTracker::new(0),
+            |packets, _payload| {
+                // Return all packets indexes as retryable
+                Some(
+                    packets
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _packet)| index)
+                        .collect_vec(),
+                )
+            },
+        );
+
+        // All packets should remain in the transaction storage
+        assert_eq!(1, transaction_storage.len());
         Ok(())
     }
 

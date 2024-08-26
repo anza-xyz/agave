@@ -260,20 +260,16 @@ impl PohService {
                         record.mixin,
                         std::mem::take(&mut record.transactions),
                     );
-                    // what do we do on failure here? Ignore for now.
-                    let (_send_res, send_record_result_us) = measure_us!(record.sender.send(res));
+                    let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
+                    debug_assert!(send_res.is_ok(), "Record wasn't sent.");
+
                     timing.total_send_record_result_us += send_record_result_us;
                     timing.num_hashes += 1; // note: may have also ticked inside record
-
-                    let new_record_result = record_receiver.try_recv();
-                    match new_record_result {
-                        Ok(new_record) => {
-                            // we already have second request to record, so record again while we still have the mutex
-                            record = new_record;
-                        }
-                        Err(_) => {
-                            break;
-                        }
+                    if let Ok(new_record) = record_receiver.try_recv() {
+                        // we already have second request to record, so record again while we still have the mutex
+                        record = new_record;
+                    } else {
+                        break;
                     }
                 }
                 record_time.stop();
@@ -390,7 +386,7 @@ mod tests {
         solana_measure::measure::Measure,
         solana_perf::test_tx::test_tx,
         solana_runtime::bank::Bank,
-        solana_sdk::{clock, hash::hash, timing, transaction::VersionedTransaction},
+        solana_sdk::{clock, hash::hash, transaction::VersionedTransaction},
         std::{thread::sleep, time::Duration},
     };
 
@@ -406,7 +402,7 @@ mod tests {
             .expect("Expected to be able to open database ledger");
 
         let default_target_tick_duration =
-            timing::duration_as_us(&PohConfig::default().target_tick_duration);
+            PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
             hashes_per_tick: Some(clock::DEFAULT_HASHES_PER_TICK),

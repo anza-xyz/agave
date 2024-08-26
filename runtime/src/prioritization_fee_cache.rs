@@ -1,13 +1,16 @@
 use {
-    crate::{bank::Bank, compute_budget_details::GetComputeBudgetDetails, prioritization_fee::*},
+    crate::{bank::Bank, prioritization_fee::*},
     crossbeam_channel::{unbounded, Receiver, Sender},
     log::*,
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         clock::{BankId, Slot},
         pubkey::Pubkey,
         transaction::SanitizedTransaction,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     std::{
         collections::{BTreeMap, HashMap},
         sync::{
@@ -201,35 +204,40 @@ impl PrioritizationFeeCache {
                     continue;
                 }
 
-                let round_compute_unit_price_enabled = false; // TODO: bank.feture_set.is_active(round_compute_unit_price)
-                let compute_budget_details = sanitized_transaction
-                    .get_compute_budget_details(round_compute_unit_price_enabled);
-                let account_locks = sanitized_transaction
-                    .get_account_locks(bank.get_transaction_account_lock_limit());
+                let compute_budget_limits = process_compute_budget_instructions(
+                    SVMMessage::program_instructions_iter(sanitized_transaction),
+                );
 
-                if compute_budget_details.is_none() || account_locks.is_err() {
+                let message = sanitized_transaction.message();
+                let lock_result = validate_account_locks(
+                    message.account_keys(),
+                    bank.get_transaction_account_lock_limit(),
+                );
+
+                if compute_budget_limits.is_err() || lock_result.is_err() {
                     continue;
                 }
-                let compute_budget_details = compute_budget_details.unwrap();
+                let compute_budget_limits = compute_budget_limits.unwrap();
 
                 // filter out any transaction that requests zero compute_unit_limit
                 // since its priority fee amount is not instructive
-                if compute_budget_details.compute_unit_limit == 0 {
+                if compute_budget_limits.compute_unit_limit == 0 {
                     continue;
                 }
 
-                let writable_accounts = account_locks
-                    .unwrap()
-                    .writable
+                let writable_accounts = message
+                    .account_keys()
                     .iter()
-                    .map(|key| **key)
-                    .collect::<Vec<_>>();
+                    .enumerate()
+                    .filter(|(index, _)| message.is_writable(*index))
+                    .map(|(_, key)| *key)
+                    .collect();
 
                 self.sender
                     .send(CacheServiceUpdate::TransactionUpdate {
                         slot: bank.slot(),
                         bank_id: bank.bank_id(),
-                        transaction_fee: compute_budget_details.compute_unit_price,
+                        transaction_fee: compute_budget_limits.compute_unit_price,
                         writable_accounts,
                     })
                     .unwrap_or_else(|err| {

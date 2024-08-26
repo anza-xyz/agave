@@ -1,43 +1,35 @@
 //! The `timing` module provides std::time utility functions.
-use {
-    crate::unchecked_div_by_const,
-    std::{
-        sync::atomic::{AtomicU64, Ordering},
-        time::{Duration, SystemTime, UNIX_EPOCH},
-    },
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_nanos()` directly")]
 pub fn duration_as_ns(d: &Duration) -> u64 {
-    d.as_secs()
-        .saturating_mul(1_000_000_000)
-        .saturating_add(u64::from(d.subsec_nanos()))
+    d.as_nanos() as u64
 }
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_micros()` directly")]
 pub fn duration_as_us(d: &Duration) -> u64 {
-    d.as_secs()
-        .saturating_mul(1_000_000)
-        .saturating_add(unchecked_div_by_const!(u64::from(d.subsec_nanos()), 1_000))
+    d.as_micros() as u64
 }
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_millis()` directly")]
 pub fn duration_as_ms(d: &Duration) -> u64 {
-    d.as_secs()
-        .saturating_mul(1000)
-        .saturating_add(unchecked_div_by_const!(
-            u64::from(d.subsec_nanos()),
-            1_000_000
-        ))
+    d.as_millis() as u64
 }
 
+#[deprecated(since = "2.1.0", note = "Use `Duration::as_secs_f32()` directly")]
 pub fn duration_as_s(d: &Duration) -> f32 {
-    d.as_secs() as f32 + (d.subsec_nanos() as f32 / 1_000_000_000.0)
+    d.as_secs_f32()
 }
 
 /// return timestamp as ms
 pub fn timestamp() -> u64 {
-    let now = SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("create timestamp in timing");
-    duration_as_ms(&now)
+        .expect("create timestamp in timing")
+        .as_millis() as u64
 }
 
 pub const SECONDS_PER_YEAR: f64 = 365.242_199 * 24.0 * 60.0 * 60.0;
@@ -49,7 +41,7 @@ pub fn years_as_slots(years: f64, tick_duration: &Duration, ticks_per_slot: u64)
     //  slots/year  is  seconds/year ...
         SECONDS_PER_YEAR
     //  * (ns/s)/(ns/tick) / ticks/slot = 1/s/1/tick = ticks/s
-        * (1_000_000_000.0 / duration_as_ns(tick_duration) as f64)
+        * (1_000_000_000.0 / tick_duration.as_nanos() as f64)
     //  / ticks/slot
         / ticks_per_slot as f64
 }
@@ -166,60 +158,5 @@ mod test {
             slot_duration_from_slots_per_year(slots_per_year),
             Duration::from_millis(1000) * ticks_per_slot
         );
-    }
-
-    #[test]
-    fn test_duration_as() {
-        // zero
-        let test_zero = Duration::from_nanos(0);
-        assert_eq!(duration_as_ns(&test_zero), 0);
-        assert_eq!(duration_as_us(&test_zero), 0);
-        assert_eq!(duration_as_ms(&test_zero), 0);
-        assert!((duration_as_s(&test_zero) - 0f32) <= f32::EPSILON);
-        // min non-zero for each unit
-        let test_1ns = Duration::from_nanos(1);
-        assert_eq!(duration_as_ns(&test_1ns), 1);
-        assert_eq!(duration_as_us(&test_1ns), 0);
-        assert_eq!(duration_as_ms(&test_1ns), 0);
-        assert!((duration_as_s(&test_1ns) - 0.000_000_001f32) <= f32::EPSILON);
-        let test_1ns = Duration::from_micros(1);
-        assert_eq!(duration_as_ns(&test_1ns), 1_000);
-        assert_eq!(duration_as_us(&test_1ns), 1);
-        assert_eq!(duration_as_ms(&test_1ns), 0);
-        assert!((duration_as_s(&test_1ns) - 0.000_001f32) <= f32::EPSILON);
-        let test_1ns = Duration::from_millis(1);
-        assert_eq!(duration_as_ns(&test_1ns), 1_000_000);
-        assert_eq!(duration_as_us(&test_1ns), 1_000);
-        assert_eq!(duration_as_ms(&test_1ns), 1);
-        assert!((duration_as_s(&test_1ns) - 0.001f32) <= f32::EPSILON);
-        let test_1ns = Duration::from_secs(1);
-        assert_eq!(duration_as_ns(&test_1ns), 1_000_000_000);
-        assert_eq!(duration_as_us(&test_1ns), 1_000_000);
-        assert_eq!(duration_as_ms(&test_1ns), 1_000);
-        assert!((duration_as_s(&test_1ns) - 1f32) <= f32::EPSILON);
-        // max without error for each unit (except secs, 'cause if you use floats
-        // you deserve to get got)
-        const DUR_MAX_SECS: u64 = Duration::MAX.as_secs();
-        const NS_PER_SEC: u64 = 1_000_000_000;
-        let max_as_ns_secs = DUR_MAX_SECS / NS_PER_SEC;
-        let max_as_ns_ns = (DUR_MAX_SECS % NS_PER_SEC) as u32;
-        let max_as_ns = Duration::new(max_as_ns_secs, max_as_ns_ns);
-        assert_eq!(max_as_ns_secs, 18_446_744_073);
-        assert_eq!(max_as_ns_ns, 709_551_615);
-        assert_eq!(duration_as_ns(&max_as_ns), u64::MAX);
-        const US_PER_SEC: u64 = 1_000_000;
-        let max_as_us_secs = DUR_MAX_SECS / US_PER_SEC;
-        let max_as_us_ns = (DUR_MAX_SECS % US_PER_SEC) as u32;
-        let max_as_us = Duration::new(max_as_us_secs, max_as_us_ns * 1_000);
-        assert_eq!(max_as_us_secs, 18_446_744_073_709);
-        assert_eq!(max_as_us_ns, 551_615);
-        assert_eq!(duration_as_us(&max_as_us), u64::MAX);
-        const MS_PER_SEC: u64 = 1_000;
-        let max_as_ms_secs = DUR_MAX_SECS / MS_PER_SEC;
-        let max_as_ms_ns = (DUR_MAX_SECS % MS_PER_SEC) as u32;
-        let max_as_ms = Duration::new(max_as_ms_secs, max_as_ms_ns * 1_000_000);
-        assert_eq!(max_as_ms_secs, 18_446_744_073_709_551);
-        assert_eq!(max_as_ms_ns, 615);
-        assert_eq!(duration_as_ms(&max_as_ms), u64::MAX);
     }
 }

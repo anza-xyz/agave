@@ -34,11 +34,11 @@ solana-entry = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-streamer = { workspace = true }
+solana-vote = { workspace = true }
 tempfile = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }
-rustc_version = { workspace = true }
 
 # windows users should install the protobuf compiler manually and set the PROTOC
 # envar to point to the installed binary

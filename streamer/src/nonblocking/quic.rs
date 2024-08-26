@@ -253,7 +253,7 @@ async fn run_server(
     coalesce: Duration,
 ) {
     let rate_limiter = ConnectionRateLimiter::new(max_connections_per_ipaddr_per_min);
-    let mut overall_connection_rate_limiter =
+    let overall_connection_rate_limiter =
         TotalConnectionRateLimiter::new(TOTAL_CONNECTIONS_PER_SECOND);
 
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
@@ -340,9 +340,9 @@ async fn run_server(
             stats
                 .connection_rate_limiter_length
                 .store(rate_limiter.len(), Ordering::Relaxed);
-            info!("Got a connection {remote_address:?}");
+            debug!("Got a connection {remote_address:?}");
             if !rate_limiter.is_allowed(&remote_address.ip()) {
-                info!(
+                debug!(
                     "Reject connection from {:?} -- rate limiting exceeded",
                     remote_address
                 );
@@ -351,6 +351,7 @@ async fn run_server(
                     .fetch_add(1, Ordering::Relaxed);
                 continue;
             }
+
             stats
                 .outstanding_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
@@ -2290,9 +2291,15 @@ pub mod test {
     async fn test_throttling_check_no_packet_drop() {
         solana_logger::setup_with_default_filter();
 
-        let (server_handle, exit, receiver, tpu_address, stats) = setup_quic_server(None, 1);
+        let SpawnTestServerResult {
+            join_handle,
+            exit,
+            receiver,
+            server_address,
+            stats,
+        } = setup_quic_server(None, TestServerConfig::default());
 
-        let client_connection = make_client_endpoint(&tpu_address, None).await;
+        let client_connection = make_client_endpoint(&server_address, None).await;
 
         // unstaked connection can handle up to 100tps, so we should send in ~1s.
         let expected_num_txs = 100;
@@ -2320,7 +2327,7 @@ pub mod test {
 
         // stop it
         exit.store(true, Ordering::Relaxed);
-        server_handle.await.unwrap();
+        join_handle.await.unwrap();
 
         assert_eq!(
             stats.total_new_streams.load(Ordering::Relaxed),

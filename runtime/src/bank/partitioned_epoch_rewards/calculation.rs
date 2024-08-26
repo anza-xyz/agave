@@ -378,15 +378,14 @@ impl Bank {
                     let stake_pubkey = **stake_pubkey;
                     let stake_account = (*stake_account).to_owned();
 
-                    let delegation = stake_account.delegation();
+                    let vote_pubkey = stake_account.delegation().voter_pubkey;
                     let (mut stake_account, stake_state) =
                         <(AccountSharedData, StakeStateV2)>::from(stake_account);
-                    let vote_pubkey = delegation.voter_pubkey;
                     let vote_account = get_vote_account(&vote_pubkey)?;
                     if vote_account.owner() != &solana_vote_program {
                         return None;
                     }
-                    let vote_state = vote_account.vote_state().cloned().ok()?;
+                    let vote_state = vote_account.vote_state();
 
                     let pre_lamport = stake_account.lamports();
 
@@ -394,7 +393,7 @@ impl Bank {
                         rewarded_epoch,
                         stake_state,
                         &mut stake_account,
-                        &vote_state,
+                        vote_state,
                         &point_value,
                         stake_history,
                         reward_calc_tracer.as_ref(),
@@ -408,13 +407,14 @@ impl Bank {
                             "calculated reward: {} {} {} {}",
                             stake_pubkey, pre_lamport, post_lamport, stakers_reward
                         );
+                        let commission = vote_state.commission;
 
                         // track voter rewards
                         let mut voters_reward_entry = vote_account_rewards
                             .entry(vote_pubkey)
                             .or_insert(VoteReward {
+                                commission,
                                 vote_account: vote_account.into(),
-                                commission: vote_state.commission,
                                 vote_rewards: 0,
                                 vote_needs_store: false,
                             });
@@ -439,7 +439,7 @@ impl Bank {
                                 reward_type: RewardType::Staking,
                                 lamports: i64::try_from(stakers_reward).unwrap(),
                                 post_balance,
-                                commission: Some(vote_state.commission),
+                                commission: Some(commission),
                             },
                             stake,
                         });
@@ -501,8 +501,7 @@ impl Bank {
             stake_delegations
                 .par_iter()
                 .map(|(_stake_pubkey, stake_account)| {
-                    let delegation = stake_account.delegation();
-                    let vote_pubkey = delegation.voter_pubkey;
+                    let vote_pubkey = stake_account.delegation().voter_pubkey;
 
                     let Some(vote_account) = get_vote_account(&vote_pubkey) else {
                         return 0;
@@ -510,13 +509,10 @@ impl Bank {
                     if vote_account.owner() != &solana_vote_program {
                         return 0;
                     }
-                    let Ok(vote_state) = vote_account.vote_state() else {
-                        return 0;
-                    };
 
                     solana_stake_program::points::calculate_points(
                         stake_account.stake_state(),
-                        vote_state,
+                        vote_account.vote_state(),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                     )

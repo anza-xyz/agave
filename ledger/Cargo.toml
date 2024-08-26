@@ -89,11 +89,12 @@ spl-pod = { workspace = true }
 test-case = { workspace = true }
 
 [build-dependencies]
-rustc_version = { workspace = true }
+rustc_version = { workspace = true, optional = true }
 
 [features]
 dev-context-only-utils = []
 frozen-abi = [
+    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-runtime/frozen-abi",
@@ -111,3 +112,6 @@ name = "blockstore"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[lints]
+workspace = true

@@ -14,6 +14,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     static_assertions::const_assert_eq,
     std::{
+        cmp::Ordering,
         collections::HashSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::{SystemTime, UNIX_EPOCH},
@@ -181,11 +182,7 @@ impl ContactInfo {
         Self {
             pubkey,
             wallclock,
-            outset: {
-                let now = SystemTime::now();
-                let elapsed = now.duration_since(UNIX_EPOCH).unwrap();
-                u64::try_from(elapsed.as_micros()).unwrap()
-            },
+            outset: get_node_outset(),
             shred_version,
             version: solana_version::Version::default(),
             addrs: Vec::<IpAddr>::default(),
@@ -215,8 +212,11 @@ impl ContactInfo {
         &self.version
     }
 
-    pub fn set_pubkey(&mut self, pubkey: Pubkey) {
-        self.pubkey = pubkey
+    pub fn hot_swap_pubkey(&mut self, pubkey: Pubkey) {
+        self.pubkey = pubkey;
+        // Need to update ContactInfo.outset so that this node's contact-info
+        // will override older node with the same pubkey.
+        self.outset = get_node_outset();
     }
 
     pub fn set_wallclock(&mut self, wallclock: u64) {
@@ -435,6 +435,38 @@ impl ContactInfo {
         node.set_serve_repair_quic((addr, port + 4)).unwrap();
         node
     }
+
+    // Returns true if the other contact-info is a duplicate instance of this
+    // node, with a more recent `outset` timestamp.
+    #[inline]
+    #[must_use]
+    pub(crate) fn check_duplicate(&self, other: &ContactInfo) -> bool {
+        self.pubkey == other.pubkey && self.outset < other.outset
+    }
+
+    // Returns None if the contact-infos have different pubkey.
+    // Otherwise returns true if (self.outset, self.wallclock) tuple is larger
+    // than (other.outset, other.wallclock).
+    // If the tuples are equal it returns None.
+    #[inline]
+    #[must_use]
+    pub(crate) fn overrides(&self, other: &ContactInfo) -> Option<bool> {
+        if self.pubkey != other.pubkey {
+            return None;
+        }
+        let other = (other.outset, other.wallclock);
+        match (self.outset, self.wallclock).cmp(&other) {
+            Ordering::Less => Some(false),
+            Ordering::Greater => Some(true),
+            Ordering::Equal => None,
+        }
+    }
+}
+
+fn get_node_outset() -> u64 {
+    let now = SystemTime::now();
+    let elapsed = now.duration_since(UNIX_EPOCH).unwrap();
+    u64::try_from(elapsed.as_micros()).unwrap()
 }
 
 impl Default for ContactInfo {
@@ -622,6 +654,7 @@ mod tests {
             iter::repeat_with,
             net::{Ipv4Addr, Ipv6Addr},
             ops::Range,
+            time::Duration,
         },
     };
 
@@ -1015,5 +1048,96 @@ mod tests {
             node.tpu_forwards(Protocol::QUIC),
             Err(Error::InvalidPort(0))
         );
+    }
+
+    #[test]
+    fn test_check_duplicate() {
+        let mut rng = rand::thread_rng();
+        let mut node = ContactInfo::new(
+            Keypair::new().pubkey(),
+            rng.gen(), // wallclock
+            rng.gen(), // shred_version
+        );
+        // Same contact-info is not a duplicate instance.
+        {
+            let other = node.clone();
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+        }
+        // Updated socket address is not a duplicate instance.
+        {
+            let mut other = node.clone();
+            while other.set_gossip(new_rand_socket(&mut rng)).is_err() {}
+            while other.set_serve_repair(new_rand_socket(&mut rng)).is_err() {}
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+            other.remove_serve_repair();
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+        }
+        // Updated wallclock is not a duplicate instance.
+        {
+            let other = node.clone();
+            node.set_wallclock(rng.gen());
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(
+                node.overrides(&other),
+                Some(other.wallclock < node.wallclock)
+            );
+            assert_eq!(
+                other.overrides(&node),
+                Some(node.wallclock < other.wallclock)
+            );
+        }
+        // Different pubkey is not a duplicate instance.
+        {
+            let other = ContactInfo::new(
+                Keypair::new().pubkey(),
+                rng.gen(), // wallclock
+                rng.gen(), // shred_version
+            );
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+
+            // Need to sleep here so that get_node_outset
+            // returns a larger value.
+            std::thread::sleep(Duration::from_millis(1));
+
+            node.hot_swap_pubkey(*other.pubkey());
+            assert!(node.outset > other.outset);
+            assert!(!node.check_duplicate(&other));
+            assert!(other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), Some(true));
+            assert_eq!(other.overrides(&node), Some(false));
+        }
+        // Same pubkey, more recent outset timestamp is a duplicate instance.
+        {
+            std::thread::sleep(Duration::from_millis(1));
+            let other = ContactInfo::new(
+                node.pubkey,
+                rng.gen(), // wallclock
+                rng.gen(), // shred_version
+            );
+            assert!(node.outset < other.outset);
+            assert!(node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), Some(false));
+            assert_eq!(other.overrides(&node), Some(true));
+            node.set_wallclock(other.wallclock);
+            assert!(node.outset < other.outset);
+            assert!(node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), Some(false));
+            assert_eq!(other.overrides(&node), Some(true));
+        }
     }
 }

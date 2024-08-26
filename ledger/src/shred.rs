@@ -348,7 +348,7 @@ impl Shred {
     dispatch!(fn set_signature(&mut self, signature: Signature));
     dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
 
-    dispatch!(pub(crate) fn chained_merkle_root(&self) -> Result<Hash, Error>);
+    dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
     // Returns the portion of the shred's payload which is erasure coded.
     dispatch!(pub(crate) fn erasure_shard(self) -> Result<Vec<u8>, Error>);
     // Like Shred::erasure_shard but returning a slice.
@@ -574,6 +574,37 @@ impl Shred {
         match self {
             Self::ShredCode(shred) => Ok(shred.num_coding_shreds()),
             Self::ShredData(_) => Err(Error::InvalidShredType),
+        }
+    }
+
+    /// Returns true if the other shred has the same ShredId, i.e. (slot, index,
+    /// shred-type), but different payload.
+    /// Retransmitter's signature is ignored when comparing payloads.
+    pub fn is_shred_duplicate(&self, other: &Shred) -> bool {
+        if self.id() != other.id() {
+            return false;
+        }
+        fn get_payload(shred: &Shred) -> &[u8] {
+            let Ok(offset) = shred.retransmitter_signature_offset() else {
+                return shred.payload();
+            };
+            // Assert that the retransmitter's signature is at the very end of
+            // the shred payload.
+            debug_assert_eq!(offset + SIZE_OF_SIGNATURE, shred.payload().len());
+            shred
+                .payload()
+                .get(..offset)
+                .unwrap_or_else(|| shred.payload())
+        }
+        get_payload(self) != get_payload(other)
+    }
+
+    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
+        match self {
+            Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
+            Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),
+            Self::ShredCode(ShredCode::Legacy(_)) => Err(Error::InvalidShredVariant),
+            Self::ShredData(ShredData::Legacy(_)) => Err(Error::InvalidShredVariant),
         }
     }
 }
@@ -802,7 +833,7 @@ pub mod layout {
         }
     }
 
-    pub(crate) fn set_retransmitter_signature(
+    pub fn set_retransmitter_signature(
         shred: &mut [u8],
         signature: &Signature,
     ) -> Result<(), Error> {
@@ -2090,5 +2121,100 @@ mod tests {
         assert!(!flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
         assert_eq!((flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(), 61u8);
         assert_eq!(bincode::serialize(&flags).unwrap(), [0b1011_1101]);
+    }
+
+    #[test_case(false, false)]
+    #[test_case(false, true)]
+    #[test_case(true, false)]
+    #[test_case(true, true)]
+    fn test_is_shred_duplicate(chained: bool, is_last_in_slot: bool) {
+        fn fill_retransmitter_signature<R: Rng>(
+            rng: &mut R,
+            shred: Shred,
+            chained: bool,
+            is_last_in_slot: bool,
+        ) -> Shred {
+            let mut shred = shred.into_payload();
+            let mut signature = [0u8; SIGNATURE_BYTES];
+            rng.fill(&mut signature[..]);
+            let out = layout::set_retransmitter_signature(&mut shred, &Signature::from(signature));
+            if chained && is_last_in_slot {
+                assert_matches!(out, Ok(()));
+            } else {
+                assert_matches!(out, Err(Error::InvalidShredVariant));
+            }
+            Shred::new_from_serialized_shred(shred).unwrap()
+        }
+        let mut rng = rand::thread_rng();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let keypair = Keypair::new();
+        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+        let slot = 285_376_049 + rng.gen_range(0..100_000);
+        let parent_slot = slot - rng.gen_range(1..=65535);
+        let shred_version = rng.gen();
+        let reference_tick = rng.gen_range(1..64);
+        let next_shred_index = rng.gen_range(0..671);
+        let next_code_index = rng.gen_range(0..781);
+        let mut data = vec![0u8; 1200 * 5];
+        rng.fill(&mut data[..]);
+        let shreds: Vec<_> = merkle::make_shreds_from_data(
+            &thread_pool,
+            &keypair,
+            chained_merkle_root,
+            &data[..],
+            slot,
+            parent_slot,
+            shred_version,
+            reference_tick,
+            is_last_in_slot,
+            next_shred_index,
+            next_code_index,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .map(Shred::from)
+        .map(|shred| fill_retransmitter_signature(&mut rng, shred, chained, is_last_in_slot))
+        .collect();
+        {
+            let num_data_shreds = shreds.iter().filter(|shred| shred.is_data()).count();
+            let num_coding_shreds = shreds.iter().filter(|shred| shred.is_code()).count();
+            assert!(num_data_shreds > if is_last_in_slot { 31 } else { 5 });
+            assert!(num_coding_shreds > if is_last_in_slot { 31 } else { 20 });
+        }
+        // Shreds of different (slot, index, shred-type) are not duplicate.
+        // A shred is not a duplicate of itself either.
+        for shred in &shreds {
+            for other in &shreds {
+                assert!(!shred.is_shred_duplicate(other));
+            }
+        }
+        // Different retransmitter signature does not make shreds duplicate.
+        for shred in &shreds {
+            let other =
+                fill_retransmitter_signature(&mut rng, shred.clone(), chained, is_last_in_slot);
+            if chained && is_last_in_slot {
+                assert_ne!(shred.payload(), other.payload());
+            }
+            assert!(!shred.is_shred_duplicate(&other));
+            assert!(!other.is_shred_duplicate(shred));
+        }
+        // Shreds of the same (slot, index, shred-type) with different payload
+        // (ignoring retransmitter signature) are duplicate.
+        for shred in &shreds {
+            let mut other = shred.payload().clone();
+            other[90] = other[90].wrapping_add(1);
+            let other = Shred::new_from_serialized_shred(other).unwrap();
+            assert_ne!(shred.payload(), other.payload());
+            assert_eq!(
+                layout::get_retransmitter_signature(shred.payload()).ok(),
+                layout::get_retransmitter_signature(other.payload()).ok()
+            );
+            assert!(shred.is_shred_duplicate(&other));
+            assert!(other.is_shred_duplicate(shred));
+        }
     }
 }

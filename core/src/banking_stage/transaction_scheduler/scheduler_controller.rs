@@ -23,10 +23,11 @@ use {
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
-    solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         self,
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
@@ -35,6 +36,7 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+    solana_svm_transaction::svm_message::SVMMessage,
     std::{
         sync::{Arc, RwLock},
         time::{Duration, Instant},
@@ -526,14 +528,14 @@ impl SchedulerController {
                 })
                 .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
                 .filter(|(_packet, tx)| {
-                    SanitizedTransaction::validate_account_locks(
-                        tx.message(),
+                    validate_account_locks(
+                        tx.message().account_keys(),
                         transaction_account_lock_limit,
                     )
                     .is_ok()
                 })
                 .filter_map(|(packet, tx)| {
-                    process_compute_budget_instructions(tx.message().program_instructions_iter())
+                    process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx))
                         .map(|compute_budget| (packet, tx, compute_budget.into()))
                         .ok()
                 })

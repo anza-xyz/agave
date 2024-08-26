@@ -8,10 +8,11 @@
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
     log::*,
-    solana_compute_budget::compute_budget_processor::{
-        process_compute_budget_instructions, DEFAULT_HEAP_COST,
-        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
+    solana_builtins_default_costs::BUILTIN_INSTRUCTION_COSTS,
+    solana_compute_budget::compute_budget_limits::{
+        DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
     },
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
         compute_budget::{self, ComputeBudgetInstruction},
@@ -24,6 +25,7 @@ use {
         system_program,
         transaction::SanitizedTransaction,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 pub struct CostModel;
@@ -149,7 +151,7 @@ impl CostModel {
 
     fn get_transaction_cost(
         tx_cost: &mut UsageCostDetails,
-        transaction: &SanitizedTransaction,
+        transaction: &impl SVMMessage,
         feature_set: &FeatureSet,
     ) {
         let mut programs_execution_costs = 0u64;
@@ -158,7 +160,7 @@ impl CostModel {
         let mut compute_unit_limit_is_set = false;
         let mut has_user_space_instructions = false;
 
-        for (program_id, instruction) in transaction.message().program_instructions_iter() {
+        for (program_id, instruction) in transaction.program_instructions_iter() {
             let ix_execution_cost =
                 if let Some(builtin_cost) = BUILTIN_INSTRUCTION_COSTS.get(program_id) {
                     *builtin_cost
@@ -176,7 +178,7 @@ impl CostModel {
 
             if compute_budget::check_id(program_id) {
                 if let Ok(ComputeBudgetInstruction::SetComputeUnitLimit(_)) =
-                    try_from_slice_unchecked(&instruction.data)
+                    try_from_slice_unchecked(instruction.data)
                 {
                     compute_unit_limit_is_set = true;
                 }
@@ -185,8 +187,7 @@ impl CostModel {
 
         // if failed to process compute_budget instructions, the transaction will not be executed
         // by `bank`, therefore it should be considered as no execution cost by cost model.
-        match process_compute_budget_instructions(transaction.message().program_instructions_iter())
-        {
+        match process_compute_budget_instructions(transaction.program_instructions_iter()) {
             Ok(compute_budget_limits) => {
                 // if tx contained user-space instructions and a more accurate estimate available correct it,
                 // where "user-space instructions" must be specifically checked by
@@ -627,8 +628,8 @@ mod tests {
             .unwrap();
         const DEFAULT_PAGE_COST: u64 = 8;
         let expected_loaded_accounts_data_size_cost =
-            solana_compute_budget::compute_budget_processor::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
-                .get() as u64
+            solana_compute_budget::compute_budget_limits::MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get()
+                as u64
                 / ACCOUNT_DATA_COST_PAGE_SIZE
                 * DEFAULT_PAGE_COST;
 

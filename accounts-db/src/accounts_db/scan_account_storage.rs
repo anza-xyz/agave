@@ -27,7 +27,7 @@ trait AppendVecScan: Send + Sync + Clone {
     /// return true if this pubkey should be included
     fn filter(&mut self, pubkey: &Pubkey) -> bool;
     /// set current slot of the scan
-    fn set_slot(&mut self, slot: Slot);
+    fn set_slot(&mut self, slot: Slot, is_ancient: bool);
     /// found `account` in the append vec
     fn found_account(&mut self, account: &LoadedAccount);
     /// scanning is done
@@ -51,11 +51,14 @@ struct ScanState<'a> {
     range: usize,
     sort_time: Arc<AtomicU64>,
     pubkey_to_bin_index: usize,
+    is_ancient: bool,
+    stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
 }
 
 impl<'a> AppendVecScan for ScanState<'a> {
-    fn set_slot(&mut self, slot: Slot) {
+    fn set_slot(&mut self, slot: Slot, is_ancient: bool) {
         self.current_slot = slot;
+        self.is_ancient = is_ancient;
     }
     fn filter(&mut self, pubkey: &Pubkey) -> bool {
         self.pubkey_to_bin_index = self.bin_calculator.bin_from_pubkey(pubkey);
@@ -82,6 +85,12 @@ impl<'a> AppendVecScan for ScanState<'a> {
             let computed_hash = AccountsDb::hash_account(loaded_account, loaded_account.pubkey());
             account_hash = computed_hash;
         }
+
+        if balance == 0 && self.is_ancient {
+            self.stats_num_zero_lamport_accounts_ancient
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
         let source_item = CalculateHashIntermediate {
             hash: account_hash,
             lamports: balance,
@@ -135,6 +144,10 @@ impl AccountsDb {
             bin_range,
             sort_time: sort_time.clone(),
             pubkey_to_bin_index: 0,
+            is_ancient: false,
+            stats_num_zero_lamport_accounts_ancient: Arc::clone(
+                &stats.num_zero_lamport_accounts_ancient,
+            ),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -170,12 +183,18 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot_for_hash_calc_scan(
-            snapshot_storages.max_slot_inclusive(),
-            config,
-        );
-        let splitter = SplitAncientStorages::new(oldest_non_ancient_slot, snapshot_storages);
-
+        let oldest_non_ancient_slot_for_split = self
+            .get_oldest_non_ancient_slot_for_hash_calc_scan(
+                snapshot_storages.max_slot_inclusive(),
+                config,
+            );
+        let splitter =
+            SplitAncientStorages::new(oldest_non_ancient_slot_for_split, snapshot_storages);
+        let oldest_non_ancient_slot_for_identification = self
+            .get_oldest_non_ancient_slot_from_slot(
+                config.epoch_schedule,
+                snapshot_storages.max_slot_inclusive(),
+            );
         let slots_per_epoch = config
             .rent_collector
             .epoch_schedule
@@ -284,10 +303,7 @@ impl AccountsDb {
                         let mut init_accum = true;
                         // load from cache failed, so create the cache file for this chunk
                         for (slot, storage) in snapshot_storages.iter_range(&range_this_chunk) {
-                            let ancient =
-                                oldest_non_ancient_slot.is_some_and(|oldest_non_ancient_slot| {
-                                    slot < oldest_non_ancient_slot
-                                });
+                            let ancient = slot < oldest_non_ancient_slot_for_identification;
 
                             let (_, scan_us) = measure_us!(if let Some(storage) = storage {
                                 if init_accum {
@@ -295,7 +311,7 @@ impl AccountsDb {
                                     scanner.init_accum(range);
                                     init_accum = false;
                                 }
-                                scanner.set_slot(slot);
+                                scanner.set_slot(slot, ancient);
 
                                 Self::scan_single_account_storage(storage, &mut scanner);
                             });
@@ -404,7 +420,7 @@ mod tests {
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {
             true
         }
-        fn set_slot(&mut self, slot: Slot) {
+        fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
             self.current_slot = slot;
         }
         fn init_accum(&mut self, _count: usize) {}
@@ -434,7 +450,7 @@ mod tests {
     }
 
     impl AppendVecScan for TestScanSimple {
-        fn set_slot(&mut self, slot: Slot) {
+        fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
             self.current_slot = slot;
         }
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {

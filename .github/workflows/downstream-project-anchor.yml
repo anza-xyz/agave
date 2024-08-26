@@ -41,7 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        version: ["v0.29.0", "v0.30.0"]
+        version: ["master"]
+    if: false # Re-enable once new major versions for spl-token-2022 and spl-pod are out
     steps:
       - uses: actions/checkout@v4
 

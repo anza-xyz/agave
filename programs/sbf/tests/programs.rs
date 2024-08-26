@@ -9,14 +9,12 @@
 
 #[cfg(feature = "sbf_rust")]
 use {
+    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     itertools::izip,
     solana_account_decoder::parse_bpf_loader::{
         parse_bpf_upgradeable_loader, BpfUpgradeableLoaderAccountType,
     },
-    solana_compute_budget::{
-        compute_budget::ComputeBudget,
-        compute_budget_processor::process_compute_budget_instructions,
-    },
+    solana_compute_budget::compute_budget::ComputeBudget,
     solana_ledger::token_balances::collect_token_balances,
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_rbpf::vm::ContextObject,
@@ -34,6 +32,7 @@ use {
             load_upgradeable_program_wrapper, set_upgrade_authority, upgrade_program,
         },
     },
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,
@@ -63,17 +62,17 @@ use {
         transaction::{SanitizedTransaction, Transaction, TransactionError, VersionedTransaction},
     },
     solana_svm::{
+        transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
+        transaction_execution_result::InnerInstruction,
         transaction_processor::ExecutionRecordingConfig,
-        transaction_results::{
-            InnerInstruction, TransactionExecutionDetails, TransactionExecutionResult,
-            TransactionResults,
-        },
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     solana_transaction_status::{
         map_inner_instructions, ConfirmedTransactionWithStatusMeta, TransactionStatusMeta,
         TransactionWithStatusMeta, VersionedTransactionWithStatusMeta,
     },
+    solana_type_overrides::rand,
     std::{
         assert_eq,
         cell::RefCell,
@@ -93,10 +92,23 @@ fn process_transaction_and_record_inner(
     Vec<Vec<InnerInstruction>>,
     Vec<String>,
 ) {
-    let signature = tx.signatures.first().unwrap().clone();
+    let commit_result = load_execute_and_commit_transaction(bank, tx);
+    let CommittedTransaction {
+        inner_instructions,
+        log_messages,
+        status,
+        ..
+    } = commit_result.unwrap();
+    let inner_instructions = inner_instructions.expect("cpi recording should be enabled");
+    let log_messages = log_messages.expect("log recording should be enabled");
+    (status, inner_instructions, log_messages)
+}
+
+#[cfg(feature = "sbf_rust")]
+fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> TransactionCommitResult {
     let txs = vec![tx];
     let tx_batch = bank.prepare_batch_for_tests(txs);
-    let mut results = bank
+    let mut commit_results = bank
         .load_execute_and_commit_transactions(
             &tx_batch,
             MAX_PROCESSING_AGE,
@@ -110,23 +122,7 @@ fn process_transaction_and_record_inner(
             None,
         )
         .0;
-    let result = results
-        .fee_collection_results
-        .swap_remove(0)
-        .and_then(|_| bank.get_signature_status(&signature).unwrap());
-    let execution_details = results
-        .execution_results
-        .swap_remove(0)
-        .details()
-        .expect("tx should be executed")
-        .clone();
-    let inner_instructions = execution_details
-        .inner_instructions
-        .expect("cpi recording should be enabled");
-    let log_messages = execution_details
-        .log_messages
-        .expect("log recording should be enabled");
-    (result, inner_instructions, log_messages)
+    commit_results.pop().unwrap()
 }
 
 #[cfg(feature = "sbf_rust")]
@@ -139,9 +135,7 @@ fn execute_transactions(
     let mut mint_decimals = HashMap::new();
     let tx_pre_token_balances = collect_token_balances(&bank, &batch, &mut mint_decimals);
     let (
-        TransactionResults {
-            execution_results, ..
-        },
+        commit_results,
         TransactionBalancesSet {
             pre_balances,
             post_balances,
@@ -159,7 +153,7 @@ fn execute_transactions(
 
     izip!(
         txs.iter(),
-        execution_results.into_iter(),
+        commit_results.into_iter(),
         pre_balances.into_iter(),
         post_balances.into_iter(),
         tx_pre_token_balances.into_iter(),
@@ -168,56 +162,52 @@ fn execute_transactions(
     .map(
         |(
             tx,
-            execution_result,
+            commit_result,
             pre_balances,
             post_balances,
             pre_token_balances,
             post_token_balances,
         )| {
-            match execution_result {
-                TransactionExecutionResult::Executed(executed_tx) => {
-                    let fee_details = executed_tx.loaded_transaction.fee_details;
-                    let TransactionExecutionDetails {
-                        status,
-                        log_messages,
-                        inner_instructions,
-                        return_data,
-                        executed_units,
-                        ..
-                    } = executed_tx.execution_details;
+            commit_result.map(|committed_tx| {
+                let CommittedTransaction {
+                    status,
+                    log_messages,
+                    inner_instructions,
+                    return_data,
+                    executed_units,
+                    fee_details,
+                    ..
+                } = committed_tx;
 
-                    let inner_instructions = inner_instructions.map(|inner_instructions| {
-                        map_inner_instructions(inner_instructions).collect()
-                    });
+                let inner_instructions = inner_instructions
+                    .map(|inner_instructions| map_inner_instructions(inner_instructions).collect());
 
-                    let tx_status_meta = TransactionStatusMeta {
-                        status,
-                        fee: fee_details.total_fee(),
-                        pre_balances,
-                        post_balances,
-                        pre_token_balances: Some(pre_token_balances),
-                        post_token_balances: Some(post_token_balances),
-                        inner_instructions,
-                        log_messages,
-                        rewards: None,
-                        loaded_addresses: LoadedAddresses::default(),
-                        return_data,
-                        compute_units_consumed: Some(executed_units),
-                    };
+                let tx_status_meta = TransactionStatusMeta {
+                    status,
+                    fee: fee_details.total_fee(),
+                    pre_balances,
+                    post_balances,
+                    pre_token_balances: Some(pre_token_balances),
+                    post_token_balances: Some(post_token_balances),
+                    inner_instructions,
+                    log_messages,
+                    rewards: None,
+                    loaded_addresses: LoadedAddresses::default(),
+                    return_data,
+                    compute_units_consumed: Some(executed_units),
+                };
 
-                    Ok(ConfirmedTransactionWithStatusMeta {
-                        slot: bank.slot(),
-                        tx_with_meta: TransactionWithStatusMeta::Complete(
-                            VersionedTransactionWithStatusMeta {
-                                transaction: VersionedTransaction::from(tx.clone()),
-                                meta: tx_status_meta,
-                            },
-                        ),
-                        block_time: None,
-                    })
+                ConfirmedTransactionWithStatusMeta {
+                    slot: bank.slot(),
+                    tx_with_meta: TransactionWithStatusMeta::Complete(
+                        VersionedTransactionWithStatusMeta {
+                            transaction: VersionedTransaction::from(tx.clone()),
+                            meta: tx_status_meta,
+                        },
+                    ),
+                    block_time: None,
                 }
-                TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
-            }
+            })
         },
     )
     .collect()
@@ -1896,10 +1886,10 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
             bank.last_blockhash(),
         );
         if index == 0 {
-            let results = execute_transactions(&bank, vec![tx]);
+            let result = load_execute_and_commit_transaction(&bank, tx);
             assert_eq!(
-                results[0].as_ref().unwrap_err(),
-                &TransactionError::ProgramAccountNotFound,
+                result.unwrap().status,
+                Err(TransactionError::ProgramAccountNotFound),
             );
         } else {
             let (result, _, _) = process_transaction_and_record_inner(&bank, tx);
@@ -3891,8 +3881,10 @@ fn test_program_fees() {
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default(),
+        process_compute_budget_instructions(SVMMessage::program_instructions_iter(
+            &sanitized_message,
+        ))
+        .unwrap_or_default(),
     );
     let expected_normal_fee = solana_fee::calculate_fee(
         &sanitized_message,
@@ -3921,8 +3913,10 @@ fn test_program_fees() {
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(sanitized_message.program_instructions_iter())
-            .unwrap_or_default(),
+        process_compute_budget_instructions(SVMMessage::program_instructions_iter(
+            &sanitized_message,
+        ))
+        .unwrap_or_default(),
     );
     let expected_prioritized_fee = solana_fee::calculate_fee(
         &sanitized_message,
@@ -5140,4 +5134,147 @@ fn test_stack_heap_zeroed() {
             "{logs:?}"
         );
     }
+}
+
+#[test]
+fn test_function_call_args() {
+    // This function tests edge compiler edge cases when calling functions with more than five
+    // arguments and passing by value arguments with more than 16 bytes.
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_123_456_789);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank);
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        bank_forks.as_ref(),
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_call_args",
+    );
+
+    #[derive(BorshSerialize, BorshDeserialize, PartialEq, Eq, Debug)]
+    struct Test128 {
+        a: u128,
+        b: u128,
+    }
+
+    #[derive(BorshSerialize)]
+    struct InputData {
+        test_128: Test128,
+        arg1: i64,
+        arg2: i64,
+        arg3: i64,
+        arg4: i64,
+        arg5: i64,
+        arg6: i64,
+        arg7: i64,
+        arg8: i64,
+    }
+
+    #[derive(BorshDeserialize)]
+    struct OutputData {
+        res_128: u128,
+        res_256: Test128,
+        many_args_1: i64,
+        many_args_2: i64,
+    }
+
+    let input_data = InputData {
+        test_128: Test128 {
+            a: rand::random::<u128>(),
+            b: rand::random::<u128>(),
+        },
+        arg1: rand::random::<i64>(),
+        arg2: rand::random::<i64>(),
+        arg3: rand::random::<i64>(),
+        arg4: rand::random::<i64>(),
+        arg5: rand::random::<i64>(),
+        arg6: rand::random::<i64>(),
+        arg7: rand::random::<i64>(),
+        arg8: rand::random::<i64>(),
+    };
+
+    let instruction_data = to_vec(&input_data).unwrap();
+    let account_metas = vec![
+        AccountMeta::new(mint_keypair.pubkey(), true),
+        AccountMeta::new(Keypair::new().pubkey(), false),
+    ];
+
+    let instruction = Instruction::new_with_bytes(program_id, &instruction_data, account_metas);
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+
+    let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+
+    let txs = vec![tx];
+    let tx_batch = bank.prepare_batch_for_tests(txs);
+    let result = bank
+        .load_execute_and_commit_transactions(
+            &tx_batch,
+            MAX_PROCESSING_AGE,
+            false,
+            ExecutionRecordingConfig {
+                enable_cpi_recording: false,
+                enable_log_recording: false,
+                enable_return_data_recording: true,
+            },
+            &mut ExecuteTimings::default(),
+            None,
+        )
+        .0;
+
+    fn verify_many_args(input: &InputData) -> i64 {
+        let a = input
+            .arg1
+            .overflowing_add(input.arg2)
+            .0
+            .overflowing_sub(input.arg3)
+            .0
+            .overflowing_add(input.arg4)
+            .0
+            .overflowing_sub(input.arg5)
+            .0;
+        (a % input.arg6)
+            .overflowing_sub(input.arg7)
+            .0
+            .overflowing_add(input.arg8)
+            .0
+    }
+
+    let return_data = &result[0]
+        .as_ref()
+        .unwrap()
+        .return_data
+        .as_ref()
+        .unwrap()
+        .data;
+    let decoded: OutputData = from_slice::<OutputData>(return_data).unwrap();
+    assert_eq!(
+        decoded.res_128,
+        input_data.test_128.a % input_data.test_128.b
+    );
+    assert_eq!(
+        decoded.res_256,
+        Test128 {
+            a: input_data
+                .test_128
+                .a
+                .overflowing_add(input_data.test_128.b)
+                .0,
+            b: input_data
+                .test_128
+                .a
+                .overflowing_sub(input_data.test_128.b)
+                .0
+        }
+    );
+    assert_eq!(decoded.many_args_1, verify_many_args(&input_data));
+    assert_eq!(decoded.many_args_2, verify_many_args(&input_data));
 }
