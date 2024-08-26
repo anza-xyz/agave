@@ -197,6 +197,17 @@ pub fn validate_fee_payer(
 // XXX TODO OK i have to fix the integration test pr and then rebase this on that
 // which is going to break again because theres a new feature gate for changing fees for load failure for simd82...
 // then... add account change carryover and write tests! basic fee/nonce/normal account, plus the program cache gauntlet
+// starry mentioned `collect_accounts_to_store()` as a place that shows how to handle saving all accounts
+//
+// XXX ok!! brooks has also changed transaction processing but his is very simple
+// he is adding a mechanism to beacon back a hash of initial account states out to the bank
+// i commented out for now, he has one more pr to add
+// this one will be very satisfying, i can move it all into `load_accounts()` and cut the number of calls substantially
+// so next i wanna... yea, write the update function and then some more tests
+//
+// the other thing to remember is the program cache tests. do i need to change the framework for that at all?
+// hm. i believe i need a mechanism to forward the cache to the next state... ugh
+
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
