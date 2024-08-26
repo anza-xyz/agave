@@ -1437,10 +1437,14 @@ pub fn process_ping(
     rpc_client: &RpcClient,
 ) -> ProcessResult {
     let (signal_sender, signal_receiver) = unbounded();
-    ctrlc::set_handler(move || {
+    match ctrlc::try_set_handler(move || {
         let _ = signal_sender.send(());
-    })
-    .expect("Error setting Ctrl-C handler");
+    }) {
+        // It's possible to set the ctrl-c handler more than once in testing
+        // situations, so let that case through
+        Err(ctrlc::Error::MultipleHandlers) => {}
+        result => result.expect("Error setting Ctrl-C handler"),
+    }
 
     let mut cli_pings = vec![];
 
@@ -1461,18 +1465,21 @@ pub fn process_ping(
     }
 
     let to = config.signers[0].pubkey();
-    let ixs = vec![system_instruction::transfer(
-        &config.signers[0].pubkey(),
-        &to,
-        lamports,
-    )]
-    .with_compute_unit_config(&ComputeUnitConfig {
-        compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Simulated,
-    });
-    let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
-    let compute_unit_limit =
-        ComputeUnitLimit::Static(simulate_for_compute_unit_limit(rpc_client, &message)?);
+    let compute_unit_limit = if compute_unit_price.is_some() {
+        let ixs = vec![system_instruction::transfer(
+            &config.signers[0].pubkey(),
+            &to,
+            lamports,
+        )]
+        .with_compute_unit_config(&ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit: ComputeUnitLimit::Simulated,
+        });
+        let message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
+        ComputeUnitLimit::Static(simulate_for_compute_unit_limit(rpc_client, &message)?)
+    } else {
+        ComputeUnitLimit::Default
+    };
 
     'mainloop: for seq in 0..count.unwrap_or(u64::MAX) {
         let now = Instant::now();
