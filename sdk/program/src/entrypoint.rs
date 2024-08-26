@@ -151,6 +151,8 @@ macro_rules! entrypoint {
 ///
 /// For more information about how the program entrypoint behaves and what it
 /// does, please see the documentation for [`entrypoint!`].
+///
+/// NOTE: This entrypoint has a hard-coded limit of 64 input accounts.
 #[macro_export]
 macro_rules! entrypoint_no_alloc {
     ($process_instruction:ident) => {
