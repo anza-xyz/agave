@@ -2753,7 +2753,7 @@ impl AccountsDb {
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
     /// Any accounts which are removed from the accounts index are returned in PubkeysRemovedFromAccountsIndex.
     /// These should NOT be unref'd later from the accounts index.
-    fn clean_accounts_older_than_root(
+    fn clean_account_older_than_root(
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
@@ -3428,7 +3428,7 @@ impl AccountsDb {
                         let (
                             (purged_account_slots_new, removed_accounts_new),
                             pubkeys_removed_from_accounts_index_new,
-                        ) = self.clean_accounts_older_than_root(
+                        ) = self.clean_account_older_than_root(
                             candidate_pubkey,
                             max_clean_root_inclusive,
                             &ancient_account_cleans,
@@ -3499,7 +3499,7 @@ impl AccountsDb {
                         return false;
                     }
                     // Check if this update in `slot` to the account with `key` was reclaimed earlier by
-                    // `clean_accounts_older_than_root()`
+                    // `clean_account_older_than_root()`
                     let was_reclaimed = removed_accounts
                         .get(slot)
                         .map(|store_removed| store_removed.contains(&account_info.offset()))
@@ -5583,7 +5583,7 @@ impl AccountsDb {
         //          handle_reclaims()             | (removes storage entries)
         //      OR                                |
         //    clean_accounts()/                   |
-        //        clean_accounts_older_than_root()| (removes existing store_id, offset for stores)
+        //        clean_account_older_than_root() | (removes existing store_id, offset for stores)
         //                                        V
         //
         // Remarks for purger: So, for any reading operations, it's a race condition
