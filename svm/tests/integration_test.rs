@@ -68,12 +68,12 @@ impl SvmTestEntry {
             .insert(pubkey, account.clone())
             .is_none());
 
-        self.create_account(pubkey, account);
+        self.create_expected_account(pubkey, account);
     }
 
     // add a new rent-exempt account that is created by the transaction
     // inserts it only into the post account map
-    pub fn create_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
+    pub fn create_expected_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
         let mut account = account.clone();
         account.set_rent_epoch(u64::MAX);
 
@@ -458,7 +458,7 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
         destination_data
             .checked_add_lamports(transfer_amount)
             .unwrap();
-        test_entry.create_account(destination, &destination_data);
+        test_entry.create_expected_account(destination, &destination_data);
 
         test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
     }
