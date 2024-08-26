@@ -71,7 +71,7 @@ impl InstructionsMeta {
     }
 }
 
-pub(crate) struct InstructionsIterator<'a> {
+pub struct InstructionsIterator<'a> {
     pub(crate) bytes: &'a [u8],
     pub(crate) offset: usize,
     pub(crate) num_instructions: u16,

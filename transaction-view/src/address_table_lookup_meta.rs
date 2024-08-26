@@ -108,7 +108,7 @@ impl AddressTableLookupMeta {
     }
 }
 
-pub(crate) struct AddressTableLookupIterator<'a> {
+pub struct AddressTableLookupIterator<'a> {
     pub(crate) bytes: &'a [u8],
     pub(crate) offset: usize,
     pub(crate) num_address_table_lookups: u8,
