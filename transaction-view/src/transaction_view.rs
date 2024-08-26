@@ -111,7 +111,7 @@ impl<D: TransactionData> TransactionView<D> {
     /// Return the serialized **message** data.
     /// This does not include the signatures.
     pub fn message_data(&self) -> &[u8] {
-        &self.data()[usize::from(self.meta.message_header.offset)..]
+        &self.data()[usize::from(self.meta.message_offset())..]
     }
 }
 
