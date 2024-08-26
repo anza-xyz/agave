@@ -515,32 +515,48 @@ pub fn process_instruction_transfer_authority(
         .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
     let new_authority_address = instruction_context
         .get_index_of_instruction_account_in_transaction(2)
-        .and_then(|index| transaction_context.get_key_of_account_at_index(index))
-        .ok()
-        .cloned();
-    let _state = check_program_account(
+        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let state = check_program_account(
         &log_collector,
         instruction_context,
         &program,
         authority_address,
     )?;
+    if !instruction_context.is_instruction_account_signer(2)? {
+        ic_logger_msg!(log_collector, "New authority did not sign");
+        return Err(InstructionError::MissingRequiredSignature);
+    }
+    if state.authority_address == *new_authority_address {
+        ic_logger_msg!(log_collector, "No change");
+        return Err(InstructionError::InvalidArgument);
+    }
     let state = get_state_mut(program.get_data_mut()?)?;
-    if let Some(new_authority_address) = new_authority_address {
-        if !instruction_context.is_instruction_account_signer(2)? {
-            ic_logger_msg!(log_collector, "New authority did not sign");
-            return Err(InstructionError::MissingRequiredSignature);
-        }
-        if state.authority_address == new_authority_address {
-            ic_logger_msg!(log_collector, "No change");
-            return Err(InstructionError::InvalidArgument);
-        }
-        state.authority_address = new_authority_address;
-    } else if matches!(state.status, LoaderV4Status::Deployed) {
-        state.status = LoaderV4Status::Finalized;
-    } else {
+    state.authority_address = *new_authority_address;
+    Ok(())
+}
+
+pub fn process_instruction_finalize(
+    invoke_context: &mut InvokeContext,
+) -> Result<(), InstructionError> {
+    let log_collector = invoke_context.get_log_collector();
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let authority_address = instruction_context
+        .get_index_of_instruction_account_in_transaction(1)
+        .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
+    let state = check_program_account(
+        &log_collector,
+        instruction_context,
+        &program,
+        authority_address,
+    )?;
+    if !matches!(state.status, LoaderV4Status::Deployed) {
         ic_logger_msg!(log_collector, "Program must be deployed to be finalized");
         return Err(InstructionError::InvalidArgument);
     }
+    let state = get_state_mut(program.get_data_mut()?)?;
+    state.status = LoaderV4Status::Finalized;
     Ok(())
 }
 
@@ -581,6 +597,7 @@ pub fn process_instruction_inner(
             LoaderV4Instruction::TransferAuthority => {
                 process_instruction_transfer_authority(invoke_context)
             }
+            LoaderV4Instruction::Finalize => process_instruction_finalize(invoke_context),
         }
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     } else {
@@ -1495,27 +1512,13 @@ mod tests {
         );
         assert_eq!(accounts[0].lamports(), transaction_accounts[0].1.lamports());
 
-        // Finalize program
-        let accounts = process_instruction(
-            vec![],
-            &bincode::serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
-            transaction_accounts.clone(),
-            &[(0, false, true), (3, true, false)],
-            Ok(()),
-        );
-        assert_eq!(
-            accounts[0].data().len(),
-            transaction_accounts[0].1.data().len(),
-        );
-        assert_eq!(accounts[0].lamports(), transaction_accounts[0].1.lamports());
-
-        // Error: Program must be deployed to be finalized
+        // Error: No new authority provided
         process_instruction(
             vec![],
             &bincode::serialize(&LoaderV4Instruction::TransferAuthority).unwrap(),
             transaction_accounts.clone(),
-            &[(1, false, true), (3, true, false)],
-            Err(InstructionError::InvalidArgument),
+            &[(0, false, true), (3, true, false)],
+            Err(InstructionError::NotEnoughAccountKeys),
         );
 
         // Error: Program is uninitialized
@@ -1543,6 +1546,79 @@ mod tests {
             transaction_accounts,
             &[(0, false, true), (3, true, false), (3, true, false)],
             Err(InstructionError::InvalidArgument),
+        );
+
+        test_loader_instruction_general_errors(LoaderV4Instruction::TransferAuthority);
+    }
+
+    #[test]
+    fn test_loader_instruction_finalize() {
+        let authority_address = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (
+                Pubkey::new_unique(),
+                load_program_account_from_elf(
+                    authority_address,
+                    LoaderV4Status::Deployed,
+                    "rodata_section",
+                ),
+            ),
+            (
+                Pubkey::new_unique(),
+                load_program_account_from_elf(
+                    authority_address,
+                    LoaderV4Status::Retracted,
+                    "rodata_section",
+                ),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(0, 0, &loader_v4::id()),
+            ),
+            (
+                authority_address,
+                AccountSharedData::new(0, 0, &Pubkey::new_unique()),
+            ),
+            (
+                clock::id(),
+                create_account_shared_data_for_test(&clock::Clock::default()),
+            ),
+            (
+                rent::id(),
+                create_account_shared_data_for_test(&rent::Rent::default()),
+            ),
+        ];
+
+        // Finalize program
+        let accounts = process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(0, false, true), (3, true, false)],
+            Ok(()),
+        );
+        assert_eq!(
+            accounts[0].data().len(),
+            transaction_accounts[0].1.data().len(),
+        );
+        assert_eq!(accounts[0].lamports(), transaction_accounts[0].1.lamports());
+
+        // Error: Program must be deployed to be finalized
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(1, false, true), (3, true, false)],
+            Err(InstructionError::InvalidArgument),
+        );
+
+        // Error: Program is uninitialized
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(2, false, true), (3, true, false)],
+            Err(InstructionError::AccountDataTooSmall),
         );
 
         test_loader_instruction_general_errors(LoaderV4Instruction::TransferAuthority);
