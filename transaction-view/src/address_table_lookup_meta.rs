@@ -46,7 +46,7 @@ const MAX_ATLS_PER_PACKET: u8 =
     ((PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL) as u8;
 
 /// Contains metadata about the address table lookups in a transaction packet.
-pub struct AddressTableLookupMeta {
+pub(crate) struct AddressTableLookupMeta {
     /// The number of address table lookups in the transaction.
     pub(crate) num_address_table_lookups: u8,
     /// The offset to the first address table lookup in the transaction.
@@ -60,7 +60,7 @@ impl AddressTableLookupMeta {
     /// This function will parse each ATL to ensure the data is well-formed,
     /// but will not cache data related to these ATLs.
     #[inline(always)]
-    pub fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
+    pub(crate) fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
         // Maximum number of ATLs should be represented by a single byte,
         // thus the MSB should not be set.
         const _: () = assert!(MAX_ATLS_PER_PACKET & 0b1000_0000 == 0);
@@ -108,7 +108,7 @@ impl AddressTableLookupMeta {
     }
 }
 
-pub struct AddressTableLookupIterator<'a> {
+pub(crate) struct AddressTableLookupIterator<'a> {
     pub(crate) bytes: &'a [u8],
     pub(crate) offset: usize,
     pub(crate) num_address_table_lookups: u8,
