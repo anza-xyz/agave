@@ -4,7 +4,7 @@ use {
         bytes::advance_offset_for_type,
         instructions_meta::{InstructionsIterator, InstructionsMeta},
         message_header_meta::{MessageHeaderMeta, TransactionVersion},
-        result::{Result, TransactionParsingError},
+        result::{Result, TransactionViewError},
         signature_meta::SignatureMeta,
         static_account_keys_meta::StaticAccountKeysMeta,
     },
@@ -54,7 +54,7 @@ impl TransactionMeta {
 
         // Verify that the entire transaction was parsed.
         if offset != bytes.len() {
-            return Err(TransactionParsingError);
+            return Err(TransactionViewError::ParseError);
         }
 
         Ok(Self {

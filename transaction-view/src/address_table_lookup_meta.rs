@@ -4,7 +4,7 @@ use {
             advance_offset_for_array, advance_offset_for_type, check_remaining,
             optimized_read_compressed_u16, read_byte, read_slice_data, read_type,
         },
-        result::{Result, TransactionParsingError},
+        result::{Result, TransactionViewError},
     },
     solana_sdk::{hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Signature},
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
@@ -70,7 +70,7 @@ impl AddressTableLookupMeta {
         const _: () = assert!(MAX_ATLS_PER_PACKET & 0b1000_0000 == 0);
         let num_address_table_lookups = read_byte(bytes, offset)?;
         if num_address_table_lookups > MAX_ATLS_PER_PACKET {
-            return Err(TransactionParsingError);
+            return Err(TransactionViewError::ParseError);
         }
 
         // Check that the remaining bytes are enough to hold the ATLs.
@@ -120,9 +120,9 @@ impl AddressTableLookupMeta {
             num_address_table_lookups,
             offset: address_table_lookups_offset,
             total_writable_lookup_accounts: u16::try_from(total_writable_lookup_accounts)
-                .map_err(|_| TransactionParsingError)?,
+                .map_err(|_| TransactionViewError::SanitizeError)?,
             total_readonly_lookup_accounts: u16::try_from(total_readonly_lookup_accounts)
-                .map_err(|_| TransactionParsingError)?,
+                .map_err(|_| TransactionViewError::SanitizeError)?,
         })
     }
 }
