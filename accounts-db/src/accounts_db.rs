@@ -3463,6 +3463,7 @@ impl AccountsDb {
         }
 
         accounts_scan.stop();
+        let retained_keys_count = Self::count_pubkeys(&candidates);
         let purged_account_slots = purged_account_slots.into_inner().unwrap();
         let removed_accounts = removed_accounts.into_inner().unwrap();
         let mut pubkeys_removed_from_accounts_index =
@@ -3627,6 +3628,7 @@ impl AccountsDb {
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
             ("useful_keys", useful_accum.load(Ordering::Relaxed), i64),
             ("total_keys_count", num_candidates, i64),
+            ("retained_keys_count", retained_keys_count, i64),
             (
                 "scan_found_not_zero",
                 found_not_zero_accum.load(Ordering::Relaxed),
