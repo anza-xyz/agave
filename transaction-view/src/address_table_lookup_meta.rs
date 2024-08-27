@@ -113,7 +113,7 @@ impl AddressTableLookupMeta {
             let num_read_accounts = optimized_read_compressed_u16(bytes, offset)?;
             total_readonly_lookup_accounts =
                 total_readonly_lookup_accounts.wrapping_add(u32::from(num_read_accounts));
-            advance_offset_for_array::<u8>(bytes, offset, num_read_accounts)?
+            advance_offset_for_array::<u8>(bytes, offset, num_read_accounts)?;
         }
 
         Ok(Self {

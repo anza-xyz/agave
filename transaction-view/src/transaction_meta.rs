@@ -13,17 +13,17 @@ use {
 
 pub(crate) struct TransactionMeta {
     /// Signature metadata.
-    signature: SignatureMeta,
+    pub(crate) signature: SignatureMeta,
     /// Message header metadata.
-    message_header: MessageHeaderMeta,
+    pub(crate) message_header: MessageHeaderMeta,
     /// Static account keys metadata.
-    static_account_keys: StaticAccountKeysMeta,
+    pub(crate) static_account_keys: StaticAccountKeysMeta,
     /// Recent blockhash offset.
-    recent_blockhash_offset: u16,
+    pub(crate) recent_blockhash_offset: u16,
     /// Instructions metadata.
-    instructions: InstructionsMeta,
+    pub(crate) instructions: InstructionsMeta,
     /// Address table lookup metadata.
-    address_table_lookup: AddressTableLookupMeta,
+    pub(crate) address_table_lookup: AddressTableLookupMeta,
 }
 
 impl TransactionMeta {
