@@ -2,7 +2,8 @@ use {
     crate::{
         address_table_lookup_meta::AddressTableLookupIterator,
         instructions_meta::InstructionsIterator, message_header_meta::TransactionVersion,
-        result::Result, transaction_data::TransactionData, transaction_meta::TransactionMeta,
+        result::Result, sanitize::sanitize, transaction_data::TransactionData,
+        transaction_meta::TransactionMeta,
     },
     solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
 };
@@ -14,19 +15,28 @@ use {
 /// about the layout of the serialized transaction.
 /// The owned `data` is abstracted through the `TransactionData` trait,
 /// so that different containers for the serialized transaction can be used.
-pub struct TransactionView<D: TransactionData> {
-    data: D,
-    meta: TransactionMeta,
+pub struct TransactionView<const SANITIZED: bool, D: TransactionData> {
+    pub(crate) data: D,
+    pub(crate) meta: TransactionMeta,
 }
 
-impl<D: TransactionData> TransactionView<D> {
-    /// Creates a new `TransactionView` from the given serialized transaction data.
-    /// Returns an error if the data does not meet the expected format.
-    pub fn try_new(data: D) -> Result<Self> {
+impl<D: TransactionData> TransactionView<false, D> {
+    /// Creates a new `TransactionView` without running sanitization checks.
+    pub fn try_new_unsanitized(data: D) -> Result<Self> {
         let meta = TransactionMeta::try_new(data.data())?;
         Ok(Self { data, meta })
     }
+}
 
+impl<D: TransactionData> TransactionView<true, D> {
+    /// Creates a new `TransactionView`, running sanitization checks.
+    pub fn try_new_sanitized(data: D) -> Result<Self> {
+        let unsanitized_view = TransactionView::try_new_unsanitized(data)?;
+        sanitize(unsanitized_view)
+    }
+}
+
+impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     /// Return the number of signatures in the transaction.
     pub fn num_signatures(&self) -> u8 {
         self.meta.num_signatures()
@@ -140,7 +150,7 @@ mod tests {
 
     fn verify_transaction_view_meta(tx: &VersionedTransaction) {
         let bytes = bincode::serialize(tx).unwrap();
-        let view = TransactionView::try_new(bytes.as_ref()).unwrap();
+        let view = TransactionView::try_new_unsanitized(bytes.as_ref()).unwrap();
 
         assert_eq!(view.num_signatures(), tx.signatures.len() as u8);
 

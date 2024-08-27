@@ -4,16 +4,25 @@ use crate::{
     transaction_view::TransactionView,
 };
 
-pub fn sanitize(view: &TransactionView<impl TransactionData>) -> Result<()> {
-    sanitize_signatures(view)?;
-    sanitize_account_access(view)?;
-    sanitize_instructions(view)?;
-    sanitize_address_table_lookups(view)?;
+// alias for convenience
+type UnsanitizedTransactionView<D> = TransactionView<false, D>;
+type SanitizedTransactionView<D> = TransactionView<true, D>;
 
-    Ok(())
+pub fn sanitize<D: TransactionData>(
+    view: UnsanitizedTransactionView<D>,
+) -> Result<SanitizedTransactionView<D>> {
+    sanitize_signatures(&view)?;
+    sanitize_account_access(&view)?;
+    sanitize_instructions(&view)?;
+    sanitize_address_table_lookups(&view)?;
+
+    Ok(SanitizedTransactionView {
+        data: view.data,
+        meta: view.meta,
+    })
 }
 
-fn sanitize_signatures(view: &TransactionView<impl TransactionData>) -> Result<()> {
+fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
     // Check the required number of signatures matches the number of signatures.
     if view.num_signatures() != view.num_required_signatures() {
         return Err(TransactionViewError::SanitizeError);
@@ -28,7 +37,7 @@ fn sanitize_signatures(view: &TransactionView<impl TransactionData>) -> Result<(
     Ok(())
 }
 
-fn sanitize_account_access(view: &TransactionView<impl TransactionData>) -> Result<()> {
+fn sanitize_account_access(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
     // Check there is no overlap of signing area and readonly non-signing area.
     // We have already checked that `num_required_signatures` is less than or equal to `num_static_account_keys`,
     // so it is safe to use wrapping arithmetic.
@@ -53,7 +62,7 @@ fn sanitize_account_access(view: &TransactionView<impl TransactionData>) -> Resu
     Ok(())
 }
 
-fn sanitize_instructions(view: &TransactionView<impl TransactionData>) -> Result<()> {
+fn sanitize_instructions(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
     // already verified there is at least one static account.
     let max_program_id_index = view.num_static_account_keys().wrapping_sub(1);
     // verified that there are no more than 256 accounts in `sanitize_account_access`
@@ -81,7 +90,9 @@ fn sanitize_instructions(view: &TransactionView<impl TransactionData>) -> Result
     Ok(())
 }
 
-fn sanitize_address_table_lookups(view: &TransactionView<impl TransactionData>) -> Result<()> {
+fn sanitize_address_table_lookups(
+    view: &UnsanitizedTransactionView<impl TransactionData>,
+) -> Result<()> {
     for address_table_lookup in view.address_table_lookup_iter() {
         // Check that there is at least one account lookup.
         if address_table_lookup.writable_indexes.is_empty()
@@ -94,7 +105,7 @@ fn sanitize_address_table_lookups(view: &TransactionView<impl TransactionData>) 
     Ok(())
 }
 
-fn total_number_of_accounts(view: &TransactionView<impl TransactionData>) -> u16 {
+fn total_number_of_accounts(view: &UnsanitizedTransactionView<impl TransactionData>) -> u16 {
     u16::from(view.num_static_account_keys())
         .saturating_add(view.total_writable_lookup_accounts())
         .saturating_add(view.total_readonly_lookup_accounts())
