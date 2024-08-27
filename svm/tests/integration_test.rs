@@ -117,38 +117,43 @@ impl SvmTestEntry {
 
     // convenience function that adds a transaction that is expected to succeed
     pub fn push_transaction(&mut self, transaction: Transaction) {
-        self.transaction_batch.push(TransactionBatchItem {
-            transaction,
-            ..TransactionBatchItem::default()
-        });
+        self.push_transaction_with_status(transaction, ExecutionStatus::Succeeded)
     }
 
-    // convenience function that adds a transaction that is expected to execute but fail
-    pub fn push_failed_transaction(&mut self, transaction: Transaction) {
+    // convenience function that adds a transaction with an expected execution status
+    pub fn push_transaction_with_status(
+        &mut self,
+        transaction: Transaction,
+        status: ExecutionStatus,
+    ) {
         self.transaction_batch.push(TransactionBatchItem {
             transaction,
-            asserts: TransactionBatchItemAsserts::failed(),
+            asserts: TransactionBatchItemAsserts {
+                status,
+                ..TransactionBatchItemAsserts::default()
+            },
             ..TransactionBatchItem::default()
         });
     }
 
     // convenience function that adds a nonce transaction that is expected to succeed
     pub fn push_nonce_transaction(&mut self, transaction: Transaction, nonce_info: NonceInfo) {
-        self.transaction_batch.push(TransactionBatchItem {
-            transaction,
-            ..TransactionBatchItem::with_nonce(nonce_info)
-        });
+        self.push_nonce_transaction_with_status(transaction, nonce_info, ExecutionStatus::Succeeded)
     }
 
-    // convenience function that adds a nonce transaction that is expected to execute but fail
-    pub fn push_failed_nonce_transaction(
+    // convenience function that adds a nonce transaction with an expected execution status
+    pub fn push_nonce_transaction_with_status(
         &mut self,
         transaction: Transaction,
         nonce_info: NonceInfo,
+        status: ExecutionStatus,
     ) {
         self.transaction_batch.push(TransactionBatchItem {
             transaction,
-            asserts: TransactionBatchItemAsserts::failed(),
+            asserts: TransactionBatchItemAsserts {
+                status,
+                ..TransactionBatchItemAsserts::default()
+            },
             ..TransactionBatchItem::with_nonce(nonce_info)
         });
     }
@@ -205,7 +210,7 @@ impl Default for TransactionBatchItem {
                 nonce: None,
                 lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             }),
-            asserts: TransactionBatchItemAsserts::succeeded(),
+            asserts: TransactionBatchItemAsserts::default(),
         }
     }
 }
@@ -213,45 +218,33 @@ impl Default for TransactionBatchItem {
 // asserts for a given transaction in a batch
 // we can automatically check whether it executed, whether it succeeded
 // log items we expect to see (exect match only), and rodata
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionBatchItemAsserts {
-    pub executed: bool,
-    pub succeeded: bool,
+    pub status: ExecutionStatus,
     pub logs: Vec<String>,
     pub return_data: ReturnDataAssert,
 }
 
 impl TransactionBatchItemAsserts {
-    pub fn succeeded() -> Self {
-        Self {
-            executed: true,
-            succeeded: true,
-            logs: vec![],
-            return_data: ReturnDataAssert::Skip,
-        }
+    pub fn succeeded(&self) -> bool {
+        self.status.succeeded()
     }
 
-    pub fn failed() -> Self {
-        Self {
-            executed: true,
-            succeeded: false,
-            logs: vec![],
-            return_data: ReturnDataAssert::Skip,
-        }
+    pub fn executed(&self) -> bool {
+        self.status.executed()
     }
 
-    pub fn not_executed() -> Self {
-        Self {
-            executed: false,
-            succeeded: false,
-            logs: vec![],
-            return_data: ReturnDataAssert::Skip,
-        }
+    pub fn processed(&self) -> bool {
+        self.status.processed()
+    }
+
+    pub fn discarded(&self) -> bool {
+        self.status.discarded()
     }
 
     pub fn check_executed_transaction(&self, execution_details: &TransactionExecutionDetails) {
-        assert!(self.executed);
-        assert_eq!(self.succeeded, execution_details.status.is_ok());
+        assert!(self.executed());
+        assert_eq!(self.succeeded(), execution_details.status.is_ok());
 
         if !self.logs.is_empty() {
             let actual_logs = execution_details.log_messages.as_ref().unwrap();
@@ -269,7 +262,51 @@ impl TransactionBatchItemAsserts {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+impl From<ExecutionStatus> for TransactionBatchItemAsserts {
+    fn from(status: ExecutionStatus) -> Self {
+        Self {
+            status,
+            ..Self::default()
+        }
+    }
+}
+
+// states a transaction can end in after a trip through the batch processor:
+// * discarded: no-op. not even processed. a flawed transaction excluded from the entry
+// * processed-failed: aka fee (and nonce) only. charged and added to an entry but not executed, would have failed invariably
+// * executed-failed: failed during execution. as above, fees charged and nonce advanced
+// * succeeded: what we all aspire to be in our transaction processing lifecycles
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExecutionStatus {
+    Discarded,
+    ProcessedFailed,
+    ExecutedFailed,
+    #[default]
+    Succeeded,
+}
+
+// note we avoid the word "failed" because it is confusing
+// the batch processor uses it to mean "executed and not succeeded"
+// but intuitively (and from the point of a user) it could just as likely mean "any state other than succeeded"
+impl ExecutionStatus {
+    pub fn succeeded(self) -> bool {
+        self == Self::Succeeded
+    }
+
+    pub fn executed(self) -> bool {
+        self > Self::ProcessedFailed
+    }
+
+    pub fn processed(self) -> bool {
+        self != Self::Discarded
+    }
+
+    pub fn discarded(self) -> bool {
+        self == Self::Discarded
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ReturnDataAssert {
     Some(TransactionReturnData),
     None,
@@ -439,12 +476,15 @@ fn program_medley() -> Vec<SvmTestEntry> {
             ],
         );
 
-        test_entry.push_failed_transaction(Transaction::new_signed_with_payer(
-            &[instruction],
-            Some(&fee_payer),
-            &[&fee_payer_keypair, &sender_keypair],
-            Hash::default(),
-        ));
+        test_entry.push_transaction_with_status(
+            Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&fee_payer),
+                &[&fee_payer_keypair, &sender_keypair],
+                Hash::default(),
+            ),
+            ExecutionStatus::ExecutedFailed,
+        );
 
         test_entry.transaction_batch[3]
             .asserts
@@ -467,7 +507,7 @@ fn program_medley() -> Vec<SvmTestEntry> {
                 Hash::default(),
             ),
             check_result: Err(TransactionError::BlockhashNotFound),
-            asserts: TransactionBatchItemAsserts::not_executed(),
+            asserts: ExecutionStatus::Discarded.into(),
         });
     }
 
@@ -515,12 +555,15 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
         source_data.set_lamports(transfer_amount - 1);
         test_entry.add_initial_account(source, &source_data);
 
-        test_entry.push_failed_transaction(system_transaction::transfer(
-            &source_keypair,
-            &Pubkey::new_unique(),
-            transfer_amount,
-            Hash::default(),
-        ));
+        test_entry.push_transaction_with_status(
+            system_transaction::transfer(
+                &source_keypair,
+                &Pubkey::new_unique(),
+                transfer_amount,
+                Hash::default(),
+            ),
+            ExecutionStatus::ExecutedFailed,
+        );
 
         test_entry.decrease_expected_lamports(&source, LAMPORTS_PER_SIGNATURE);
     }
@@ -535,23 +578,22 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
                 Hash::default(),
             ),
             check_result: Err(TransactionError::BlockhashNotFound),
-            asserts: TransactionBatchItemAsserts::not_executed(),
+            asserts: ExecutionStatus::Discarded.into(),
         });
     }
 
     // 3: a non-executable transfer that fails loading the fee-payer
     // NOTE when we support the processed/executed distinction, this is NOT processed
     {
-        test_entry.transaction_batch.push(TransactionBatchItem {
-            transaction: system_transaction::transfer(
+        test_entry.push_transaction_with_status(
+            system_transaction::transfer(
                 &Keypair::new(),
                 &Pubkey::new_unique(),
                 transfer_amount,
                 Hash::default(),
             ),
-            asserts: TransactionBatchItemAsserts::not_executed(),
-            ..TransactionBatchItem::default()
-        });
+            ExecutionStatus::Discarded,
+        );
     }
 
     // 4: a non-executable transfer that fails loading the program
@@ -573,16 +615,15 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
             system_instruction::transfer(&source, &Pubkey::new_unique(), transfer_amount);
         instruction.program_id = Pubkey::new_unique();
 
-        test_entry.transaction_batch.push(TransactionBatchItem {
-            transaction: Transaction::new_signed_with_payer(
+        test_entry.push_transaction_with_status(
+            Transaction::new_signed_with_payer(
                 &[instruction],
                 Some(&source),
                 &[&source_keypair],
                 Hash::default(),
             ),
-            asserts: TransactionBatchItemAsserts::not_executed(),
-            ..TransactionBatchItem::default()
-        });
+            ExecutionStatus::Discarded,
+        );
     }
 
     vec![test_entry]
@@ -678,18 +719,22 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
             .unwrap()
             .set_rent_epoch(0);
 
-        test_entry.transaction_batch.push(TransactionBatchItem {
+        test_entry.push_nonce_transaction_with_status(
             transaction,
-            asserts: TransactionBatchItemAsserts::not_executed(),
-            ..TransactionBatchItem::with_nonce(nonce_info)
-        });
+            nonce_info,
+            ExecutionStatus::Discarded,
+        );
     }
 
     // failing nonce transaction (bad system instruction) regardless of features
     {
         let (transaction, fee_payer, mut nonce_info) =
             mk_nonce_transaction(&mut test_entry, system_program::id(), false);
-        test_entry.push_failed_nonce_transaction(transaction, nonce_info.clone());
+        test_entry.push_nonce_transaction_with_status(
+            transaction,
+            nonce_info.clone(),
+            ExecutionStatus::ExecutedFailed,
+        );
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
@@ -709,13 +754,16 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
 
     // and this (program doesnt exist) will be a non-executing transaction without the feature
     // or a fee-only transaction with it. which is identical to failed *except* rent is not updated
-    // HANA and i need to update my verbiage to include this new strange creature
     {
         let (transaction, fee_payer, mut nonce_info) =
             mk_nonce_transaction(&mut test_entry, Pubkey::new_unique(), false);
 
         if enable_fee_only_transactions {
-            test_entry.push_failed_nonce_transaction(transaction, nonce_info.clone());
+            test_entry.push_nonce_transaction_with_status(
+                transaction,
+                nonce_info.clone(),
+                ExecutionStatus::ProcessedFailed,
+            );
 
             test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
@@ -749,11 +797,11 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
                 .unwrap()
                 .set_rent_epoch(0);
 
-            test_entry.transaction_batch.push(TransactionBatchItem {
+            test_entry.push_nonce_transaction_with_status(
                 transaction,
-                asserts: TransactionBatchItemAsserts::not_executed(),
-                ..TransactionBatchItem::with_nonce(nonce_info)
-            });
+                nonce_info,
+                ExecutionStatus::Discarded,
+            );
         }
     }
 
@@ -889,10 +937,11 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         match processing_result {
             Ok(ProcessedTransaction::Executed(executed_transaction)) => test_item_asserts
                 .check_executed_transaction(&executed_transaction.execution_details),
-            // HANA we have to expand our semantics, there are four cases now
-            // succeeded, failed-executed, failed-processed, no-op
-            Ok(ProcessedTransaction::FeesOnly(_)) => assert!(!test_item_asserts.succeeded),
-            Err(_) => assert!(!test_item_asserts.executed),
+            Ok(ProcessedTransaction::FeesOnly(_)) => {
+                assert!(test_item_asserts.processed());
+                assert!(!test_item_asserts.executed());
+            }
+            Err(_) => assert!(test_item_asserts.discarded()),
         }
     }
 }
