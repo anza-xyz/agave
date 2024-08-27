@@ -213,7 +213,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         let disk = match config
             .as_ref()
             .map(|config| &config.index_limit_mb)
-            .unwrap_or(&IndexLimitMb::Unlimited)
+            .unwrap_or(&IndexLimitMb::default())
         {
             IndexLimitMb::InMemOnly => None,
             IndexLimitMb::Unlimited => Some(BucketMap::new(bucket_config)),
@@ -477,10 +477,7 @@ pub mod tests {
     #[test]
     fn test_disk_index_enabled() {
         let bins = 1;
-        let config = AccountsIndexConfig {
-            index_limit_mb: IndexLimitMb::Unlimited,
-            ..AccountsIndexConfig::default()
-        };
+        let config = AccountsIndexConfig::default();
         let test = BucketMapHolder::<u64, u64>::new(bins, &Some(config), 1);
         assert!(test.is_disk_index_enabled());
     }

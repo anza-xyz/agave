@@ -1188,7 +1188,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             if !evictions_age_possible.is_empty() || !evictions_random.is_empty() {
                 let disk = self.bucket.as_ref().unwrap();
                 let mut flush_entries_updated_on_disk = 0;
-
                 let mut flush_should_evict_us = 0;
                 // we don't care about lock time in this metric - bg threads can wait
                 let m = Measure::start("flush_update");

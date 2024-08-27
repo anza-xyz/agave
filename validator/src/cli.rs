@@ -1999,6 +1999,7 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
                 Ok(())
             }
         }));
+    // deprecated in v2.1 by PR #2721
     add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
         .long("accounts-index-memory-limit-mb")
         .value_name("MEGABYTES")
@@ -2033,7 +2034,8 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .help("Number of threads to use for servicing AccountsDb Replication requests"));
     add_arg!(Arg::with_name("disable_accounts_disk_index")
         .long("disable-accounts-disk-index")
-        .help("Disable the disk-based accounts index if it is enabled by default."));
+        .help("Disable the disk-based accounts index if it is enabled by default.")
+        .conflicts_with("accounts_index_memory_limit_mb"));
     add_arg!(
         Arg::with_name("disable_quic_servers")
             .long("disable-quic-servers")
