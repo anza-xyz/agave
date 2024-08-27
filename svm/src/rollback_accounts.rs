@@ -51,6 +51,10 @@ impl RollbackAccounts {
 
         if let Some(nonce) = nonce {
             if &fee_payer_address == nonce.address() {
+                fee_payer_account
+                    .data_as_mut_slice()
+                    .copy_from_slice(nonce.account().data());
+
                 RollbackAccounts::SameNonceAndFeePayer {
                     nonce: NonceInfo::new(fee_payer_address, fee_payer_account),
                 }

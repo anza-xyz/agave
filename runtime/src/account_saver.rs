@@ -52,8 +52,6 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     txs: &'a [T],
     txs_refs: &'a Option<Vec<impl Borrow<SanitizedTransaction>>>,
     processing_results: &'a mut [TransactionProcessingResult],
-    durable_nonce: &DurableNonce,
-    lamports_per_signature: u64,
 ) -> (
     Vec<(&'a Pubkey, &'a AccountSharedData)>,
     Option<Vec<&'a SanitizedTransaction>>,
@@ -66,7 +64,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     for (index, (processing_result, transaction)) in
         processing_results.iter_mut().zip(txs).enumerate()
     {
-        let Some(processed_tx) = processing_result.processed_transaction_mut() else {
+        let Some(processed_tx) = processing_result.processed_transaction() else {
             // Don't store any accounts if tx wasn't executed
             continue;
         };
@@ -88,9 +86,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                         &mut transactions,
                         transaction,
                         transaction_ref,
-                        &mut executed_tx.loaded_transaction.rollback_accounts,
-                        durable_nonce,
-                        lamports_per_signature,
+                        &executed_tx.loaded_transaction.rollback_accounts,
                     );
                 }
             }
@@ -100,9 +96,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                     &mut transactions,
                     transaction,
                     transaction_ref,
-                    &mut fees_only_tx.rollback_accounts,
-                    durable_nonce,
-                    lamports_per_signature,
+                    &fees_only_tx.rollback_accounts,
                 );
             }
         }
@@ -142,25 +136,18 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
     transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
-    rollback_accounts: &'a mut RollbackAccounts,
-    durable_nonce: &DurableNonce,
-    lamports_per_signature: u64,
+    rollback_accounts: &'a RollbackAccounts,
 ) {
     let fee_payer_address = transaction.fee_payer();
     match rollback_accounts {
         RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-            collected_accounts.push((fee_payer_address, &*fee_payer_account));
+            collected_accounts.push((fee_payer_address, fee_payer_account));
             if let Some(collected_account_transactions) = collected_account_transactions {
                 collected_account_transactions
                     .push(transaction_ref.expect("transaction ref must exist if collecting"));
             }
         }
         RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-            // Since we know we are dealing with a valid nonce account,
-            // unwrap is safe here
-            nonce
-                .try_advance_nonce(*durable_nonce, lamports_per_signature)
-                .unwrap();
             collected_accounts.push((nonce.address(), nonce.account()));
             if let Some(collected_account_transactions) = collected_account_transactions {
                 collected_account_transactions
@@ -171,17 +158,12 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
             nonce,
             fee_payer_account,
         } => {
-            collected_accounts.push((fee_payer_address, &*fee_payer_account));
+            collected_accounts.push((fee_payer_address, fee_payer_account));
             if let Some(collected_account_transactions) = collected_account_transactions {
                 collected_account_transactions
                     .push(transaction_ref.expect("transaction ref must exist if collecting"));
             }
 
-            // Since we know we are dealing with a valid nonce account,
-            // unwrap is safe here
-            nonce
-                .try_advance_nonce(*durable_nonce, lamports_per_signature)
-                .unwrap();
             collected_accounts.push((nonce.address(), nonce.account()));
             if let Some(collected_account_transactions) = collected_account_transactions {
                 collected_account_transactions
