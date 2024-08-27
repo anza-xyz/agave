@@ -67,6 +67,16 @@ impl<D: TransactionData> TransactionView<D> {
         self.meta.num_address_table_lookups()
     }
 
+    /// Return the number of writable lookup accounts in the transaction.
+    pub fn total_writable_lookup_accounts(&self) -> u16 {
+        self.meta.total_writable_lookup_accounts()
+    }
+
+    /// Return the number of readonly lookup accounts in the transaction.
+    pub fn total_readonly_lookup_accounts(&self) -> u16 {
+        self.meta.total_readonly_lookup_accounts()
+    }
+
     /// Return the slice of signatures in the transaction.
     pub fn signatures(&self) -> &[Signature] {
         let data = self.data();

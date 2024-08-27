@@ -46,6 +46,8 @@ impl TransactionMeta {
             TransactionVersion::Legacy => AddressTableLookupMeta {
                 num_address_table_lookups: 0,
                 offset: 0,
+                total_writable_lookup_accounts: 0,
+                total_readonly_lookup_accounts: 0,
             },
             TransactionVersion::V0 => AddressTableLookupMeta::try_new(bytes, &mut offset)?,
         };
@@ -103,6 +105,16 @@ impl TransactionMeta {
     /// Return the number of address table lookups in the transaction.
     pub(crate) fn num_address_table_lookups(&self) -> u8 {
         self.address_table_lookup.num_address_table_lookups
+    }
+
+    /// Return the number of writable lookup accounts in the transaction.
+    pub(crate) fn total_writable_lookup_accounts(&self) -> u16 {
+        self.address_table_lookup.total_writable_lookup_accounts
+    }
+
+    /// Return the number of readonly lookup accounts in the transaction.
+    pub(crate) fn total_readonly_lookup_accounts(&self) -> u16 {
+        self.address_table_lookup.total_readonly_lookup_accounts
     }
 
     /// Return the offset to the message.
