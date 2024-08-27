@@ -7707,7 +7707,6 @@ dependencies = [
  "solana-log-collector",
  "solana-logger",
  "solana-measure",
- "solana-metrics",
  "solana-program-runtime",
  "solana-runtime-transaction",
  "solana-sdk",
