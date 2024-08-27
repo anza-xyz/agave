@@ -186,7 +186,7 @@ mod tests {
             message::Message,
             native_loader,
             nonce::{
-                state::{Data as NonceData, Versions as NonceVersions},
+                state::{Data as NonceData, DurableNonce, Versions as NonceVersions},
                 State as NonceState,
             },
             nonce_account,
@@ -297,7 +297,7 @@ mod tests {
         };
 
         let txs = vec![tx0.clone(), tx1.clone()];
-        let mut processing_results = vec![
+        let processing_results = vec![
             new_executed_processing_result(Ok(()), loaded0),
             new_executed_processing_result(Ok(()), loaded1),
         ];
@@ -365,7 +365,7 @@ mod tests {
         };
 
         let txs = vec![tx];
-        let mut processing_results = vec![new_executed_processing_result(
+        let processing_results = vec![new_executed_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
@@ -465,9 +465,8 @@ mod tests {
             loaded_accounts_data_size: 0,
         };
 
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let txs = vec![tx];
-        let mut processing_results = vec![new_executed_processing_result(
+        let processing_results = vec![new_executed_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
@@ -579,9 +578,8 @@ mod tests {
             loaded_accounts_data_size: 0,
         };
 
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let txs = vec![tx];
-        let mut processing_results = vec![new_executed_processing_result(
+        let processing_results = vec![new_executed_processing_result(
             Err(TransactionError::InstructionError(
                 1,
                 InstructionError::InvalidArgument,
@@ -640,7 +638,7 @@ mod tests {
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
         let txs = vec![tx];
-        let mut processing_results = vec![Ok(ProcessedTransaction::FeesOnly(Box::new(
+        let processing_results = vec![Ok(ProcessedTransaction::FeesOnly(Box::new(
             FeesOnlyTransaction {
                 load_error: TransactionError::InvalidProgramForExecution,
                 fee_details: FeeDetails::default(),

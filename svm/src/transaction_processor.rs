@@ -1912,6 +1912,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -1990,6 +1991,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2041,6 +2043,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2075,6 +2078,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2113,6 +2117,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2149,6 +2154,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2181,6 +2187,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
+            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2194,13 +2201,14 @@ mod tests {
         let lamports_per_signature = 5000;
         let rent_collector = RentCollector::default();
         let compute_unit_limit = 2 * solana_compute_budget_program::DEFAULT_COMPUTE_UNITS;
+        let last_blockhash = Hash::new_unique();
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit as u32),
                 ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
             ],
             Some(&Pubkey::new_unique()),
-            &Hash::new_unique(),
+            &last_blockhash,
         ));
         let compute_budget_limits =
             process_compute_budget_instructions(SVMMessage::program_instructions_iter(&message))
@@ -2230,10 +2238,14 @@ mod tests {
 
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-            let nonce = Some(NonceInfo::new(
-                *fee_payer_address,
-                fee_payer_account.clone(),
-            ));
+
+            let durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+            let mut nonce_info = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
+            nonce_info
+                .try_advance_nonce(durable_nonce, lamports_per_signature)
+                .unwrap();
+            let nonce = Some(nonce_info);
+
             let result = batch_processor.validate_transaction_fee_payer(
                 &mock_bank,
                 None,
@@ -2245,6 +2257,7 @@ mod tests {
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
+                &durable_nonce,
                 &mut error_counters,
             );
 
@@ -2307,6 +2320,7 @@ mod tests {
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
+                &DurableNonce::default(),
                 &mut error_counters,
             );
 
@@ -2361,6 +2375,7 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
+            &DurableNonce::default(),
             &mut error_counters,
         );
         assert!(
