@@ -686,13 +686,15 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         .unwrap()
         .total_active_stake = total_active_stake;
 
-    let mut progress_last_sent = Instant::now();
     let mut cursor = solana_gossip::crds::Cursor::default();
-    let mut progress_changed = false;
+    // Init progress_changed to true and progress_last_sent to old time so we can send out the first Gossip message.
+    let mut progress_changed = true;
+    let mut progress_last_sent = Instant::now()
+        .checked_sub(Duration::from_secs(HEAVIEST_REFRESH_INTERVAL_IN_SECONDS))
+        .unwrap();
     let majority_stake_required =
         (total_stake as f64 / 100.0 * adjusted_threshold_percent as f64).round() as u64;
     let mut total_active_stake_higher_than_supermajority = false;
-    let mut first_time_entering_loop = true;
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
@@ -722,7 +724,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 .total_active_stake = current_total_active_stake;
             progress_changed = true;
         }
-        if progress_changed || first_time_entering_loop {
+        if progress_changed {
             progress_changed = false;
             let total_active_stake_seen_supermajority =
                 heaviest_fork_aggregate.total_active_stake_seen_supermajority();
@@ -745,10 +747,8 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             // the first time.
             if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
                 || can_exit
-                || first_time_entering_loop
                 || saw_supermajority_first_time
             {
-                first_time_entering_loop = false;
                 cluster_info.push_restart_heaviest_fork(
                     heaviest_fork_slot,
                     heaviest_fork_hash,
