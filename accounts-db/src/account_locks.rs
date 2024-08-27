@@ -54,6 +54,7 @@ impl AccountLocks {
         keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
         batch_account_locks: &mut RefMut<BatchAccountLocks>,
     ) -> (Result<(), TransactionError>, bool) {
+        
         let mut self_conflicting_batch = false;
 
         for (key, writable) in keys.clone() {
