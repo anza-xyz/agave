@@ -83,6 +83,7 @@ pub enum ProgramV4CliCommand {
     Finalize {
         program_address: Pubkey,
         authority_signer_index: SignerIndex,
+        next_version_signer_index: SignerIndex,
     },
     Show {
         account_pubkey: Option<Pubkey>,
@@ -247,6 +248,16 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .validator(is_valid_signer)
                                 .help(
                                     "Program authority [default: the default configured keypair]",
+                                ),
+                        )
+                        .arg(
+                            Arg::with_name("next-version")
+                                .long("next-version")
+                                .value_name("NEXT_VERSION")
+                                .takes_value(true)
+                                .validator(is_valid_signer)
+                                .help(
+                                    "Reserves the address and links it as the programs next-version, which is a hint that frontends can show to users",
                                 ),
                         ),
                 )
@@ -439,16 +450,26 @@ pub fn parse_program_v4_subcommand(
             let (authority, authority_pubkey) = signer_of(matches, "authority", wallet_manager)?;
             bulk_signers.push(authority);
 
+            if let Ok((next_version, _next_version_pubkey)) =
+                signer_of(matches, "next-version", wallet_manager)
+            {
+                bulk_signers.push(next_version);
+            }
+
             let signer_info =
                 default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+            let authority_signer_index = signer_info
+                .index_of(authority_pubkey)
+                .expect("Authority signer is missing");
 
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Finalize {
                     program_address: pubkey_of(matches, "program-id")
                         .expect("Program address is missing"),
-                    authority_signer_index: signer_info
-                        .index_of(authority_pubkey)
-                        .expect("Authority signer is missing"),
+                    authority_signer_index,
+                    next_version_signer_index: pubkey_of(matches, "next-version")
+                        .and_then(|pubkey| signer_info.index_of(Some(pubkey)))
+                        .unwrap_or(authority_signer_index),
                 }),
                 signers: signer_info.signers,
             }
@@ -589,10 +610,12 @@ pub fn process_program_v4_subcommand(
         ProgramV4CliCommand::Finalize {
             program_address,
             authority_signer_index,
+            next_version_signer_index,
         } => process_finalize_program(
             rpc_client,
             &ProgramV4CommandConfig::new_from_cli_config(config, authority_signer_index),
             program_address,
+            config.signers[*next_version_signer_index],
         ),
         ProgramV4CliCommand::Show {
             account_pubkey,
@@ -811,6 +834,7 @@ fn process_finalize_program(
     rpc_client: Arc<RpcClient>,
     config: &ProgramV4CommandConfig,
     program_address: &Pubkey,
+    next_version: &dyn Signer,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
 
@@ -818,6 +842,7 @@ fn process_finalize_program(
         &[loader_v4::finalize(
             program_address,
             &config.authority.pubkey(),
+            &next_version.pubkey(),
         )],
         Some(&config.payer.pubkey()),
         &blockhash,
@@ -855,7 +880,7 @@ fn process_show(
                     Ok(config.output_format.formatted_string(&CliProgramV4 {
                         program_id: account_pubkey.to_string(),
                         owner: account.owner.to_string(),
-                        authority: state.authority_address.to_string(),
+                        authority: state.authority_address_or_next_version.to_string(),
                         last_deploy_slot: state.slot,
                         data_len: account
                             .data
@@ -1234,11 +1259,11 @@ fn build_retract_instruction(
 
     if let Ok(LoaderV4State {
         slot: _,
-        authority_address,
+        authority_address_or_next_version,
         status,
     }) = solana_loader_v4_program::get_state(&account.data)
     {
-        if authority != authority_address {
+        if authority != authority_address_or_next_version {
             return Err(
                 "Program authority does not match with the provided authority address".into(),
             );
@@ -1273,11 +1298,11 @@ fn build_truncate_instructions(
     } else {
         if let Ok(LoaderV4State {
             slot: _,
-            authority_address,
+            authority_address_or_next_version,
             status,
         }) = solana_loader_v4_program::get_state(&account.data)
         {
-            if authority != authority_address {
+            if authority != authority_address_or_next_version {
                 return Err(
                     "Program authority does not match with the provided authority address".into(),
                 );
@@ -1382,7 +1407,7 @@ fn get_programs(
             programs.push(CliProgramV4 {
                 program_id: program.to_string(),
                 owner: account.owner.to_string(),
-                authority: state.authority_address.to_string(),
+                authority: state.authority_address_or_next_version.to_string(),
                 last_deploy_slot: state.slot,
                 status: status.to_string(),
                 data_len: account
@@ -1735,9 +1760,11 @@ mod tests {
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let program_signer = keypair_from_seed(&[2u8; 32]).unwrap();
         let authority_signer = program_authority();
+        let next_version_signer = keypair_from_seed(&[4u8; 32]).unwrap();
 
         config.signers.push(&payer);
         config.signers.push(&authority_signer);
+        config.signers.push(&next_version_signer);
 
         let config = ProgramV4CommandConfig::new_from_cli_config(&config, &1);
 
@@ -1745,6 +1772,7 @@ mod tests {
             Arc::new(rpc_client_with_program_deployed()),
             &config,
             &program_signer.pubkey(),
+            &next_version_signer,
         )
         .is_ok());
     }
@@ -1996,6 +2024,10 @@ mod tests {
         let authority_keypair_file = make_tmp_path("authority_keypair_file");
         write_keypair_file(&authority_keypair, &authority_keypair_file).unwrap();
 
+        let next_version_keypair = Keypair::new();
+        let next_version_keypair_file = make_tmp_path("next_version_keypair_file");
+        write_keypair_file(&next_version_keypair, &next_version_keypair_file).unwrap();
+
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program-v4",
@@ -2004,6 +2036,8 @@ mod tests {
             &program_keypair_file,
             "--authority",
             &authority_keypair_file,
+            "--next-version",
+            &next_version_keypair_file,
         ]);
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
@@ -2011,10 +2045,12 @@ mod tests {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Finalize {
                     program_address: program_keypair.pubkey(),
                     authority_signer_index: 1,
+                    next_version_signer_index: 2,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
-                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&next_version_keypair_file).unwrap()),
                 ],
             }
         );

@@ -72,5 +72,6 @@ pub enum LoaderV4Instruction {
     /// # Account references
     ///   0. `[writable]` The program account to change the authority of.
     ///   1. `[signer]` The current authority of the program.
+    ///   2. `[]` The next version of the program (can be itself).
     Finalize,
 }

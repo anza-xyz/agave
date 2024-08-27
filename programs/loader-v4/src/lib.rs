@@ -208,7 +208,7 @@ fn check_program_account(
         ic_logger_msg!(log_collector, "Authority did not sign");
         return Err(InstructionError::MissingRequiredSignature);
     }
-    if state.authority_address != *authority_address {
+    if state.authority_address_or_next_version != *authority_address {
         ic_logger_msg!(log_collector, "Incorrect authority provided");
         return Err(InstructionError::IncorrectAuthority);
     }
@@ -336,7 +336,7 @@ pub fn process_instruction_truncate(
             let state = get_state_mut(program.get_data_mut()?)?;
             state.slot = 0;
             state.status = LoaderV4Status::Retracted;
-            state.authority_address = *authority_address;
+            state.authority_address_or_next_version = *authority_address;
         }
     }
     Ok(())
@@ -526,12 +526,12 @@ pub fn process_instruction_transfer_authority(
         ic_logger_msg!(log_collector, "New authority did not sign");
         return Err(InstructionError::MissingRequiredSignature);
     }
-    if state.authority_address == *new_authority_address {
+    if state.authority_address_or_next_version == *new_authority_address {
         ic_logger_msg!(log_collector, "No change");
         return Err(InstructionError::InvalidArgument);
     }
     let state = get_state_mut(program.get_data_mut()?)?;
-    state.authority_address = *new_authority_address;
+    state.authority_address_or_next_version = *new_authority_address;
     Ok(())
 }
 
@@ -541,7 +541,7 @@ pub fn process_instruction_finalize(
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+    let program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
     let authority_address = instruction_context
         .get_index_of_instruction_account_in_transaction(1)
         .and_then(|index| transaction_context.get_key_of_account_at_index(index))?;
@@ -555,7 +555,27 @@ pub fn process_instruction_finalize(
         ic_logger_msg!(log_collector, "Program must be deployed to be finalized");
         return Err(InstructionError::InvalidArgument);
     }
+    drop(program);
+    let next_version =
+        instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+    if !loader_v4::check_id(next_version.get_owner()) {
+        ic_logger_msg!(log_collector, "Next version is not owned by loader");
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+    let state_of_next_version = get_state(next_version.get_data())?;
+    if state_of_next_version.authority_address_or_next_version != *authority_address {
+        ic_logger_msg!(log_collector, "Next version has a different authority");
+        return Err(InstructionError::IncorrectAuthority);
+    }
+    if matches!(state_of_next_version.status, LoaderV4Status::Finalized) {
+        ic_logger_msg!(log_collector, "Next version is finalized");
+        return Err(InstructionError::Immutable);
+    }
+    let address_of_next_version = *next_version.get_key();
+    drop(next_version);
+    let mut program = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
     let state = get_state_mut(program.get_data_mut()?)?;
+    state.authority_address_or_next_version = address_of_next_version;
     state.status = LoaderV4Status::Finalized;
     Ok(())
 }
@@ -761,7 +781,7 @@ mod tests {
         );
         let state = get_state_mut(program_account.data_as_mut_slice()).unwrap();
         state.slot = 0;
-        state.authority_address = authority_address;
+        state.authority_address_or_next_version = authority_address;
         state.status = status;
         program_account.data_as_mut_slice()[loader_v4::LoaderV4State::program_data_offset()..]
             .copy_from_slice(&elf_bytes);
@@ -1573,6 +1593,22 @@ mod tests {
             ),
             (
                 Pubkey::new_unique(),
+                load_program_account_from_elf(
+                    authority_address,
+                    LoaderV4Status::Finalized,
+                    "rodata_section",
+                ),
+            ),
+            (
+                Pubkey::new_unique(),
+                load_program_account_from_elf(
+                    Pubkey::new_unique(),
+                    LoaderV4Status::Retracted,
+                    "rodata_section",
+                ),
+            ),
+            (
+                Pubkey::new_unique(),
                 AccountSharedData::new(0, 0, &loader_v4::id()),
             ),
             (
@@ -1589,12 +1625,26 @@ mod tests {
             ),
         ];
 
-        // Finalize program
+        // Finalize program with a next version
         let accounts = process_instruction(
             vec![],
             &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
             transaction_accounts.clone(),
-            &[(0, false, true), (3, true, false)],
+            &[(0, false, true), (5, true, false), (1, false, false)],
+            Ok(()),
+        );
+        assert_eq!(
+            accounts[0].data().len(),
+            transaction_accounts[0].1.data().len(),
+        );
+        assert_eq!(accounts[0].lamports(), transaction_accounts[0].1.lamports());
+
+        // Finalize program with itself as next version
+        let accounts = process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(0, false, true), (5, true, false), (0, false, false)],
             Ok(()),
         );
         assert_eq!(
@@ -1608,7 +1658,7 @@ mod tests {
             vec![],
             &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
             transaction_accounts.clone(),
-            &[(1, false, true), (3, true, false)],
+            &[(1, false, true), (5, true, false)],
             Err(InstructionError::InvalidArgument),
         );
 
@@ -1617,8 +1667,44 @@ mod tests {
             vec![],
             &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
             transaction_accounts.clone(),
-            &[(2, false, true), (3, true, false)],
+            &[(4, false, true), (5, true, false)],
             Err(InstructionError::AccountDataTooSmall),
+        );
+
+        // Error: Next version not owned by loader
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(0, false, true), (5, true, false), (5, false, false)],
+            Err(InstructionError::InvalidAccountOwner),
+        );
+
+        // Error: Program is uninitialized
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(0, false, true), (5, true, false), (4, false, false)],
+            Err(InstructionError::AccountDataTooSmall),
+        );
+
+        // Error: Next version is finalized
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(0, false, true), (5, true, false), (2, false, false)],
+            Err(InstructionError::Immutable),
+        );
+
+        // Error: Incorrect authority of next version
+        process_instruction(
+            vec![],
+            &bincode::serialize(&LoaderV4Instruction::Finalize).unwrap(),
+            transaction_accounts.clone(),
+            &[(0, false, true), (5, true, false), (3, false, false)],
+            Err(InstructionError::IncorrectAuthority),
         );
 
         test_loader_instruction_general_errors(LoaderV4Instruction::TransferAuthority);
