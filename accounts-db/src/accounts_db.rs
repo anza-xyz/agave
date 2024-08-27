@@ -90,6 +90,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         rent_collector::RentCollector,
+        saturating_add_assign,
         timing::AtomicInterval,
         transaction::SanitizedTransaction,
     },
@@ -6811,14 +6812,9 @@ impl AccountsDb {
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         mut txn_iter: impl Iterator<Item = &'a SanitizedTransaction>,
     ) -> Vec<AccountInfo> {
-        let mut write_version_producer = if self.accounts_update_notifier.is_some() {
-            let current_version = self
-                .write_version
-                .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel);
-            current_version..current_version + accounts_and_meta_to_store.len() as u64
-        } else {
-            0..0 // dummy empty iterator
-        };
+        let mut current_write_version = self
+            .write_version
+            .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel);
 
         let (account_infos, cached_accounts) = (0..accounts_and_meta_to_store.len())
             .map(|index| {
@@ -6834,8 +6830,9 @@ impl AccountsDb {
                         &account_shared_data,
                         txn,
                         pubkey,
-                        &mut write_version_producer,
+                        current_write_version,
                     );
+                    saturating_add_assign!(current_write_version, 1);
 
                     let cached_account =
                         self.accounts_cache.store(slot, pubkey, account_shared_data);
