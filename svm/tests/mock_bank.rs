@@ -25,6 +25,7 @@ use {
         sysvar::SysvarId,
     },
     solana_svm::{
+        account_loader::TransactionCheckResults,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::TransactionBatchProcessor,
     },
@@ -40,6 +41,11 @@ use {
 };
 
 pub struct MockForkGraph {}
+
+#[derive(Default)]
+pub struct MockTransactionCheck {}
+
+impl TransactionCheckResults for MockTransactionCheck {}
 
 impl ForkGraph for MockForkGraph {
     fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {

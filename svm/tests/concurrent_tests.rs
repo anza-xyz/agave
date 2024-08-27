@@ -4,6 +4,7 @@ use {
     crate::{
         mock_bank::{
             create_executable_environment, deploy_program, register_builtins, MockForkGraph,
+            MockTransactionCheck,
         },
         transaction_builder::SanitizedTransactionBuilder,
     },
@@ -22,7 +23,6 @@ use {
         signature::Signature,
     },
     solana_svm::{
-        account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
         },
@@ -228,13 +228,6 @@ fn svm_concurrent() {
             let local_batch = batch_processor.clone();
             let local_bank = mock_bank.clone();
             let th_txs = std::mem::take(&mut transactions[idx]);
-            let check_results = vec![
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 20
-                }) as TransactionCheckResult;
-                TRANSACTIONS_PER_THREAD
-            ];
             let processing_config = TransactionProcessingConfig {
                 recording_config: ExecutionRecordingConfig {
                     enable_log_recording: true,
@@ -244,12 +237,13 @@ fn svm_concurrent() {
                 ..Default::default()
             };
             let check_tx_data = std::mem::take(&mut check_data[idx]);
+            let mut check_results = MockTransactionCheck::default();
 
             thread::spawn(move || {
                 let result = local_batch.load_and_execute_sanitized_transactions(
                     &*local_bank,
                     &th_txs,
-                    check_results,
+                    &mut check_results,
                     &TransactionProcessingEnvironment::default(),
                     &processing_config,
                 );
