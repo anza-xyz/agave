@@ -5,6 +5,7 @@ use {
             common_error_adapter, log_instruction_custom_error_ex, CliCommand, CliCommandInfo,
             CliConfig, CliError, ProcessResult,
         },
+        feature::{status_from_account, CliFeatureStatus},
         program::calculate_max_chunk_size,
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -31,10 +32,12 @@ use {
     solana_rpc_client_api::{
         config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
         filter::{Memcmp, RpcFilterType},
+        request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_sdk::{
         account::Account,
         commitment_config::CommitmentConfig,
+        feature_set::{FeatureSet, FEATURE_NAMES},
         hash::Hash,
         instruction::Instruction,
         loader_v4::{
@@ -501,7 +504,36 @@ pub fn parse_program_v4_subcommand(
     Ok(response)
 }
 
-pub fn read_and_verify_elf(program_location: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
+    let mut feature_set = FeatureSet::default();
+    for feature_ids in FEATURE_NAMES
+        .keys()
+        .cloned()
+        .collect::<Vec<Pubkey>>()
+        .chunks(MAX_MULTIPLE_ACCOUNTS)
+    {
+        rpc_client
+            .get_multiple_accounts(feature_ids)?
+            .into_iter()
+            .zip(feature_ids)
+            .for_each(|(account, feature_id)| {
+                let activation_slot = account.and_then(status_from_account);
+
+                if let Some(CliFeatureStatus::Active(slot)) = activation_slot {
+                    feature_set.activate(feature_id, slot);
+                }
+            });
+    }
+
+    Ok(feature_set)
+}
+
+pub fn read_and_verify_elf(
+    program_location: &str,
+    rpc_client: &RpcClient,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let feature_set = fetch_feature_set(rpc_client)?;
+
     let mut file = File::open(program_location)
         .map_err(|err| format!("Unable to open program file: {err}"))?;
     let mut program_data = Vec::new();
@@ -510,10 +542,13 @@ pub fn read_and_verify_elf(program_location: &str) -> Result<Vec<u8>, Box<dyn st
 
     // Verify the program
     let program_runtime_environment =
-        solana_loader_v4_program::create_program_runtime_environment_v2(
+        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
+            &feature_set,
             &ComputeBudget::default(),
+            true,
             false,
-        );
+        )
+        .unwrap();
     let executable =
         Executable::<InvokeContext>::from_elf(&program_data, Arc::new(program_runtime_environment))
             .map_err(|err| format!("ELF error: {err}"))?;
@@ -558,7 +593,7 @@ pub fn process_program_v4_subcommand(
             program_signer_index,
             authority_signer_index,
         } => {
-            let program_data = read_and_verify_elf(program_location)?;
+            let program_data = read_and_verify_elf(program_location, &rpc_client)?;
             let program_len = program_data.len() as u32;
 
             process_deploy_program(
@@ -576,7 +611,7 @@ pub fn process_program_v4_subcommand(
             buffer_signer_index,
             authority_signer_index,
         } => {
-            let program_data = read_and_verify_elf(program_location)?;
+            let program_data = read_and_verify_elf(program_location, &rpc_client)?;
             let program_len = program_data.len() as u32;
             let buffer_signer = buffer_signer_index.map(|index| config.signers[index]);
 

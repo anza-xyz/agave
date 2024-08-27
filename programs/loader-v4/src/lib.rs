@@ -1,5 +1,5 @@
 use {
-    solana_compute_budget::compute_budget::ComputeBudget,
+    solana_bpf_loader_program::execute,
     solana_log_collector::{ic_logger_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_program_runtime::{
@@ -8,19 +8,9 @@ use {
             LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             DELAY_VISIBILITY_SLOT_OFFSET,
         },
-        stable_log,
     },
-    solana_rbpf::{
-        aligned_memory::AlignedMemory,
-        declare_builtin_function, ebpf,
-        elf::Executable,
-        error::ProgramResult,
-        memory_region::{MemoryMapping, MemoryRegion},
-        program::{BuiltinProgram, FunctionRegistry},
-        vm::{Config, ContextObject, EbpfVm},
-    },
+    solana_rbpf::{declare_builtin_function, memory_region::MemoryMapping},
     solana_sdk::{
-        entrypoint::SUCCESS,
         instruction::InstructionError,
         loader_v4::{self, LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
         loader_v4_instruction::LoaderV4Instruction,
@@ -60,132 +50,6 @@ fn get_state_mut(data: &mut [u8]) -> Result<&mut LoaderV4State, InstructionError
             &mut [u8; LoaderV4State::program_data_offset()],
             &mut LoaderV4State,
         >(data))
-    }
-}
-
-pub fn create_program_runtime_environment_v2<'a>(
-    compute_budget: &ComputeBudget,
-    debugging_features: bool,
-) -> BuiltinProgram<InvokeContext<'a>> {
-    let config = Config {
-        max_call_depth: compute_budget.max_call_depth,
-        stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
-        enable_stack_frame_gaps: false,
-        instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
-        enable_instruction_tracing: debugging_features,
-        enable_symbol_and_section_labels: debugging_features,
-        reject_broken_elfs: true,
-        noop_instruction_rate: 256,
-        sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: true,
-        reject_callx_r10: true,
-        enable_sbpf_v1: false,
-        enable_sbpf_v2: true,
-        optimize_rodata: true,
-        aligned_memory_mapping: true,
-        // Warning, do not use `Config::default()` so that configuration here is explicit.
-    };
-    BuiltinProgram::new_loader(config, FunctionRegistry::default())
-}
-
-fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
-    const KIBIBYTE: u64 = 1024;
-    const PAGE_SIZE_KB: u64 = 32;
-    u64::from(heap_size)
-        .saturating_add(PAGE_SIZE_KB.saturating_mul(KIBIBYTE).saturating_sub(1))
-        .checked_div(PAGE_SIZE_KB.saturating_mul(KIBIBYTE))
-        .expect("PAGE_SIZE_KB * KIBIBYTE > 0")
-        .saturating_sub(1)
-        .saturating_mul(heap_cost)
-}
-
-/// Create the SBF virtual machine
-pub fn create_vm<'a, 'b>(
-    invoke_context: &'a mut InvokeContext<'b>,
-    program: &'a Executable<InvokeContext<'b>>,
-) -> Result<EbpfVm<'a, InvokeContext<'b>>, Box<dyn std::error::Error>> {
-    let config = program.get_config();
-    let sbpf_version = program.get_sbpf_version();
-    let compute_budget = invoke_context.get_compute_budget();
-    let heap_size = compute_budget.heap_size;
-    invoke_context.consume_checked(calculate_heap_cost(heap_size, compute_budget.heap_cost))?;
-    let mut stack = AlignedMemory::<{ ebpf::HOST_ALIGN }>::zero_filled(config.stack_size());
-    let mut heap = AlignedMemory::<{ ebpf::HOST_ALIGN }>::zero_filled(
-        usize::try_from(compute_budget.heap_size).unwrap(),
-    );
-    let stack_len = stack.len();
-    let regions: Vec<MemoryRegion> = vec![
-        program.get_ro_region(),
-        MemoryRegion::new_writable_gapped(stack.as_slice_mut(), ebpf::MM_STACK_START, 0),
-        MemoryRegion::new_writable(heap.as_slice_mut(), ebpf::MM_HEAP_START),
-    ];
-    let log_collector = invoke_context.get_log_collector();
-    let memory_mapping = MemoryMapping::new(regions, config, sbpf_version).map_err(|err| {
-        ic_logger_msg!(log_collector, "Failed to create SBF VM: {}", err);
-        Box::new(InstructionError::ProgramEnvironmentSetupFailure)
-    })?;
-    Ok(EbpfVm::new(
-        program.get_loader().clone(),
-        sbpf_version,
-        invoke_context,
-        memory_mapping,
-        stack_len,
-    ))
-}
-
-fn execute<'a, 'b: 'a>(
-    invoke_context: &'a mut InvokeContext<'b>,
-    executable: &'a Executable<InvokeContext<'static>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // We dropped the lifetime tracking in the Executor by setting it to 'static,
-    // thus we need to reintroduce the correct lifetime of InvokeContext here again.
-    let executable = unsafe {
-        std::mem::transmute::<
-            &'a Executable<InvokeContext<'static>>,
-            &'a Executable<InvokeContext<'b>>,
-        >(executable)
-    };
-    let log_collector = invoke_context.get_log_collector();
-    let stack_height = invoke_context.get_stack_height();
-    let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    let program_id = *instruction_context.get_last_program_key(transaction_context)?;
-    #[cfg(any(target_os = "windows", not(target_arch = "x86_64")))]
-    let use_jit = false;
-    #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
-    let use_jit = executable.get_compiled_program().is_some();
-
-    let compute_meter_prev = invoke_context.get_remaining();
-    let mut create_vm_time = Measure::start("create_vm");
-    let mut vm = create_vm(invoke_context, executable)?;
-    create_vm_time.stop();
-
-    let mut execute_time = Measure::start("execute");
-    stable_log::program_invoke(&log_collector, &program_id, stack_height);
-    let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);
-    drop(vm);
-    ic_logger_msg!(
-        log_collector,
-        "Program {} consumed {} of {} compute units",
-        &program_id,
-        compute_units_consumed,
-        compute_meter_prev
-    );
-    execute_time.stop();
-
-    let timings = &mut invoke_context.timings;
-    timings.create_vm_us = timings.create_vm_us.saturating_add(create_vm_time.as_us());
-    timings.execute_us = timings.execute_us.saturating_add(execute_time.as_us());
-
-    match result {
-        ProgramResult::Ok(status) if status != SUCCESS => {
-            let error: InstructionError = status.into();
-            Err(error.into())
-        }
-        ProgramResult::Err(error) => Err(error.into()),
-        _ => Ok(()),
     }
 }
 
@@ -651,7 +515,7 @@ pub fn process_instruction_inner(
                 ic_logger_msg!(log_collector, "Program is not deployed");
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
             }
-            ProgramCacheEntryType::Loaded(executable) => execute(invoke_context, executable),
+            ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context),
             _ => {
                 Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
             }
@@ -664,6 +528,7 @@ pub fn process_instruction_inner(
 mod tests {
     use {
         super::*,
+        solana_bpf_loader_program::test_utils,
         solana_program_runtime::invoke_context::mock_process_instruction,
         solana_sdk::{
             account::{
@@ -677,51 +542,6 @@ mod tests {
         },
         std::{fs::File, io::Read, path::Path},
     };
-
-    pub fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
-        let mut load_program_metrics = LoadProgramMetrics::default();
-        let num_accounts = invoke_context.transaction_context.get_number_of_accounts();
-        for index in 0..num_accounts {
-            let account = invoke_context
-                .transaction_context
-                .get_account_at_index(index)
-                .expect("Failed to get the account")
-                .borrow();
-
-            let owner = account.owner();
-            if loader_v4::check_id(owner) {
-                let pubkey = invoke_context
-                    .transaction_context
-                    .get_key_of_account_at_index(index)
-                    .expect("Failed to get account key");
-
-                if let Some(programdata) =
-                    account.data().get(LoaderV4State::program_data_offset()..)
-                {
-                    if let Ok(loaded_program) = ProgramCacheEntry::new(
-                        &loader_v4::id(),
-                        invoke_context
-                            .program_cache_for_tx_batch
-                            .environments
-                            .program_runtime_v2
-                            .clone(),
-                        0,
-                        0,
-                        programdata,
-                        account.data().len(),
-                        &mut load_program_metrics,
-                    ) {
-                        invoke_context
-                            .program_cache_for_tx_batch
-                            .set_slot_for_tests(0);
-                        invoke_context
-                            .program_cache_for_tx_batch
-                            .store_modified_entry(*pubkey, Arc::new(loaded_program));
-                    }
-                }
-            }
-        }
-    }
 
     fn process_instruction(
         program_indices: Vec<IndexOfAccount>,
@@ -749,14 +569,7 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
-                invoke_context
-                    .program_cache_for_tx_batch
-                    .environments
-                    .program_runtime_v2 = Arc::new(create_program_runtime_environment_v2(
-                    &ComputeBudget::default(),
-                    false,
-                ));
-                load_all_invoked_programs(invoke_context);
+                test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},
         )
@@ -767,7 +580,9 @@ mod tests {
         status: LoaderV4Status,
         path: &str,
     ) -> AccountSharedData {
-        let path = Path::new("test_elfs/out/").join(path).with_extension("so");
+        let path = Path::new("../bpf_loader/test_elfs/out/")
+            .join(path)
+            .with_extension("so");
         let mut file = File::open(path).expect("file open failed");
         let mut elf_bytes = Vec::new();
         file.read_to_end(&mut elf_bytes).unwrap();
@@ -805,7 +620,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -817,7 +632,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -903,7 +718,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -915,7 +730,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -1000,7 +815,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -1020,7 +835,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1028,7 +843,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -1257,7 +1072,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1269,7 +1084,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "relative_call",
+                    "noop_unaligned",
                 ),
             ),
             (
@@ -1281,7 +1096,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "invalid",
+                    "callx-r10-sbfv1",
                 ),
             ),
             (clock::id(), clock(1000)),
@@ -1405,7 +1220,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1421,7 +1236,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (clock::id(), clock(1000)),
@@ -1485,7 +1300,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1493,7 +1308,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1580,7 +1395,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1588,7 +1403,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1596,7 +1411,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1604,7 +1419,7 @@ mod tests {
                 load_program_account_from_elf(
                     Pubkey::new_unique(),
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1720,7 +1535,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1736,7 +1551,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "rodata_section",
+                    "noop_aligned",
                 ),
             ),
             (
@@ -1744,7 +1559,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "invalid",
+                    "callx-r10-sbfv1",
                 ),
             ),
         ];
@@ -1755,7 +1570,7 @@ mod tests {
             &[0, 1, 2, 3],
             transaction_accounts.clone(),
             &[(1, false, true)],
-            Err(InstructionError::Custom(42)),
+            Ok(()),
         );
 
         // Error: Program not owned by loader
