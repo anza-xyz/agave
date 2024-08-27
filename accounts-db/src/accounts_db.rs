@@ -6810,7 +6810,7 @@ impl AccountsDb {
         &self,
         slot: Slot,
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
-        mut txn_iter: impl Iterator<Item = &'a SanitizedTransaction>,
+        txs: Option<&[&SanitizedTransaction]>,
     ) -> Vec<AccountInfo> {
         let mut current_write_version = self
             .write_version
@@ -6818,7 +6818,7 @@ impl AccountsDb {
 
         let (account_infos, cached_accounts) = (0..accounts_and_meta_to_store.len())
             .map(|index| {
-                let txn = &txn_iter.next(); // if empty, then None
+                let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
                 let mut account_info = AccountInfo::default();
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
                     let account_shared_data = account.to_account_shared_data();
@@ -6828,7 +6828,7 @@ impl AccountsDb {
                     self.notify_account_at_accounts_update(
                         slot,
                         &account_shared_data,
-                        txn,
+                        &txn,
                         pubkey,
                         current_write_version,
                     );
@@ -6879,17 +6879,7 @@ impl AccountsDb {
             .fetch_add(calc_stored_meta_time.as_us(), Ordering::Relaxed);
 
         match store_to {
-            StoreTo::Cache => {
-                let txn_iter = match transactions {
-                    Some(transactions) => {
-                        assert_eq!(transactions.len(), accounts.len());
-                        transactions.iter().copied()
-                    }
-                    None => [].iter().copied(),
-                };
-
-                self.write_accounts_to_cache(slot, accounts, txn_iter)
-            }
+            StoreTo::Cache => self.write_accounts_to_cache(slot, accounts, transactions),
             StoreTo::Storage(storage) => self.write_accounts_to_storage(slot, storage, accounts),
         }
     }
