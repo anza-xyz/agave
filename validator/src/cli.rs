@@ -287,6 +287,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ),
         )
         .arg(
+            Arg::with_name("skip_preflight_health_check")
+                .long("skip-preflight-health-check")
+                .takes_value(false)
+                .help(
+                    "Skip health check when running a preflight check",
+                ),
+        )
+        .arg(
             Arg::with_name("rpc_faucet_addr")
                 .long("rpc-faucet-address")
                 .value_name("HOST:PORT")
@@ -1552,16 +1560,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .possible_values(BlockProductionMethod::cli_names())
                 .help(BlockProductionMethod::cli_message()),
-        )
-        .arg(
-            Arg::with_name("disable_block_production_forwarding")
-            .long("disable-block-production-forwarding")
-            .requires("staked_nodes_overrides")
-            .takes_value(false)
-            .help("Disable forwarding of non-vote transactions in block production. \
-                   By default, forwarding is already disabled, it is enabled by setting \
-                   \"staked-nodes-overrides\". This flag can be used to disable forwarding \
-                   even when \"staked-nodes-overrides\" is set."),
         )
         .arg(
             Arg::with_name("unified_scheduler_handler_threads")

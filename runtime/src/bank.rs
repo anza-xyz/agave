@@ -43,6 +43,7 @@ use {
         bank_forks::BankForks,
         epoch_stakes::{split_epoch_stakes, EpochStakes, NodeVoteAccounts, VersionedEpochStakes},
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
+        rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
@@ -987,6 +988,7 @@ impl Bank {
         #[allow(unused)] collector_id_for_tests: Option<Pubkey>,
         exit: Arc<AtomicBool>,
         #[allow(unused)] genesis_hash: Option<Hash>,
+        #[allow(unused)] feature_set: Option<FeatureSet>,
     ) -> Self {
         let accounts_db = AccountsDb::new_with_config(
             paths,
@@ -1004,6 +1006,11 @@ impl Bank {
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
         bank.transaction_debug_keys = debug_keys;
         bank.cluster_type = Some(genesis_config.cluster_type);
+
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            bank.feature_set = Arc::new(feature_set.unwrap_or_default());
+        }
 
         #[cfg(not(feature = "dev-context-only-utils"))]
         bank.process_genesis_config(genesis_config);
@@ -3157,7 +3164,6 @@ impl Bank {
             w_blockhash_queue
                 .register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
         }
-        self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
 
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls
@@ -3471,6 +3477,10 @@ impl Bank {
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
+        // TODO: Pass into `TransactionProcessingEnvironment` in place of
+        // `rent_collector` when SVM supports the new `SVMRentCollector` trait.
+        let _rent_collector_with_metrics =
+            RentCollectorWithMetrics::new(self.rent_collector.clone());
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             epoch_total_stake: self.epoch_total_stake(self.epoch()),
@@ -5508,9 +5518,13 @@ impl Bank {
             )
         }?;
 
-        if verification_mode == TransactionVerificationMode::HashAndVerifyPrecompiles
-            || verification_mode == TransactionVerificationMode::FullVerification
-        {
+        let move_precompile_verification_to_svm = self
+            .feature_set
+            .is_active(&feature_set::move_precompile_verification_to_svm::id());
+        if !move_precompile_verification_to_svm && {
+            verification_mode == TransactionVerificationMode::HashAndVerifyPrecompiles
+                || verification_mode == TransactionVerificationMode::FullVerification
+        } {
             sanitized_tx.verify_precompiles(&self.feature_set)?;
         }
 
@@ -6631,6 +6645,7 @@ impl Bank {
             Some(Pubkey::new_unique()),
             Arc::default(),
             None,
+            None,
         )
     }
 
@@ -6654,6 +6669,7 @@ impl Bank {
             None,
             Some(Pubkey::new_unique()),
             Arc::default(),
+            None,
             None,
         )
     }
