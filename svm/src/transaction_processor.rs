@@ -254,6 +254,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         config: &TransactionProcessingConfig,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
         // Initialize metrics.
+        
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
 
