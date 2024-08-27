@@ -212,8 +212,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
 
         let disk = match config
             .as_ref()
-            .map(|config| &config.index_limit_mb)
-            .unwrap_or(&IndexLimitMb::default())
+            .map(|config| config.index_limit_mb)
+            .unwrap_or_default()
         {
             IndexLimitMb::InMemOnly => None,
             IndexLimitMb::Unlimited => Some(BucketMap::new(bucket_config)),

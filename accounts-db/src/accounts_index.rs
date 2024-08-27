@@ -189,7 +189,7 @@ pub struct AccountSecondaryIndexesIncludeExclude {
 }
 
 /// specification of how much memory in-mem portion of account index can use
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum IndexLimitMb {
     /// use disk index while allowing to use as much memory as available for
     /// in-memory index.
