@@ -854,33 +854,14 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
                         final_accounts_actual.insert(*fee_payer, fee_payer_account);
                     }
                     RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                        let mut new_nonce = nonce.clone();
-                        new_nonce
-                            .try_advance_nonce(
-                                DurableNonce::from_blockhash(&Hash::default()),
-                                LAMPORTS_PER_SIGNATURE,
-                            )
-                            .unwrap();
-
-                        final_accounts_actual
-                            .insert(*new_nonce.address(), new_nonce.account().clone());
+                        final_accounts_actual.insert(*nonce.address(), nonce.account().clone());
                     }
                     RollbackAccounts::SeparateNonceAndFeePayer {
                         nonce,
                         fee_payer_account,
                     } => {
                         final_accounts_actual.insert(*fee_payer, fee_payer_account);
-
-                        let mut new_nonce = nonce.clone();
-                        new_nonce
-                            .try_advance_nonce(
-                                DurableNonce::from_blockhash(&Hash::default()),
-                                LAMPORTS_PER_SIGNATURE,
-                            )
-                            .unwrap();
-
-                        final_accounts_actual
-                            .insert(*new_nonce.address(), new_nonce.account().clone());
+                        final_accounts_actual.insert(*nonce.address(), nonce.account().clone());
                     }
                 }
             }
