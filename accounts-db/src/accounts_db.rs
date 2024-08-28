@@ -2750,17 +2750,16 @@ impl AccountsDb {
             .expect("Cluster type must be set at initialization")
     }
 
-    /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
-    /// Any accounts which are removed from the accounts index are returned in PubkeysRemovedFromAccountsIndex.
-    /// These should NOT be unref'd later from the accounts index.
-    fn clean_account_older_than_root(
+    /// While scanning cleaning candidates obtain slots that can be
+    /// reclaimed for each pubkey. In addition if the pubkey is
+    /// removed from the index, let the caller know this.
+    fn collect_reclaims(
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
         ancient_account_cleans: &AtomicU64,
         epoch_schedule: &EpochSchedule,
-    ) -> (ReclaimResult, PubkeysRemovedFromAccountsIndex) {
-        let mut pubkeys_removed_from_accounts_index = HashSet::default();
+    ) -> (SlotList<AccountInfo>, bool) {
         let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut clean_rooted = Measure::start("clean_old_root-ms");
         let mut reclaims = Vec::new();
@@ -2769,9 +2768,6 @@ impl AccountsDb {
             &mut reclaims,
             max_clean_root_inclusive,
         );
-        if removed_from_index {
-            pubkeys_removed_from_accounts_index.insert(*pubkey);
-        }
         if !reclaims.is_empty() {
             // figure out how many ancient accounts have been reclaimed
             let old_reclaims = reclaims
@@ -2781,10 +2777,21 @@ impl AccountsDb {
             ancient_account_cleans.fetch_add(old_reclaims, Ordering::Relaxed);
         }
         clean_rooted.stop();
+        debug!("{}", clean_rooted);
         self.clean_accounts_stats
             .clean_old_root_us
             .fetch_add(clean_rooted.as_us(), Ordering::Relaxed);
+        (reclaims, removed_from_index)
+    }
 
+    /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
+    /// Any accounts which are removed from the accounts index are returned in PubkeysRemovedFromAccountsIndex.
+    /// These should NOT be unref'd later from the accounts index.
+    fn clean_accounts_older_than_root(
+        &self,
+        reclaims: &SlotList<AccountInfo>,
+        pubkeys_removed_from_accounts_index: &HashSet<Pubkey>,
+    ) -> ReclaimResult {
         let mut measure = Measure::start("clean_old_root_reclaims");
 
         // Don't reset from clean, since the pubkeys in those stores may need to be unref'ed
@@ -2795,15 +2802,15 @@ impl AccountsDb {
             (!reclaims.is_empty()).then(|| reclaims.iter()),
             None,
             reset_accounts,
-            &pubkeys_removed_from_accounts_index,
+            pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
         );
         measure.stop();
-        debug!("{} {}", clean_rooted, measure);
+        debug!("{}", measure);
         self.clean_accounts_stats
             .clean_old_root_reclaim_us
             .fetch_add(measure.as_us(), Ordering::Relaxed);
-        (reclaim_result, pubkeys_removed_from_accounts_index)
+        reclaim_result
     }
 
     fn do_reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
@@ -3328,10 +3335,8 @@ impl AccountsDb {
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
-        let purged_account_slots: AccountSlots = HashMap::new();
-        let purged_account_slots = Mutex::new(purged_account_slots);
-        let removed_accounts: SlotOffsets = HashMap::new();
-        let removed_accounts = Mutex::new(removed_accounts);
+        let reclaims: SlotList<AccountInfo> = Vec::new();
+        let reclaims = Mutex::new(reclaims);
         let pubkeys_removed_from_accounts_index: PubkeysRemovedFromAccountsIndex = HashSet::new();
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
         // parallel scan the index.
@@ -3425,27 +3430,19 @@ impl AccountsDb {
                         ScanFilter::All,
                     );
                     if should_purge {
-                        let (
-                            (purged_account_slots_new, removed_accounts_new),
-                            pubkeys_removed_from_accounts_index_new,
-                        ) = self.clean_account_older_than_root(
+                        let (reclaims_new, removed_from_index) = self.collect_reclaims(
                             candidate_pubkey,
                             max_clean_root_inclusive,
                             &ancient_account_cleans,
                             epoch_schedule,
                         );
-                        purged_account_slots
-                            .lock()
-                            .unwrap()
-                            .extend(purged_account_slots_new);
-                        removed_accounts
-                            .lock()
-                            .unwrap()
-                            .extend(removed_accounts_new);
-                        pubkeys_removed_from_accounts_index
-                            .lock()
-                            .unwrap()
-                            .extend(pubkeys_removed_from_accounts_index_new);
+                        reclaims.lock().unwrap().extend(reclaims_new);
+                        if removed_from_index {
+                            pubkeys_removed_from_accounts_index
+                                .lock()
+                                .unwrap()
+                                .insert(*candidate_pubkey);
+                        }
                     }
                     !candidate_info.slot_list.is_empty()
                 });
@@ -3464,11 +3461,12 @@ impl AccountsDb {
 
         accounts_scan.stop();
         let retained_keys_count = Self::count_pubkeys(&candidates);
-        let purged_account_slots = purged_account_slots.into_inner().unwrap();
-        let removed_accounts = removed_accounts.into_inner().unwrap();
+        let reclaims = reclaims.into_inner().unwrap();
         let mut pubkeys_removed_from_accounts_index =
             pubkeys_removed_from_accounts_index.into_inner().unwrap();
         let mut clean_old_rooted = Measure::start("clean_old_roots");
+        let (purged_account_slots, removed_accounts) =
+            self.clean_accounts_older_than_root(&reclaims, &pubkeys_removed_from_accounts_index);
         self.do_reset_uncleaned_roots(max_clean_root_inclusive);
         clean_old_rooted.stop();
 
@@ -3500,7 +3498,7 @@ impl AccountsDb {
                         return false;
                     }
                     // Check if this update in `slot` to the account with `key` was reclaimed earlier by
-                    // `clean_account_older_than_root()`
+                    // `clean_accounts_older_than_root()`
                     let was_reclaimed = removed_accounts
                         .get(slot)
                         .map(|store_removed| store_removed.contains(&account_info.offset()))
@@ -5585,7 +5583,7 @@ impl AccountsDb {
         //          handle_reclaims()             | (removes storage entries)
         //      OR                                |
         //    clean_accounts()/                   |
-        //        clean_account_older_than_root() | (removes existing store_id, offset for stores)
+        //        clean_accounts_older_than_root()| (removes existing store_id, offset for stores)
         //                                        V
         //
         // Remarks for purger: So, for any reading operations, it's a race condition
