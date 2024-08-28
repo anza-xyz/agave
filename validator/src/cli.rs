@@ -287,6 +287,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ),
         )
         .arg(
+            Arg::with_name("skip_preflight_health_check")
+                .long("skip-preflight-health-check")
+                .takes_value(false)
+                .help(
+                    "Skip health check when running a preflight check",
+                ),
+        )
+        .arg(
             Arg::with_name("rpc_faucet_addr")
                 .long("rpc-faucet-address")
                 .value_name("HOST:PORT")
@@ -1393,17 +1401,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ),
         )
         .arg(
-            Arg::with_name("accounts_index_memory_limit_mb")
-                .long("accounts-index-memory-limit-mb")
-                .value_name("MEGABYTES")
-                .validator(is_parsable::<usize>)
-                .takes_value(true)
-                .help(
-                    "How much memory the accounts index can consume. If this is exceeded, some \
-                     account index entries will be stored on disk.",
-                ),
-        )
-        .arg(
             Arg::with_name("accounts_index_bins")
                 .long("accounts-index-bins")
                 .value_name("BINS")
@@ -1552,16 +1549,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .possible_values(BlockProductionMethod::cli_names())
                 .help(BlockProductionMethod::cli_message()),
-        )
-        .arg(
-            Arg::with_name("disable_block_production_forwarding")
-            .long("disable-block-production-forwarding")
-            .requires("staked_nodes_overrides")
-            .takes_value(false)
-            .help("Disable forwarding of non-vote transactions in block production. \
-                   By default, forwarding is already disabled, it is enabled by setting \
-                   \"staked-nodes-overrides\". This flag can be used to disable forwarding \
-                   even when \"staked-nodes-overrides\" is set."),
         )
         .arg(
             Arg::with_name("unified_scheduler_handler_threads")
@@ -2011,6 +1998,18 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
                 Ok(())
             }
         }));
+    // deprecated in v2.1 by PR #2721
+    add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
+        .long("accounts-index-memory-limit-mb")
+        .value_name("MEGABYTES")
+        .validator(is_parsable::<usize>)
+        .takes_value(true)
+        .help(
+            "How much memory the accounts index can consume. If this is exceeded, some \
+         account index entries will be stored on disk.",
+        ),
+        usage_warning: "index memory limit has been deprecated. The limit arg has no effect now.",
+    );
     add_arg!(Arg::with_name("accountsdb_repl_bind_address")
         .long("accountsdb-repl-bind-address")
         .value_name("HOST")

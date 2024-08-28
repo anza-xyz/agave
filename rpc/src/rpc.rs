@@ -146,6 +146,7 @@ pub struct JsonRpcConfig {
     pub enable_extended_tx_metadata_storage: bool,
     pub faucet_addr: Option<SocketAddr>,
     pub health_check_slot_distance: u64,
+    pub skip_preflight_health_check: bool,
     pub rpc_bigtable_config: Option<RpcBigtableConfig>,
     pub max_multiple_accounts: Option<usize>,
     pub account_indexes: AccountSecondaryIndexes,
@@ -632,6 +633,20 @@ impl JsonRpcRequestProcessor {
             }
             .into());
         };
+
+        // If there is a gap in blockstore or long-term historical storage that
+        // includes the epoch boundary, the `get_blocks_with_limit()` call above
+        // will return the slot of the block at the end of that gap, not a
+        // legitimate epoch-boundary block. Therefore, verify that the parent of
+        // `epoch_boundary_block` occurred before the `first_slot_in_epoch`. If
+        // it didn't, return an error; it will be impossible to locate
+        // rewards properly.
+        if epoch_boundary_block.parent_slot >= first_slot_in_epoch {
+            return Err(RpcCustomError::SlotNotEpochBoundary {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        }
 
         // Collect rewards from first block in the epoch if partitioned epoch
         // rewards not enabled, or address is a vote account
@@ -2250,8 +2265,12 @@ fn verify_transaction(
         return Err(RpcCustomError::TransactionSignatureVerificationFailure.into());
     }
 
-    if let Err(e) = transaction.verify_precompiles(feature_set) {
-        return Err(RpcCustomError::TransactionPrecompileVerificationFailure(e).into());
+    let move_precompile_verification_to_svm =
+        feature_set.is_active(&feature_set::move_precompile_verification_to_svm::id());
+    if !move_precompile_verification_to_svm {
+        if let Err(e) = transaction.verify_precompiles(feature_set) {
+            return Err(RpcCustomError::TransactionPrecompileVerificationFailure(e).into());
+        }
     }
 
     Ok(())
@@ -3695,21 +3714,23 @@ pub mod rpc_full {
             if !skip_preflight {
                 verify_transaction(&transaction, &preflight_bank.feature_set)?;
 
-                match meta.health.check() {
-                    RpcHealthStatus::Ok => (),
-                    RpcHealthStatus::Unknown => {
-                        inc_new_counter_info!("rpc-send-tx_health-unknown", 1);
-                        return Err(RpcCustomError::NodeUnhealthy {
-                            num_slots_behind: None,
+                if !meta.config.skip_preflight_health_check {
+                    match meta.health.check() {
+                        RpcHealthStatus::Ok => (),
+                        RpcHealthStatus::Unknown => {
+                            inc_new_counter_info!("rpc-send-tx_health-unknown", 1);
+                            return Err(RpcCustomError::NodeUnhealthy {
+                                num_slots_behind: None,
+                            }
+                            .into());
                         }
-                        .into());
-                    }
-                    RpcHealthStatus::Behind { num_slots } => {
-                        inc_new_counter_info!("rpc-send-tx_health-behind", 1);
-                        return Err(RpcCustomError::NodeUnhealthy {
-                            num_slots_behind: Some(num_slots),
+                        RpcHealthStatus::Behind { num_slots } => {
+                            inc_new_counter_info!("rpc-send-tx_health-behind", 1);
+                            return Err(RpcCustomError::NodeUnhealthy {
+                                num_slots_behind: Some(num_slots),
+                            }
+                            .into());
                         }
-                        .into());
                     }
                 }
 

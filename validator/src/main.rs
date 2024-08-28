@@ -1187,14 +1187,11 @@ pub fn main() {
             TestPartitionedEpochRewards::None
         };
 
-    accounts_index_config.index_limit_mb =
-        if let Ok(limit) = value_t!(matches, "accounts_index_memory_limit_mb", usize) {
-            IndexLimitMb::Limit(limit)
-        } else if matches.is_present("disable_accounts_disk_index") {
-            IndexLimitMb::InMemOnly
-        } else {
-            IndexLimitMb::Unspecified
-        };
+    accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
+        IndexLimitMb::InMemOnly
+    } else {
+        IndexLimitMb::Unlimited
+    };
 
     {
         let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
@@ -1422,6 +1419,7 @@ pub fn main() {
                 "rpc_max_request_body_size",
                 usize
             )),
+            skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
         },
         on_start_geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -1784,10 +1782,7 @@ pub fn main() {
         BlockProductionMethod
     )
     .unwrap_or_default();
-    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path
-        .as_ref()
-        .map(|_| !matches.is_present("disable_block_production_forwarding"))
-        .unwrap_or_default();
+    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
 
