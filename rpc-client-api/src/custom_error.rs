@@ -235,7 +235,7 @@ impl From<RpcCustomError> for Error {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY),
                 message: format!(
                     "Rewards cannot be found because slot {slot} is not the epoch boundary. This \
-                     may be due to gap in ledger or long-term storage"
+                     may be due to gap in the queried node's local ledger or long-term storage"
                 ),
                 data: None,
             },
