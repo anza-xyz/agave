@@ -9,6 +9,7 @@ mod tests {
             feature_set, genesis_config::create_genesis_config, pubkey::Pubkey,
             sysvar::epoch_rewards::EpochRewards,
         },
+        solana_stake_program::points::PointValue,
         std::sync::Arc,
     };
 
@@ -126,7 +127,10 @@ mod tests {
             expected_epoch_rewards.distributed_rewards,
             expected_epoch_rewards.distribution_starting_block_height,
             num_partitions,
-            total_points,
+            PointValue {
+                rewards: 100,
+                points: total_points,
+            },
         );
 
         bank1
