@@ -24,11 +24,8 @@ pub const JSON_RPC_SERVER_ERROR_TRANSACTION_SIGNATURE_LEN_MISMATCH: i64 = -32013
 pub const JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET: i64 = -32014;
 pub const JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION: i64 = -32015;
 pub const JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED: i64 = -32016;
-<<<<<<< HEAD
-=======
-pub const JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE: i64 = -32017;
+const _RESERVED_FOR_V2_0_ERROR: i64 = -32017;
 pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
->>>>>>> 9a4b094ded (RPC: rewards, return error if epoch_boundary_block is a lie (#2758))
 
 #[derive(Error, Debug)]
 pub enum RpcCustomError {
@@ -70,17 +67,8 @@ pub enum RpcCustomError {
     UnsupportedTransactionVersion(u8),
     #[error("MinContextSlotNotReached")]
     MinContextSlotNotReached { context_slot: Slot },
-<<<<<<< HEAD
-=======
-    #[error("EpochRewardsPeriodActive")]
-    EpochRewardsPeriodActive {
-        slot: Slot,
-        current_block_height: u64,
-        rewards_complete_block_height: u64,
-    },
     #[error("SlotNotEpochBoundary")]
     SlotNotEpochBoundary { slot: Slot },
->>>>>>> 9a4b094ded (RPC: rewards, return error if epoch_boundary_block is a lie (#2758))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -222,16 +210,6 @@ impl From<RpcCustomError> for Error {
                     context_slot,
                 })),
             },
-<<<<<<< HEAD
-=======
-            RpcCustomError::EpochRewardsPeriodActive { slot, current_block_height, rewards_complete_block_height } => Self {
-                code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_EPOCH_REWARDS_PERIOD_ACTIVE),
-                message: format!("Epoch rewards period still active at slot {slot}"),
-                data: Some(serde_json::json!(EpochRewardsPeriodActiveErrorData {
-                    current_block_height,
-                    rewards_complete_block_height,
-                })),
-            },
             RpcCustomError::SlotNotEpochBoundary { slot } => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY),
                 message: format!(
@@ -240,7 +218,6 @@ impl From<RpcCustomError> for Error {
                 ),
                 data: None,
             },
->>>>>>> 9a4b094ded (RPC: rewards, return error if epoch_boundary_block is a lie (#2758))
         }
     }
 }
