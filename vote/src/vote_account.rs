@@ -473,6 +473,7 @@ mod tests {
         bincode::Options,
         rand::Rng,
         solana_sdk::{
+            account::WritableAccount,
             pubkey::Pubkey,
             sysvar::clock::Clock,
             vote::state::{VoteInit, VoteStateVersions},
@@ -539,13 +540,31 @@ mod tests {
     }
 
     #[test]
-    fn test_vote_account() {
+    fn test_vote_account_try_from() {
         let mut rng = rand::thread_rng();
         let (account, vote_state) = new_rand_vote_account(&mut rng, None);
         let lamports = account.lamports();
-        let vote_account = VoteAccount::try_from(account).unwrap();
+        let vote_account = VoteAccount::try_from(account.clone()).unwrap();
         assert_eq!(lamports, vote_account.lamports());
         assert_eq!(vote_state, *vote_account.vote_state());
+        assert_eq!(&account, vote_account.account());
+    }
+
+    #[test]
+    #[should_panic(expected = "InvalidOwner")]
+    fn test_vote_account_try_from_invalid_owner() {
+        let mut rng = rand::thread_rng();
+        let (mut account, _) = new_rand_vote_account(&mut rng, None);
+        account.set_owner(Pubkey::new_unique());
+        VoteAccount::try_from(account).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "InvalidAccountData")]
+    fn test_vote_account_try_from_invalid_account() {
+        let mut account = AccountSharedData::default();
+        account.set_owner(solana_sdk::vote::program::id());
+        VoteAccount::try_from(account).unwrap();
     }
 
     #[test]
