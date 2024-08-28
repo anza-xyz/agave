@@ -575,10 +575,42 @@ impl JsonRpcRequestProcessor {
             .into());
         };
 
+<<<<<<< HEAD
         let addresses: Vec<String> = addresses
             .into_iter()
             .map(|pubkey| pubkey.to_string())
             .collect();
+=======
+        // If there is a gap in blockstore or long-term historical storage that
+        // includes the epoch boundary, the `get_blocks_with_limit()` call above
+        // will return the slot of the block at the end of that gap, not a
+        // legitimate epoch-boundary block. Therefore, verify that the parent of
+        // `epoch_boundary_block` occurred before the `first_slot_in_epoch`. If
+        // it didn't, return an error; it will be impossible to locate
+        // rewards properly.
+        if epoch_boundary_block.parent_slot >= first_slot_in_epoch {
+            return Err(RpcCustomError::SlotNotEpochBoundary {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        }
+
+        // Collect rewards from first block in the epoch if partitioned epoch
+        // rewards not enabled, or address is a vote account
+        let mut reward_map: HashMap<String, (Reward, Slot)> = {
+            let addresses: Vec<String> =
+                addresses.iter().map(|pubkey| pubkey.to_string()).collect();
+            Self::filter_map_rewards(
+                &epoch_boundary_block.rewards,
+                first_confirmed_block_in_epoch,
+                &addresses,
+                &|reward_type| -> bool {
+                    reward_type == RewardType::Voting
+                        || (!partitioned_epoch_reward_enabled && reward_type == RewardType::Staking)
+                },
+            )
+        };
+>>>>>>> 9a4b094ded (RPC: rewards, return error if epoch_boundary_block is a lie (#2758))
 
         let reward_hash: HashMap<String, Reward> = first_confirmed_block
             .rewards
