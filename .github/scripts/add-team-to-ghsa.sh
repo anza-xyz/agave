@@ -23,7 +23,7 @@ while IFS= read -r ghsa_id; do
     # added to this GHSA and format them as parameters for gh api like:
     #    -f collaborating_teams[]=ghsa-testing-1
     original_collaborating_team_slugs=$( jq -r '[ .[] | select(.ghsa_id == "'$ghsa_id'") | .collaborating_teams ] | "-f collaborating_teams[]=" + .[][].slug ' <<< "$ghsa_json" )
-    
+
     # Update the team list
     gh api \
         --method PATCH \
