@@ -5921,6 +5921,8 @@ impl Bank {
 
     /// Get the EpochStakes for the current Bank::epoch
     pub fn current_epoch_stakes(&self) -> &EpochStakes {
+        // The stakes for a given epoch (E) in self.epoch_stakes are keyed by leader schedule epoch
+        // (E + 1) so the stakes for the current epoch are stored at self.epoch_stakes[E + 1]
         self.epoch_stakes
             .get(&self.epoch.saturating_add(1))
             .expect("Current epoch stakes must exist")
