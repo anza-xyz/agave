@@ -1,21 +1,14 @@
 use crate::{
     result::{Result, TransactionViewError},
     transaction_data::TransactionData,
-    transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
+    transaction_view::UnsanitizedTransactionView,
 };
 
-impl<D: TransactionData> UnsanitizedTransactionView<D> {
-    pub fn sanitize(self) -> Result<SanitizedTransactionView<D>> {
-        sanitize_signatures(&self)?;
-        sanitize_account_access(&self)?;
-        sanitize_instructions(&self)?;
-        sanitize_address_table_lookups(&self)?;
-
-        Ok(SanitizedTransactionView {
-            data: self.data,
-            meta: self.meta,
-        })
-    }
+pub(crate) fn sanitize(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
+    sanitize_signatures(view)?;
+    sanitize_account_access(view)?;
+    sanitize_instructions(view)?;
+    sanitize_address_table_lookups(view)
 }
 
 fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
@@ -349,20 +342,71 @@ mod tests {
 
     #[test]
     fn test_sanitize_instructions() {
-        let transaction = multiple_transfers();
-        let data = bincode::serialize(&transaction).unwrap();
-        let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+        let num_signatures = 1;
+        let header = MessageHeader {
+            num_required_signatures: 1,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: 1,
+        };
+        let account_keys = vec![
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+        let valid_instructions = vec![
+            CompiledInstruction {
+                program_id_index: 1,
+                accounts: vec![0, 1],
+                data: vec![1, 2, 3],
+            },
+            CompiledInstruction {
+                program_id_index: 2,
+                accounts: vec![1, 0],
+                data: vec![3, 2, 1, 4],
+            },
+        ];
+        let atls = vec![MessageAddressTableLookup {
+            account_key: Pubkey::new_unique(),
+            writable_indexes: vec![0, 1],
+            readonly_indexes: vec![2],
+        }];
 
-        let instruction_size =
-            bincode::serialized_size(&transaction.message.instructions()[0]).unwrap();
-        for instruction_index in 0..usize::from(view.num_instructions()) {
-            let instruction_offset = usize::from(view.meta.instructions.offset)
-                + instruction_index * instruction_size as usize;
+        // Verify that the unmodified transaction(s) are valid/sanitized.
+        {
+            let transaction = create_legacy_transaction(
+                num_signatures,
+                header,
+                account_keys.clone(),
+                valid_instructions.clone(),
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert!(sanitize_instructions(&view).is_ok());
 
+            let transaction = create_v0_transaction(
+                num_signatures,
+                header,
+                account_keys.clone(),
+                valid_instructions.clone(),
+                atls.clone(),
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert!(sanitize_instructions(&view).is_ok());
+        }
+
+        for instruction_index in 0..valid_instructions.len() {
             // Invalid program index.
             {
-                let mut data = data.clone();
-                data[instruction_offset] = 4;
+                let mut instructions = valid_instructions.clone();
+                instructions[instruction_index].program_id_index = account_keys.len() as u8;
+                let transaction = create_legacy_transaction(
+                    num_signatures,
+                    header,
+                    account_keys.clone(),
+                    instructions,
+                );
+                let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view),
@@ -372,8 +416,15 @@ mod tests {
 
             // Program index is fee-payer.
             {
-                let mut data = data.clone();
-                data[instruction_offset] = 0;
+                let mut instructions = valid_instructions.clone();
+                instructions[instruction_index].program_id_index = 0;
+                let transaction = create_legacy_transaction(
+                    num_signatures,
+                    header,
+                    account_keys.clone(),
+                    instructions,
+                );
+                let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view),
@@ -383,9 +434,41 @@ mod tests {
 
             // Invalid account index.
             {
-                let mut data = data.clone();
-                // one byte for program index, one byte for number of accounts
-                data[instruction_offset + 2] = 7;
+                let mut instructions = valid_instructions.clone();
+                instructions[instruction_index]
+                    .accounts
+                    .push(account_keys.len() as u8);
+                let transaction = create_legacy_transaction(
+                    num_signatures,
+                    header,
+                    account_keys.clone(),
+                    instructions,
+                );
+                let data = bincode::serialize(&transaction).unwrap();
+                let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+                assert_eq!(
+                    sanitize_instructions(&view),
+                    Err(TransactionViewError::SanitizeError)
+                );
+            }
+
+            // Invalid account index with v0.
+            {
+                let num_lookup_accounts =
+                    atls[0].writable_indexes.len() + atls[0].readonly_indexes.len();
+                let total_accounts = (account_keys.len() + num_lookup_accounts) as u8;
+                let mut instructions = valid_instructions.clone();
+                instructions[instruction_index]
+                    .accounts
+                    .push(total_accounts);
+                let transaction = create_v0_transaction(
+                    num_signatures,
+                    header,
+                    account_keys.clone(),
+                    instructions,
+                    atls.clone(),
+                );
+                let data = bincode::serialize(&transaction).unwrap();
                 let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
                 assert_eq!(
                     sanitize_instructions(&view),
@@ -399,6 +482,19 @@ mod tests {
     fn test_sanitize_address_table_lookups() {
         fn create_transaction(empty_index: usize) -> VersionedTransaction {
             let payer = Pubkey::new_unique();
+            let mut address_table_lookups = vec![
+                MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0, 1],
+                    readonly_indexes: vec![],
+                },
+                MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0, 1],
+                    readonly_indexes: vec![],
+                },
+            ];
+            address_table_lookups[empty_index].writable_indexes.clear();
             create_v0_transaction(
                 1,
                 MessageHeader {
@@ -408,18 +504,7 @@ mod tests {
                 },
                 vec![payer],
                 vec![],
-                vec![
-                    MessageAddressTableLookup {
-                        account_key: Pubkey::new_unique(),
-                        writable_indexes: if empty_index == 0 { vec![] } else { vec![0, 1] },
-                        readonly_indexes: vec![],
-                    },
-                    MessageAddressTableLookup {
-                        account_key: Pubkey::new_unique(),
-                        writable_indexes: if empty_index == 1 { vec![] } else { vec![0, 1] },
-                        readonly_indexes: vec![],
-                    },
-                ],
+                address_table_lookups,
             )
         }
 

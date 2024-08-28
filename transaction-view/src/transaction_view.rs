@@ -2,7 +2,8 @@ use {
     crate::{
         address_table_lookup_meta::AddressTableLookupIterator,
         instructions_meta::InstructionsIterator, message_header_meta::TransactionVersion,
-        result::Result, transaction_data::TransactionData, transaction_meta::TransactionMeta,
+        result::Result, sanitize::sanitize, transaction_data::TransactionData,
+        transaction_meta::TransactionMeta,
     },
     solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
 };
@@ -19,8 +20,8 @@ pub type SanitizedTransactionView<D> = TransactionView<true, D>;
 /// The owned `data` is abstracted through the `TransactionData` trait,
 /// so that different containers for the serialized transaction can be used.
 pub struct TransactionView<const SANITIZED: bool, D: TransactionData> {
-    pub(crate) data: D,
-    pub(crate) meta: TransactionMeta,
+    data: D,
+    meta: TransactionMeta,
 }
 
 impl<D: TransactionData> TransactionView<false, D> {
@@ -28,6 +29,15 @@ impl<D: TransactionData> TransactionView<false, D> {
     pub fn try_new_unsanitized(data: D) -> Result<Self> {
         let meta = TransactionMeta::try_new(data.data())?;
         Ok(Self { data, meta })
+    }
+
+    /// Sanitizes the transaction view, returning a sanitized view on success.
+    pub fn sanitize(self) -> Result<SanitizedTransactionView<D>> {
+        sanitize(&self)?;
+        Ok(SanitizedTransactionView {
+            data: self.data,
+            meta: self.meta,
+        })
     }
 }
 
