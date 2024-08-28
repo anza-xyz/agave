@@ -75,7 +75,8 @@ use {
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::{
-            TransactionProcessingResult, TransactionProcessingResultExtensions,
+            ProcessedTransaction, TransactionProcessingResult,
+            TransactionProcessingResultExtensions,
         },
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
@@ -223,10 +224,6 @@ impl ForkGraph for MockForkGraph {
             std::cmp::Ordering::Equal => BlockRelation::Equal,
             std::cmp::Ordering::Greater => BlockRelation::Descendant,
         }
-    }
-
-    fn slot_epoch(&self, _slot: Slot) -> Option<Epoch> {
-        Some(0)
     }
 }
 
@@ -391,7 +388,7 @@ impl JsonRpcRequestProcessor {
         let ledger_tool_ledger_path = ledger_path.join("ledger_tool");
 
         let accounts_index_bins = None;
-        let accounts_index_index_limit_mb = IndexLimitMb::Unspecified;
+        let accounts_index_index_limit_mb = IndexLimitMb::Unlimited;
         let accounts_index_drives = vec![ledger_tool_ledger_path.join("accounts_index")];
         let accounts_index_config = AccountsIndexConfig {
             bins: accounts_index_bins,
@@ -552,21 +549,24 @@ impl JsonRpcRequestProcessor {
         let flattened_result = processing_result.flattened_result();
         let (post_simulation_accounts, logs, return_data, inner_instructions) =
             match processing_result {
-                Ok(processed_tx) => {
-                    let details = processed_tx.execution_details;
-                    let post_simulation_accounts = processed_tx
-                        .loaded_transaction
-                        .accounts
-                        .into_iter()
-                        .take(number_of_accounts)
-                        .collect::<Vec<_>>();
-                    (
-                        post_simulation_accounts,
-                        details.log_messages,
-                        details.return_data,
-                        details.inner_instructions,
-                    )
-                }
+                Ok(processed_tx) => match processed_tx {
+                    ProcessedTransaction::Executed(executed_tx) => {
+                        let details = executed_tx.execution_details;
+                        let post_simulation_accounts = executed_tx
+                            .loaded_transaction
+                            .accounts
+                            .into_iter()
+                            .take(number_of_accounts)
+                            .collect::<Vec<_>>();
+                        (
+                            post_simulation_accounts,
+                            details.log_messages,
+                            details.return_data,
+                            details.inner_instructions,
+                        )
+                    }
+                    ProcessedTransaction::FeesOnly(_) => (vec![], None, None, None),
+                },
                 Err(_) => (vec![], None, None, None),
             };
         let logs = logs.unwrap_or_default();
