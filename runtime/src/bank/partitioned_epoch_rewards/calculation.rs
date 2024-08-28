@@ -50,7 +50,7 @@ impl Bank {
         let CalculateRewardsAndDistributeVoteRewardsResult {
             total_rewards,
             distributed_rewards,
-            total_points,
+            point_value,
             stake_rewards_by_partition,
         } = self.calculate_rewards_and_distribute_vote_rewards(
             parent_epoch,
@@ -80,7 +80,7 @@ impl Bank {
             distributed_rewards,
             distribution_starting_block_height,
             num_partitions,
-            total_points,
+            point_value,
         );
 
         datapoint_info!(
@@ -110,7 +110,7 @@ impl Bank {
             foundation_rate,
             prev_epoch_duration_in_years,
             capitalization,
-            total_points,
+            point_value,
         } = self.calculate_rewards_for_partitioning(
             prev_epoch,
             reward_calc_tracer,
@@ -179,7 +179,7 @@ impl Bank {
         CalculateRewardsAndDistributeVoteRewardsResult {
             total_rewards: validator_rewards_paid + total_stake_rewards_lamports,
             distributed_rewards: validator_rewards_paid,
-            total_points,
+            point_value,
             stake_rewards_by_partition,
         }
     }
@@ -231,7 +231,7 @@ impl Bank {
         let CalculateValidatorRewardsResult {
             vote_rewards_accounts: vote_account_rewards,
             stake_reward_calculation: mut stake_rewards,
-            total_points,
+            point_value,
         } = self
             .calculate_validator_rewards(
                 prev_epoch,
@@ -265,7 +265,7 @@ impl Bank {
             foundation_rate,
             prev_epoch_duration_in_years,
             capitalization,
-            total_points,
+            point_value,
         }
     }
 
@@ -288,12 +288,11 @@ impl Bank {
             metrics,
         )
         .map(|point_value| {
-            let total_points = point_value.points;
             let (vote_rewards_accounts, stake_reward_calculation) = self
                 .calculate_stake_vote_rewards(
                     &reward_calculate_param,
                     rewarded_epoch,
-                    point_value,
+                    point_value.clone(),
                     thread_pool,
                     reward_calc_tracer,
                     metrics,
@@ -301,7 +300,7 @@ impl Bank {
             CalculateValidatorRewardsResult {
                 vote_rewards_accounts,
                 stake_reward_calculation,
-                total_points,
+                point_value,
             }
         })
     }

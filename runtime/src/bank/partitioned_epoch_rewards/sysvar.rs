@@ -3,8 +3,9 @@ use {
     log::info,
     solana_sdk::{
         account::{create_account_shared_data_with_fields as create_account, from_account},
-        sysvar,
+        feature_set, sysvar,
     },
+    solana_stake_program::points::PointValue,
 };
 
 impl Bank {
@@ -28,10 +29,18 @@ impl Bank {
         distributed_rewards: u64,
         distribution_starting_block_height: u64,
         num_partitions: u64,
-        total_points: u128,
+        point_value: PointValue,
     ) {
         assert!(self.is_partitioned_rewards_code_enabled());
 
+        let total_rewards = if self
+            .feature_set
+            .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
+        {
+            point_value.rewards
+        } else {
+            total_rewards
+        };
         assert!(total_rewards >= distributed_rewards);
 
         let parent_blockhash = self.last_blockhash();
@@ -40,7 +49,7 @@ impl Bank {
             distribution_starting_block_height,
             num_partitions,
             parent_blockhash,
-            total_points,
+            total_points: point_value.points,
             total_rewards,
             distributed_rewards,
             active: true,
@@ -81,10 +90,17 @@ impl Bank {
     /// Update EpochRewards sysvar with distributed rewards
     pub(in crate::bank::partitioned_epoch_rewards) fn set_epoch_rewards_sysvar_to_inactive(&self) {
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
-        assert_eq!(
-            epoch_rewards.distributed_rewards,
-            epoch_rewards.total_rewards
-        );
+        if self
+            .feature_set
+            .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
+        {
+            assert!(epoch_rewards.total_rewards >= epoch_rewards.distributed_rewards);
+        } else {
+            assert_eq!(
+                epoch_rewards.distributed_rewards,
+                epoch_rewards.total_rewards
+            );
+        }
         epoch_rewards.active = false;
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
