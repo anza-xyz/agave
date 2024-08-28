@@ -601,7 +601,8 @@ mod tests {
                 null_tracer,
                 partitioned_epoch_rewards::{
                     tests::{
-                        create_default_reward_bank, create_reward_bank, RewardBank, SLOTS_PER_EPOCH,
+                        create_default_reward_bank, create_reward_bank,
+                        create_reward_bank_with_specific_stakes, RewardBank, SLOTS_PER_EPOCH,
                     },
                     EpochRewardStatus, StartBlockHeightAndRewards,
                 },
@@ -988,11 +989,14 @@ mod tests {
 
     #[test]
     fn test_recalculate_partitioned_rewards() {
-        let expected_num_delegations = 4;
+        let expected_num_delegations = 3;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let RewardBank { bank, .. } = create_reward_bank(
-            expected_num_delegations,
+        let mut stakes = vec![2_000_000_000; expected_num_delegations];
+        // Add stake large enough to be affected by total-rewards discrepancy
+        stakes.push(40_000_000_000);
+        let RewardBank { bank, .. } = create_reward_bank_with_specific_stakes(
+            stakes,
             num_rewards_per_block,
             SLOTS_PER_EPOCH - 1,
         );
@@ -1012,6 +1016,7 @@ mod tests {
                     stake_rewards_by_partition: expected_stake_rewards,
                     ..
                 },
+            validator_rewards,
             ..
         } = bank.calculate_rewards_for_partitioning(
             rewarded_epoch,
@@ -1034,6 +1039,9 @@ mod tests {
         );
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         compare_stake_rewards(&expected_stake_rewards, recalculated_rewards);
+
+        let sysvar = bank.get_epoch_rewards_sysvar();
+        assert_eq!(validator_rewards, sysvar.total_rewards);
 
         // Advance to first distribution slot
         let mut bank =
