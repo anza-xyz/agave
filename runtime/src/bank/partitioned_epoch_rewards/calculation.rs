@@ -105,7 +105,6 @@ impl Bank {
             vote_account_rewards,
             stake_rewards_by_partition,
             old_vote_balance_and_staked,
-            validator_rewards,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
@@ -136,11 +135,11 @@ impl Bank {
         self.assert_validator_rewards_paid(validator_rewards_paid);
 
         // verify that we didn't pay any more than we expected to
-        assert!(validator_rewards >= validator_rewards_paid + total_stake_rewards_lamports);
+        assert!(point_value.rewards >= validator_rewards_paid + total_stake_rewards_lamports);
 
         info!(
             "distributed vote rewards: {} out of {}, remaining {}",
-            validator_rewards_paid, validator_rewards, total_stake_rewards_lamports
+            validator_rewards_paid, point_value.rewards, total_stake_rewards_lamports
         );
 
         let (num_stake_accounts, num_vote_accounts) = {
@@ -260,7 +259,6 @@ impl Bank {
                 total_stake_rewards_lamports: stake_rewards.total_stake_rewards_lamports,
             },
             old_vote_balance_and_staked,
-            validator_rewards,
             validator_rate,
             foundation_rate,
             prev_epoch_duration_in_years,
@@ -1015,7 +1013,7 @@ mod tests {
                     stake_rewards_by_partition: expected_stake_rewards,
                     ..
                 },
-            validator_rewards,
+            point_value,
             ..
         } = bank.calculate_rewards_for_partitioning(
             rewarded_epoch,
@@ -1040,7 +1038,7 @@ mod tests {
         compare_stake_rewards(&expected_stake_rewards, recalculated_rewards);
 
         let sysvar = bank.get_epoch_rewards_sysvar();
-        assert_eq!(validator_rewards, sysvar.total_rewards);
+        assert_eq!(point_value.rewards, sysvar.total_rewards);
 
         // Advance to first distribution slot
         let mut bank =

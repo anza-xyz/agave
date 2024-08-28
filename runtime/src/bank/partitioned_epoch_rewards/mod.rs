@@ -130,7 +130,6 @@ pub(super) struct PartitionedRewardsCalculation {
     pub(super) vote_account_rewards: VoteRewardsAccounts,
     pub(super) stake_rewards_by_partition: StakeRewardCalculationPartitioned,
     pub(super) old_vote_balance_and_staked: u64,
-    pub(super) validator_rewards: u64,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
     pub(super) prev_epoch_duration_in_years: f64,
