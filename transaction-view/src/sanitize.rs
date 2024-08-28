@@ -111,17 +111,10 @@ fn total_number_of_accounts(view: &UnsanitizedTransactionView<impl TransactionDa
 mod tests {
     use {
         super::*,
-        crate::{
-            address_table_lookup_meta::AddressTableLookupMeta,
-            instructions_meta::InstructionsMeta,
-            message_header_meta::{MessageHeaderMeta, TransactionVersion},
-            signature_meta::SignatureMeta,
-            static_account_keys_meta::StaticAccountKeysMeta,
-            transaction_meta::TransactionMeta,
-            transaction_view::TransactionView,
-        },
+        crate::transaction_view::TransactionView,
         solana_sdk::{
             hash::Hash,
+            instruction::CompiledInstruction,
             message::{
                 v0::{self, MessageAddressTableLookup},
                 Message, MessageHeader, VersionedMessage,
@@ -133,38 +126,39 @@ mod tests {
         },
     };
 
-    // Construct a dummy metadata object for testing.
-    // Most sanitization checks are based on the counts stored in this metadata
-    // rather than checking actual data. Using a mutable dummy object allows for
-    // far simpler testing.
-    fn dummy_metadata() -> TransactionMeta {
-        TransactionMeta {
-            signature: SignatureMeta {
-                num_signatures: 1,
-                offset: 1,
-            },
-            message_header: MessageHeaderMeta {
-                offset: 0,
-                version: TransactionVersion::Legacy,
-                num_required_signatures: 1,
-                num_readonly_signed_accounts: 0,
-                num_readonly_unsigned_accounts: 0,
-            },
-            static_account_keys: StaticAccountKeysMeta {
-                num_static_accounts: 1,
-                offset: 2,
-            },
-            recent_blockhash_offset: 3,
-            instructions: InstructionsMeta {
-                num_instructions: 0,
-                offset: 4,
-            },
-            address_table_lookup: AddressTableLookupMeta {
-                num_address_table_lookups: 0,
-                offset: 5,
-                total_writable_lookup_accounts: 0,
-                total_readonly_lookup_accounts: 0,
-            },
+    fn create_legacy_transaction(
+        num_signatures: u8,
+        header: MessageHeader,
+        account_keys: Vec<Pubkey>,
+        instructions: Vec<CompiledInstruction>,
+    ) -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: vec![Signature::default(); num_signatures as usize],
+            message: VersionedMessage::Legacy(Message {
+                header,
+                account_keys,
+                recent_blockhash: Hash::default(),
+                instructions,
+            }),
+        }
+    }
+
+    fn create_v0_transaction(
+        num_signatures: u8,
+        header: MessageHeader,
+        account_keys: Vec<Pubkey>,
+        instructions: Vec<CompiledInstruction>,
+        address_table_lookups: Vec<MessageAddressTableLookup>,
+    ) -> VersionedTransaction {
+        VersionedTransaction {
+            signatures: vec![Signature::default(); num_signatures as usize],
+            message: VersionedMessage::V0(v0::Message {
+                header,
+                account_keys,
+                recent_blockhash: Hash::default(),
+                instructions,
+                address_table_lookups,
+            }),
         }
     }
 
@@ -183,17 +177,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_dummy() {
-        // The dummy metadata object should pass all sanitization checks.
-        // Otherwise the tests which modify it are incorrect.
-        let view = UnsanitizedTransactionView {
-            data: &[][..],
-            meta: dummy_metadata(),
-        };
-        assert!(view.sanitize().is_ok());
-    }
-
-    #[test]
     fn test_sanitize_multiple_transfers() {
         let transaction = multiple_transfers();
         let data = bincode::serialize(&transaction).unwrap();
@@ -205,12 +188,18 @@ mod tests {
     fn test_sanitize_signatures() {
         // Too few signatures.
         {
-            let mut meta = dummy_metadata();
-            meta.signature.num_signatures = 0;
-            let view = UnsanitizedTransactionView {
-                data: &[][..],
-                meta,
-            };
+            let transaction = create_legacy_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..3).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
                 Err(TransactionViewError::SanitizeError)
@@ -219,12 +208,18 @@ mod tests {
 
         // Too many signatures.
         {
-            let mut meta = dummy_metadata();
-            meta.signature.num_signatures = 2;
-            let view = UnsanitizedTransactionView {
-                data: &[][..],
-                meta,
-            };
+            let transaction = create_legacy_transaction(
+                2,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..3).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
                 Err(TransactionViewError::SanitizeError)
@@ -233,14 +228,43 @@ mod tests {
 
         // Not enough static accounts.
         {
-            let mut meta = dummy_metadata();
-            meta.signature.num_signatures = 2;
-            meta.message_header.num_required_signatures = 2;
-            meta.static_account_keys.num_static_accounts = 1;
-            let view = UnsanitizedTransactionView {
-                data: &[][..],
-                meta,
-            };
+            let transaction = create_legacy_transaction(
+                2,
+                MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..1).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+            assert_eq!(
+                sanitize_signatures(&view),
+                Err(TransactionViewError::SanitizeError)
+            );
+        }
+
+        // Not enough static accounts - with look up accounts
+        {
+            let transaction = create_v0_transaction(
+                2,
+                MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..1).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0, 1, 2, 3, 4, 5],
+                    readonly_indexes: vec![6, 7, 8],
+                }],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_signatures(&view),
                 Err(TransactionViewError::SanitizeError)
@@ -252,13 +276,18 @@ mod tests {
     fn test_sanitize_account_access() {
         // Overlap of signing and readonly non-signing accounts.
         {
-            let mut meta = dummy_metadata();
-            meta.message_header.num_readonly_unsigned_accounts = 2;
-            meta.static_account_keys.num_static_accounts = 2;
-            let view = UnsanitizedTransactionView {
-                data: &[][..],
-                meta,
-            };
+            let transaction = create_legacy_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 2,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
                 Err(TransactionViewError::SanitizeError)
@@ -267,13 +296,18 @@ mod tests {
 
         // Not enough writable accounts.
         {
-            let mut meta = dummy_metadata();
-            meta.message_header.num_readonly_signed_accounts = 1;
-            meta.static_account_keys.num_static_accounts = 2;
-            let view = UnsanitizedTransactionView {
-                data: &[][..],
-                meta,
-            };
+            let transaction = create_legacy_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 1,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..2).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
                 Err(TransactionViewError::SanitizeError)
@@ -282,14 +316,30 @@ mod tests {
 
         // Too many accounts.
         {
-            let mut meta = dummy_metadata();
-            meta.static_account_keys.num_static_accounts = 1;
-            meta.address_table_lookup.total_writable_lookup_accounts = 200;
-            meta.address_table_lookup.total_readonly_lookup_accounts = 200;
-            let view = UnsanitizedTransactionView {
-                data: &[][..],
-                meta,
-            };
+            let transaction = create_v0_transaction(
+                2,
+                MessageHeader {
+                    num_required_signatures: 2,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                (0..1).map(|_| Pubkey::new_unique()).collect(),
+                vec![],
+                vec![
+                    MessageAddressTableLookup {
+                        account_key: Pubkey::new_unique(),
+                        writable_indexes: (0..100).collect(),
+                        readonly_indexes: (100..200).collect(),
+                    },
+                    MessageAddressTableLookup {
+                        account_key: Pubkey::new_unique(),
+                        writable_indexes: (100..200).collect(),
+                        readonly_indexes: (0..100).collect(),
+                    },
+                ],
+            );
+            let data = bincode::serialize(&transaction).unwrap();
+            let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
             assert_eq!(
                 sanitize_account_access(&view),
                 Err(TransactionViewError::SanitizeError)
@@ -349,31 +399,28 @@ mod tests {
     fn test_sanitize_address_table_lookups() {
         fn create_transaction(empty_index: usize) -> VersionedTransaction {
             let payer = Pubkey::new_unique();
-            VersionedTransaction {
-                signatures: vec![Signature::default()], // 1 signature to be valid.
-                message: VersionedMessage::V0(v0::Message {
-                    header: MessageHeader {
-                        num_required_signatures: 1,
-                        num_readonly_signed_accounts: 0,
-                        num_readonly_unsigned_accounts: 0,
+            create_v0_transaction(
+                1,
+                MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                vec![payer],
+                vec![],
+                vec![
+                    MessageAddressTableLookup {
+                        account_key: Pubkey::new_unique(),
+                        writable_indexes: if empty_index == 0 { vec![] } else { vec![0, 1] },
+                        readonly_indexes: vec![],
                     },
-                    account_keys: vec![payer],
-                    recent_blockhash: Hash::default(),
-                    instructions: vec![],
-                    address_table_lookups: vec![
-                        MessageAddressTableLookup {
-                            account_key: Pubkey::new_unique(),
-                            writable_indexes: if empty_index == 0 { vec![] } else { vec![0, 1] },
-                            readonly_indexes: vec![],
-                        },
-                        MessageAddressTableLookup {
-                            account_key: Pubkey::new_unique(),
-                            writable_indexes: if empty_index == 1 { vec![] } else { vec![0, 1] },
-                            readonly_indexes: vec![],
-                        },
-                    ],
-                }),
-            }
+                    MessageAddressTableLookup {
+                        account_key: Pubkey::new_unique(),
+                        writable_indexes: if empty_index == 1 { vec![] } else { vec![0, 1] },
+                        readonly_indexes: vec![],
+                    },
+                ],
+            )
         }
 
         for empty_index in 0..2 {
