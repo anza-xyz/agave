@@ -350,17 +350,25 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> RewardBank {
-        let validator_keypairs = (0..expected_num_delegations)
+        create_reward_bank_with_specific_stakes(
+            vec![2_000_000_000; expected_num_delegations],
+            stake_account_stores_per_block,
+            advance_num_slots,
+        )
+    }
+
+    pub(super) fn create_reward_bank_with_specific_stakes(
+        stakes: Vec<u64>,
+        stake_account_stores_per_block: u64,
+        advance_num_slots: u64,
+    ) -> RewardBank {
+        let validator_keypairs = (0..stakes.len())
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
 
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![2_000_000_000; expected_num_delegations],
-        );
+        } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
