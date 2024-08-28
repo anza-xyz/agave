@@ -655,3 +655,200 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         }
     }
 }
+
+#[test]
+fn svm_inspect_account() {
+    let mock_bank = MockBankCallback::default();
+    let mut expected_inspected_accounts: HashMap<_, Vec<_>> = HashMap::new();
+
+    let transfer_program =
+        deploy_program("simple-transfer".to_string(), DEPLOYMENT_SLOT, &mock_bank);
+    let sender = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let fee_payer = Pubkey::new_unique();
+    let system = Pubkey::from([0u8; 32]);
+
+    // Setting up the accounts for the transfer
+
+    // fee payer
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(80_020);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(fee_payer, account_data.clone());
+    expected_inspected_accounts
+        .entry(fee_payer.clone())
+        .or_default()
+        .push((Some(account_data.clone()), true));
+
+    // sender
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(11_000_000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(sender, account_data.clone());
+    expected_inspected_accounts
+        .entry(sender.clone())
+        .or_default()
+        .push((Some(account_data.clone()), true));
+
+    // recipient -- initially dead
+    expected_inspected_accounts
+        .entry(recipient.clone())
+        .or_default()
+        .push((None, true));
+
+    let mut transaction_builder = SanitizedTransactionBuilder::default();
+    transaction_builder.create_instruction(
+        transfer_program,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        1_000_000_u64.to_be_bytes().to_vec(),
+    );
+    let sanitized_transaction = transaction_builder
+        .build(Hash::default(), (fee_payer, Signature::new_unique()), true)
+        .unwrap();
+    let transaction_check = Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    });
+
+    // Load and execute the transaction
+
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
+        EXECUTION_SLOT,
+        EXECUTION_EPOCH,
+        HashSet::new(),
+    );
+
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+
+    create_executable_environment(
+        fork_graph.clone(),
+        &mock_bank,
+        &mut batch_processor.program_cache.write().unwrap(),
+    );
+
+    // The sysvars must be put in the cache
+    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+    register_builtins(&mock_bank, &batch_processor);
+
+    let _result = batch_processor.load_and_execute_sanitized_transactions(
+        &mock_bank,
+        &[sanitized_transaction],
+        vec![transaction_check],
+        &TransactionProcessingEnvironment::default(),
+        &TransactionProcessingConfig::default(),
+    );
+
+    // do another transfer; recipient should be alive now
+
+    // fee payer
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(80_000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(fee_payer, account_data.clone());
+    expected_inspected_accounts
+        .entry(fee_payer.clone())
+        .or_default()
+        .push((Some(account_data.clone()), true));
+
+    // sender
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(10_000_000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(sender, account_data.clone());
+    expected_inspected_accounts
+        .entry(sender.clone())
+        .or_default()
+        .push((Some(account_data.clone()), true));
+
+    // recipient -- now alive
+    let mut account_data = AccountSharedData::default();
+    account_data.set_lamports(1_000_000);
+    mock_bank
+        .account_shared_data
+        .write()
+        .unwrap()
+        .insert(recipient, account_data.clone());
+    expected_inspected_accounts
+        .entry(recipient.clone())
+        .or_default()
+        .push((Some(account_data.clone()), true));
+
+    let mut transaction_builder = SanitizedTransactionBuilder::default();
+    transaction_builder.create_instruction(
+        transfer_program,
+        vec![
+            AccountMeta {
+                pubkey: sender,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: recipient,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: system,
+                is_signer: false,
+                is_writable: false,
+            },
+        ],
+        HashMap::from([(sender, Signature::new_unique())]),
+        456_u64.to_be_bytes().to_vec(),
+    );
+    let sanitized_transaction = transaction_builder
+        .build(Hash::default(), (fee_payer, Signature::new_unique()), true)
+        .unwrap();
+    let transaction_check = Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    });
+
+    // Load and execute the second transaction
+    let _result = batch_processor.load_and_execute_sanitized_transactions(
+        &mock_bank,
+        &[sanitized_transaction],
+        vec![transaction_check],
+        &TransactionProcessingEnvironment::default(),
+        &TransactionProcessingConfig::default(),
+    );
+
+    // Ensure all the expected inspected accounts were inspected
+    let actual_inspected_accounts = mock_bank.inspected_accounts.read().unwrap().clone();
+    for (expected_pubkey, expected_account) in expected_inspected_accounts {
+        let actual_account = actual_inspected_accounts.get(&expected_pubkey).unwrap();
+        assert_eq!(
+            expected_account, *actual_account,
+            "pubkey: {expected_pubkey}",
+        );
+    }
+}
