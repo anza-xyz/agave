@@ -2,11 +2,14 @@ use {
     crate::{
         address_table_lookup_meta::AddressTableLookupIterator,
         instructions_meta::InstructionsIterator, message_header_meta::TransactionVersion,
-        result::Result, sanitize::sanitize, transaction_data::TransactionData,
-        transaction_meta::TransactionMeta,
+        result::Result, transaction_data::TransactionData, transaction_meta::TransactionMeta,
     },
     solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
 };
+
+// alias for convenience
+pub type UnsanitizedTransactionView<D> = TransactionView<false, D>;
+pub type SanitizedTransactionView<D> = TransactionView<true, D>;
 
 /// A view into a serialized transaction.
 ///
@@ -32,7 +35,7 @@ impl<D: TransactionData> TransactionView<true, D> {
     /// Creates a new `TransactionView`, running sanitization checks.
     pub fn try_new_sanitized(data: D) -> Result<Self> {
         let unsanitized_view = TransactionView::try_new_unsanitized(data)?;
-        sanitize(unsanitized_view)
+        unsanitized_view.sanitize()
     }
 }
 

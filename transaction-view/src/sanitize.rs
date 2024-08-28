@@ -1,25 +1,21 @@
 use crate::{
     result::{Result, TransactionViewError},
     transaction_data::TransactionData,
-    transaction_view::TransactionView,
+    transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
 };
 
-// alias for convenience
-type UnsanitizedTransactionView<D> = TransactionView<false, D>;
-type SanitizedTransactionView<D> = TransactionView<true, D>;
+impl<D: TransactionData> UnsanitizedTransactionView<D> {
+    pub fn sanitize(self) -> Result<SanitizedTransactionView<D>> {
+        sanitize_signatures(&self)?;
+        sanitize_account_access(&self)?;
+        sanitize_instructions(&self)?;
+        sanitize_address_table_lookups(&self)?;
 
-pub fn sanitize<D: TransactionData>(
-    view: UnsanitizedTransactionView<D>,
-) -> Result<SanitizedTransactionView<D>> {
-    sanitize_signatures(&view)?;
-    sanitize_account_access(&view)?;
-    sanitize_instructions(&view)?;
-    sanitize_address_table_lookups(&view)?;
-
-    Ok(SanitizedTransactionView {
-        data: view.data,
-        meta: view.meta,
-    })
+        Ok(SanitizedTransactionView {
+            data: self.data,
+            meta: self.meta,
+        })
+    }
 }
 
 fn sanitize_signatures(view: &UnsanitizedTransactionView<impl TransactionData>) -> Result<()> {
@@ -122,6 +118,7 @@ mod tests {
             signature_meta::SignatureMeta,
             static_account_keys_meta::StaticAccountKeysMeta,
             transaction_meta::TransactionMeta,
+            transaction_view::TransactionView,
         },
         solana_sdk::{
             hash::Hash,
@@ -193,7 +190,7 @@ mod tests {
             data: &[][..],
             meta: dummy_metadata(),
         };
-        assert!(sanitize(view).is_ok());
+        assert!(view.sanitize().is_ok());
     }
 
     #[test]
@@ -201,7 +198,7 @@ mod tests {
         let transaction = multiple_transfers();
         let data = bincode::serialize(&transaction).unwrap();
         let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
-        assert!(sanitize(view).is_ok());
+        assert!(view.sanitize().is_ok());
     }
 
     #[test]
