@@ -6812,9 +6812,12 @@ impl AccountsDb {
         accounts_and_meta_to_store: &impl StorableAccounts<'b>,
         txs: Option<&[&SanitizedTransaction]>,
     ) -> Vec<AccountInfo> {
-        let mut current_write_version = self
-            .write_version
-            .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel);
+        let mut current_write_version = if self.accounts_update_notifier.is_some() {
+            self.write_version
+                .fetch_add(accounts_and_meta_to_store.len() as u64, Ordering::AcqRel)
+        } else {
+            0
+        };
 
         let (account_infos, cached_accounts) = (0..accounts_and_meta_to_store.len())
             .map(|index| {
