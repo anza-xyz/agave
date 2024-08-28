@@ -180,6 +180,9 @@ impl Bank {
     pub(super) fn is_partitioned_rewards_feature_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::enable_partitioned_epoch_reward::id())
+            || self
+                .feature_set
+                .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
     }
 
     pub(crate) fn set_epoch_reward_status_active(
@@ -456,7 +459,7 @@ mod tests {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         assert!(!bank.is_partitioned_rewards_feature_enabled());
-        bank.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
+        bank.activate_feature(&feature_set::partitioned_epoch_rewards_superfeature::id());
         assert!(bank.is_partitioned_rewards_feature_enabled());
     }
 
@@ -950,6 +953,9 @@ mod tests {
         genesis_config
             .accounts
             .remove(&feature_set::enable_partitioned_epoch_reward::id());
+        genesis_config
+            .accounts
+            .remove(&feature_set::partitioned_epoch_rewards_superfeature::id());
 
         let bank = Bank::new_for_tests(&genesis_config);
 

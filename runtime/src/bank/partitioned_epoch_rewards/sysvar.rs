@@ -132,7 +132,7 @@ mod tests {
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
         let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
+        bank.activate_feature(&feature_set::partitioned_epoch_rewards_superfeature::id());
 
         let total_rewards = 1_000_000_000; // a large rewards so that the sysvar account is rent-exempted.
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test

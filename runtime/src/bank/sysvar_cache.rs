@@ -109,7 +109,7 @@ mod tests {
         drop(bank1_sysvar_cache);
 
         // inject a reward sysvar for test
-        bank1.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
+        bank1.activate_feature(&feature_set::partitioned_epoch_rewards_superfeature::id());
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = 42_000; // total_points is arbitrary for the purposes of this test
         let expected_epoch_rewards = EpochRewards {
