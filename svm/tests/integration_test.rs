@@ -679,7 +679,7 @@ fn svm_inspect_account() {
         .unwrap()
         .insert(fee_payer, account_data.clone());
     expected_inspected_accounts
-        .entry(fee_payer.clone())
+        .entry(fee_payer)
         .or_default()
         .push((Some(account_data.clone()), true));
 
@@ -692,13 +692,13 @@ fn svm_inspect_account() {
         .unwrap()
         .insert(sender, account_data.clone());
     expected_inspected_accounts
-        .entry(sender.clone())
+        .entry(sender)
         .or_default()
         .push((Some(account_data.clone()), true));
 
     // recipient -- initially dead
     expected_inspected_accounts
-        .entry(recipient.clone())
+        .entry(recipient)
         .or_default()
         .push((None, true));
 
@@ -772,7 +772,7 @@ fn svm_inspect_account() {
         .unwrap()
         .insert(fee_payer, account_data.clone());
     expected_inspected_accounts
-        .entry(fee_payer.clone())
+        .entry(fee_payer)
         .or_default()
         .push((Some(account_data.clone()), true));
 
@@ -785,7 +785,7 @@ fn svm_inspect_account() {
         .unwrap()
         .insert(sender, account_data.clone());
     expected_inspected_accounts
-        .entry(sender.clone())
+        .entry(sender)
         .or_default()
         .push((Some(account_data.clone()), true));
 
@@ -798,7 +798,7 @@ fn svm_inspect_account() {
         .unwrap()
         .insert(recipient, account_data.clone());
     expected_inspected_accounts
-        .entry(recipient.clone())
+        .entry(recipient)
         .or_default()
         .push((Some(account_data.clone()), true));
 
