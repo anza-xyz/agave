@@ -42,8 +42,7 @@ use {
         fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
-        instruction::{CompiledInstruction, InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
-        nonce::state::DurableNonce,
+        instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
@@ -238,7 +237,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
 
-        let durable_nonce = DurableNonce::from_blockhash(&environment.blockhash);
         let (validation_results, validate_fees_us) = measure_us!(self.validate_fees(
             callbacks,
             config.account_overrides,
@@ -251,7 +249,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
-            &durable_nonce,
             &mut error_metrics
         ));
 
@@ -373,7 +370,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn validate_fees<CB: TransactionProcessingCallback, T: SVMMessage>(
         &self,
         callbacks: &CB,
@@ -399,7 +395,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         feature_set,
                         fee_structure,
                         rent_collector,
-                        durable_nonce,
                         error_counters,
                     )
                 })
@@ -410,7 +405,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     // Loads transaction fee payer, collects rent if necessary, then calculates
     // transaction fees, and deducts them from the fee payer balance. If the
     // account is not found or has insufficient funds, an error is returned.
-    #[allow(clippy::too_many_arguments)]
     fn validate_transaction_fee_payer<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
@@ -456,7 +450,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         .rent_amount;
 
         let CheckedTransactionDetails {
-            mut nonce,
+            nonce,
             lamports_per_signature,
         } = checked_details;
 
@@ -478,16 +472,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             rent_collector,
             fee_details.total_fee(),
         )?;
-
-        if let Some(ref mut nonce_info) = nonce {
-            // Coding instruction 0 is appropriate because it must be the advance nonce instruction
-            // However the nonce info is guaranteed to be valid so this should never occur
-            nonce_info
-                .try_advance_nonce(*durable_nonce, lamports_per_signature)
-                .map_err(|_| {
-                    TransactionError::InstructionError(0, InstructionError::InvalidAccountData)
-                })?;
-        };
 
         // Capture fee-subtracted fee payer account and next nonce account state
         // to commit if transaction execution fails.

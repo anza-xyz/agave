@@ -3,13 +3,21 @@ use {
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_perf::perf_libs,
     solana_sdk::{
+        account::AccountSharedData,
+        account_utils::StateMut,
         clock::{
             MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
             MAX_TRANSACTION_FORWARDING_DELAY_GPU,
         },
         message::SanitizedMessage,
-        nonce::{self, state::DurableNonce, NONCED_TX_MARKER_IX_INDEX},
+        nonce::{
+            state::{
+                Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
+            },
+            NONCED_TX_MARKER_IX_INDEX,
+        },
         nonce_account,
+        pubkey::Pubkey,
         transaction::{Result as TransactionResult, SanitizedTransaction, TransactionError},
     },
     solana_svm::{
@@ -102,12 +110,12 @@ impl Bank {
                 nonce: None,
                 lamports_per_signature: hash_info.lamports_per_signature(),
             })
-        } else if let Some((nonce, nonce_data)) =
-            self.check_and_load_message_nonce_account(tx.message(), next_durable_nonce)
+        } else if let Some((nonce, lamports_per_signature)) =
+            self.check_load_and_advance_message_nonce_account(tx.message(), next_durable_nonce)
         {
             Ok(CheckedTransactionDetails {
                 nonce: Some(nonce),
-                lamports_per_signature: nonce_data.get_lamports_per_signature(),
+                lamports_per_signature,
             })
         } else {
             error_counters.blockhash_not_found += 1;
@@ -115,14 +123,33 @@ impl Bank {
         }
     }
 
-    pub(super) fn check_and_load_message_nonce_account(
+    pub(super) fn check_load_and_advance_message_nonce_account(
         &self,
         message: &SanitizedMessage,
         next_durable_nonce: &DurableNonce,
-    ) -> Option<(NonceInfo, nonce::state::Data)> {
+    ) -> Option<(NonceInfo, u64)> {
         let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
         if nonce_is_advanceable {
-            self.load_message_nonce_account(message)
+            if let Some((nonce_address, mut nonce_account, nonce_data)) =
+                self.load_message_nonce_account(message)
+            {
+                let lamports_per_signature = nonce_data.get_lamports_per_signature();
+                let next_nonce_state = NonceState::new_initialized(
+                    &nonce_data.authority,
+                    *next_durable_nonce,
+                    lamports_per_signature,
+                );
+                nonce_account
+                    .set_state(&NonceVersions::new(next_nonce_state))
+                    .ok()?;
+
+                Some((
+                    NonceInfo::new(nonce_address, nonce_account),
+                    lamports_per_signature,
+                ))
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -131,7 +158,7 @@ impl Bank {
     pub(super) fn load_message_nonce_account(
         &self,
         message: &SanitizedMessage,
-    ) -> Option<(NonceInfo, nonce::state::Data)> {
+    ) -> Option<(Pubkey, AccountSharedData, NonceData)> {
         let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
@@ -144,7 +171,7 @@ impl Bank {
             return None;
         }
 
-        Some((NonceInfo::new(*nonce_address, nonce_account), nonce_data))
+        Some((*nonce_address, nonce_account, nonce_data))
     }
 
     fn check_status_cache(
