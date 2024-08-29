@@ -319,8 +319,8 @@ impl AncestorRequestStatus {
                             agreed_response[*mismatch_i];
                         let mismatch_our_frozen_hash = blockstore.get_bank_hash(mismatch_slot);
                         info!(
-                            "When processing the ancestor sample for {}, there was a mismatch
-                            for {mismatch_slot}: we had frozen hash {:?} and the cluster agreed \
+                            "When processing the ancestor sample for {}, there was a mismatch \
+                             for {mismatch_slot}: we had frozen hash {:?} and the cluster agreed \
                              upon {mismatch_agreed_upon_hash}. However for a later ancestor \
                              {ancestor_slot} we have agreement on {our_frozen_hash} as the bank \
                              hash. This should never be possible, something is wrong or the \
