@@ -414,6 +414,25 @@ mod tests {
                 );
             }
 
+            // Invalid program index with lookups.
+            {
+                let mut instructions = valid_instructions.clone();
+                instructions[instruction_index].program_id_index = account_keys.len() as u8;
+                let transaction = create_v0_transaction(
+                    num_signatures,
+                    header,
+                    account_keys.clone(),
+                    instructions,
+                    atls.clone(),
+                );
+                let data = bincode::serialize(&transaction).unwrap();
+                let view = TransactionView::try_new_unsanitized(data.as_ref()).unwrap();
+                assert_eq!(
+                    sanitize_instructions(&view),
+                    Err(TransactionViewError::SanitizeError)
+                );
+            }
+
             // Program index is fee-payer.
             {
                 let mut instructions = valid_instructions.clone();
