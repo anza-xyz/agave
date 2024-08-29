@@ -427,32 +427,17 @@ impl SanitizedMessage {
 /// Transaction signature details including the number of transaction signatures
 /// and precompile signatures.
 pub struct TransactionSignatureDetails {
-    num_transaction_signatures: u64,
-    num_secp256k1_instruction_signatures: u64,
-    num_ed25519_instruction_signatures: u64,
+    pub num_transaction_signatures: u64,
+    pub num_secp256k1_instruction_signatures: u64,
+    pub num_ed25519_instruction_signatures: u64,
 }
 
 impl TransactionSignatureDetails {
     /// return total number of signature, treating pre-processor operations as signature
-    pub(crate) fn total_signatures(&self) -> u64 {
+    pub fn total_signatures(&self) -> u64 {
         self.num_transaction_signatures
             .saturating_add(self.num_secp256k1_instruction_signatures)
             .saturating_add(self.num_ed25519_instruction_signatures)
-    }
-
-    /// return the number of transaction signatures
-    pub fn num_transaction_signatures(&self) -> u64 {
-        self.num_transaction_signatures
-    }
-
-    /// return the number of secp256k1 instruction signatures
-    pub fn num_secp256k1_instruction_signatures(&self) -> u64 {
-        self.num_secp256k1_instruction_signatures
-    }
-
-    /// return the number of ed25519 instruction signatures
-    pub fn num_ed25519_instruction_signatures(&self) -> u64 {
-        self.num_ed25519_instruction_signatures
     }
 }
 

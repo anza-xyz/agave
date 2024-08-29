@@ -5,7 +5,9 @@ use {
         result::Result, sanitize::sanitize, transaction_data::TransactionData,
         transaction_frame::TransactionFrame,
     },
+    core::fmt::{Debug, Formatter},
     solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
+    solana_svm_transaction::instruction::SVMInstruction,
 };
 
 // alias for convenience
@@ -22,6 +24,14 @@ pub type SanitizedTransactionView<D> = TransactionView<true, D>;
 pub struct TransactionView<const SANITIZED: bool, D: TransactionData> {
     data: D,
     frame: TransactionFrame,
+}
+
+impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITIZED, D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TransactionView")
+            .field("frame", &self.frame)
+            .finish()
+    }
 }
 
 impl<D: TransactionData> TransactionView<false, D> {
@@ -161,6 +171,17 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     #[inline]
     pub fn message_data(&self) -> &[u8] {
         &self.data()[usize::from(self.frame.message_offset())..]
+    }
+}
+
+// Implementation that relies on sanitization checks having been run.
+impl<D: TransactionData> TransactionView<true, D> {
+    pub fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+        self.instructions_iter().map(|ix| {
+            let program_id_index = usize::from(ix.program_id_index);
+            let program_id = &self.static_account_keys()[program_id_index];
+            (program_id, ix)
+        })
     }
 }
 

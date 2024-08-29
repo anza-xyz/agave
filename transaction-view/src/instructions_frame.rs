@@ -10,7 +10,7 @@ use {
 };
 
 /// Contains metadata about the instructions in a transaction packet.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct InstructionsFrame {
     /// The number of instructions in the transaction.
     pub(crate) num_instructions: u16,
