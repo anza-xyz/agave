@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euof pipefail
 
 team_to_add_slug="security-incident-response"
 github_org="anza-xyz"
@@ -25,11 +25,12 @@ while IFS= read -r ghsa_id; do
     original_collaborating_team_slugs=$( jq -r '[ .[] | select(.ghsa_id == "'"$ghsa_id"'") | .collaborating_teams ] | "-f collaborating_teams[]=" + .[][].slug ' <<< "$ghsa_json" )
 
     # Update the team list
+    # shellcheck disable=SC2086
     gh api \
         --method PATCH \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "/repos/$github_org/$github_repo/security-advisories/$ghsa_id" \
-        -f "collaborating_teams[]=$team_to_add_slug" "$original_collaborating_team_slugs" \
+        -f "collaborating_teams[]=$team_to_add_slug" $original_collaborating_team_slugs \
         > /dev/null 2>&1
 done <<< "$ghsa_without_team"
