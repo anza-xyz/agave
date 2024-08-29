@@ -1,6 +1,7 @@
 pub(crate) mod in_mem_accounts_index;
 use {
     crate::{
+        accounts_db::ShrinkStats,
         accounts_index_storage::{AccountsIndexStorage, Startup},
         accounts_partition::RentPayingAccountsByPartition,
         ancestors::Ancestors,
@@ -1395,6 +1396,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ///     None.
     pub(crate) fn scan<'a, F, I>(
         &self,
+        stat: &ShrinkStats,
         pubkeys: I,
         mut callback: F,
         avoid_callback_result: Option<AccountsIndexScanResult>,
@@ -1437,6 +1439,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             AccountsIndexScanResult::Unref => {
                                 if locked_entry.unref() {
                                     info!("scan: refcount of item already at 0: {pubkey}");
+                                    stat.unref_zero_count.fetch_add(1, Ordering::Relaxed);
                                 }
                                 true
                             }

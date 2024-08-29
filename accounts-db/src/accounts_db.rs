@@ -2035,6 +2035,7 @@ pub struct ShrinkStats {
     accounts_loaded: AtomicU64,
     purged_zero_lamports: AtomicU64,
     accounts_not_found_in_index: AtomicU64,
+    pub(crate) unref_zero_count: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -2141,6 +2142,11 @@ impl ShrinkStats {
                 (
                     "accounts_not_found_in_index",
                     self.accounts_not_found_in_index.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "unref_zero_count",
+                    self.unref_zero_count.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -3315,6 +3321,7 @@ impl AccountsDb {
                     .iter_mut()
                     .for_each(|(candidate_pubkey, candidate_info)| {
                         self.accounts_index.scan(
+                            &self.shrink_stats,
                             [*candidate_pubkey].iter(),
                             |_candidate_pubkey, slot_list_and_ref_count, _entry| {
                                 let mut useless = true;
@@ -3919,6 +3926,7 @@ impl AccountsDb {
         let mut index_entries_being_shrunk = Vec::with_capacity(accounts.len());
         let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
         self.accounts_index.scan(
+            &self.shrink_stats,
             accounts.iter().map(|account| account.pubkey()),
             |pubkey, slots_refs, entry| {
                 let mut result = AccountsIndexScanResult::OnlyKeepInMemoryIfDirty;
@@ -4188,6 +4196,7 @@ impl AccountsDb {
         // we have to unref before we `purge_keys_exact`. Otherwise, we could race with the foreground with tx processing
         // reviving this index entry and then we'd unref the revived version, which is a refcount bug.
         self.accounts_index.scan(
+            &self.shrink_stats,
             zero_lamport_single_ref_pubkeys.iter().cloned(),
             |_pubkey, _slots_refs, _entry| AccountsIndexScanResult::Unref,
             Some(AccountsIndexScanResult::Unref),
@@ -4296,6 +4305,7 @@ impl AccountsDb {
                 .fetch_add(1, Ordering::Relaxed);
 
             self.accounts_index.scan(
+            &self.shrink_stats,
                 shrink_collect.unrefed_pubkeys.into_iter(),
                 |pubkey, _slot_refs, entry| {
                     // pubkeys in `unrefed_pubkeys` were unref'd in `shrink_collect` above under the assumption that we would shrink everything.
@@ -8144,6 +8154,7 @@ impl AccountsDb {
             (0..batches).into_par_iter().for_each(|batch| {
                 let skip = batch * UNREF_ACCOUNTS_BATCH_SIZE;
                 self.accounts_index.scan(
+                    &self.shrink_stats,
                     pubkeys
                         .clone()
                         .skip(skip)
@@ -9216,6 +9227,7 @@ impl AccountsDb {
         let mut removed_rent_paying = 0;
         let mut removed_top_off = 0;
         self.accounts_index.scan(
+            &self.shrink_stats,
             pubkeys.iter(),
             |pubkey, slots_refs, _entry| {
                 if let Some((slot_list, _ref_count)) = slots_refs {
