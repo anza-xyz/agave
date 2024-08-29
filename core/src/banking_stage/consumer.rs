@@ -665,7 +665,6 @@ impl Consumer {
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
-        execute_and_commit_timings.last_blockhash_us = 0;
 
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
