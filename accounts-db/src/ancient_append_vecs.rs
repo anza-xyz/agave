@@ -491,7 +491,6 @@ impl AccountsDb {
         self.thread_pool_clean.install(|| {
             accounts_to_combine.into_par_iter().for_each(|combine| {
                 self.accounts_index.scan(
-                    &self.shrink_stats,
                     combine.unrefed_pubkeys.into_iter(),
                     |_pubkey, _slots_refs, entry| {
                         if let Some(entry) = entry {
@@ -3887,7 +3886,6 @@ pub mod tests {
             };
             db.addref_accounts_failed_to_shrink_ancient(accounts_to_combine.accounts_to_combine);
             db.accounts_index.scan(
-                &db.shrink_stats,
                 unrefed_pubkeys.iter(),
                 |k, slot_refs, _entry| {
                     assert_eq!(expected_ref_counts.remove(k).unwrap(), slot_refs.unwrap().1);
