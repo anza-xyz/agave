@@ -12,8 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: main
-          fetch-depth: 0
+          ref: master
       - name: Run script
         shell: bash
         env:
