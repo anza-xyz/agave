@@ -8,6 +8,7 @@ use {
             TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
+        account_saver::collect_accounts_to_store,
         message_processor::MessageProcessor,
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
@@ -271,7 +272,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch
         });
 
-        let accounts_cache = load_accounts(
+        let mut accounts_map = load_accounts(
             callbacks,
             sanitized_txs,
             &check_results,
@@ -282,7 +283,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .feature_set
             .is_active(&enable_transaction_loading_failure_fees::id());
 
-        for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
+        for (tx, check_result) in sanitized_txs.into_iter().zip(check_results) {
             let validate_result = check_result.and_then(|tx_details| {
                 // XXX this shouldnt take callback or override
                 self.validate_transaction_fee_payer(
@@ -302,7 +303,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
 
             let load_result = load_transaction(
-                &accounts_cache,
+                &accounts_map,
                 tx,
                 validate_result,
                 &mut error_metrics,
@@ -333,7 +334,20 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         config,
                     );
 
-                    // XXX FIXME need to code the thing to update the accounts map. also handle nonces
+                    // XXX TODO FIXME im going to go INSANE. first off, i really dont want to clone executed_tx
+                    // second off WHY do we lose type specificity at some point??? im passing `sanitized_tx here` (wrongly)
+                    // because if i try to create &[tx] it tells me
+                    // "the trait `SVMMessage` is not implemented for `&impl SVMTransaction`"
+                    // which i dont understand because the exact same type signature is used for `load_accounts()` et al
+                    // i guess it becomes a reference with the `iter()` call? but `into_iter()` doesnt change it
+                    let processing_results = [Ok(ProcessedTransaction::Executed(Box::new(
+                        executed_tx.clone(),
+                    )))];
+                    let (update_accounts, _) =
+                        collect_accounts_to_store(sanitized_txs, &processing_results);
+                    for (pubkey, account) in update_accounts {
+                        accounts_map.insert(*pubkey, account.clone());
+                    }
 
                     // Update batch specific cache of the loaded programs with the modifications
                     // made by the transaction, if it executed successfully.
@@ -341,7 +355,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
                     }
 
-                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                    Ok(ProcessedTransaction::Executed(Box::new(
+                        executed_tx.clone(),
+                    )))
                 }
             };
 
@@ -424,6 +440,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_address = message.fee_payer();
 
+        // XXX we CANNOT use the callback here, we MUST use the hashmap
         let fee_payer_account = account_overrides
             .and_then(|overrides| overrides.get(fee_payer_address).cloned())
             .or_else(|| callbacks.get_account_shared_data(fee_payer_address));
@@ -471,6 +488,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             rent_collector,
             fee_details.total_fee(),
         )?;
+
+        // XXX i need to do some kind of nonce validation here
+        // we are switching to hashmap so, i think we just check "is actual nonce data same as rollback nonce data"
+        // if so, we already used it, and should drop the transaction. perhaps charging fees or not, dunno
 
         // Capture fee-subtracted fee payer account and next nonce account state
         // to commit if transaction execution fails.

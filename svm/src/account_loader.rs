@@ -207,7 +207,11 @@ pub fn validate_fee_payer(
 //
 // the other thing to remember is the program cache tests. do i need to change the framework for that at all?
 // hm. i believe i need a mechanism to forward the cache to the next state... ugh
-
+//
+// XXX ok new day new me. i started writing the update function this week but wanted to reuse the saver fns
+// but they mutated the rollback accounts. so i started another pr to roll nonces earlier
+// i am pretty sure that is almost through code review now! so i can use the saver fn now
+// i think i can just use the collect accounts function directly actually? lol so simple
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
