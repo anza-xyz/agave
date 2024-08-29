@@ -581,8 +581,7 @@ impl ReplayStage {
                     Err(err) => {
                         error!(
                             "Unable to load new tower when attempting to change identity from {} \
-                             to {} on
-                            ReplayStage startup, Exiting: {}",
+                             to {} on ReplayStage startup, Exiting: {}",
                             my_old_pubkey, my_pubkey, err
                         );
                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
@@ -1037,8 +1036,7 @@ impl ReplayStage {
                                 Err(err) => {
                                     error!(
                                         "Unable to load new tower when attempting to change \
-                                         identity
-                                        from {} to {} on set-identity, Exiting: {}",
+                                         identity from {} to {} on set-identity, Exiting: {}",
                                         my_old_pubkey, my_pubkey, err
                                     );
                                     // drop(_exit) will set the exit flag, eventually tearing down the entire process
@@ -1213,9 +1211,8 @@ impl ReplayStage {
             Ok(tower) => Ok(tower),
             Err(err) if err.is_file_missing() => {
                 warn!(
-                    "Failed to load tower, file missing for {}: {}. Creating a new tower from \
-                     bankforks.",
-                    node_pubkey, err
+                    "Failed to load tower, file missing for {node_pubkey}: {err}. Creating a new \
+                     tower from bankforks."
                 );
                 Ok(Tower::new_from_bankforks(
                     &bank_forks.read().unwrap(),
@@ -1225,9 +1222,8 @@ impl ReplayStage {
             }
             Err(err) if err.is_too_old() => {
                 warn!(
-                    "Failed to load tower, too old for {}: {}. Creating a new tower from \
-                     bankforks.",
-                    node_pubkey, err
+                    "Failed to load tower, too old for {node_pubkey}: {err}. Creating a new tower \
+                     from bankforks."
                 );
                 Ok(Tower::new_from_bankforks(
                     &bank_forks.read().unwrap(),
@@ -1751,9 +1747,8 @@ impl ReplayStage {
                 // will be handled in the next round of repair/replay - so we just clear the dead
                 // flag for now.
                 warn!(
-                    "not purging descendant {} of slot {} as it is dead. resetting dead flag \
-                     instead",
-                    slot, duplicate_slot
+                    "not purging descendant {slot} of slot {duplicate_slot} as it is dead. \
+                     resetting dead flag instead"
                 );
                 // Clear the "dead" flag allowing ReplayStage to start replaying
                 // this slot once the parent is repaired
@@ -2551,9 +2546,8 @@ impl ReplayStage {
         {
             None => {
                 warn!(
-                    "The authorized keypair {} for vote account {} is not available.  Unable to \
-                     vote",
-                    authorized_voter_pubkey, vote_account_pubkey
+                    "The authorized keypair {authorized_voter_pubkey} for vote account \
+                     {vote_account_pubkey} is not available.  Unable to vote"
                 );
                 return GenerateVoteTxResult::NonVoting;
             }

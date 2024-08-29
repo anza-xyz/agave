@@ -561,8 +561,7 @@ impl AncestorHashesService {
                         // so we can upgrade it to `repairable_dead_slot_pool`.
                         info!(
                             "{pruned_slot} is part of a popular pruned fork however we previously \
-                             marked it as dead.
-                            Upgrading as dead duplicate confirmed"
+                             marked it as dead. Upgrading as dead duplicate confirmed"
                         );
                         dead_slot_pool.remove(&pruned_slot);
                         repairable_dead_slot_pool.insert(pruned_slot);
@@ -573,9 +572,8 @@ impl AncestorHashesService {
                         // and then marked dead duplicate confirmed.
                         info!(
                             "Received pruned duplicate confirmed status for {pruned_slot} that \
-                             was previously marked
-                            dead duplicate confirmed. Ignoring and processing it as dead duplicate \
-                             confirmed."
+                             was previously marked dead duplicate confirmed. Ignoring and \
+                             processing it as dead duplicate confirmed."
                         );
                     } else {
                         popular_pruned_slot_pool.insert(pruned_slot);

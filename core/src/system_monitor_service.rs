@@ -470,7 +470,7 @@ impl SystemMonitorService {
                         if current_value < recommended_value =>
                     {
                         warn!(
-                            "  {key}: recommended={recommended_value} current={current_value}, \
+                            "  {key}: recommended={recommended_value}, current={current_value} \
                              too small"
                         );
                         false

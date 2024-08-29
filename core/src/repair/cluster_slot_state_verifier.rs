@@ -457,8 +457,7 @@ fn check_epoch_slots_hash_against_bank_status(
             // The cluster sample found the troublesome slot which caused this fork to be pruned
             warn!(
                 "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, but \
-                 we
-                have pruned it due to incorrect ancestry"
+                 we have pruned it due to incorrect ancestry"
             );
         }
     }
@@ -645,8 +644,8 @@ fn on_epoch_slots_frozen(
         if let Some(duplicate_confirmed_hash) = duplicate_confirmed_hash {
             if epoch_slots_frozen_hash != duplicate_confirmed_hash {
                 warn!(
-                    "EpochSlots sample returned slot {} with hash {}, but we already saw
-                duplicate confirmation on hash: {:?}",
+                    "EpochSlots sample returned slot {} with hash {}, but we already saw \
+                     duplicate confirmation on hash: {:?}",
                     slot, epoch_slots_frozen_hash, duplicate_confirmed_hash
                 );
             }

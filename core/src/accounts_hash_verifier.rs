@@ -266,9 +266,12 @@ impl AccountsHashVerifier {
                     else {
                         panic!(
                             "incremental snapshot requires accounts hash and capitalization from \
-                             the full snapshot it is based on \npackage: {accounts_package:?} \
-                             \naccounts hashes: {:?} \nincremental accounts hashes: {:?} \nfull \
-                             snapshot archives: {:?} \nbank snapshots: {:?}",
+                             the full snapshot it is based on\n\
+                             package: {accounts_package:?}\n\
+                             accounts hashes: {:?}\n\
+                             incremental accounts hashes: {:?}\n\
+                             full snapshot archives: {:?}\n\
+                             bank snapshots: {:?}",
                             accounts_db.get_accounts_hashes(),
                             accounts_db.get_incremental_accounts_hashes(),
                             snapshot_utils::get_full_snapshot_archives(
