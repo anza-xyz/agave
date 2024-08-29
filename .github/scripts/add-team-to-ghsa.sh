@@ -30,5 +30,6 @@ while IFS= read -r ghsa_id; do
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "/repos/$github_org/$github_repo/security-advisories/$ghsa_id" \
-        -f "collaborating_teams[]=$team_to_add_slug" $original_collaborating_team_slugs
+        -f "collaborating_teams[]=$team_to_add_slug" $original_collaborating_team_slugs \
+        > /dev/null 2>&1
 done <<< "$ghsa_without_team"
