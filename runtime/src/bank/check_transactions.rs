@@ -250,9 +250,16 @@ mod tests {
         ));
         let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
         let nonce_data = get_nonce_data_from_account(&nonce_account).unwrap();
+
+        let lamports_per_signature = nonce_data.get_lamports_per_signature();
+        let mut expected_nonce_info = NonceInfo::new(nonce_pubkey, nonce_account);
+        expected_nonce_info
+            .try_advance_nonce(bank.next_durable_nonce(), lamports_per_signature)
+            .unwrap();
+
         assert_eq!(
-            bank.check_and_load_message_nonce_account(&message, &bank.next_durable_nonce()),
-            Some((NonceInfo::new(nonce_pubkey, nonce_account), nonce_data))
+            bank.check_load_and_advance_message_nonce_account(&message, &bank.next_durable_nonce()),
+            Some((expected_nonce_info, lamports_per_signature)),
         );
     }
 
@@ -280,7 +287,7 @@ mod tests {
             &nonce_hash,
         ));
         assert!(bank
-            .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
+            .check_load_and_advance_message_nonce_account(&message, &bank.next_durable_nonce())
             .is_none());
     }
 
@@ -309,7 +316,7 @@ mod tests {
         );
         message.instructions[0].accounts.clear();
         assert!(bank
-            .check_and_load_message_nonce_account(
+            .check_load_and_advance_message_nonce_account(
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
             )
@@ -342,7 +349,7 @@ mod tests {
             &nonce_hash,
         ));
         assert!(bank
-            .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
+            .check_load_and_advance_message_nonce_account(&message, &bank.next_durable_nonce())
             .is_none());
     }
 
@@ -369,7 +376,7 @@ mod tests {
             &Hash::default(),
         ));
         assert!(bank
-            .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
+            .check_load_and_advance_message_nonce_account(&message, &bank.next_durable_nonce())
             .is_none());
     }
 }

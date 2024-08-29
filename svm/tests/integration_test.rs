@@ -45,6 +45,7 @@ const DEPLOYMENT_SLOT: u64 = 0;
 const EXECUTION_SLOT: u64 = 5; // The execution slot must be greater than the deployment slot
 const EXECUTION_EPOCH: u64 = 2; // The execution epoch must be greater than the deployment epoch
 const LAMPORTS_PER_SIGNATURE: u64 = 5000;
+const LAST_BLOCKHASH: Hash = Hash::new_from_array([7; 32]); // Arbitrary constant hash for advancing nonces
 
 pub type AccountsMap = HashMap<Pubkey, AccountSharedData>;
 
@@ -137,17 +138,26 @@ impl SvmTestEntry {
     }
 
     // convenience function that adds a nonce transaction that is expected to succeed
+    // we accept the prior nonce state and advance it for the check status, since this happens before svm
     pub fn push_nonce_transaction(&mut self, transaction: Transaction, nonce_info: NonceInfo) {
         self.push_nonce_transaction_with_status(transaction, nonce_info, ExecutionStatus::Succeeded)
     }
 
     // convenience function that adds a nonce transaction with an expected execution status
+    // we accept the prior nonce state and advance it for the check status, since this happens before svm
     pub fn push_nonce_transaction_with_status(
         &mut self,
         transaction: Transaction,
-        nonce_info: NonceInfo,
+        mut nonce_info: NonceInfo,
         status: ExecutionStatus,
     ) {
+        nonce_info
+            .try_advance_nonce(
+                DurableNonce::from_blockhash(&LAST_BLOCKHASH),
+                LAMPORTS_PER_SIGNATURE,
+            )
+            .unwrap();
+
         self.transaction_batch.push(TransactionBatchItem {
             transaction,
             asserts: TransactionBatchItemAsserts {
@@ -696,10 +706,11 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
 
         nonce_info
             .try_advance_nonce(
-                DurableNonce::from_blockhash(&Hash::default()),
+                DurableNonce::from_blockhash(&LAST_BLOCKHASH),
                 LAMPORTS_PER_SIGNATURE,
             )
             .unwrap();
+
         test_entry
             .final_accounts
             .get_mut(nonce_info.address())
@@ -740,10 +751,11 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
 
         nonce_info
             .try_advance_nonce(
-                DurableNonce::from_blockhash(&Hash::default()),
+                DurableNonce::from_blockhash(&LAST_BLOCKHASH),
                 LAMPORTS_PER_SIGNATURE,
             )
             .unwrap();
+
         test_entry
             .final_accounts
             .get_mut(nonce_info.address())
@@ -769,10 +781,11 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
 
             nonce_info
                 .try_advance_nonce(
-                    DurableNonce::from_blockhash(&Hash::default()),
+                    DurableNonce::from_blockhash(&LAST_BLOCKHASH),
                     LAMPORTS_PER_SIGNATURE,
                 )
                 .unwrap();
+
             test_entry
                 .final_accounts
                 .get_mut(nonce_info.address())
@@ -866,6 +879,7 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     }
 
     let processing_environment = TransactionProcessingEnvironment {
+        blockhash: LAST_BLOCKHASH,
         feature_set: feature_set.into(),
         lamports_per_signature: LAMPORTS_PER_SIGNATURE,
         ..TransactionProcessingEnvironment::default()

@@ -224,6 +224,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
+    // XXX OK WHEN BACK need to fix svm integration and bank tests
+
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
@@ -1010,7 +1012,7 @@ mod tests {
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
-            nonce,
+            nonce::{self, state::DurableNonce},
             rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
             rent_debits::RentDebits,
             reserved_account_keys::ReservedAccountKeys,
@@ -1896,7 +1898,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -1975,7 +1976,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2027,7 +2027,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2062,7 +2061,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2101,7 +2099,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2138,7 +2135,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2171,7 +2167,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
-            &DurableNonce::default(),
             &mut error_counters,
         );
 
@@ -2241,7 +2236,6 @@ mod tests {
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
-                &durable_nonce,
                 &mut error_counters,
             );
 
@@ -2304,7 +2298,6 @@ mod tests {
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
-                &DurableNonce::default(),
                 &mut error_counters,
             );
 
@@ -2359,7 +2352,6 @@ mod tests {
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
-            &DurableNonce::default(),
             &mut error_counters,
         );
         assert!(

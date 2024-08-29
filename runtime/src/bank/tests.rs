@@ -5733,7 +5733,7 @@ fn test_check_ro_durable_nonce_fails() {
         Err(TransactionError::BlockhashNotFound)
     );
     assert_eq!(
-        bank.check_and_load_message_nonce_account(
+        bank.check_load_and_advance_message_nonce_account(
             &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
         ),
