@@ -1,6 +1,9 @@
 use {
     crate::{transaction_data::TransactionData, transaction_view::TransactionView},
-    core::fmt::{Debug, Formatter},
+    core::{
+        fmt::{Debug, Formatter},
+        ops::Deref,
+    },
     solana_sdk::{
         bpf_loader_upgradeable, ed25519_program,
         hash::Hash,
@@ -24,6 +27,14 @@ pub struct ResolvedTransactionView<D: TransactionData> {
     resolved_addresses: LoadedAddresses,
     /// A cache for whether an address is writable.
     writable_cache: Vec<bool>, // TODO: should this be a vec, bitset, or array[256].
+}
+
+impl<D: TransactionData> Deref for ResolvedTransactionView<D> {
+    type Target = TransactionView<true, D>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
 }
 
 impl<D: TransactionData> Debug for ResolvedTransactionView<D> {
