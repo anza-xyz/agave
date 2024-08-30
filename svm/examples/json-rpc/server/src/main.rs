@@ -16,6 +16,7 @@ use {
 
 pub mod rpc_process;
 pub mod rpc_service;
+pub mod svm_bridge;
 
 fn main() {
     env_logger::init();

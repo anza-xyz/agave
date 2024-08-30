@@ -1,4 +1,8 @@
 use {
+    crate::svm_bridge::{
+        create_executable_environment, LoadAndExecuteTransactionsOutput, MockBankCallback,
+        MockForkGraph, TransactionBatch,
+    },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::config::Options,
     jsonrpc_core::{types::error, Error, Metadata, Result},
@@ -10,59 +14,30 @@ use {
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
-    solana_accounts_db::{
-        accounts::Accounts,
-        accounts_db::{self, AccountsDb, AccountsDbConfig},
-        accounts_index::{AccountsIndexConfig, IndexLimitMb},
-        ancestors::Ancestors,
-        blockhash_queue::BlockhashQueue,
-        partitioned_rewards::TestPartitionedEpochRewards,
-        utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
-    },
-    solana_bpf_loader_program::syscalls::{
-        SyscallAbort, SyscallGetClockSysvar, SyscallInvokeSignedRust, SyscallLog,
-        SyscallLogBpfComputeUnits, SyscallLogPubkey, SyscallLogU64, SyscallMemcpy, SyscallMemset,
-        SyscallSetReturnData,
-    },
+    solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_perf::packet::PACKET_DATA_SIZE,
-    solana_program_runtime::{
-        invoke_context::InvokeContext,
-        loaded_programs::{
-            BlockRelation, ForkGraph, LoadProgramMetrics, ProgramCacheEntry,
-            ProgramRuntimeEnvironments,
-        },
-        solana_rbpf::{
-            program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
-            vm::Config,
-        },
-    },
+    solana_program_runtime::loaded_programs::ProgramCacheEntry,
     solana_rpc_client_api::{
         config::*,
         response::{Response as RpcResponse, *},
     },
     solana_sdk::{
         account::{from_account, Account, AccountSharedData, ReadableAccount},
-        clock::{
-            Clock, Epoch, Slot, UnixTimestamp, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
-        },
+        clock::{Epoch, Slot, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
         commitment_config::CommitmentConfig,
         exit::Exit,
-        feature_set::FeatureSet,
         hash::Hash,
         inner_instruction::InnerInstructions,
         message::{
             v0::{LoadedAddresses, MessageAddressTableLookup},
-            AccountKeys, AddressLoaderError,
+            AddressLoaderError,
         },
-        native_loader,
         nonce::state::DurableNonce,
         pubkey::Pubkey,
         reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
-        slot_history::{Check, SlotHistory},
-        system_instruction,
-        sysvar::{self, SysvarId},
+        system_instruction, sysvar,
         transaction::{
             AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
             VersionedTransaction,
@@ -73,10 +48,8 @@ use {
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         account_overrides::AccountOverrides,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::{
-            ProcessedTransaction, TransactionProcessingResult,
-            TransactionProcessingResultExtensions,
+            ProcessedTransaction, TransactionProcessingResultExtensions,
         },
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionLogMessages,
@@ -101,26 +74,21 @@ use {
         cmp::min,
         collections::{HashMap, HashSet},
         fs,
-        path::{Path, PathBuf},
+        path::PathBuf,
         str::FromStr,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
         },
-        time::{SystemTime, UNIX_EPOCH},
     },
 };
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 
-const DEPLOYMENT_SLOT: u64 = 0;
 const EXECUTION_SLOT: u64 = 5; // The execution slot must be greater than the deployment slot
-const DEPLOYMENT_EPOCH: u64 = 0;
 const EXECUTION_EPOCH: u64 = 2; // The execution epoch must be greater than the deployment epoch
 const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
-
-const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10485760;
 
 fn new_response<T>(slot: Slot, value: T) -> RpcResponse<T> {
     RpcResponse {
@@ -141,22 +109,9 @@ pub struct JsonRpcConfig {
 #[derive(Clone)]
 pub struct JsonRpcRequestProcessor {
     account_map: Vec<(Pubkey, AccountSharedData)>,
-    accounts: Arc<RwLock<Accounts>>,
-    ancestors: Ancestors,
     #[allow(dead_code)]
     exit: Arc<RwLock<Exit>>,
     transaction_processor: Arc<RwLock<TransactionBatchProcessor<MockForkGraph>>>,
-}
-
-struct LoadAndExecuteTransactionsOutput {
-    // Vector of results indicating whether a transaction was executed or could not
-    // be executed. Note executed transactions can still have failed!
-    pub processing_results: Vec<TransactionProcessingResult>,
-}
-
-struct TransactionBatch<'a> {
-    lock_results: Vec<solana_sdk::transaction::Result<()>>,
-    sanitized_txs: std::borrow::Cow<'a, [SanitizedTransaction]>,
 }
 
 struct TransactionSimulationResult {
@@ -215,72 +170,6 @@ pub struct TransactionLogCollector {
     pub mentioned_address_map: HashMap<Pubkey, Vec<usize>>,
 }
 
-struct MockForkGraph {}
-
-impl ForkGraph for MockForkGraph {
-    fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
-        match a.cmp(&b) {
-            std::cmp::Ordering::Less => BlockRelation::Ancestor,
-            std::cmp::Ordering::Equal => BlockRelation::Equal,
-            std::cmp::Ordering::Greater => BlockRelation::Descendant,
-        }
-    }
-}
-
-pub struct MockBankCallback {
-    feature_set: Arc<FeatureSet>,
-    pub account_shared_data: RwLock<HashMap<Pubkey, AccountSharedData>>,
-}
-
-impl TransactionProcessingCallback for MockBankCallback {
-    fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-        if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
-            if data.lamports() == 0 {
-                None
-            } else {
-                owners.iter().position(|entry| data.owner() == entry)
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        debug!(
-            "Get account {pubkey} shared data, thread {:?}",
-            std::thread::current().name()
-        );
-        self.account_shared_data
-            .read()
-            .unwrap()
-            .get(pubkey)
-            .cloned()
-    }
-
-    fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let account_data = native_loader::create_loadable_account_with_fields(name, (5000, 0));
-
-        self.account_shared_data
-            .write()
-            .unwrap()
-            .insert(*program_id, account_data);
-    }
-}
-
-impl MockBankCallback {
-    pub fn new(account_map: Vec<(Pubkey, AccountSharedData)>) -> Self {
-        Self {
-            feature_set: Arc::new(FeatureSet::default()),
-            account_shared_data: RwLock::new(HashMap::from_iter(account_map)),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn override_feature_set(&mut self, new_set: FeatureSet) {
-        self.feature_set = Arc::new(new_set)
-    }
-}
-
 impl AddressLoader for JsonRpcRequestProcessor {
     fn load_addresses(
         self,
@@ -293,61 +182,13 @@ impl AddressLoader for JsonRpcRequestProcessor {
     }
 }
 
-impl<'a> TransactionBatch<'a> {
-    pub fn new(
-        lock_results: Vec<solana_sdk::transaction::Result<()>>,
-        sanitized_txs: std::borrow::Cow<'a, [SanitizedTransaction]>,
-    ) -> Self {
-        assert_eq!(lock_results.len(), sanitized_txs.len());
-        Self {
-            lock_results,
-            sanitized_txs,
-        }
-    }
-
-    pub fn lock_results(&self) -> &Vec<solana_sdk::transaction::Result<()>> {
-        &self.lock_results
-    }
-
-    pub fn sanitized_transactions(&self) -> &[SanitizedTransaction] {
-        &self.sanitized_txs
-    }
-}
-
 impl Metadata for JsonRpcRequestProcessor {}
 
 impl JsonRpcRequestProcessor {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(config: JsonRpcConfig, exit: Arc<RwLock<Exit>>) -> Self {
-        let ledger_path = config.ledger_path.clone();
         let accounts_json_path = config.accounts_path.clone();
-        let account_paths = vec![ledger_path.join("accounts")];
-        let accounts_db_config = Some(Self::get_accounts_db_config(&ledger_path));
-
-        let (account_paths, _account_snapshot_paths) =
-            create_all_accounts_run_and_snapshot_dirs(&account_paths).unwrap();
-
-        let genesis_config = solana_accounts_db::hardened_unpack::open_genesis_config(
-            &ledger_path,
-            MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        )
-        .unwrap();
-
-        let exit_bool = Arc::new(AtomicBool::new(false));
-
         let accounts_data: String = fs::read_to_string(accounts_json_path).unwrap();
         let accounts_data: serde_json::Value = serde_json::from_str(&accounts_data).unwrap();
-
-        let accounts_db = AccountsDb::new_with_config(
-            account_paths,
-            &genesis_config.cluster_type,
-            solana_accounts_db::accounts_index::AccountSecondaryIndexes::default(),
-            accounts_db::AccountShrinkThreshold::default(),
-            accounts_db_config,
-            None,
-            exit_bool,
-        );
-
         let accounts_slice: Vec<(Pubkey, AccountSharedData)> = accounts_data["accounts"]
             .as_array()
             .unwrap()
@@ -367,8 +208,6 @@ impl JsonRpcRequestProcessor {
                 (pubkey, acc_data)
             })
             .collect();
-        let accounts = Accounts::new(Arc::new(accounts_db));
-        let ancestors = Ancestors::from(vec![EXECUTION_SLOT]);
         let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
             EXECUTION_SLOT,
             EXECUTION_EPOCH,
@@ -377,52 +216,8 @@ impl JsonRpcRequestProcessor {
 
         Self {
             account_map: accounts_slice,
-            accounts: Arc::new(RwLock::new(accounts)),
-            ancestors,
             exit,
             transaction_processor: Arc::new(RwLock::new(batch_processor)),
-        }
-    }
-
-    fn get_accounts_db_config(ledger_path: &Path) -> AccountsDbConfig {
-        let ledger_tool_ledger_path = ledger_path.join("ledger_tool");
-
-        let accounts_index_bins = None;
-        let accounts_index_index_limit_mb = IndexLimitMb::Unlimited;
-        let accounts_index_drives = vec![ledger_tool_ledger_path.join("accounts_index")];
-        let accounts_index_config = AccountsIndexConfig {
-            bins: accounts_index_bins,
-            index_limit_mb: accounts_index_index_limit_mb,
-            drives: Some(accounts_index_drives),
-            ..AccountsIndexConfig::default()
-        };
-
-        let test_partitioned_epoch_rewards = TestPartitionedEpochRewards::None;
-
-        let accounts_hash_cache_path =
-            ledger_tool_ledger_path.join(AccountsDb::DEFAULT_ACCOUNTS_HASH_CACHE_DIR);
-        let accounts_hash_cache_path =
-            create_and_canonicalize_directories([&accounts_hash_cache_path])
-                .unwrap_or_else(|err| {
-                    eprintln!(
-                        "Unable to access accounts hash cache path '{}': {err}",
-                        accounts_hash_cache_path.display(),
-                    );
-                    std::process::exit(1);
-                })
-                .pop()
-                .unwrap();
-
-        AccountsDbConfig {
-            index: Some(accounts_index_config),
-            base_working_path: Some(ledger_tool_ledger_path),
-            accounts_hash_cache_path: Some(accounts_hash_cache_path),
-            ancient_append_vec_offset: None,
-            exhaustively_verify_refcounts: false,
-            skip_initial_hash_calc: false,
-            test_partitioned_epoch_rewards,
-            test_skip_rewrites_but_include_in_bank_hash: false,
-            ..AccountsDbConfig::default()
         }
     }
 
@@ -483,7 +278,7 @@ impl JsonRpcRequestProcessor {
 
         let account_keys = transaction.message().account_keys();
         let number_of_accounts = account_keys.len();
-        let account_overrides = self.get_account_overrides_for_simulation(&account_keys);
+        let account_overrides = AccountOverrides::default();
 
         let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
 
@@ -580,34 +375,6 @@ impl JsonRpcRequestProcessor {
             return_data,
             inner_instructions,
         }
-    }
-
-    fn get_account_overrides_for_simulation(&self, account_keys: &AccountKeys) -> AccountOverrides {
-        let mut account_overrides = AccountOverrides::default();
-        let slot_history_id = sysvar::slot_history::id();
-        if account_keys.iter().any(|pubkey| *pubkey == slot_history_id) {
-            let current_account = self
-                .accounts
-                .read()
-                .unwrap()
-                .load_with_fixed_root(&self.ancestors, &slot_history_id)
-                .map(|(acc, _slot)| acc);
-            let slot_history = current_account
-                .as_ref()
-                .map(|account| from_account::<SlotHistory, _>(account).unwrap())
-                .unwrap_or_default();
-            if slot_history.check(EXECUTION_SLOT) == Check::Found {
-                if let Some((account, _)) = self
-                    .accounts
-                    .read()
-                    .unwrap()
-                    .load_with_fixed_root(&self.ancestors, &slot_history_id)
-                {
-                    account_overrides.set_slot_history(Some(account));
-                }
-            }
-        }
-        account_overrides
     }
 
     fn prepare_unlocked_batch_from_single_tx<'a>(
@@ -762,7 +529,6 @@ impl JsonRpcRequestProcessor {
         (last_hash, last_lamports_per_signature)
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn load_and_execute_transactions(
         &self,
         bank: &MockBankCallback,
@@ -792,11 +558,6 @@ impl JsonRpcRequestProcessor {
             rent_collector: None,
         };
 
-        debug!(
-            "Starting load and execute sanitized transactions in thread {:?}",
-            std::thread::current().name()
-        );
-
         let sanitized_output = self
             .transaction_processor
             .read()
@@ -808,11 +569,6 @@ impl JsonRpcRequestProcessor {
                 &processing_environment,
                 &processing_config,
             );
-
-        debug!(
-            "Execution results {:?}",
-            sanitized_output.processing_results
-        );
 
         let err_count = &mut error_counters.total;
 
@@ -1063,137 +819,6 @@ pub fn create_exit(exit: Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
     let mut exit_handler = Exit::default();
     exit_handler.register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
     Arc::new(RwLock::new(exit_handler))
-}
-
-fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
-    let compute_budget = ComputeBudget::default();
-    let vm_config = Config {
-        max_call_depth: compute_budget.max_call_depth,
-        stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true,
-        enable_stack_frame_gaps: true,
-        instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
-        enable_instruction_tracing: true,
-        enable_symbol_and_section_labels: true,
-        reject_broken_elfs: true,
-        noop_instruction_rate: 256,
-        sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: false,
-        reject_callx_r10: false,
-        enable_sbpf_v1: true,
-        enable_sbpf_v2: false,
-        optimize_rodata: false,
-        aligned_memory_mapping: true,
-    };
-
-    // Register system calls that the compiled contract calls during execution.
-    let mut function_registry = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
-    function_registry
-        .register_function_hashed(*b"abort", SyscallAbort::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_", SyscallLog::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_64_", SyscallLogU64::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_compute_units_", SyscallLogBpfComputeUnits::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_log_pubkey", SyscallLogPubkey::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_memcpy_", SyscallMemcpy::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_memset_", SyscallMemset::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_set_return_data", SyscallSetReturnData::vm)
-        .expect("Registration failed");
-    function_registry
-        .register_function_hashed(*b"sol_get_clock_sysvar", SyscallGetClockSysvar::vm)
-        .expect("Registration failed");
-    BuiltinProgram::new_loader(vm_config, function_registry)
-}
-
-fn create_executable_environment(
-    fork_graph: Arc<RwLock<MockForkGraph>>,
-    account_keys: &AccountKeys,
-    mock_bank: &mut MockBankCallback,
-    transaction_processor: &TransactionBatchProcessor<MockForkGraph>,
-) {
-    let mut program_cache = transaction_processor.program_cache.write().unwrap();
-
-    program_cache.environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(create_custom_environment()),
-        // We are not using program runtime v2
-        program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
-            Config::default(),
-            FunctionRegistry::default(),
-        )),
-    };
-
-    program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
-    // add programs to cache
-    for key in account_keys.iter() {
-        if let Some(account) = mock_bank.get_account_shared_data(key) {
-            if account.executable() && *account.owner() == solana_sdk::bpf_loader_upgradeable::id()
-            {
-                let data = account.data();
-                let program_data_account_key = Pubkey::try_from(data[4..].to_vec()).unwrap();
-                let program_data_account = mock_bank
-                    .get_account_shared_data(&program_data_account_key)
-                    .unwrap();
-                let program_data = program_data_account.data();
-                let elf_bytes = program_data[45..].to_vec();
-
-                let program_runtime_environment =
-                    program_cache.environments.program_runtime_v1.clone();
-                program_cache.assign_program(
-                    *key,
-                    Arc::new(
-                        ProgramCacheEntry::new(
-                            &solana_sdk::bpf_loader_upgradeable::id(),
-                            program_runtime_environment,
-                            0,
-                            0,
-                            &elf_bytes,
-                            elf_bytes.len(),
-                            &mut LoadProgramMetrics::default(),
-                        )
-                        .unwrap(),
-                    ),
-                );
-            }
-        }
-    }
-
-    // We must fill in the sysvar cache entries
-    let time_now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs() as i64;
-    let clock = Clock {
-        slot: DEPLOYMENT_SLOT,
-        epoch_start_timestamp: time_now.saturating_sub(10) as UnixTimestamp,
-        epoch: DEPLOYMENT_EPOCH,
-        leader_schedule_epoch: DEPLOYMENT_EPOCH,
-        unix_timestamp: time_now as UnixTimestamp,
-    };
-
-    let mut account_data = AccountSharedData::default();
-    account_data.set_data_from_slice(bincode::serialize(&clock).unwrap().as_slice());
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(Clock::id(), account_data);
 }
 
 fn decode_and_deserialize<T>(
