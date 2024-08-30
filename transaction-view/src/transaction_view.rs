@@ -26,14 +26,6 @@ pub struct TransactionView<const SANITIZED: bool, D: TransactionData> {
     frame: TransactionFrame,
 }
 
-impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITIZED, D> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TransactionView")
-            .field("frame", &self.frame)
-            .finish()
-    }
-}
-
 impl<D: TransactionData> TransactionView<false, D> {
     /// Creates a new `TransactionView` without running sanitization checks.
     pub fn try_new_unsanitized(data: D) -> Result<Self> {
@@ -182,6 +174,21 @@ impl<D: TransactionData> TransactionView<true, D> {
             let program_id = &self.static_account_keys()[program_id_index];
             (program_id, ix)
         })
+    }
+}
+
+// Manual implementation of `Debug` - avoids bound on `D`.
+// Prints nicely formatted struct-ish fields even for the iterator fields.
+impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITIZED, D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TransactionView")
+            .field("frame", &self.frame)
+            .field("signatures", &self.signatures())
+            .field("static_account_keys", &self.static_account_keys())
+            .field("recent_blockhash", &self.recent_blockhash())
+            .field("instructions", &self.instructions_iter())
+            .field("address_table_lookups", &self.address_table_lookup_iter())
+            .finish()
     }
 }
 

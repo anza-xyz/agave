@@ -37,14 +37,6 @@ impl<D: TransactionData> Deref for ResolvedTransactionView<D> {
     }
 }
 
-impl<D: TransactionData> Debug for ResolvedTransactionView<D> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResolvedTransactionView")
-            .field("view", &self.view)
-            .finish()
-    }
-}
-
 impl<D: TransactionData> ResolvedTransactionView<D> {
     /// Given a parsed and sanitized transaction view, and a set of resolved
     /// addresses, create a resolved transaction view.
@@ -236,6 +228,14 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
 
     fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
         self.view.address_table_lookup_iter()
+    }
+}
+
+impl<D: TransactionData> Debug for ResolvedTransactionView<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedTransactionView")
+            .field("view", &self.view)
+            .finish()
     }
 }
 
