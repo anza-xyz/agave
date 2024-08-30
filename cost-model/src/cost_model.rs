@@ -90,11 +90,11 @@ impl CostModel {
         feature_set: &FeatureSet,
     ) {
         let signatures_count_detail = transaction.message().get_signature_details();
-        tx_cost.num_transaction_signatures = signatures_count_detail.num_transaction_signatures;
+        tx_cost.num_transaction_signatures = signatures_count_detail.num_transaction_signatures();
         tx_cost.num_secp256k1_instruction_signatures =
-            signatures_count_detail.num_secp256k1_instruction_signatures;
+            signatures_count_detail.num_secp256k1_instruction_signatures();
         tx_cost.num_ed25519_instruction_signatures =
-            signatures_count_detail.num_ed25519_instruction_signatures;
+            signatures_count_detail.num_ed25519_instruction_signatures();
 
         let ed25519_verify_cost =
             if feature_set.is_active(&feature_set::ed25519_precompile_verify_strict::id()) {
@@ -104,16 +104,16 @@ impl CostModel {
             };
 
         tx_cost.signature_cost = signatures_count_detail
-            .num_transaction_signatures
+            .num_transaction_signatures()
             .saturating_mul(SIGNATURE_COST)
             .saturating_add(
                 signatures_count_detail
-                    .num_secp256k1_instruction_signatures
+                    .num_secp256k1_instruction_signatures()
                     .saturating_mul(SECP256K1_VERIFY_COST),
             )
             .saturating_add(
                 signatures_count_detail
-                    .num_ed25519_instruction_signatures
+                    .num_ed25519_instruction_signatures()
                     .saturating_mul(ed25519_verify_cost),
             );
     }

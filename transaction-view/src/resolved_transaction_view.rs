@@ -160,11 +160,11 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             }
         }
 
-        TransactionSignatureDetails {
-            num_transaction_signatures: u64::from(self.view.num_required_signatures()),
+        TransactionSignatureDetails::new(
+            u64::from(self.view.num_required_signatures()),
             num_secp256k1_instruction_signatures,
             num_ed25519_instruction_signatures,
-        }
+        )
     }
 }
 
