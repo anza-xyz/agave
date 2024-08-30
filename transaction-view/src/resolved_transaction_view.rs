@@ -53,6 +53,18 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         resolved_addresses: LoadedAddresses,
         reserved_account_keys: &HashSet<Pubkey>, // why does this not use ahash at least?!
     ) -> Self {
+        // verify that the number of readable and writable match up.
+        // This is a basic sanity check to make sure we're not passing a totally
+        // invalid set of resolved addresses.
+        assert_eq!(
+            resolved_addresses.writable.len(),
+            usize::from(view.total_writable_lookup_accounts())
+        );
+        assert_eq!(
+            resolved_addresses.readonly.len(),
+            usize::from(view.total_readonly_lookup_accounts())
+        );
+
         let writable_cache =
             Self::cache_is_writable(&view, &resolved_addresses, reserved_account_keys);
         Self {
@@ -104,7 +116,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             };
 
             // If the key is reserved it cannot be writable.
-            is_writable_cache[index] = is_requested_write && !reserved_account_keys.contains(key);
+            is_writable_cache.push(is_requested_write && !reserved_account_keys.contains(key));
         }
 
         // If the upgradable loader is not present and a key is called as a program
@@ -224,5 +236,247 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
 
     fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
         self.view.address_table_lookup_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::transaction_view::SanitizedTransactionView,
+        solana_sdk::{
+            instruction::CompiledInstruction,
+            message::{
+                v0::{self, MessageAddressTableLookup},
+                MessageHeader, VersionedMessage,
+            },
+            signature::Signature,
+            system_program, sysvar,
+            transaction::VersionedTransaction,
+        },
+    };
+
+    #[test]
+    #[should_panic]
+    fn test_mismatched_loaded_address_lengths() {
+        // Loaded addresses only has 1 writable address, no readonly.
+        // The message ATL has 1 writable and 1 readonly.
+        let static_keys = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let loaded_addresses = LoadedAddresses {
+            writable: vec![Pubkey::new_unique()],
+            readonly: vec![],
+        };
+        let transaction = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                instructions: vec![],
+                account_keys: static_keys,
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![1],
+                }],
+                recent_blockhash: Hash::default(),
+            }),
+        };
+        let bytes = bincode::serialize(&transaction).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+        let _ = ResolvedTransactionView::new(view, loaded_addresses, &HashSet::default());
+    }
+
+    #[test]
+    fn test_is_writable() {
+        let reserved_account_keys = HashSet::from_iter([sysvar::clock::id(), system_program::id()]);
+        // Create a versioned transaction.
+        let create_transaction_with_keys =
+            |static_keys: Vec<Pubkey>, loaded_addresses: &LoadedAddresses| VersionedTransaction {
+                signatures: vec![Signature::default()],
+                message: VersionedMessage::V0(v0::Message {
+                    header: MessageHeader {
+                        num_required_signatures: 1,
+                        num_readonly_signed_accounts: 0,
+                        num_readonly_unsigned_accounts: 1,
+                    },
+                    account_keys: static_keys[..2].to_vec(),
+                    recent_blockhash: Hash::default(),
+                    instructions: vec![],
+                    address_table_lookups: vec![MessageAddressTableLookup {
+                        account_key: Pubkey::new_unique(),
+                        writable_indexes: (0..loaded_addresses.writable.len())
+                            .map(|x| (static_keys.len() + x) as u8)
+                            .collect(),
+                        readonly_indexes: (0..loaded_addresses.readonly.len())
+                            .map(|x| {
+                                (static_keys.len() + loaded_addresses.writable.len() + x) as u8
+                            })
+                            .collect(),
+                    }],
+                }),
+            };
+
+        let key0 = Pubkey::new_unique();
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+        {
+            let static_keys = vec![sysvar::clock::id(), key0];
+            let loaded_addresses = LoadedAddresses {
+                writable: vec![key1],
+                readonly: vec![key2],
+            };
+            let transaction = create_transaction_with_keys(static_keys, &loaded_addresses);
+            let bytes = bincode::serialize(&transaction).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+            let resolved_view =
+                ResolvedTransactionView::new(view, loaded_addresses, &reserved_account_keys);
+
+            // demote reserved static key to readonly
+            let expected = vec![false, false, true, false];
+            for (index, expected) in expected.into_iter().enumerate() {
+                assert_eq!(resolved_view.is_writable(index), expected);
+            }
+        }
+
+        {
+            let static_keys = vec![system_program::id(), key0];
+            let loaded_addresses = LoadedAddresses {
+                writable: vec![key1],
+                readonly: vec![key2],
+            };
+            let transaction = create_transaction_with_keys(static_keys, &loaded_addresses);
+            let bytes = bincode::serialize(&transaction).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+            let resolved_view =
+                ResolvedTransactionView::new(view, loaded_addresses, &reserved_account_keys);
+
+            // demote reserved static key to readonly
+            let expected = vec![false, false, true, false];
+            for (index, expected) in expected.into_iter().enumerate() {
+                assert_eq!(resolved_view.is_writable(index), expected);
+            }
+        }
+
+        {
+            let static_keys = vec![key0, key1];
+            let loaded_addresses = LoadedAddresses {
+                writable: vec![system_program::id()],
+                readonly: vec![key2],
+            };
+            let transaction = create_transaction_with_keys(static_keys, &loaded_addresses);
+            let bytes = bincode::serialize(&transaction).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+            let resolved_view =
+                ResolvedTransactionView::new(view, loaded_addresses, &reserved_account_keys);
+
+            // demote loaded key to readonly
+            let expected = vec![true, false, false, false];
+            for (index, expected) in expected.into_iter().enumerate() {
+                assert_eq!(resolved_view.is_writable(index), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_demote_writable_program() {
+        let reserved_account_keys = HashSet::default();
+        let key0 = Pubkey::new_unique();
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+        let key3 = Pubkey::new_unique();
+        let key4 = Pubkey::new_unique();
+        let loaded_addresses = LoadedAddresses {
+            writable: vec![key3, key4],
+            readonly: vec![],
+        };
+        let create_transaction_with_static_keys =
+            |static_keys: Vec<Pubkey>, loaded_addresses: &LoadedAddresses| VersionedTransaction {
+                signatures: vec![Signature::default()],
+                message: VersionedMessage::V0(v0::Message {
+                    header: MessageHeader {
+                        num_required_signatures: 1,
+                        num_readonly_signed_accounts: 0,
+                        num_readonly_unsigned_accounts: 0,
+                    },
+                    instructions: vec![CompiledInstruction {
+                        program_id_index: 1,
+                        accounts: vec![0],
+                        data: vec![],
+                    }],
+                    account_keys: static_keys,
+                    address_table_lookups: vec![MessageAddressTableLookup {
+                        account_key: Pubkey::new_unique(),
+                        writable_indexes: (0..loaded_addresses.writable.len())
+                            .map(|x| x as u8)
+                            .collect(),
+                        readonly_indexes: (0..loaded_addresses.readonly.len())
+                            .map(|x| (loaded_addresses.writable.len() + x) as u8)
+                            .collect(),
+                    }],
+                    recent_blockhash: Hash::default(),
+                }),
+            };
+
+        // Demote writable program - static
+        {
+            let static_keys = vec![key0, key1, key2];
+            let transaction = create_transaction_with_static_keys(static_keys, &loaded_addresses);
+            let bytes = bincode::serialize(&transaction).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+            let resolved_view = ResolvedTransactionView::new(
+                view,
+                loaded_addresses.clone(),
+                &reserved_account_keys,
+            );
+
+            let expected = vec![true, false, true, true, true];
+            for (index, expected) in expected.into_iter().enumerate() {
+                assert_eq!(resolved_view.is_writable(index), expected);
+            }
+        }
+
+        // Do not demote writable program - static address: upgradable loader
+        {
+            let static_keys = vec![key0, key1, bpf_loader_upgradeable::ID];
+            let transaction = create_transaction_with_static_keys(static_keys, &loaded_addresses);
+            let bytes = bincode::serialize(&transaction).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+            let resolved_view = ResolvedTransactionView::new(
+                view,
+                loaded_addresses.clone(),
+                &reserved_account_keys,
+            );
+
+            let expected = vec![true, true, true, true, true];
+            for (index, expected) in expected.into_iter().enumerate() {
+                assert_eq!(resolved_view.is_writable(index), expected);
+            }
+        }
+
+        // Do not demote writable program - loaded address: upgradable loader
+        {
+            let static_keys = vec![key0, key1, key2];
+            let loaded_addresses = LoadedAddresses {
+                writable: vec![key3],
+                readonly: vec![bpf_loader_upgradeable::ID],
+            };
+            let transaction = create_transaction_with_static_keys(static_keys, &loaded_addresses);
+            let bytes = bincode::serialize(&transaction).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+
+            let resolved_view = ResolvedTransactionView::new(
+                view,
+                loaded_addresses.clone(),
+                &reserved_account_keys,
+            );
+
+            let expected = vec![true, true, true, true, false];
+            for (index, expected) in expected.into_iter().enumerate() {
+                assert_eq!(resolved_view.is_writable(index), expected);
+            }
+        }
     }
 }
