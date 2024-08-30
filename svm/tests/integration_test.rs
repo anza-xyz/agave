@@ -663,38 +663,42 @@ fn svm_inspect_account() {
 
     let transfer_program =
         deploy_program("simple-transfer".to_string(), DEPLOYMENT_SLOT, &mock_bank);
-    let sender = Pubkey::new_unique();
+
+    let fee_payer_keypair = Keypair::new();
+    let sender_keypair = Keypair::new();
+
+    let fee_payer = fee_payer_keypair.pubkey();
+    let sender = sender_keypair.pubkey();
     let recipient = Pubkey::new_unique();
-    let fee_payer = Pubkey::new_unique();
-    let system = Pubkey::from([0u8; 32]);
+    let system = system_program::id();
 
     // Setting up the accounts for the transfer
 
     // fee payer
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(80_020);
+    let mut fee_payer_account = AccountSharedData::default();
+    fee_payer_account.set_lamports(80_020);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
-        .insert(fee_payer, account_data.clone());
+        .insert(fee_payer, fee_payer_account.clone());
     expected_inspected_accounts
         .entry(fee_payer)
         .or_default()
-        .push((Some(account_data.clone()), true));
+        .push((Some(fee_payer_account.clone()), true));
 
     // sender
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(11_000_000);
+    let mut sender_account = AccountSharedData::default();
+    sender_account.set_lamports(11_000_000);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
-        .insert(sender, account_data.clone());
+        .insert(sender, sender_account.clone());
     expected_inspected_accounts
         .entry(sender)
         .or_default()
-        .push((Some(account_data.clone()), true));
+        .push((Some(sender_account.clone()), true));
 
     // recipient -- initially dead
     expected_inspected_accounts
@@ -702,32 +706,22 @@ fn svm_inspect_account() {
         .or_default()
         .push((None, true));
 
-    let mut transaction_builder = SanitizedTransactionBuilder::default();
-    transaction_builder.create_instruction(
+    let instruction = Instruction::new_with_bytes(
         transfer_program,
+        &u64::to_be_bytes(1_000_000),
         vec![
-            AccountMeta {
-                pubkey: sender,
-                is_signer: true,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: recipient,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: system,
-                is_signer: false,
-                is_writable: false,
-            },
+            AccountMeta::new(sender, true),
+            AccountMeta::new(recipient, false),
+            AccountMeta::new_readonly(system, false),
         ],
-        HashMap::from([(sender, Signature::new_unique())]),
-        1_000_000_u64.to_be_bytes().to_vec(),
     );
-    let sanitized_transaction = transaction_builder
-        .build(Hash::default(), (fee_payer, Signature::new_unique()), true)
-        .unwrap();
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&fee_payer),
+        &[&fee_payer_keypair, &sender_keypair],
+        Hash::default(),
+    );
+    let sanitized_transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
     let transaction_check = Ok(CheckedTransactionDetails {
         nonce: None,
         lamports_per_signature: 20,
@@ -777,70 +771,60 @@ fn svm_inspect_account() {
     // do another transfer; recipient should be alive now
 
     // fee payer
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(80_000);
+    let mut fee_payer_account = AccountSharedData::default();
+    fee_payer_account.set_lamports(80_000);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
-        .insert(fee_payer, account_data.clone());
+        .insert(fee_payer, fee_payer_account.clone());
     expected_inspected_accounts
         .entry(fee_payer)
         .or_default()
-        .push((Some(account_data.clone()), true));
+        .push((Some(fee_payer_account.clone()), true));
 
     // sender
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(10_000_000);
+    let mut sender_account = AccountSharedData::default();
+    sender_account.set_lamports(10_000_000);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
-        .insert(sender, account_data.clone());
+        .insert(sender, sender_account.clone());
     expected_inspected_accounts
         .entry(sender)
         .or_default()
-        .push((Some(account_data.clone()), true));
+        .push((Some(sender_account.clone()), true));
 
     // recipient -- now alive
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(1_000_000);
+    let mut recipient_account = AccountSharedData::default();
+    recipient_account.set_lamports(1_000_000);
     mock_bank
         .account_shared_data
         .write()
         .unwrap()
-        .insert(recipient, account_data.clone());
+        .insert(recipient, recipient_account.clone());
     expected_inspected_accounts
         .entry(recipient)
         .or_default()
-        .push((Some(account_data.clone()), true));
+        .push((Some(recipient_account.clone()), true));
 
-    let mut transaction_builder = SanitizedTransactionBuilder::default();
-    transaction_builder.create_instruction(
+    let instruction = Instruction::new_with_bytes(
         transfer_program,
+        &u64::to_be_bytes(456),
         vec![
-            AccountMeta {
-                pubkey: sender,
-                is_signer: true,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: recipient,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: system,
-                is_signer: false,
-                is_writable: false,
-            },
+            AccountMeta::new(sender, true),
+            AccountMeta::new(recipient, false),
+            AccountMeta::new_readonly(system, false),
         ],
-        HashMap::from([(sender, Signature::new_unique())]),
-        456_u64.to_be_bytes().to_vec(),
     );
-    let sanitized_transaction = transaction_builder
-        .build(Hash::default(), (fee_payer, Signature::new_unique()), true)
-        .unwrap();
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&fee_payer),
+        &[&fee_payer_keypair, &sender_keypair],
+        Hash::default(),
+    );
+    let sanitized_transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
     let transaction_check = Ok(CheckedTransactionDetails {
         nonce: None,
         lamports_per_signature: 20,
