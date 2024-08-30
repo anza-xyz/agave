@@ -2296,8 +2296,7 @@ impl Bank {
                 .fold(
                     HashSet::default,
                     |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
-                        let delegation = stake_account.delegation();
-                        voter_pubkeys.insert(delegation.voter_pubkey);
+                        voter_pubkeys.insert(stake_account.delegation().voter_pubkey);
                         voter_pubkeys
                     },
                 )
@@ -2361,7 +2360,7 @@ impl Bank {
             };
             if let Some(reward_calc_tracer) = reward_calc_tracer.as_ref() {
                 let delegation =
-                    InflationPointCalculationEvent::Delegation(delegation, solana_vote_program);
+                    InflationPointCalculationEvent::Delegation(*delegation, solana_vote_program);
                 let event = RewardCalculationEvent::Staking(stake_pubkey, &delegation);
                 reward_calc_tracer(&event);
             }

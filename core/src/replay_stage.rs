@@ -34,6 +34,7 @@ use {
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
+    solana_accounts_db::contains::Contains,
     solana_entry::entry::VerifyRecyclers,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
@@ -134,7 +135,11 @@ enum ConfirmationType {
 
 enum GenerateVoteTxResult {
     // non voting validator, not eligible for refresh
+    // until authorized keypair is overriden
     NonVoting,
+    // hot spare validator, not eligble for refresh
+    // until set identity is invoked
+    HotSpare,
     // failed generation, eligible for refresh
     Failed,
     Tx(Transaction),
@@ -143,6 +148,10 @@ enum GenerateVoteTxResult {
 impl GenerateVoteTxResult {
     fn is_non_voting(&self) -> bool {
         matches!(self, Self::NonVoting)
+    }
+
+    fn is_hot_spare(&self) -> bool {
+        matches!(self, Self::HotSpare)
     }
 }
 
@@ -1337,6 +1346,13 @@ impl ReplayStage {
     ) {
         let start_slot = poh_recorder.read().unwrap().start_slot();
 
+        // It is possible that bank corresponding to `start_slot` has been
+        // dumped, so we need to double check it exists before proceeding
+        if !progress.contains(&start_slot) {
+            warn!("Poh start slot {start_slot}, is missing from progress map. This indicates that we are in the middle of a dump and repair. Skipping retransmission of unpropagated leader slots");
+            return;
+        }
+
         if let (false, Some(latest_leader_slot)) =
             progress.get_leader_propagation_slot_must_exist(start_slot)
         {
@@ -1852,9 +1868,12 @@ impl ReplayStage {
                 } else if let Some(prev_hash) =
                     duplicate_confirmed_slots.insert(confirmed_slot, duplicate_confirmed_hash)
                 {
-                    assert_eq!(prev_hash, duplicate_confirmed_hash);
+                    assert_eq!(
+                        prev_hash, duplicate_confirmed_hash,
+                        "Additional duplicate confirmed notification for slot {confirmed_slot} with a different hash"
+                    );
                     // Already processed this signal
-                    return;
+                    continue;
                 }
 
                 let duplicate_confirmed_state = DuplicateConfirmedState::new_from_state(
@@ -1993,6 +2012,9 @@ impl ReplayStage {
         // `poh_slot` and `parent_slot`, because they're in the same
         // `NUM_CONSECUTIVE_LEADER_SLOTS` block, we still skip the propagated
         // check because it's still within the propagation grace period.
+        //
+        // We've already checked in start_leader() that parent_slot hasn't been
+        // dumped, so we should get it in the progress map.
         if let Some(latest_leader_slot) =
             progress_map.get_latest_leader_slot_must_exist(parent_slot)
         {
@@ -2023,6 +2045,14 @@ impl ReplayStage {
         }
     }
 
+    /// Checks if it is time for us to start producing a leader block.
+    /// Fails if:
+    /// - Current PoH has not satisfied criteria to start my leader block
+    /// - Startup verification is not complete,
+    /// - Bank forks already contains a bank for this leader slot
+    /// - We have not landed a vote yet and the `wait_for_vote_to_start_leader` flag is set
+    /// - We have failed the propagated check
+    /// Returns whether a new working bank was created and inserted into bank forks.
     #[allow(clippy::too_many_arguments)]
     fn maybe_start_leader(
         my_pubkey: &Pubkey,
@@ -2036,7 +2066,7 @@ impl ReplayStage {
         banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
         track_transaction_indexes: bool,
-    ) {
+    ) -> bool {
         // all the individual calls to poh_recorder.read() are designed to
         // increase granularity, decrease contention
 
@@ -2050,28 +2080,29 @@ impl ReplayStage {
                 } => (poh_slot, parent_slot),
                 PohLeaderStatus::NotReached => {
                     trace!("{} poh_recorder hasn't reached_leader_slot", my_pubkey);
-                    return;
+                    return false;
                 }
             };
 
         trace!("{} reached_leader_slot", my_pubkey);
 
-        let parent = bank_forks
-            .read()
-            .unwrap()
-            .get(parent_slot)
-            .expect("parent_slot doesn't exist in bank forks");
+        let Some(parent) = bank_forks.read().unwrap().get(parent_slot) else {
+            warn!(
+                "Poh recorder parent slot {parent_slot} is missing from bank_forks. This indicates \
+                that we are in the middle of a dump and repair. Unable to start leader");
+            return false;
+        };
 
         assert!(parent.is_frozen());
 
         if !parent.is_startup_verification_complete() {
             info!("startup verification incomplete, so skipping my leader slot");
-            return;
+            return false;
         }
 
         if bank_forks.read().unwrap().get(poh_slot).is_some() {
             warn!("{} already have bank in forks at {}?", my_pubkey, poh_slot);
-            return;
+            return false;
         }
         trace!(
             "{} poh_slot {} parent_slot {}",
@@ -2083,7 +2114,7 @@ impl ReplayStage {
         if let Some(next_leader) = leader_schedule_cache.slot_leader_at(poh_slot, Some(&parent)) {
             if !has_new_vote_been_rooted {
                 info!("Haven't landed a vote, so skipping my leader slot");
-                return;
+                return false;
             }
 
             trace!(
@@ -2095,7 +2126,7 @@ impl ReplayStage {
 
             // I guess I missed my slot
             if next_leader != *my_pubkey {
-                return;
+                return false;
             }
 
             datapoint_info!(
@@ -2129,7 +2160,7 @@ impl ReplayStage {
                         latest_unconfirmed_leader_slot,
                     );
                 }
-                return;
+                return false;
             }
 
             let root_slot = bank_forks.read().unwrap().root();
@@ -2164,8 +2195,10 @@ impl ReplayStage {
                 .write()
                 .unwrap()
                 .set_bank(tpu_bank, track_transaction_indexes);
+            true
         } else {
             error!("{} No next leader found", my_pubkey);
+            false
         }
     }
 
@@ -2507,7 +2540,7 @@ impl ReplayStage {
                 vote_state.node_pubkey,
                 node_keypair.pubkey()
             );
-            return GenerateVoteTxResult::Failed;
+            return GenerateVoteTxResult::HotSpare;
         }
 
         let Some(authorized_voter_pubkey) = vote_state.get_authorized_voter(bank.epoch()) else {
@@ -2602,9 +2635,9 @@ impl ReplayStage {
         // If we are a non voting validator or have an incorrect setup preventing us from
         // generating vote txs, no need to refresh
         let last_vote_tx_blockhash = match tower.last_vote_tx_blockhash() {
-            // Since the checks in vote generation are deterministic, if we were non voting
+            // Since the checks in vote generation are deterministic, if we were non voting or hot spare
             // on the original vote, the refresh will also fail. No reason to refresh.
-            BlockhashStatus::NonVoting => return,
+            BlockhashStatus::NonVoting | BlockhashStatus::HotSpare => return,
             // In this case we have not voted since restart, it is unclear if we are non voting.
             // Attempt to refresh.
             BlockhashStatus::Uninitialized => None,
@@ -2667,6 +2700,8 @@ impl ReplayStage {
             last_vote_refresh_time.last_refresh_time = Instant::now();
         } else if vote_tx_result.is_non_voting() {
             tower.mark_last_vote_tx_blockhash_non_voting();
+        } else if vote_tx_result.is_hot_spare() {
+            tower.mark_last_vote_tx_blockhash_hot_spare();
         }
     }
 
@@ -3076,37 +3111,22 @@ impl ReplayStage {
                     }
                 }
 
-                if bank.collector_id() != my_pubkey {
-                    // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK shreds in the last FEC set,
-                    // mark it dead. No reason to perform this check on our leader block.
-                    if !blockstore
-                        .is_last_fec_set_full(bank.slot())
-                        .inspect_err(|e| {
-                            warn!(
-                                "Unable to determine if last fec set is full for slot {} {},
-                                marking as dead: {e:?}",
-                                bank.slot(),
-                                bank.hash()
-                            )
-                        })
-                        .unwrap_or(false)
-                    {
-                        // Update metric regardless of feature flag
-                        datapoint_warn!(
-                            "incomplete_final_fec_set",
-                            ("slot", bank_slot, i64),
-                            ("hash", bank.hash().to_string(), String)
-                        );
-                        if bank
-                            .feature_set
-                            .is_active(&solana_sdk::feature_set::vote_only_full_fec_sets::id())
-                        {
+                let _block_id = if bank.collector_id() != my_pubkey {
+                    // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
+                    // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
+                    match blockstore.check_last_fec_set_and_get_block_id(
+                        bank.slot(),
+                        bank.hash(),
+                        &bank.feature_set,
+                    ) {
+                        Ok(block_id) => block_id,
+                        Err(result_err) => {
                             let root = bank_forks.read().unwrap().root();
                             Self::mark_dead_slot(
                                 blockstore,
                                 bank,
                                 root,
-                                &BlockstoreProcessorError::IncompleteFinalFecSet,
+                                &result_err,
                                 rpc_subscriptions,
                                 duplicate_slots_tracker,
                                 duplicate_confirmed_slots,
@@ -3120,7 +3140,9 @@ impl ReplayStage {
                             continue;
                         }
                     }
-                }
+                } else {
+                    None
+                };
 
                 let r_replay_stats = replay_stats.read().unwrap();
                 let replay_progress = bank_progress.replay_progress.clone();
@@ -3620,6 +3642,8 @@ impl ReplayStage {
         vote_tracker: &VoteTracker,
         cluster_slots: &ClusterSlots,
     ) {
+        // We would only reach here if the bank is in bank_forks, so it
+        // isn't dumped and should exist in progress map.
         // If propagation has already been confirmed, return
         if progress.get_leader_propagation_slot_must_exist(slot).0 {
             return;
@@ -3935,6 +3959,8 @@ impl ReplayStage {
                 )
             };
 
+            // If we reach here, the candidate_vote_bank exists in the bank_forks, so it isn't
+            // dumped and should exist in progress map.
             let propagation_confirmed = is_leader_slot
                 || progress
                     .get_leader_propagation_slot_must_exist(candidate_vote_bank.slot())
@@ -4012,6 +4038,8 @@ impl ReplayStage {
         fork_tip: Slot,
         bank_forks: &BankForks,
     ) {
+        // We would only reach here if the bank is in bank_forks, so it
+        // isn't dumped and should exist in progress map.
         let mut current_leader_slot = progress.get_latest_leader_slot_must_exist(fork_tip);
         let mut did_newly_reach_threshold = false;
         let root = bank_forks.root();
@@ -4175,9 +4203,12 @@ impl ReplayStage {
             }
 
             if let Some(prev_hash) = duplicate_confirmed_slots.insert(*slot, *frozen_hash) {
-                assert_eq!(prev_hash, *frozen_hash);
+                assert_eq!(
+                    prev_hash, *frozen_hash,
+                    "Additional duplicate confirmed notification for slot {slot} with a different hash"
+                );
                 // Already processed this signal
-                return;
+                continue;
             }
 
             let duplicate_confirmed_state = DuplicateConfirmedState::new_from_state(
@@ -4467,6 +4498,9 @@ impl ReplayStage {
         for failure in heaviest_fork_failures {
             match failure {
                 HeaviestForkFailures::NoPropagatedConfirmation(slot, ..) => {
+                    // If failure is NoPropagatedConfirmation, then inside select_vote_and_reset_forks
+                    // we already confirmed it's in progress map, we should see it in progress map
+                    // here because we don't have dump and repair in between.
                     if let Some(latest_leader_slot) =
                         progress.get_latest_leader_slot_must_exist(*slot)
                     {
@@ -4572,6 +4606,7 @@ pub(crate) mod tests {
             sync::{atomic::AtomicU64, Arc, RwLock},
         },
         tempfile::tempdir,
+        test_case::test_case,
         trees::{tr, Tree},
     };
 
@@ -8593,6 +8628,126 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_dumped_slot_not_causing_panic() {
+        solana_logger::setup();
+        let ReplayBlockstoreComponents {
+            validator_node_to_vote_keys,
+            leader_schedule_cache,
+            poh_recorder,
+            vote_simulator,
+            rpc_subscriptions,
+            ref my_pubkey,
+            ref blockstore,
+            ..
+        } = replay_blockstore_components(None, 10, None::<GenerateVotes>);
+
+        let VoteSimulator {
+            mut progress,
+            ref bank_forks,
+            ..
+        } = vote_simulator;
+
+        let poh_recorder = Arc::new(poh_recorder);
+        let (retransmit_slots_sender, _) = unbounded();
+
+        // Use a bank slot when I was not leader to avoid panic for dumping my own slot
+        let slot_to_dump = (1..100)
+            .find(|i| leader_schedule_cache.slot_leader_at(*i, None) != Some(*my_pubkey))
+            .unwrap();
+        let bank_to_dump = Bank::new_from_parent(
+            bank_forks.read().unwrap().get(0).unwrap(),
+            &leader_schedule_cache
+                .slot_leader_at(slot_to_dump, None)
+                .unwrap(),
+            slot_to_dump,
+        );
+        progress.insert(
+            slot_to_dump,
+            ForkProgress::new_from_bank(
+                &bank_to_dump,
+                bank_to_dump.collector_id(),
+                validator_node_to_vote_keys
+                    .get(bank_to_dump.collector_id())
+                    .unwrap(),
+                Some(0),
+                0,
+                0,
+            ),
+        );
+        assert!(progress.get_propagated_stats(slot_to_dump).is_some());
+        bank_to_dump.freeze();
+        bank_forks.write().unwrap().insert(bank_to_dump);
+        let bank_to_dump = bank_forks
+            .read()
+            .unwrap()
+            .get(slot_to_dump)
+            .expect("Just inserted");
+
+        progress.get_retransmit_info_mut(0).unwrap().retry_time = Instant::now();
+        poh_recorder
+            .write()
+            .unwrap()
+            .reset(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)));
+        assert_eq!(poh_recorder.read().unwrap().start_slot(), slot_to_dump);
+
+        // Now dump and repair slot_to_dump
+        let (mut ancestors, mut descendants) = {
+            let r_bank_forks = bank_forks.read().unwrap();
+            (r_bank_forks.ancestors(), r_bank_forks.descendants())
+        };
+        let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
+        let bank_to_dump_bad_hash = Hash::new_unique();
+        duplicate_slots_to_repair.insert(slot_to_dump, bank_to_dump_bad_hash);
+        let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
+        let (dumped_slots_sender, dumped_slots_receiver) = unbounded();
+
+        ReplayStage::dump_then_repair_correct_slots(
+            &mut duplicate_slots_to_repair,
+            &mut ancestors,
+            &mut descendants,
+            &mut progress,
+            bank_forks,
+            blockstore,
+            None,
+            &mut purge_repair_slot_counter,
+            &dumped_slots_sender,
+            my_pubkey,
+            &leader_schedule_cache,
+        );
+        assert_eq!(
+            dumped_slots_receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(vec![(slot_to_dump, bank_to_dump_bad_hash)])
+        );
+
+        // Now check it doesn't cause panic in the following functions.
+        ReplayStage::retransmit_latest_unpropagated_leader_slot(
+            &poh_recorder,
+            &retransmit_slots_sender,
+            &mut progress,
+        );
+
+        let (banking_tracer, _) = BankingTracer::new(None).unwrap();
+        // A vote has not technically been rooted, but it doesn't matter for
+        // this test to use true to avoid skipping the leader slot
+        let has_new_vote_been_rooted = true;
+        let track_transaction_indexes = false;
+
+        assert!(!ReplayStage::maybe_start_leader(
+            my_pubkey,
+            bank_forks,
+            &poh_recorder,
+            &leader_schedule_cache,
+            &rpc_subscriptions,
+            &mut progress,
+            &retransmit_slots_sender,
+            &mut SkippedSlotsInfo::default(),
+            &banking_tracer,
+            has_new_vote_been_rooted,
+            track_transaction_indexes,
+        ));
+    }
+
+    #[test]
     #[should_panic(expected = "We are attempting to dump a block that we produced")]
     fn test_dump_own_slots_fails() {
         // Create the tree of banks in a BankForks object
@@ -9172,5 +9327,368 @@ pub(crate) mod tests {
         assert!(!fork_choice
             .is_candidate(&(5, bank_forks.bank_hash(5).unwrap()))
             .unwrap());
+    }
+
+    #[test]
+    fn test_skip_leader_slot_for_existing_slot() {
+        solana_logger::setup();
+
+        let ReplayBlockstoreComponents {
+            blockstore,
+            my_pubkey,
+            leader_schedule_cache,
+            poh_recorder,
+            vote_simulator,
+            rpc_subscriptions,
+            ..
+        } = replay_blockstore_components(None, 1, None);
+        let VoteSimulator {
+            bank_forks,
+            mut progress,
+            ..
+        } = vote_simulator;
+
+        let working_bank = bank_forks.read().unwrap().working_bank();
+        assert!(working_bank.is_complete());
+        assert!(working_bank.is_frozen());
+        // Mark startup verification as complete to avoid skipping leader slots
+        working_bank.set_startup_verification_complete();
+
+        // Insert a block two slots greater than current bank. This slot does
+        // not have a corresponding Bank in BankForks; this emulates a scenario
+        // where the block had previously been created and added to BankForks,
+        // but then got removed. This could be the case if the Bank was not on
+        // the major fork.
+        let dummy_slot = working_bank.slot() + 2;
+        let initial_slot = working_bank.slot();
+        let num_entries = 10;
+        let merkle_variant = true;
+        let (shreds, _) = make_slot_entries(dummy_slot, initial_slot, num_entries, merkle_variant);
+        blockstore.insert_shreds(shreds, None, false).unwrap();
+
+        // Reset PoH recorder to the completed bank to ensure consistent state
+        ReplayStage::reset_poh_recorder(
+            &my_pubkey,
+            &blockstore,
+            working_bank.clone(),
+            &poh_recorder,
+            &leader_schedule_cache,
+        );
+
+        // Register just over one slot worth of ticks directly with PoH recorder
+        let num_poh_ticks =
+            (working_bank.ticks_per_slot() * working_bank.hashes_per_tick().unwrap()) + 1;
+        poh_recorder
+            .write()
+            .map(|mut poh_recorder| {
+                for _ in 0..num_poh_ticks + 1 {
+                    poh_recorder.tick();
+                }
+            })
+            .unwrap();
+
+        let poh_recorder = Arc::new(poh_recorder);
+        let (retransmit_slots_sender, _) = unbounded();
+        let (banking_tracer, _) = BankingTracer::new(None).unwrap();
+        // A vote has not technically been rooted, but it doesn't matter for
+        // this test to use true to avoid skipping the leader slot
+        let has_new_vote_been_rooted = true;
+        let track_transaction_indexes = false;
+
+        // We should not attempt to start leader for the dummy_slot
+        assert_matches!(
+            poh_recorder.read().unwrap().reached_leader_slot(&my_pubkey),
+            PohLeaderStatus::NotReached
+        );
+        assert!(!ReplayStage::maybe_start_leader(
+            &my_pubkey,
+            &bank_forks,
+            &poh_recorder,
+            &leader_schedule_cache,
+            &rpc_subscriptions,
+            &mut progress,
+            &retransmit_slots_sender,
+            &mut SkippedSlotsInfo::default(),
+            &banking_tracer,
+            has_new_vote_been_rooted,
+            track_transaction_indexes,
+        ));
+
+        // Register another slots worth of ticks  with PoH recorder
+        poh_recorder
+            .write()
+            .map(|mut poh_recorder| {
+                for _ in 0..num_poh_ticks + 1 {
+                    poh_recorder.tick();
+                }
+            })
+            .unwrap();
+
+        // We should now start leader for dummy_slot + 1
+        let good_slot = dummy_slot + 1;
+        assert!(ReplayStage::maybe_start_leader(
+            &my_pubkey,
+            &bank_forks,
+            &poh_recorder,
+            &leader_schedule_cache,
+            &rpc_subscriptions,
+            &mut progress,
+            &retransmit_slots_sender,
+            &mut SkippedSlotsInfo::default(),
+            &banking_tracer,
+            has_new_vote_been_rooted,
+            track_transaction_indexes,
+        ));
+        // Get the new working bank, which is also the new leader bank/slot
+        let working_bank = bank_forks.read().unwrap().working_bank();
+        // The new bank's slot must NOT be dummy_slot as the blockstore already
+        // had a shred inserted for dummy_slot prior to maybe_start_leader().
+        // maybe_start_leader() must not pick dummy_slot to avoid creating a
+        // duplicate block.
+        assert_eq!(working_bank.slot(), good_slot);
+        assert_eq!(working_bank.parent_slot(), initial_slot);
+    }
+
+    #[test]
+    #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
+    fn test_mark_slots_confirmed() {
+        let generate_votes = |pubkeys: Vec<Pubkey>| {
+            pubkeys
+                .into_iter()
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .collect()
+        };
+        let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
+        let (vote_simulator, blockstore) =
+            setup_forks_from_tree(tree, 3, Some(Box::new(generate_votes)));
+        let VoteSimulator {
+            bank_forks,
+            mut heaviest_subtree_fork_choice,
+            mut progress,
+            ..
+        } = vote_simulator;
+
+        let (ancestor_hashes_replay_update_sender, _) = unbounded();
+        let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
+        let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(1, &AbsRequestSender::default(), None)
+            .unwrap();
+
+        // Mark 0 as duplicate confirmed, should fail as it is 0 < root
+        let confirmed_slots = [ConfirmedSlot::new_duplicate_confirmed_slot(0, bank_hash_0)];
+        ReplayStage::mark_slots_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+
+        assert!(!duplicate_confirmed_slots.contains_key(&0));
+
+        // Mark 5 as duplicate confirmed, should suceed
+        let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
+        let confirmed_slots = [ConfirmedSlot::new_duplicate_confirmed_slot(5, bank_hash_5)];
+
+        ReplayStage::mark_slots_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+
+        // Mark 5 and 6 as duplicate confirmed, should succeed
+        let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
+        let confirmed_slots = [
+            ConfirmedSlot::new_duplicate_confirmed_slot(5, bank_hash_5),
+            ConfirmedSlot::new_duplicate_confirmed_slot(6, bank_hash_6),
+        ];
+
+        ReplayStage::mark_slots_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+        assert_eq!(*duplicate_confirmed_slots.get(&6).unwrap(), bank_hash_6);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(6, bank_hash_6))
+            .unwrap_or(false));
+
+        // Mark 6 as duplicate confirmed again with a different hash, should panic
+        let confirmed_slots = [ConfirmedSlot::new_duplicate_confirmed_slot(
+            6,
+            Hash::new_unique(),
+        )];
+        ReplayStage::mark_slots_confirmed(
+            &confirmed_slots,
+            &blockstore,
+            &bank_forks,
+            &mut progress,
+            &mut DuplicateSlotsTracker::default(),
+            &mut heaviest_subtree_fork_choice,
+            &mut EpochSlotsFrozenSlots::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+            &mut duplicate_confirmed_slots,
+        );
+    }
+
+    #[test_case(true ; "same_batch")]
+    #[test_case(false ; "seperate_batches")]
+    #[should_panic(expected = "Additional duplicate confirmed notification for slot 6")]
+    fn test_process_duplicate_confirmed_slots(same_batch: bool) {
+        let generate_votes = |pubkeys: Vec<Pubkey>| {
+            pubkeys
+                .into_iter()
+                .zip(iter::once(vec![0, 1, 2, 5, 6]).chain(iter::repeat(vec![0, 1, 3, 4]).take(2)))
+                .collect()
+        };
+        let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
+        let (vote_simulator, blockstore) =
+            setup_forks_from_tree(tree, 3, Some(Box::new(generate_votes)));
+        let VoteSimulator {
+            bank_forks,
+            mut heaviest_subtree_fork_choice,
+            progress,
+            ..
+        } = vote_simulator;
+
+        let (ancestor_hashes_replay_update_sender, _) = unbounded();
+        let (sender, receiver) = unbounded();
+        let mut duplicate_confirmed_slots = DuplicateConfirmedSlots::default();
+        let bank_hash_0 = bank_forks.read().unwrap().bank_hash(0).unwrap();
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(1, &AbsRequestSender::default(), None)
+            .unwrap();
+
+        // Mark 0 as duplicate confirmed, should fail as it is 0 < root
+        sender.send(vec![(0, bank_hash_0)]).unwrap();
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
+
+        assert!(!duplicate_confirmed_slots.contains_key(&0));
+
+        // Mark 5 as duplicate confirmed, should succed
+        let bank_hash_5 = bank_forks.read().unwrap().bank_hash(5).unwrap();
+        sender.send(vec![(5, bank_hash_5)]).unwrap();
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+
+        // Mark 5 and 6 as duplicate confirmed, should suceed
+        let bank_hash_6 = bank_forks.read().unwrap().bank_hash(6).unwrap();
+        if same_batch {
+            sender
+                .send(vec![(5, bank_hash_5), (6, bank_hash_6)])
+                .unwrap();
+        } else {
+            sender.send(vec![(5, bank_hash_5)]).unwrap();
+            sender.send(vec![(6, bank_hash_6)]).unwrap();
+        }
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
+
+        assert_eq!(*duplicate_confirmed_slots.get(&5).unwrap(), bank_hash_5);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(5, bank_hash_5))
+            .unwrap_or(false));
+        assert_eq!(*duplicate_confirmed_slots.get(&6).unwrap(), bank_hash_6);
+        assert!(heaviest_subtree_fork_choice
+            .is_duplicate_confirmed(&(6, bank_hash_6))
+            .unwrap_or(false));
+
+        // Mark 6 as duplicate confirmed again with a different hash, should panic
+        sender.send(vec![(6, Hash::new_unique())]).unwrap();
+
+        ReplayStage::process_duplicate_confirmed_slots(
+            &receiver,
+            &blockstore,
+            &mut DuplicateSlotsTracker::default(),
+            &mut duplicate_confirmed_slots,
+            &mut EpochSlotsFrozenSlots::default(),
+            &bank_forks,
+            &progress,
+            &mut heaviest_subtree_fork_choice,
+            &mut DuplicateSlotsToRepair::default(),
+            &ancestor_hashes_replay_update_sender,
+            &mut PurgeRepairSlotCounter::default(),
+        );
     }
 }

@@ -38,7 +38,7 @@ use {
         utils::{move_and_async_delete_path, move_and_async_delete_path_contents},
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
-    solana_entry::poh::compute_hash_time_ns,
+    solana_entry::poh::compute_hash_time,
     solana_geyser_plugin_manager::{
         geyser_plugin_service::GeyserPluginService, GeyserPluginManagerRequest,
     },
@@ -1676,24 +1676,23 @@ fn check_poh_speed(
     if let Some(hashes_per_tick) = genesis_config.hashes_per_tick() {
         let ticks_per_slot = genesis_config.ticks_per_slot();
         let hashes_per_slot = hashes_per_tick * ticks_per_slot;
-
         let hash_samples = maybe_hash_samples.unwrap_or(hashes_per_slot);
-        let hash_time_ns = compute_hash_time_ns(hash_samples);
 
-        let my_ns_per_slot = (hash_time_ns * hashes_per_slot) / hash_samples;
-        debug!("computed: ns_per_slot: {}", my_ns_per_slot);
-        let target_ns_per_slot = genesis_config.ns_per_slot() as u64;
-        debug!(
-            "cluster ns_per_hash: {}ns ns_per_slot: {}",
-            target_ns_per_slot / hashes_per_slot,
-            target_ns_per_slot
+        let hash_time = compute_hash_time(hash_samples);
+        let my_hashes_per_second = (hash_samples as f64 / hash_time.as_secs_f64()) as u64;
+        let target_slot_duration = Duration::from_nanos(genesis_config.ns_per_slot() as u64);
+        let target_hashes_per_second =
+            (hashes_per_slot as f64 / target_slot_duration.as_secs_f64()) as u64;
+
+        info!(
+            "PoH speed check: \
+            computed hashes per second {my_hashes_per_second}, \
+            target hashes per second {target_hashes_per_second}"
         );
-        if my_ns_per_slot < target_ns_per_slot {
-            let extra_ns = target_ns_per_slot - my_ns_per_slot;
-            info!("PoH speed check: Will sleep {}ns per slot.", extra_ns);
-        } else {
+        if my_hashes_per_second < target_hashes_per_second {
             return Err(format!(
-                "PoH is slower than cluster target tick rate! mine: {my_ns_per_slot} cluster: {target_ns_per_slot}.",
+                "PoH hashes/second rate is slower than the cluster target: \
+                mine {my_hashes_per_second}, cluster {target_hashes_per_second}"
             ));
         }
     }
