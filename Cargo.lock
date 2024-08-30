@@ -8091,7 +8091,6 @@ dependencies = [
  "solana-log-collector",
  "solana-logger",
  "solana-measure",
- "solana-metrics",
  "solana-perf",
  "solana-program",
  "solana-program-runtime",
@@ -8113,7 +8112,7 @@ dependencies = [
  "test-case",
  "thiserror",
  "tokio",
- "tokio-util 0.7.11",
+ "tokio-util 0.7.12",
  "yaml-rust",
 ]
 
