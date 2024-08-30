@@ -14,8 +14,8 @@ extern crate solana_frozen_abi_macro;
 
 mod legacy;
 
-#[derive(Debug, Eq, PartialEq)]
-enum ClientId {
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ClientId {
     SolanaLabs,
     JitoLabs,
     Firedancer,
@@ -44,7 +44,7 @@ impl Version {
         semver::Version::new(self.major as u64, self.minor as u64, self.patch as u64)
     }
 
-    fn client(&self) -> ClientId {
+    pub fn client(&self) -> ClientId {
         ClientId::from(self.client)
     }
 }
