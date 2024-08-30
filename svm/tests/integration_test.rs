@@ -680,7 +680,7 @@ fn simple_nonce_fee_only(
             fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
             test_entry.add_initial_account(fee_payer, &fee_payer_data);
         } else if fee_paying_nonce {
-            nonce_balance += LAMPORTS_PER_SOL;
+            nonce_balance = nonce_balance.saturating_add(LAMPORTS_PER_SOL);
         }
 
         let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
@@ -743,8 +743,8 @@ fn simple_nonce_fee_only(
 
         test_entry
             .final_accounts
-            .get_mut(nonce_info.address())
-            .map(|a| a.set_rent_epoch(0));
+            .entry(*nonce_info.address())
+            .and_modify(|account| account.set_rent_epoch(0));
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
