@@ -29,7 +29,6 @@ fi
 sed -i 's/solana-geyser-plugin-interface/agave-geyser-plugin-interface/g' ./Cargo.toml
 
 # should be removed when spl bump their curve25519-dalek
-sed -i "s/^curve25519-dalek =.*/curve25519-dalek = \"4.1.3\"/" token/client/Cargo.toml
 sed -i "s/^curve25519-dalek =.*/curve25519-dalek = \"4.1.3\"/" token/confidential-transfer/proof-generation/Cargo.toml
 
 # ignore these tests temporarily. see: https://github.com/anza-xyz/agave/pull/1693#issuecomment-2182615788
