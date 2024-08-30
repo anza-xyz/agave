@@ -610,24 +610,6 @@ impl JsonRpcRequestProcessor {
         // epoch
         let bank = self.get_bank_with_config(context_config)?;
 
-        // DO NOT CLEAN UP with feature_set::partitioned_epoch_rewards_superfeature
-        // This logic needs to be retained indefinitely to support historical
-        // rewards before and after feature activation.
-        let partitioned_epoch_reward_enabled_slot = bank
-            .feature_set
-            .activated_slot(&feature_set::partitioned_epoch_rewards_superfeature::id())
-            .or_else(|| {
-                // The order of these checks should not matter, since we will
-                // not ever have both features active on a live cluster. This
-                // check can be removed with
-                // feature_set::enable_partitioned_epoch_reward
-                bank.feature_set
-                    .activated_slot(&feature_set::enable_partitioned_epoch_reward::id())
-            });
-        let partitioned_epoch_reward_enabled = partitioned_epoch_reward_enabled_slot
-            .map(|slot| slot <= first_confirmed_block_in_epoch)
-            .unwrap_or(false);
-
         // Get first block in the epoch
         let Ok(Some(epoch_boundary_block)) = self
             .get_block(
@@ -655,6 +637,8 @@ impl JsonRpcRequestProcessor {
             }
             .into());
         }
+
+        let partitioned_epoch_reward_enabled = epoch_boundary_block.num_reward_partitions.is_some();
 
         // Collect rewards from first block in the epoch if partitioned epoch
         // rewards not enabled, or address is a vote account
