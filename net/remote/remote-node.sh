@@ -300,7 +300,7 @@ cat >> ~/solana/on-reboot <<EOF
 EOF
     fi
 
-    if [[ "$maybeWenRestart" != "" ]]; then
+    if [[ -n "$maybeWenRestart" ]]; then
       args+=(--wen-restart "$maybeWenRestart")
     fi
 
@@ -435,7 +435,7 @@ EOF
       args+=(--tpu-enable-udp)
     fi
 
-    if [[ "$maybeWenRestart" != "" ]]; then
+    if [[ -n "$maybeWenRestart" ]]; then
       args+=(--wen-restart "$maybeWenRestart")
     fi
 
