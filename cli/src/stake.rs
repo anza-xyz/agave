@@ -1633,7 +1633,7 @@ pub fn process_stake_authorize(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -1784,7 +1784,7 @@ pub fn process_deactivate_stake_account(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -2083,7 +2083,7 @@ pub fn process_split_stake(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -2197,7 +2197,7 @@ pub fn process_merge_stake(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -2300,7 +2300,7 @@ pub fn process_stake_set_lockup(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -2769,7 +2769,7 @@ pub fn process_delegate_stake(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
