@@ -64,7 +64,6 @@ solana-timings = { path = "../../timings", version = "=2.1.0" }
 solana-transaction-status = { path = "../../transaction-status", version = "=2.1.0" }
 solana-type-overrides = { path = "../../type-overrides", version = "=2.1.0" }
 agave-validator = { path = "../../validator", version = "=2.1.0" }
-solana-zk-token-sdk = { path = "../../zk-token-sdk", version = "=2.1.0" }
 solana_rbpf = "=0.8.5"
 thiserror = "1.0"
 
@@ -232,4 +231,5 @@ members = [
 # and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
 solana-program = { path = "../../sdk/program" }
+solana-zk-sdk = { path = "../../zk-sdk" }
 solana-zk-token-sdk = { path = "../../zk-token-sdk" }
