@@ -25,6 +25,9 @@ fi
 
 ./patch.crates-io.sh "$SOLANA_DIR"
 
+echo "[profile.dev.package.curve25519-dalek]
+opt-level = 3" >> Cargo.toml
+
 # anza migration stopgap. can be removed when agave is fully recommended for public usage.
 sed -i 's/solana-geyser-plugin-interface/agave-geyser-plugin-interface/g' ./Cargo.toml
 
