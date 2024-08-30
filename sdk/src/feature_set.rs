@@ -1055,14 +1055,7 @@ lazy_static! {
         (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
-<<<<<<< HEAD
-=======
-        (move_precompile_verification_to_svm::id(), "SIMD-0159: Move precompile verification into SVM"),
-        (enable_transaction_loading_failure_fees::id(), "Enable fees for some additional transaction failures SIMD-0082"),
-        (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
-        (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
->>>>>>> 4470f6d96e (SIMD-0118: fix `total_rewards` for recalculation (#2780))
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

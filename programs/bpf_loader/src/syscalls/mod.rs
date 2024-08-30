@@ -42,13 +42,8 @@ use {
             enable_big_mod_exp_syscall, enable_get_epoch_stake_syscall,
             enable_partitioned_epoch_reward, enable_poseidon_syscall,
             error_on_syscall_bpf_function_hash_collisions, get_sysvar_syscall_enabled,
-<<<<<<< HEAD
-            last_restart_slot_sysvar, reject_callx_r10, remaining_compute_units_syscall_enabled,
-            switch_to_new_elf_parser,
-=======
             last_restart_slot_sysvar, partitioned_epoch_rewards_superfeature, reject_callx_r10,
-            remaining_compute_units_syscall_enabled,
->>>>>>> 4470f6d96e (SIMD-0118: fix `total_rewards` for recalculation (#2780))
+            remaining_compute_units_syscall_enabled, switch_to_new_elf_parser,
         },
         hash::{Hash, Hasher},
         instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
