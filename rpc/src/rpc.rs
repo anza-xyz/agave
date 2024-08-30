@@ -660,8 +660,8 @@ impl JsonRpcRequestProcessor {
         // rewards is enabled
         if partitioned_epoch_reward_enabled {
             let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
-                "epoch-boundary block should have num_reward_partitions after partitioned epoch \
-                 rewards enabled",
+                "epoch-boundary block should have num_reward_partitions for epochs with \
+                 partitioned rewards enabled",
             );
 
             let num_partitions = usize::try_from(num_partitions)
