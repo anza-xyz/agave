@@ -761,6 +761,19 @@ fn svm_inspect_account() {
         &TransactionProcessingConfig::default(),
     );
 
+    // the system account is modified during transaction processing,
+    // so set the expected inspected account afterwards.
+    let system_account = mock_bank
+        .account_shared_data
+        .read()
+        .unwrap()
+        .get(&system)
+        .cloned();
+    expected_inspected_accounts
+        .entry(system)
+        .or_default()
+        .push((system_account, false));
+
     // do another transfer; recipient should be alive now
 
     // fee payer
@@ -842,13 +855,49 @@ fn svm_inspect_account() {
         &TransactionProcessingConfig::default(),
     );
 
+    // the system account is modified during transaction processing,
+    // so set the expected inspected account afterwards.
+    let system_account = mock_bank
+        .account_shared_data
+        .read()
+        .unwrap()
+        .get(&system)
+        .cloned();
+    expected_inspected_accounts
+        .entry(system)
+        .or_default()
+        .push((system_account, false));
+
     // Ensure all the expected inspected accounts were inspected
     let actual_inspected_accounts = mock_bank.inspected_accounts.read().unwrap().clone();
-    for (expected_pubkey, expected_account) in expected_inspected_accounts {
-        let actual_account = actual_inspected_accounts.get(&expected_pubkey).unwrap();
+    for (expected_pubkey, expected_account) in &expected_inspected_accounts {
+        let actual_account = actual_inspected_accounts.get(expected_pubkey).unwrap();
         assert_eq!(
-            expected_account, *actual_account,
+            expected_account, actual_account,
             "pubkey: {expected_pubkey}",
         );
+    }
+
+    // The transfer program account is also loaded during transaction processing, however the
+    // account state passed to `inspect_account()` is *not* the same as what is held by
+    // MockBankCallback::account_shared_data.  So we check the transfer program differently.
+    //
+    // First ensure we have the correct number of inspected accounts, correctly counting the
+    // transfer program.
+    let num_expected_inspected_accounts: usize =
+        expected_inspected_accounts.values().map(Vec::len).sum();
+    let num_actual_inspected_accounts: usize =
+        actual_inspected_accounts.values().map(Vec::len).sum();
+    assert_eq!(
+        num_expected_inspected_accounts + 2,
+        num_actual_inspected_accounts,
+    );
+
+    // And second, ensure the inspected transfer program accounts are alive and not writable.
+    let actual_transfer_program_accounts =
+        actual_inspected_accounts.get(&transfer_program).unwrap();
+    for actual_transfer_program_account in actual_transfer_program_accounts {
+        assert!(actual_transfer_program_account.0.is_some());
+        assert!(!actual_transfer_program_account.1);
     }
 }
