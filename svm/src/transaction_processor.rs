@@ -1010,7 +1010,7 @@ mod tests {
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
-            nonce::{self, state::DurableNonce},
+            nonce,
             rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
             rent_debits::RentDebits,
             reserved_account_keys::ReservedAccountKeys,
@@ -2216,12 +2216,10 @@ mod tests {
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-            let durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
-            let mut nonce_info = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
-            nonce_info
-                .try_advance_nonce(durable_nonce, lamports_per_signature)
-                .unwrap();
-            let nonce = Some(nonce_info);
+            let nonce = Some(NonceInfo::new(
+                *fee_payer_address,
+                fee_payer_account.clone(),
+            ));
 
             let result = batch_processor.validate_transaction_fee_payer(
                 &mock_bank,

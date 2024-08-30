@@ -129,30 +129,27 @@ impl Bank {
         next_durable_nonce: &DurableNonce,
     ) -> Option<(NonceInfo, u64)> {
         let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
-        if nonce_is_advanceable {
-            if let Some((nonce_address, mut nonce_account, nonce_data)) =
-                self.load_message_nonce_account(message)
-            {
-                let lamports_per_signature = nonce_data.get_lamports_per_signature();
-                let next_nonce_state = NonceState::new_initialized(
-                    &nonce_data.authority,
-                    *next_durable_nonce,
-                    lamports_per_signature,
-                );
-                nonce_account
-                    .set_state(&NonceVersions::new(next_nonce_state))
-                    .ok()?;
-
-                Some((
-                    NonceInfo::new(nonce_address, nonce_account),
-                    lamports_per_signature,
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
+        if !nonce_is_advanceable {
+            return None;
         }
+
+        let (nonce_address, mut nonce_account, nonce_data) =
+            self.load_message_nonce_account(message)?;
+
+        let lamports_per_signature = self.get_lamports_per_signature();
+        let next_nonce_state = NonceState::new_initialized(
+            &nonce_data.authority,
+            *next_durable_nonce,
+            lamports_per_signature,
+        );
+        nonce_account
+            .set_state(&NonceVersions::new(next_nonce_state))
+            .ok()?;
+
+        Some((
+            NonceInfo::new(nonce_address, nonce_account),
+            lamports_per_signature,
+        ))
     }
 
     pub(super) fn load_message_nonce_account(
@@ -238,6 +235,7 @@ mod tests {
         .unwrap();
         let custodian_pubkey = custodian_keypair.pubkey();
         let nonce_pubkey = nonce_keypair.pubkey();
+        let stale_lamports_per_signature = 42;
 
         let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
         let message = new_sanitized_message(Message::new_with_blockhash(
@@ -248,18 +246,32 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
-        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        let nonce_data = get_nonce_data_from_account(&nonce_account).unwrap();
 
-        let lamports_per_signature = nonce_data.get_lamports_per_signature();
+        // set a spurious lamports_per_signature value
+        let mut nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+        let nonce_data = get_nonce_data_from_account(&nonce_account).unwrap();
+        nonce_account
+            .set_state(&NonceVersions::new(NonceState::new_initialized(
+                &nonce_data.authority,
+                nonce_data.durable_nonce,
+                stale_lamports_per_signature,
+            )))
+            .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+
+        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+        let current_lamports_per_signature = bank.get_lamports_per_signature();
         let mut expected_nonce_info = NonceInfo::new(nonce_pubkey, nonce_account);
         expected_nonce_info
-            .try_advance_nonce(bank.next_durable_nonce(), lamports_per_signature)
+            .try_advance_nonce(bank.next_durable_nonce(), current_lamports_per_signature)
             .unwrap();
 
+        // we now expect to:
+        // * advance the nonce to the current value
+        // * set the bank's lamports_per_signature in the nonce data
         assert_eq!(
             bank.check_load_and_advance_message_nonce_account(&message, &bank.next_durable_nonce()),
-            Some((expected_nonce_info, lamports_per_signature)),
+            Some((expected_nonce_info, current_lamports_per_signature)),
         );
     }
 

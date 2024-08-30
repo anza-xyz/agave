@@ -233,7 +233,8 @@ pub fn create_executable_environment(
         .unwrap()
         .insert(Rent::id(), account_data);
 
-    // advance nonce asserts recent blockhashes is non-empty but then just gets the blockhash from ic
+    // SystemInstruction::AdvanceNonceAccount asserts RecentBlockhashes is non-empty
+    // but then just gets the blockhash from InvokeContext. so the sysvar doesnt need real entries
     #[allow(deprecated)]
     let recent_blockhashes = vec![BlockhashesEntry::default()];
 

@@ -639,7 +639,10 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
+fn simple_nonce_fee_only(
+    enable_fee_only_transactions: bool,
+    fee_paying_nonce: bool,
+) -> Vec<SvmTestEntry> {
     let mut test_entry = SvmTestEntry::default();
     if enable_fee_only_transactions {
         test_entry
@@ -655,19 +658,31 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
 
     // create and return a transaction, fee payer, and nonce info
     // sets up initial account states but not final ones
+    // there are four cases of fee_paying_nonce and fake_fee_payer:
+    // * false/false: normal nonce account with rent minimum, normal fee payer account with 1sol
+    // * true/false: normal nonce account used to pay fees with rent minimum plus 1sol
+    // * false/true: normal nonce account with rent minimum, fee payer doesnt exist
+    // * true/true: same account for both which does not exist
     let mk_nonce_transaction = |test_entry: &mut SvmTestEntry, program_id, fake_fee_payer: bool| {
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
+        let nonce_pubkey = if fee_paying_nonce {
+            fee_payer
+        } else {
+            Pubkey::new_unique()
+        };
 
-        if !fake_fee_payer {
+        let nonce_size = nonce::State::size();
+        let mut nonce_balance = Rent::default().minimum_balance(nonce_size);
+
+        if !fake_fee_payer && !fee_paying_nonce {
             let mut fee_payer_data = AccountSharedData::default();
             fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
             test_entry.add_initial_account(fee_payer, &fee_payer_data);
+        } else if fee_paying_nonce {
+            nonce_balance += LAMPORTS_PER_SOL;
         }
 
-        let nonce_size = nonce::State::size();
-        let nonce_balance = Rent::default().minimum_balance(nonce_size);
-        let nonce_pubkey = Pubkey::new_unique();
         let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
         let nonce_data =
             nonce::state::Data::new(fee_payer, nonce_initial_hash, LAMPORTS_PER_SIGNATURE);
@@ -679,7 +694,9 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
         .unwrap();
         let nonce_info = NonceInfo::new(nonce_pubkey, nonce_account.clone());
 
-        test_entry.add_initial_account(nonce_pubkey, &nonce_account);
+        if !(fake_fee_payer && fee_paying_nonce) {
+            test_entry.add_initial_account(nonce_pubkey, &nonce_account);
+        }
 
         let instructions = vec![
             system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer),
@@ -727,8 +744,7 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
         test_entry
             .final_accounts
             .get_mut(nonce_info.address())
-            .unwrap()
-            .set_rent_epoch(0);
+            .map(|a| a.set_rent_epoch(0));
 
         test_entry.push_nonce_transaction_with_status(
             transaction,
@@ -792,11 +808,15 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
                 .unwrap()
                 .data_as_mut_slice()
                 .copy_from_slice(nonce_info.account().data());
-            test_entry
-                .final_accounts
-                .get_mut(nonce_info.address())
-                .unwrap()
-                .set_rent_epoch(0);
+
+            // if the nonce account pays fees, it keeps its new rent epoch, otherwise it resets
+            if !fee_paying_nonce {
+                test_entry
+                    .final_accounts
+                    .get_mut(nonce_info.address())
+                    .unwrap()
+                    .set_rent_epoch(0);
+            }
         } else {
             test_entry
                 .final_accounts
@@ -823,8 +843,10 @@ fn simple_nonce_fee_only(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry
 
 #[test_case(program_medley())]
 #[test_case(simple_transfer())]
-#[test_case(simple_nonce_fee_only(false))]
-#[test_case(simple_nonce_fee_only(true))]
+#[test_case(simple_nonce_fee_only(false, false))]
+#[test_case(simple_nonce_fee_only(true, false))]
+#[test_case(simple_nonce_fee_only(false, true))]
+#[test_case(simple_nonce_fee_only(true, true))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);
