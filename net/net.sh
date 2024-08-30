@@ -990,6 +990,8 @@ while [[ -n $1 ]]; do
       maybeUseUnstakedConnection="$1"
       shift 1
     elif [[ $1 = --wen-restart ]]; then
+      # wen_restart needs tower storage to be there, so set skipSetup to true
+      # to avoid erasing the tower storage on disk.
       skipSetup=true
       maybeWenRestart="$2"
       shift 2
