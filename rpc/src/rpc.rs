@@ -638,7 +638,7 @@ impl JsonRpcRequestProcessor {
             .into());
         }
 
-        let partitioned_epoch_reward_enabled = epoch_boundary_block.num_reward_partitions.is_some();
+        let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
 
         // Collect rewards from first block in the epoch if partitioned epoch
         // rewards not enabled, or address is a vote account
@@ -651,14 +651,14 @@ impl JsonRpcRequestProcessor {
                 &addresses,
                 &|reward_type| -> bool {
                     reward_type == RewardType::Voting
-                        || (!partitioned_epoch_reward_enabled && reward_type == RewardType::Staking)
+                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
                 },
             )
         };
 
         // Append stake account rewards from partitions if partitions epoch
         // rewards is enabled
-        if partitioned_epoch_reward_enabled {
+        if epoch_has_partitioned_rewards {
             let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
                 "epoch-boundary block should have num_reward_partitions for epochs with \
                  partitioned rewards enabled",
