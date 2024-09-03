@@ -1146,7 +1146,12 @@ fn main() {
                             "geyser_plugin_config",
                         ])
                         .help("In addition to the bank hash, optionally include accounts and/or transactions details for the slot"),
-                ),
+                )
+                .arg(Arg::with_name("account_override")
+                        .long("account-override")
+                        .takes_value(true)
+                        .value_name("DIR")
+                        .help("Specifies directory with slot_account.so overrides"))
         )
         .subcommand(
             SubCommand::with_name("graph")
@@ -1663,6 +1668,14 @@ fn main() {
 
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
                     let (slot_callback, slot_recorder_config) = setup_slot_recording(arg_matches);
+
+                    let slot_callback = override_accounts(
+                        value_t!(arg_matches, "account_override", String)
+                            .ok()
+                            .map(PathBuf::from),
+                        slot_callback,
+                    );
+
                     process_options.slot_callback = slot_callback;
                     let transaction_status_sender = slot_recorder_config
                         .as_ref()
@@ -2938,4 +2951,59 @@ fn main() {
     };
     measure_total_execution_time.stop();
     info!("{}", measure_total_execution_time);
+}
+
+// Override accounts without affecting the bank hash. This can useful to test whether a modified program changes the result
+// of the verify. Create a file with the contents of an account, and name it {slot}_{pubkey} and store it in a directory.
+// For example: override/279764215_A7ZG7ByDi8DpzT9Ab7CiXhvgYTJQmaDPJkMDoPitaCQV and now run:
+// ledger-tool verify --account-override=override/
+// Now at the end of slot 279764215, account A7ZG7ByDi8DpzT9Ab7CiXhvgYTJQmaDPJkMDoPitaCQV is override with the contents
+// of the file.
+fn override_accounts(
+    account_override: Option<PathBuf>,
+    cb: Option<ProcessSlotCallback>,
+) -> Option<ProcessSlotCallback> {
+    if let Some(account_override) = account_override {
+        let slot_callback = Arc::new({
+            move |bank: &Bank| {
+                if let Some(cb) = cb.clone() {
+                    cb(bank);
+                }
+
+                info!("checking for overrides in {} for slot {}", account_override.display(), bank.slot());
+
+                let prefix = format!("{}_", bank.slot());
+
+                let entries = std::fs::read_dir(&account_override).unwrap();
+
+                for entry in entries {
+                    let entry = entry.unwrap();
+
+                    if let Some(filename) = entry.path().file_name() {
+                        let filename = filename.to_string_lossy();
+
+                        if let Some(key) = filename.strip_prefix(&prefix) {
+                            let Ok(key) = Pubkey::from_str(key) else {
+                                panic!("{key} is not a valid public key")
+                            };
+
+                            let mut account = bank.get_account(&key).unwrap();
+
+                            info!("overriding {key} using {}", entry.path().display());
+
+                            let data = std::fs::read(entry.path()).unwrap();
+
+                            account.set_data_from_slice(&data);
+
+                            bank.rc.accounts.accounts_db.store_uncached(bank.slot(), &[(&key, &account)]);
+                        }
+                    }
+                }
+            }
+        });
+
+        Some(slot_callback as ProcessSlotCallback)
+    } else {
+        cb
+    }
 }
