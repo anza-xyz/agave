@@ -1,8 +1,12 @@
 use {
     core::borrow::Borrow,
     solana_sdk::{
+<<<<<<< HEAD
         account::AccountSharedData, nonce::state::DurableNonce, pubkey::Pubkey,
         transaction::SanitizedTransaction, transaction_context::TransactionAccount,
+=======
+        account::AccountSharedData, pubkey::Pubkey, transaction_context::TransactionAccount,
+>>>>>>> adb1a4159c (fix merge issues)
     },
     solana_svm::{
         rollback_accounts::RollbackAccounts,
@@ -309,9 +313,7 @@ mod tests {
             let (collected_accounts, transactions) = collect_accounts_to_store(
                 &txs,
                 &transaction_refs,
-                &mut processing_results,
-                &DurableNonce::default(),
-                0,
+                &processing_results,
             );
             assert_eq!(collected_accounts.len(), 2);
             assert!(collected_accounts
@@ -374,16 +376,13 @@ mod tests {
         )];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 1);
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) = collect_accounts_to_store(
                 &txs,
                 &transaction_refs,
-                &mut processing_results,
-                &durable_nonce,
-                0,
+                &processing_results,
             );
             assert_eq!(collected_accounts.len(), 1);
             assert_eq!(
@@ -481,9 +480,7 @@ mod tests {
             let (collected_accounts, transactions) = collect_accounts_to_store(
                 &txs,
                 &transaction_refs,
-                &mut processing_results,
-                &durable_nonce,
-                0,
+                &processing_results,
             );
             assert_eq!(collected_accounts.len(), 2);
             assert_eq!(
@@ -594,9 +591,7 @@ mod tests {
             let (collected_accounts, transactions) = collect_accounts_to_store(
                 &txs,
                 &transaction_refs,
-                &mut processing_results,
-                &durable_nonce,
-                0,
+                &processing_results,
             );
             assert_eq!(collected_accounts.len(), 1);
             let collected_nonce_account = collected_accounts
@@ -649,16 +644,13 @@ mod tests {
         )))];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 1);
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
 
         for collect_transactions in [false, true] {
             let transaction_refs = collect_transactions.then(|| txs.iter().collect::<Vec<_>>());
             let (collected_accounts, transactions) = collect_accounts_to_store(
                 &txs,
                 &transaction_refs,
-                &mut processing_results,
-                &durable_nonce,
-                0,
+                &processing_results,
             );
             assert_eq!(collected_accounts.len(), 1);
             assert_eq!(

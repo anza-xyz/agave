@@ -3798,8 +3798,6 @@ impl Bank {
         }
 
         let ((), store_accounts_us) = measure_us!({
-            let durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
-
             // If geyser is present, we must collect `SanitizedTransaction`
             // references in order to comply with that interface - until it
             // is changed.
