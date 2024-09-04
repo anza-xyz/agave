@@ -4346,7 +4346,7 @@ impl AccountsDb {
                 // if all are zero lamports, then we expect that we would like to mark the whole slot dead, but we cannot. That's clean's job.
                 info!(
                     "Unexpected shrink for slot {} alive {} capacity {}, \
-                        All alive bytes are zero.",
+                        likely caused by a bug for calculating alive bytes.",
                     slot, shrink_collect.alive_total_bytes, shrink_collect.capacity
                 );
             }
