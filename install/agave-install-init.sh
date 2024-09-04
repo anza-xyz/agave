@@ -41,6 +41,37 @@ OPTIONS:
 EOF
 }
 
+install_homebrew() {
+    # Check if Homebrew is installed; if not, install it
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if ! check_cmd brew; then
+            printf 'Homebrew not found. Installing Homebrew...\n' 1>&2
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+    fi
+}
+
+install_gnu_tar() {
+    # Check if gnu-tar is installed via Homebrew; if not, install it
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if ! brew list gnu-tar >/dev/null 2>&1; then
+            printf 'gnu-tar not found. Installing gnu-tar using Homebrew...\n' 1>&2
+            brew install gnu-tar
+        fi
+    fi
+}
+
+update_path_for_gnu_tar() {
+    # Check uname for macOS and arm64
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if [ "$(uname -m)" = "arm64" ]; then
+            export PATH="/opt/homebrew/opt/gnu-tar/libexec/gnubin:$PATH"
+        else
+            export PATH="/usr/local/opt/gnu-tar/libexec/gnubin:$PATH"
+        fi
+    fi
+}
+
 main() {
     downloader --check
     need_cmd uname
@@ -50,6 +81,11 @@ main() {
     need_cmd rm
     need_cmd sed
     need_cmd grep
+
+    # install homebrew and gnu-tar if not present and update PATH for gnu-tar on macOS
+    install_homebrew
+    install_gnu_tar
+    update_path_for_gnu_tar 
 
     for arg in "$@"; do
       case "$arg" in
