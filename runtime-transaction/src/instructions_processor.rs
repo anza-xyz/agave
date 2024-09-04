@@ -1,5 +1,5 @@
 use {
-    crate::compute_budget_instruction_details::*,
+    crate::instruction_details::*,
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{pubkey::Pubkey, transaction::TransactionError},
     solana_svm_transaction::instruction::SVMInstruction,
@@ -13,8 +13,7 @@ use {
 pub fn process_compute_budget_instructions<'a>(
     instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
 ) -> Result<ComputeBudgetLimits, TransactionError> {
-    ComputeBudgetInstructionDetails::try_from(instructions)?
-        .sanitize_and_convert_to_compute_budget_limits()
+    InstructionDetails::try_from(instructions)?.sanitize_and_convert_to_compute_budget_limits()
 }
 
 #[cfg(test)]
