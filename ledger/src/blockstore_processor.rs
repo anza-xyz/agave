@@ -37,7 +37,7 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
-        transaction_batch::TransactionBatch,
+        transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
@@ -61,7 +61,6 @@ use {
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         ops::Index,
         path::PathBuf,
@@ -443,7 +442,8 @@ fn rebatch_transactions<'a>(
 ) -> TransactionBatchWithIndexes<'a, 'a, SanitizedTransaction> {
     let txs = &sanitized_txs[start..=end];
     let results = &lock_results[start..=end];
-    let mut tx_batch = TransactionBatch::new(results.to_vec(), bank, Cow::from(txs));
+    let mut tx_batch =
+        TransactionBatch::new(results.to_vec(), bank, OwnedOrBorrowed::Borrowed(txs));
     tx_batch.set_needs_unlock(false);
 
     let transaction_indexes = transaction_indexes[start..=end].to_vec();
