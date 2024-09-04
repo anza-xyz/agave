@@ -6367,7 +6367,6 @@ dependencies = [
 name = "solana-short-vec"
 version = "2.1.0"
 dependencies = [
- "rustc_version",
  "serde",
 ]
 
