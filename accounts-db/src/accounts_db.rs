@@ -4347,6 +4347,16 @@ impl AccountsDb {
                 slot, shrink_collect.alive_total_bytes, shrink_collect.capacity
             );
 
+            if !shrink_collect.all_are_zero_lamports {
+                // if all are zero lamports, then we expect that we would like to mark the whole slot dead, but we cannot. That's clean's job.
+                info!(
+                    "Unexpected shrink for slot {} alive {} capacity {}, \
+                    likely caused by a bug for calculating alive bytes. All alive bytes are zero: {}, {}",
+                    slot, shrink_collect.alive_total_bytes, shrink_collect.capacity,
+                    store.alive_bytes(), shrink_collect.zero_lamport_single_ref_pubkeys.len() * aligned_stored_size(0),
+                );
+            }
+
             self.shrink_stats
                 .skipped_shrink
                 .fetch_add(1, Ordering::Relaxed);
