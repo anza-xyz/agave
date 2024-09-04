@@ -1,6 +1,6 @@
 use {
     crate::bank::Bank, solana_sdk::transaction::Result,
-    solana_svm_transaction::svm_transaction::SVMTransaction,
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 pub enum OwnedOrBorrowed<'a, T> {
@@ -20,14 +20,14 @@ impl<T> core::ops::Deref for OwnedOrBorrowed<'_, T> {
 }
 
 // Represents the results of trying to lock a set of accounts
-pub struct TransactionBatch<'a, 'b, Tx: SVMTransaction> {
+pub struct TransactionBatch<'a, 'b, Tx: SVMMessage> {
     lock_results: Vec<Result<()>>,
     bank: &'a Bank,
     sanitized_txs: OwnedOrBorrowed<'b, Tx>,
     needs_unlock: bool,
 }
 
-impl<'a, 'b, Tx: SVMTransaction> TransactionBatch<'a, 'b, Tx> {
+impl<'a, 'b, Tx: SVMMessage> TransactionBatch<'a, 'b, Tx> {
     pub fn new(
         lock_results: Vec<Result<()>>,
         bank: &'a Bank,
@@ -97,7 +97,7 @@ impl<'a, 'b, Tx: SVMTransaction> TransactionBatch<'a, 'b, Tx> {
 }
 
 // Unlock all locked accounts in destructor.
-impl<'a, 'b, Tx: SVMTransaction> Drop for TransactionBatch<'a, 'b, Tx> {
+impl<'a, 'b, Tx: SVMMessage> Drop for TransactionBatch<'a, 'b, Tx> {
     fn drop(&mut self) {
         if self.needs_unlock() {
             self.set_needs_unlock(false);
