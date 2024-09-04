@@ -3533,20 +3533,26 @@ pub mod tests {
         // keypair2=3
         // keypair3=3
 
-        assert!(process_entries_for_tests_without_scheduler(
-            &bank,
-            vec![
-                entry_1_to_mint,
-                entry_2_to_3_and_1_to_mint,
-                entry_conflict_itself,
-            ],
-        )
-        .is_err());
+        let allow_self_conflicting_txns = bank
+            .feature_set
+            .is_active(&feature_set::allow_self_conflicting_entries::id());
 
-        // last entry should have been aborted before par_execute_entries
-        assert_eq!(bank.get_balance(&keypair1.pubkey()), 2);
-        assert_eq!(bank.get_balance(&keypair2.pubkey()), 2);
-        assert_eq!(bank.get_balance(&keypair3.pubkey()), 2);
+        if !allow_self_conflicting_txns {
+            assert!(process_entries_for_tests_without_scheduler(
+                &bank,
+                vec![
+                    entry_1_to_mint,
+                    entry_2_to_3_and_1_to_mint,
+                    entry_conflict_itself,
+                ],
+            )
+            .is_err());
+    
+            // last entry should have been aborted before par_execute_entries
+            assert_eq!(bank.get_balance(&keypair1.pubkey()), 2);
+            assert_eq!(bank.get_balance(&keypair2.pubkey()), 2);
+            assert_eq!(bank.get_balance(&keypair3.pubkey()), 2);
+        }
     }
 
     #[test]
@@ -3888,13 +3894,19 @@ pub mod tests {
             ],
         );
 
-        assert_eq!(
-            process_entries_for_tests_without_scheduler(&bank, vec![entry_1_to_mint]),
-            Err(TransactionError::AccountInUse)
-        );
+        let allow_self_conflicting_txns = bank
+            .feature_set
+            .is_active(&feature_set::allow_self_conflicting_entries::id());
 
-        // Should not see duplicate signature error
-        assert_eq!(bank.process_transaction(&fail_tx), Ok(()));
+        if !allow_self_conflicting_txns {
+            assert_eq!(
+                process_entries_for_tests_without_scheduler(&bank, vec![entry_1_to_mint]),
+                Err(TransactionError::AccountInUse)
+            );
+
+            // Should not see duplicate signature error
+            assert_eq!(bank.process_transaction(&fail_tx), Ok(()));
+        }
     }
 
     #[test]

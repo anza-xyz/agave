@@ -1555,53 +1555,60 @@ mod tests {
                 retryable_transaction_indexes,
                 ..
             } = process_transactions_batch_output.execute_and_commit_transactions_output;
-            assert_eq!(transaction_counts.processed_with_successful_result_count, 1);
-            assert!(commit_transactions_result.is_ok());
 
-            // first one should have been committed, second one not committed due to AccountInUse error during
-            // account locking
-            let commit_transactions_result = commit_transactions_result.unwrap();
-            assert_eq!(commit_transactions_result.len(), 2);
-            assert_matches!(
-                commit_transactions_result.first(),
-                Some(CommitTransactionDetails::Committed { .. })
-            );
-            assert_matches!(
-                commit_transactions_result.get(1),
-                Some(CommitTransactionDetails::NotCommitted)
-            );
-            assert_eq!(retryable_transaction_indexes, vec![1]);
+            let allow_self_conflicting_txns = bank
+                .feature_set
+                .is_active(&feature_set::allow_self_conflicting_entries::id());
 
-            let expected_block_cost = {
-                let (actual_programs_execution_cost, actual_loaded_accounts_data_size_cost) =
-                    match commit_transactions_result.first().unwrap() {
-                        CommitTransactionDetails::Committed {
-                            compute_units,
-                            loaded_accounts_data_size,
-                        } => (
-                            *compute_units,
-                            CostModel::calculate_loaded_accounts_data_size_cost(
-                                *loaded_accounts_data_size,
-                                &bank.feature_set,
+            if !allow_self_conflicting_txns {
+                assert_eq!(transaction_counts.processed_with_successful_result_count, 1);
+                assert!(commit_transactions_result.is_ok());
+
+                // first one should have been committed, second one not committed due to AccountInUse error during
+                // account locking
+                let commit_transactions_result = commit_transactions_result.unwrap();
+                assert_eq!(commit_transactions_result.len(), 2);
+                assert_matches!(
+                    commit_transactions_result.first(),
+                    Some(CommitTransactionDetails::Committed { .. })
+                );
+                assert_matches!(
+                    commit_transactions_result.get(1),
+                    Some(CommitTransactionDetails::NotCommitted)
+                );
+                assert_eq!(retryable_transaction_indexes, vec![1]);
+
+                let expected_block_cost = {
+                    let (actual_programs_execution_cost, actual_loaded_accounts_data_size_cost) =
+                        match commit_transactions_result.first().unwrap() {
+                            CommitTransactionDetails::Committed {
+                                compute_units,
+                                loaded_accounts_data_size,
+                            } => (
+                                *compute_units,
+                                CostModel::calculate_loaded_accounts_data_size_cost(
+                                    *loaded_accounts_data_size,
+                                    &bank.feature_set,
+                                ),
                             ),
-                        ),
-                        CommitTransactionDetails::NotCommitted => {
-                            unreachable!()
-                        }
-                    };
+                            CommitTransactionDetails::NotCommitted => {
+                                unreachable!()
+                            }
+                        };
 
-                let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-                if let TransactionCost::Transaction(ref mut usage_cost) = cost {
-                    usage_cost.programs_execution_cost = actual_programs_execution_cost;
-                    usage_cost.loaded_accounts_data_size_cost =
-                        actual_loaded_accounts_data_size_cost;
-                }
+                    let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
+                    if let TransactionCost::Transaction(ref mut usage_cost) = cost {
+                        usage_cost.programs_execution_cost = actual_programs_execution_cost;
+                        usage_cost.loaded_accounts_data_size_cost =
+                            actual_loaded_accounts_data_size_cost;
+                    }
 
-                block_cost + cost.sum()
-            };
+                    block_cost + cost.sum()
+                };
 
-            assert_eq!(get_block_cost(), expected_block_cost);
-            assert_eq!(get_tx_count(), 2);
+                assert_eq!(get_block_cost(), expected_block_cost);
+                assert_eq!(get_tx_count(), 2);
+            }
 
             poh_recorder
                 .read()
@@ -1680,16 +1687,22 @@ mod tests {
                 ..
             } = process_transactions_batch_output.execute_and_commit_transactions_output;
 
-            assert_eq!(
-                transaction_counts,
-                LeaderProcessedTransactionCounts {
-                    attempted_processing_count: 2,
-                    processed_count: 1,
-                    processed_with_successful_result_count: 1,
-                }
-            );
-            assert_eq!(retryable_transaction_indexes, vec![1]);
-            assert!(commit_transactions_result.is_ok());
+            let allow_self_conflicting_txns = bank
+                .feature_set
+                .is_active(&feature_set::allow_self_conflicting_entries::id());
+
+            if !allow_self_conflicting_txns {
+                assert_eq!(
+                    transaction_counts,
+                    LeaderProcessedTransactionCounts {
+                        attempted_processing_count: 2,
+                        processed_count: 1,
+                        processed_with_successful_result_count: 1,
+                    }
+                );
+                assert_eq!(retryable_transaction_indexes, vec![1]);
+                assert!(commit_transactions_result.is_ok());
+            }
         }
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
@@ -1737,25 +1750,31 @@ mod tests {
             transaction_counts,
             retryable_transaction_indexes,
             ..
-        } = execute_transactions_with_dummy_poh_service(bank, transactions);
+        } = execute_transactions_with_dummy_poh_service(bank.clone(), transactions);
 
-        // All the transactions should have been replayed, but only 1 committed
-        assert!(!reached_max_poh_height);
-        assert_eq!(
-            transaction_counts,
-            CommittedTransactionsCounts {
-                attempted_processing_count: transactions_len as u64,
-                // Both transactions should have been committed, even though one was an error,
-                // because InstructionErrors are committed
-                committed_transactions_count: 2,
-                committed_transactions_with_successful_result_count: 1,
-                processed_but_failed_commit: 0,
-            }
-        );
-        assert_eq!(
-            retryable_transaction_indexes,
-            (1..transactions_len - 1).collect::<Vec<usize>>()
-        );
+        let allow_self_conflicting_txns = bank
+            .feature_set
+            .is_active(&feature_set::allow_self_conflicting_entries::id());
+
+        if !allow_self_conflicting_txns {
+            // All the transactions should have been replayed, but only 1 committed
+            assert!(!reached_max_poh_height);
+            assert_eq!(
+                transaction_counts,
+                CommittedTransactionsCounts {
+                    attempted_processing_count: transactions_len as u64,
+                    // Both transactions should have been committed, even though one was an error,
+                    // because InstructionErrors are committed
+                    committed_transactions_count: 2,
+                    committed_transactions_with_successful_result_count: 1,
+                    processed_but_failed_commit: 0,
+                }
+            );
+            assert_eq!(
+                retryable_transaction_indexes,
+                (1..transactions_len - 1).collect::<Vec<usize>>()
+            );
+        }
     }
 
     #[test]
@@ -1798,25 +1817,31 @@ mod tests {
             transaction_counts,
             retryable_transaction_indexes,
             ..
-        } = execute_transactions_with_dummy_poh_service(bank, transactions);
+        } = execute_transactions_with_dummy_poh_service(bank.clone(), transactions);
 
-        // All the transactions should have been replayed, but only 2 committed (first and last)
-        assert!(!reached_max_poh_height);
-        assert_eq!(
-            transaction_counts,
-            CommittedTransactionsCounts {
-                attempted_processing_count: transactions_len as u64,
-                committed_transactions_count: 2,
-                committed_transactions_with_successful_result_count: 2,
-                processed_but_failed_commit: 0,
-            }
-        );
+        let allow_self_conflicting_txns = bank
+            .feature_set
+            .is_active(&feature_set::allow_self_conflicting_entries::id());
 
-        // Everything except first and last index of the transactions failed and are last retryable
-        assert_eq!(
-            retryable_transaction_indexes,
-            (1..transactions_len - 1).collect::<Vec<usize>>()
-        );
+        if !allow_self_conflicting_txns {
+            // All the transactions should have been replayed, but only 2 committed (first and last)
+            assert!(!reached_max_poh_height);
+            assert_eq!(
+                transaction_counts,
+                CommittedTransactionsCounts {
+                    attempted_processing_count: transactions_len as u64,
+                    committed_transactions_count: 2,
+                    committed_transactions_with_successful_result_count: 2,
+                    processed_but_failed_commit: 0,
+                }
+            );
+
+            // Everything except first and last index of the transactions failed and are last retryable
+            assert_eq!(
+                retryable_transaction_indexes,
+                (1..transactions_len - 1).collect::<Vec<usize>>()
+            );
+        }
     }
 
     #[test]

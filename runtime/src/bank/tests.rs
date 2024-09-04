@@ -3048,9 +3048,9 @@ fn test_readonly_accounts() {
     );
     let txs = vec![tx0, tx1];
     let results = bank.process_transactions(txs.iter());
-    // However, an account may not be locked as read-only and writable at the same time.
+    // An account can be locked as read-only and writable at the same time "in the same entry" after SIMD#83.
     assert_eq!(results[0], Ok(()));
-    assert_eq!(results[1], Err(TransactionError::AccountInUse));
+    assert_eq!(results[1], Ok(()));
 }
 
 #[test]
@@ -9228,7 +9228,8 @@ fn test_tx_log_order() {
         .as_ref()
         .unwrap()[2]
         .contains(&"failed".to_string()));
-    assert!(commit_results[2].is_err());
+    // this tx conflicts with the first tx
+    assert!(commit_results[2].is_ok());
 
     let stored_logs = &bank.transaction_log_collector.read().unwrap().logs;
     let success_log_info = stored_logs
