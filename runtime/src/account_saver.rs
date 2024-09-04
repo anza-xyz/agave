@@ -1,4 +1,5 @@
 use {
+    core::borrow::Borrow,
     solana_sdk::{
         account::AccountSharedData, nonce::state::DurableNonce, pubkey::Pubkey,
         transaction::SanitizedTransaction, transaction_context::TransactionAccount,
@@ -49,7 +50,7 @@ fn max_number_of_accounts_to_collect(
 // be useless.
 pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     txs: &'a [T],
-    txs_refs: &'a Option<Vec<impl core::borrow::Borrow<SanitizedTransaction>>>,
+    txs_refs: &'a Option<Vec<impl Borrow<SanitizedTransaction>>>,
     processing_results: &'a mut [TransactionProcessingResult],
     durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
