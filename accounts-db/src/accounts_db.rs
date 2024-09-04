@@ -2039,6 +2039,7 @@ pub struct ShrinkStats {
     accounts_loaded: AtomicU64,
     purged_zero_lamports: AtomicU64,
     accounts_not_found_in_index: AtomicU64,
+    adding_slots_to_clean: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -2155,6 +2156,11 @@ impl ShrinkStats {
                 (
                     "accounts_not_found_in_index",
                     self.accounts_not_found_in_index.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "adding_slots_to_clean",
+                    self.adding_slots_to_clean.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -2387,6 +2393,13 @@ impl ShrinkAncientStats {
                 "accounts_not_found_in_index",
                 self.shrink_stats
                     .accounts_not_found_in_index
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "adding_slots_to_clean",
+                self.shrink_stats
+                    .adding_slots_to_clean
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -3966,6 +3979,7 @@ impl AccountsDb {
         let mut alive = 0;
         let mut dead = 0;
         let mut index = 0;
+        let mut adding_slots_to_clean = 0;
         let mut index_scan_returned_some_count = 0;
         let mut index_scan_returned_none_count = 0;
         let mut all_are_zero_lamports = true;
@@ -4012,6 +4026,18 @@ impl AccountsDb {
                         unrefed_pubkeys.push(pubkey);
                         result = AccountsIndexScanResult::Unref;
                         dead += 1;
+
+                        // If we are marking something dead, and the only remaining alive account is zero lamport, then make that zero lamport slot ready to be cleaned.
+                        // If that slot happens to only contain zero lamport accounts, the whole slot will go away
+                        if slot_list.len() == 1 // should we also check for ref counts here?
+                            && slot_list
+                                .iter()
+                                .all(|(_slot, acct_info)| acct_info.is_zero_lamport())
+                        {
+                            adding_slots_to_clean += 1;
+                            self.accounts_index
+                                .add_uncleaned_roots(slot_list.iter().map(|(slot, _)| *slot));
+                        }
                     } else {
                         do_populate_accounts_for_shrink(ref_count, slot_list);
                     }
@@ -4042,6 +4068,9 @@ impl AccountsDb {
             .fetch_add(index_scan_returned_none_count, Ordering::Relaxed);
         stats.alive_accounts.fetch_add(alive, Ordering::Relaxed);
         stats.dead_accounts.fetch_add(dead, Ordering::Relaxed);
+        stats
+            .adding_slots_to_clean
+            .fetch_add(adding_slots_to_clean, Ordering::Relaxed);
 
         LoadAccountsIndexForShrink {
             alive_accounts,
