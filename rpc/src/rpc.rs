@@ -92,7 +92,7 @@ use {
         TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
-    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
+    solana_vote_program::vote_state::{EpochCreditsItem, MAX_LOCKOUT_HISTORY},
     spl_token_2022::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions,
@@ -1034,17 +1034,21 @@ impl JsonRpcRequestProcessor {
                 };
 
                 let epoch_credits = vote_state.epoch_credits();
-                let epoch_credits = if epoch_credits.len()
-                    > MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY
-                {
-                    epoch_credits
-                        .iter()
-                        .skip(epoch_credits.len() - MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY)
-                        .cloned()
-                        .collect()
-                } else {
-                    epoch_credits.clone()
-                };
+                let epoch_credits = epoch_credits
+                    .iter()
+                    .skip(
+                        epoch_credits
+                            .len()
+                            .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
+                    )
+                    .map(
+                        |EpochCreditsItem {
+                             epoch,
+                             credits,
+                             prev_credits,
+                         }| (*epoch, *credits, *prev_credits),
+                    )
+                    .collect();
 
                 Some(RpcVoteAccountInfo {
                     vote_pubkey: vote_pubkey.to_string(),

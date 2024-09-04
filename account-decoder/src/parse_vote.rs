@@ -3,7 +3,7 @@ use {
     solana_sdk::{
         clock::{Epoch, Slot},
         pubkey::Pubkey,
-        vote::state::{BlockTimestamp, Lockout, VoteState},
+        vote::state::{BlockTimestamp, EpochCreditsItem, Lockout, PriorVotersItem, VoteState},
     },
 };
 
@@ -12,11 +12,17 @@ pub fn parse_vote(data: &[u8]) -> Result<VoteAccountType, ParseAccountError> {
     let epoch_credits = vote_state
         .epoch_credits()
         .iter()
-        .map(|(epoch, credits, previous_credits)| UiEpochCredits {
-            epoch: *epoch,
-            credits: credits.to_string(),
-            previous_credits: previous_credits.to_string(),
-        })
+        .map(
+            |EpochCreditsItem {
+                 epoch,
+                 credits,
+                 prev_credits,
+             }| UiEpochCredits {
+                epoch: *epoch,
+                credits: credits.to_string(),
+                previous_credits: prev_credits.to_string(),
+            },
+        )
         .collect();
     let votes = vote_state
         .votes
@@ -38,9 +44,13 @@ pub fn parse_vote(data: &[u8]) -> Result<VoteAccountType, ParseAccountError> {
         .prior_voters()
         .buf()
         .iter()
-        .filter(|(pubkey, _, _)| pubkey != &Pubkey::default())
+        .filter(|PriorVotersItem { voter, .. }| voter != &Pubkey::default())
         .map(
-            |(authorized_pubkey, epoch_of_last_authorized_switch, target_epoch)| UiPriorVoters {
+            |PriorVotersItem {
+                 voter: authorized_pubkey,
+                 start_epoch_inclusive: epoch_of_last_authorized_switch,
+                 end_epoch_exclusive: target_epoch,
+             }| UiPriorVoters {
                 authorized_pubkey: authorized_pubkey.to_string(),
                 epoch_of_last_authorized_switch: *epoch_of_last_authorized_switch,
                 target_epoch: *target_epoch,

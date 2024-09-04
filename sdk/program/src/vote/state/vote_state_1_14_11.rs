@@ -7,7 +7,7 @@ const DEFAULT_PRIOR_VOTERS_OFFSET: usize = 82;
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "CZTgLymuevXjAx6tM8X8T5J3MCx9AkEsFSmu4FJrEpkG"),
+    frozen_abi(digest = "6io5iuPRfguxFPNLtu9uMCncSudPvShXUaLYnxqJxbQG"),
     derive(AbiExample)
 )]
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -34,11 +34,10 @@ pub struct VoteState1_14_11 {
     /// history of prior authorized voters and the epochs for which
     /// they were set, the bottom end of the range is inclusive,
     /// the top of the range is exclusive
-    pub prior_voters: CircBuf<(Pubkey, Epoch, Epoch)>,
+    pub prior_voters: CircBuf<PriorVotersItem>,
 
     /// history of how many credits earned by the end of each epoch
-    ///  each tuple is (Epoch, credits, prev_credits)
-    pub epoch_credits: Vec<(Epoch, u64, u64)>,
+    pub epoch_credits: Vec<EpochCreditsItem>,
 
     /// most recent timestamp submitted with a vote
     pub last_timestamp: BlockTimestamp,

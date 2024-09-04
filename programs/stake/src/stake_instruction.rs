@@ -7134,14 +7134,14 @@ mod tests {
             reference_vote_state.increment_credits(epoch, 1);
         }
         assert_eq!(
-            reference_vote_state.epoch_credits[current_epoch as usize - 2].0,
+            reference_vote_state.epoch_credits[current_epoch as usize - 2].epoch,
             current_epoch - 2
         );
         reference_vote_state
             .epoch_credits
             .remove(current_epoch as usize - 2);
         assert_eq!(
-            reference_vote_state.epoch_credits[current_epoch as usize - 2].0,
+            reference_vote_state.epoch_credits[current_epoch as usize - 2].epoch,
             current_epoch - 1
         );
         reference_vote_account

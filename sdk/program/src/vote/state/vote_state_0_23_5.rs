@@ -30,8 +30,7 @@ pub struct VoteState0_23_5 {
     pub root_slot: Option<u64>,
 
     /// history of how many credits earned by the end of each epoch
-    ///  each tuple is (Epoch, credits, prev_credits)
-    pub epoch_credits: Vec<(Epoch, u64, u64)>,
+    pub epoch_credits: Vec<EpochCreditsItem>,
 
     /// most recent timestamp submitted with a vote
     pub last_timestamp: BlockTimestamp,

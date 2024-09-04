@@ -60,6 +60,7 @@ use {
         system_program,
         sysvar::{clock, stake_history},
         transaction::Transaction,
+        vote::state::EpochCreditsItem,
     },
     std::{ops::Deref, rc::Rc},
 };
@@ -1733,7 +1734,16 @@ pub fn process_deactivate_stake_account(
             .current
             .into_iter()
             .find(|vote_account_info| {
-                acceptable_reference_epoch_credits(&vote_account_info.epoch_credits, current_epoch)
+                let epoch_credits: Vec<_> = vote_account_info
+                    .epoch_credits
+                    .iter()
+                    .map(|&(epoch, credits, prev_credits)| EpochCreditsItem {
+                        epoch,
+                        credits,
+                        prev_credits,
+                    })
+                    .collect();
+                acceptable_reference_epoch_credits(&epoch_credits, current_epoch)
             });
         let reference_vote_account_address = reference_vote_account_address
             .ok_or_else(|| {

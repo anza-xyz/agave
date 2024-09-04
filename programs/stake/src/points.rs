@@ -9,7 +9,7 @@ use {
         stake::state::{Delegation, Stake, StakeStateV2},
         stake_history::StakeHistory,
     },
-    solana_vote_program::vote_state::VoteState,
+    solana_vote_program::vote_state::{EpochCreditsItem, VoteState},
     std::cmp::Ordering,
 };
 
@@ -162,8 +162,11 @@ pub(crate) fn calculate_stake_points_and_credits(
     let mut points = 0;
     let mut new_credits_observed = credits_in_stake;
 
-    for (epoch, final_epoch_credits, initial_epoch_credits) in
-        new_vote_state.epoch_credits().iter().copied()
+    for EpochCreditsItem {
+        epoch,
+        credits: final_epoch_credits,
+        prev_credits: initial_epoch_credits,
+    } in new_vote_state.epoch_credits().iter().copied()
     {
         let stake_amount = u128::from(stake.delegation.stake(
             epoch,

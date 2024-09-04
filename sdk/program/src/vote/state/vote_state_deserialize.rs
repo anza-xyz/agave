@@ -1,16 +1,20 @@
 use {
-    super::{MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
+    super::{EpochCreditsItem, PriorVotersItem, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
     crate::{
-        clock::Epoch,
         instruction::InstructionError,
-        pubkey::Pubkey,
         serialize_utils::cursor::*,
         vote::{
             authorized_voters::AuthorizedVoters,
             state::{BlockTimestamp, LandedVote, Lockout, VoteState, MAX_ITEMS},
         },
     },
-    std::{collections::VecDeque, io::Cursor, ptr::addr_of_mut},
+    std::{
+        collections::VecDeque,
+        io::{Cursor, Read},
+        mem,
+        ptr::addr_of_mut,
+        slice,
+    },
 };
 
 pub(super) fn deserialize_vote_state_into(
@@ -99,16 +103,31 @@ fn read_prior_voters_into<T: AsRef<[u8]>>(
     // Safety: if vote_state is non-null, prior_voters is guaranteed to be valid too
     unsafe {
         let prior_voters = addr_of_mut!((*vote_state).prior_voters);
-        let prior_voters_buf = addr_of_mut!((*prior_voters).buf) as *mut (Pubkey, Epoch, Epoch);
+        let prior_voters_buf = addr_of_mut!((*prior_voters).buf) as *mut PriorVotersItem;
 
-        for i in 0..MAX_ITEMS {
-            let prior_voter = read_pubkey(cursor)?;
-            let from_epoch = read_u64(cursor)?;
-            let until_epoch = read_u64(cursor)?;
+        // Vote state is always serialized using bincode which uses little
+        // endian by default so when targeting little endian, we can optimize
+        // deserialization by copying the serialized data directly into memory
+        if cfg!(target_endian = "little") {
+            let total_bytes = MAX_ITEMS.saturating_mul(mem::size_of::<PriorVotersItem>());
+            let buffer_ptr = prior_voters_buf as *mut u8;
 
-            prior_voters_buf
-                .add(i)
-                .write((prior_voter, from_epoch, until_epoch));
+            // Read the bytes directly into the buffer's uninitialized memory
+            cursor
+                .read_exact(slice::from_raw_parts_mut(buffer_ptr, total_bytes))
+                .map_err(|_| InstructionError::InvalidAccountData)?;
+        } else {
+            for i in 0..MAX_ITEMS {
+                let prior_voter = read_pubkey(cursor)?;
+                let from_epoch = read_u64(cursor)?;
+                let until_epoch = read_u64(cursor)?;
+
+                prior_voters_buf.add(i).write(PriorVotersItem {
+                    voter: prior_voter,
+                    start_epoch_inclusive: from_epoch,
+                    end_epoch_exclusive: until_epoch,
+                });
+            }
         }
 
         (*vote_state).prior_voters.idx = read_u64(cursor)? as usize;
@@ -119,15 +138,44 @@ fn read_prior_voters_into<T: AsRef<[u8]>>(
 
 fn read_epoch_credits<T: AsRef<[u8]>>(
     cursor: &mut Cursor<T>,
-) -> Result<Vec<(Epoch, u64, u64)>, InstructionError> {
+) -> Result<Vec<EpochCreditsItem>, InstructionError> {
     let epoch_credit_count = read_u64(cursor)? as usize;
     let mut epoch_credits = Vec::with_capacity(epoch_credit_count.min(MAX_EPOCH_CREDITS_HISTORY));
 
-    for _ in 0..epoch_credit_count {
-        let epoch = read_u64(cursor)?;
-        let credits = read_u64(cursor)?;
-        let prev_credits = read_u64(cursor)?;
-        epoch_credits.push((epoch, credits, prev_credits));
+    // Vote state is always serialized using bincode which uses little
+    // endian by default so when targeting little endian, we can optimize
+    // deserialization by copying the serialized data directly into memory.
+    // But only do this optimization if the epoch_credits_count isn't bigger
+    // than the max history so that we don't overshoot the allocated vec buffer
+    // bounds.
+    if cfg!(target_endian = "little") && epoch_credit_count <= MAX_EPOCH_CREDITS_HISTORY {
+        let total_bytes = epoch_credit_count.saturating_mul(mem::size_of::<EpochCreditsItem>());
+
+        // Safety: This is safe because we have pre-allocated enough space in the Vec,
+        // and we will manually initialize each element by reading from the cursor.
+        unsafe {
+            // Get a pointer to the start of the vector's buffer
+            let buffer_ptr = epoch_credits.as_mut_ptr() as *mut u8;
+
+            // Read the bytes directly into the vector's uninitialized memory
+            cursor
+                .read_exact(slice::from_raw_parts_mut(buffer_ptr, total_bytes))
+                .map_err(|_| InstructionError::InvalidAccountData)?;
+
+            // Set the length of the vector to reflect the initialized elements
+            epoch_credits.set_len(epoch_credit_count);
+        }
+    } else {
+        for _ in 0..epoch_credit_count {
+            let epoch = read_u64(cursor)?;
+            let credits = read_u64(cursor)?;
+            let prev_credits = read_u64(cursor)?;
+            epoch_credits.push(EpochCreditsItem {
+                epoch,
+                credits,
+                prev_credits,
+            });
+        }
     }
 
     Ok(epoch_credits)

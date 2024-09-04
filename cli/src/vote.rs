@@ -38,7 +38,7 @@ use {
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, withdraw, CreateVoteAccountConfig},
-        vote_state::{VoteAuthorize, VoteInit, VoteState, VoteStateVersions},
+        vote_state::{EpochCreditsItem, VoteAuthorize, VoteInit, VoteState, VoteStateVersions},
     },
     std::rc::Rc,
 };
@@ -1252,7 +1252,12 @@ pub fn process_show_vote_account(
         for vote in &vote_state.votes {
             votes.push(vote.into());
         }
-        for (epoch, credits, prev_credits) in vote_state.epoch_credits().iter().copied() {
+        for EpochCreditsItem {
+            epoch,
+            credits,
+            prev_credits,
+        } in vote_state.epoch_credits().iter().copied()
+        {
             let credits_earned = credits.saturating_sub(prev_credits);
             let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
             epoch_voting_history.push(CliEpochVotingHistory {

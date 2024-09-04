@@ -282,7 +282,10 @@ mod tests {
                 self, clock::Clock, epoch_schedule::EpochSchedule, rent::Rent,
                 slot_hashes::SlotHashes,
             },
-            vote::instruction::{tower_sync, tower_sync_switch},
+            vote::{
+                instruction::{tower_sync, tower_sync_switch},
+                state::EpochCreditsItem,
+            },
         },
         std::{collections::HashSet, str::FromStr},
     };
@@ -461,11 +464,11 @@ mod tests {
         let mut previous_epoch_credits = 0;
         for (epoch, credits) in credits_to_append.iter().enumerate() {
             current_epoch_credits = current_epoch_credits.saturating_add(*credits);
-            vote_state.epoch_credits.push((
-                u64::try_from(epoch).unwrap(),
-                current_epoch_credits,
-                previous_epoch_credits,
-            ));
+            vote_state.epoch_credits.push(EpochCreditsItem {
+                epoch: u64::try_from(epoch).unwrap(),
+                credits: current_epoch_credits,
+                prev_credits: previous_epoch_credits,
+            });
             previous_epoch_credits = current_epoch_credits;
         }
 

@@ -404,9 +404,29 @@ impl<I> CircBuf<I> {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(Arbitrary, Default))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+pub struct EpochCreditsItem {
+    pub epoch: Epoch,
+    pub credits: u64,
+    pub prev_credits: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(Arbitrary))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+pub struct PriorVotersItem {
+    pub voter: Pubkey,
+    pub start_epoch_inclusive: Epoch,
+    pub end_epoch_exclusive: Epoch,
+}
+
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "EeenjJaSrm9hRM39gK6raRNtzG61hnk7GciUCJJRDUSQ"),
+    frozen_abi(digest = "456hApVev1Vn6QfurNVrtRpG3NdRiB9ZYz65dN8v39Bg"),
     derive(AbiExample)
 )]
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -433,11 +453,10 @@ pub struct VoteState {
     /// history of prior authorized voters and the epochs for which
     /// they were set, the bottom end of the range is inclusive,
     /// the top of the range is exclusive
-    prior_voters: CircBuf<(Pubkey, Epoch, Epoch)>,
+    prior_voters: CircBuf<PriorVotersItem>,
 
     /// history of how many credits earned by the end of each epoch
-    ///  each tuple is (Epoch, credits, prev_credits)
-    pub epoch_credits: Vec<(Epoch, u64, u64)>,
+    pub epoch_credits: Vec<EpochCreditsItem>,
 
     /// most recent timestamp submitted with a vote
     pub last_timestamp: BlockTimestamp,
@@ -480,7 +499,7 @@ impl VoteState {
         &self.authorized_voters
     }
 
-    pub fn prior_voters(&mut self) -> &CircBuf<(Pubkey, Epoch, Epoch)> {
+    pub fn prior_voters(&mut self) -> &CircBuf<PriorVotersItem> {
         &self.prior_voters
     }
 
@@ -686,7 +705,7 @@ impl VoteState {
         VoteState {
             votes: VecDeque::from(vec![LandedVote::default(); MAX_LOCKOUT_HISTORY]),
             root_slot: Some(u64::MAX),
-            epoch_credits: vec![(0, 0, 0); MAX_EPOCH_CREDITS_HISTORY],
+            epoch_credits: vec![EpochCreditsItem::default(); MAX_EPOCH_CREDITS_HISTORY],
             authorized_voters,
             ..Self::default()
         }
@@ -736,17 +755,29 @@ impl VoteState {
 
         // never seen a credit
         if self.epoch_credits.is_empty() {
-            self.epoch_credits.push((epoch, 0, 0));
-        } else if epoch != self.epoch_credits.last().unwrap().0 {
-            let (_, credits, prev_credits) = *self.epoch_credits.last().unwrap();
+            self.epoch_credits.push(EpochCreditsItem {
+                epoch,
+                credits: 0,
+                prev_credits: 0,
+            });
+        } else if epoch != self.epoch_credits.last().unwrap().epoch {
+            let EpochCreditsItem {
+                credits,
+                prev_credits,
+                ..
+            } = *self.epoch_credits.last().unwrap();
 
             if credits != prev_credits {
                 // if credits were earned previous epoch
                 // append entry at end of list for the new epoch
-                self.epoch_credits.push((epoch, credits, credits));
+                self.epoch_credits.push(EpochCreditsItem {
+                    epoch,
+                    credits,
+                    prev_credits: credits,
+                });
             } else {
                 // else just move the current epoch
-                self.epoch_credits.last_mut().unwrap().0 = epoch;
+                self.epoch_credits.last_mut().unwrap().epoch = epoch;
             }
 
             // Remove too old epoch_credits
@@ -755,8 +786,12 @@ impl VoteState {
             }
         }
 
-        self.epoch_credits.last_mut().unwrap().1 =
-            self.epoch_credits.last().unwrap().1.saturating_add(credits);
+        self.epoch_credits.last_mut().unwrap().credits = self
+            .epoch_credits
+            .last()
+            .unwrap()
+            .credits
+            .saturating_add(credits);
     }
 
     // Computes the vote latency for vote on voted_for_slot where the vote itself landed in current_slot
@@ -827,7 +862,7 @@ impl VoteState {
         if self.epoch_credits.is_empty() {
             0
         } else {
-            self.epoch_credits.last().unwrap().0
+            self.epoch_credits.last().unwrap().epoch
         }
     }
 
@@ -837,7 +872,7 @@ impl VoteState {
         if self.epoch_credits.is_empty() {
             0
         } else {
-            self.epoch_credits.last().unwrap().1
+            self.epoch_credits.last().unwrap().credits
         }
     }
 
@@ -846,7 +881,7 @@ impl VoteState {
     /// Each tuple of (Epoch, u64, u64) is read as (epoch, credits, prev_credits), where
     ///   credits for each epoch is credits - prev_credits; while redundant this makes
     ///   calculating rewards over partial epochs nice and simple
-    pub fn epoch_credits(&self) -> &Vec<(Epoch, u64, u64)> {
+    pub fn epoch_credits(&self) -> &Vec<EpochCreditsItem> {
         &self.epoch_credits
     }
 
@@ -883,8 +918,11 @@ impl VoteState {
         // of the old authorized pubkey
         if latest_authorized_pubkey != authorized_pubkey {
             // Update the epoch ranges of authorized pubkeys that will be expired
-            let epoch_of_last_authorized_switch =
-                self.prior_voters.last().map(|range| range.2).unwrap_or(0);
+            let epoch_of_last_authorized_switch = self
+                .prior_voters
+                .last()
+                .map(|range| range.end_epoch_exclusive)
+                .unwrap_or(0);
 
             // target_epoch must:
             // 1) Be monotonically increasing due to the clock always
@@ -897,11 +935,11 @@ impl VoteState {
             }
 
             // Commit the new state
-            self.prior_voters.append((
-                *latest_authorized_pubkey,
-                epoch_of_last_authorized_switch,
-                target_epoch,
-            ));
+            self.prior_voters.append(PriorVotersItem {
+                voter: *latest_authorized_pubkey,
+                start_epoch_inclusive: epoch_of_last_authorized_switch,
+                end_epoch_exclusive: target_epoch,
+            });
         }
 
         self.authorized_voters
@@ -1386,7 +1424,11 @@ mod tests {
                 vote_state.increment_credits(epoch, 1);
                 credits += 1;
             }
-            expected.push((epoch, credits, credits - epoch));
+            expected.push(EpochCreditsItem {
+                epoch,
+                credits,
+                prev_credits: credits - epoch,
+            });
         }
 
         while expected.len() > MAX_EPOCH_CREDITS_HISTORY {
@@ -1566,7 +1608,11 @@ mod tests {
         assert_eq!(vote_state.prior_voters.idx, 0);
         assert_eq!(
             vote_state.prior_voters.last(),
-            Some(&(original_voter, 0, epoch_offset))
+            Some(&PriorVotersItem {
+                voter: original_voter,
+                start_epoch_inclusive: 0,
+                end_epoch_exclusive: epoch_offset,
+            })
         );
 
         // Trying to set authorized voter for same epoch again should fail
@@ -1588,7 +1634,11 @@ mod tests {
         assert_eq!(vote_state.prior_voters.idx, 1);
         assert_eq!(
             vote_state.prior_voters.last(),
-            Some(&(new_voter, epoch_offset, 3 + epoch_offset))
+            Some(&PriorVotersItem {
+                voter: new_voter,
+                start_epoch_inclusive: epoch_offset,
+                end_epoch_exclusive: 3 + epoch_offset,
+            })
         );
 
         let new_voter3 = Pubkey::new_unique();
@@ -1598,7 +1648,11 @@ mod tests {
         assert_eq!(vote_state.prior_voters.idx, 2);
         assert_eq!(
             vote_state.prior_voters.last(),
-            Some(&(new_voter2, 3 + epoch_offset, 6 + epoch_offset))
+            Some(&PriorVotersItem {
+                voter: new_voter2,
+                start_epoch_inclusive: 3 + epoch_offset,
+                end_epoch_exclusive: 6 + epoch_offset,
+            })
         );
 
         // Check can set back to original voter
@@ -1840,5 +1894,101 @@ mod tests {
         let data: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00];
         let circ_buf: CircBuf<()> = bincode::deserialize(data).unwrap();
         assert_eq!(circ_buf.last(), None);
+    }
+
+    impl VoteState {
+        fn rand_vote_state_for_tests<R: Rng>(rng: &mut R) -> Self {
+            let votes = (0..31)
+                .map(|_| LandedVote {
+                    latency: rng.gen(),
+                    lockout: Lockout::new_with_confirmation_count(rng.gen(), rng.gen()),
+                })
+                .collect();
+
+            let root_slot = rng.gen_bool(0.8).then(|| rng.gen());
+
+            let mut authorized_voters = AuthorizedVoters::default();
+            for _ in 0..=MAX_LEADER_SCHEDULE_EPOCH_OFFSET {
+                authorized_voters.insert(rng.gen(), Pubkey::new_unique());
+            }
+
+            let prior_voters = CircBuf {
+                buf: std::array::from_fn(|_| PriorVotersItem {
+                    voter: Pubkey::new_unique(),
+                    start_epoch_inclusive: rng.gen(),
+                    end_epoch_exclusive: rng.gen(),
+                }),
+                idx: rng.gen_range(0..MAX_ITEMS),
+                is_empty: false,
+            };
+
+            let epoch_credits = (0..MAX_EPOCH_CREDITS_HISTORY)
+                .map(|_| EpochCreditsItem {
+                    epoch: rng.gen(),
+                    credits: rng.gen(),
+                    prev_credits: rng.gen(),
+                })
+                .collect();
+
+            Self {
+                node_pubkey: Pubkey::new_unique(),
+                authorized_withdrawer: Pubkey::new_unique(),
+                commission: rng.gen(),
+                votes,
+                root_slot,
+                authorized_voters,
+                prior_voters,
+                epoch_credits,
+                last_timestamp: BlockTimestamp {
+                    slot: rng.gen(),
+                    timestamp: rng.gen(),
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn test_deserialize_vote_state() {
+        let mut rng = rand::thread_rng();
+        let vote_state = VoteState::rand_vote_state_for_tests(&mut rng);
+        let vote_bytes =
+            bincode::serialize(&VoteStateVersions::new_current(vote_state.clone())).unwrap();
+
+        let mut deserialized_vote_state = VoteState::default();
+        VoteState::deserialize_into(vote_bytes.as_slice(), &mut deserialized_vote_state).unwrap();
+        assert_eq!(vote_state, deserialized_vote_state);
+    }
+
+    #[test]
+    fn test_deserialize_vote_state_with_too_many_epoch_credits() {
+        // This test ensures that an invalid epoch credits length doesn't cause
+        // any issues with optimized deserialization. This should never actually
+        // happen in the runtime though because the vote program doesn't allow
+        // epoch credits to be too long.
+        let mut rng = rand::thread_rng();
+        let mut vote_state = VoteState::rand_vote_state_for_tests(&mut rng);
+        while vote_state.epoch_credits.len() <= MAX_EPOCH_CREDITS_HISTORY {
+            vote_state.epoch_credits.push(EpochCreditsItem {
+                epoch: rng.gen(),
+                credits: rng.gen(),
+                prev_credits: rng.gen(),
+            });
+        }
+        let vote_bytes =
+            bincode::serialize(&VoteStateVersions::new_current(vote_state.clone())).unwrap();
+
+        let mut deserialized_vote_state = VoteState::default();
+        VoteState::deserialize_into(vote_bytes.as_slice(), &mut deserialized_vote_state).unwrap();
+        assert_eq!(vote_state, deserialized_vote_state);
+    }
+
+    #[test]
+    fn test_epoch_credits_item_size_of() {
+        assert_eq!(24, mem::size_of::<EpochCreditsItem>());
+    }
+
+    #[test]
+    fn test_prior_voter_item_size_of() {
+        assert_eq!(48, mem::size_of::<PriorVotersItem>());
     }
 }

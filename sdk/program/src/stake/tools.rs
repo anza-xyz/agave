@@ -1,6 +1,7 @@
 //! Utility functions
 use crate::{
     clock::Epoch, program_error::ProgramError, stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION,
+    vote::state::EpochCreditsItem,
 };
 
 /// Helper function for programs to call [`GetMinimumDelegation`] and then fetch the return data
@@ -42,7 +43,7 @@ fn get_minimum_delegation_return_data() -> Result<u64, ProgramError> {
 // Check if the provided `epoch_credits` demonstrate active voting over the previous
 // `MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION`
 pub fn acceptable_reference_epoch_credits(
-    epoch_credits: &[(Epoch, u64, u64)],
+    epoch_credits: &[EpochCreditsItem],
     current_epoch: Epoch,
 ) -> bool {
     if let Some(epoch_index) = epoch_credits
@@ -50,7 +51,10 @@ pub fn acceptable_reference_epoch_credits(
         .checked_sub(MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION)
     {
         let mut epoch = current_epoch;
-        for (vote_epoch, ..) in epoch_credits[epoch_index..].iter().rev() {
+        for EpochCreditsItem {
+            epoch: vote_epoch, ..
+        } in epoch_credits[epoch_index..].iter().rev()
+        {
             if *vote_epoch != epoch {
                 return false;
             }
@@ -65,12 +69,12 @@ pub fn acceptable_reference_epoch_credits(
 // Check if the provided `epoch_credits` demonstrate delinquency over the previous
 // `MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION`
 pub fn eligible_for_deactivate_delinquent(
-    epoch_credits: &[(Epoch, u64, u64)],
+    epoch_credits: &[EpochCreditsItem],
     current_epoch: Epoch,
 ) -> bool {
     match epoch_credits.last() {
         None => true,
-        Some((epoch, ..)) => {
+        Some(EpochCreditsItem { epoch, .. }) => {
             if let Some(minimum_epoch) =
                 current_epoch.checked_sub(MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as Epoch)
             {
@@ -86,39 +90,52 @@ pub fn eligible_for_deactivate_delinquent(
 mod tests {
     use super::*;
 
+    fn create_test_epoch_credits_item(epoch: Epoch) -> EpochCreditsItem {
+        EpochCreditsItem {
+            epoch,
+            credits: 42,
+            prev_credits: 42,
+        }
+    }
+
     #[test]
     fn test_acceptable_reference_epoch_credits() {
         let epoch_credits = [];
         assert!(!acceptable_reference_epoch_credits(&epoch_credits, 0));
 
-        let epoch_credits = [(0, 42, 42), (1, 42, 42), (2, 42, 42), (3, 42, 42)];
+        let epoch_credits = [
+            create_test_epoch_credits_item(0),
+            create_test_epoch_credits_item(1),
+            create_test_epoch_credits_item(2),
+            create_test_epoch_credits_item(3),
+        ];
         assert!(!acceptable_reference_epoch_credits(&epoch_credits, 3));
 
         let epoch_credits = [
-            (0, 42, 42),
-            (1, 42, 42),
-            (2, 42, 42),
-            (3, 42, 42),
-            (4, 42, 42),
+            create_test_epoch_credits_item(0),
+            create_test_epoch_credits_item(1),
+            create_test_epoch_credits_item(2),
+            create_test_epoch_credits_item(3),
+            create_test_epoch_credits_item(4),
         ];
         assert!(!acceptable_reference_epoch_credits(&epoch_credits, 3));
         assert!(acceptable_reference_epoch_credits(&epoch_credits, 4));
 
         let epoch_credits = [
-            (1, 42, 42),
-            (2, 42, 42),
-            (3, 42, 42),
-            (4, 42, 42),
-            (5, 42, 42),
+            create_test_epoch_credits_item(1),
+            create_test_epoch_credits_item(2),
+            create_test_epoch_credits_item(3),
+            create_test_epoch_credits_item(4),
+            create_test_epoch_credits_item(5),
         ];
         assert!(acceptable_reference_epoch_credits(&epoch_credits, 5));
 
         let epoch_credits = [
-            (0, 42, 42),
-            (2, 42, 42),
-            (3, 42, 42),
-            (4, 42, 42),
-            (5, 42, 42),
+            create_test_epoch_credits_item(0),
+            create_test_epoch_credits_item(2),
+            create_test_epoch_credits_item(3),
+            create_test_epoch_credits_item(4),
+            create_test_epoch_credits_item(5),
         ];
         assert!(!acceptable_reference_epoch_credits(&epoch_credits, 5));
     }
@@ -128,10 +145,10 @@ mod tests {
         let epoch_credits = [];
         assert!(eligible_for_deactivate_delinquent(&epoch_credits, 42));
 
-        let epoch_credits = [(0, 42, 42)];
+        let epoch_credits = [create_test_epoch_credits_item(0)];
         assert!(!eligible_for_deactivate_delinquent(&epoch_credits, 0));
 
-        let epoch_credits = [(0, 42, 42)];
+        let epoch_credits = [create_test_epoch_credits_item(0)];
         assert!(!eligible_for_deactivate_delinquent(
             &epoch_credits,
             MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as Epoch - 1
@@ -141,7 +158,7 @@ mod tests {
             MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as Epoch
         ));
 
-        let epoch_credits = [(100, 42, 42)];
+        let epoch_credits = [create_test_epoch_credits_item(100)];
         assert!(!eligible_for_deactivate_delinquent(
             &epoch_credits,
             100 + MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as Epoch - 1

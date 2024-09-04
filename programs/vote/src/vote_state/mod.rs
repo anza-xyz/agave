@@ -993,13 +993,18 @@ pub fn withdraw<S: std::hash::BuildHasher>(
         let reject_active_vote_account_close = vote_state
             .epoch_credits
             .last()
-            .map(|(last_epoch_with_credits, _, _)| {
-                let current_epoch = clock.epoch;
-                // if current_epoch - last_epoch_with_credits < 2 then the validator has received credits
-                // either in the current epoch or the previous epoch. If it's >= 2 then it has been at least
-                // one full epoch since the validator has received credits.
-                current_epoch.saturating_sub(*last_epoch_with_credits) < 2
-            })
+            .map(
+                |EpochCreditsItem {
+                     epoch: last_epoch_with_credits,
+                     ..
+                 }| {
+                    let current_epoch = clock.epoch;
+                    // if current_epoch - last_epoch_with_credits < 2 then the validator has received credits
+                    // either in the current epoch or the previous epoch. If it's >= 2 then it has been at least
+                    // one full epoch since the validator has received credits.
+                    current_epoch.saturating_sub(*last_epoch_with_credits) < 2
+                },
+            )
             .unwrap_or(false);
 
         if reject_active_vote_account_close {
