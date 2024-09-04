@@ -41,6 +41,34 @@ OPTIONS:
 EOF
 }
 
+install_gnutar_macos() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    VERSION="1.34"  # specify the gnu-tar version
+
+    # Download the tarball
+    URL="https://ftp.gnu.org/gnu/tar/tar-${VERSION}.tar.gz"
+    echo "Downloading GNU tar ${VERSION}..."
+    curl -O "${URL}" >/dev/null 2>&1
+
+    # Extract the downloaded tarball
+    tar -xzf "tar-${VERSION}.tar.gz" >/dev/null 2>&1
+    cd "tar-${VERSION}"
+
+    echo "Configuring the build..."
+    ./configure --with-included-libiconv >/dev/null 2>&1
+
+    echo "Compiling GNU tar..."
+    make >/dev/null 2>&1
+
+    echo "Installing GNU tar..."
+    sudo make install >/dev/null 2>&1
+
+    # clean up
+    cd ..
+    rm -rf "tar-${VERSION}" "tar-${VERSION}.tar.gz" >/dev/null 2>&1
+  fi
+}
+
 main() {
     downloader --check
     need_cmd uname
@@ -50,6 +78,9 @@ main() {
     need_cmd rm
     need_cmd sed
     need_cmd grep
+    
+    # default bsdtar isn't compatible as hardened_unpack() expects gnu-tar on macOS
+    install_gnutar_macos
 
     for arg in "$@"; do
       case "$arg" in
