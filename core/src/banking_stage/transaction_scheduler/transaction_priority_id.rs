@@ -5,7 +5,7 @@ use {
 };
 
 /// A unique identifier tied with priority ordering for a transaction/packet:
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TransactionPriorityId {
     pub(crate) priority: u64,
     pub(crate) id: TransactionId,
@@ -14,20 +14,6 @@ pub(crate) struct TransactionPriorityId {
 impl TransactionPriorityId {
     pub(crate) fn new(priority: u64, id: TransactionId) -> Self {
         Self { priority, id }
-    }
-}
-
-impl Ord for TransactionPriorityId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority
-            .cmp(&other.priority)
-            .then_with(|| self.id.cmp(&other.id))
-    }
-}
-
-impl PartialOrd for TransactionPriorityId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }
 
