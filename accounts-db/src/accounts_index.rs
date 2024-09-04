@@ -50,7 +50,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
     bins: Some(BINS_FOR_TESTING),
     flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Unspecified,
+    index_limit_mb: IndexLimitMb::Unlimited,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
     started_from_validator: false,
@@ -59,7 +59,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIn
     bins: Some(BINS_FOR_BENCHMARKS),
     flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
-    index_limit_mb: IndexLimitMb::Unspecified,
+    index_limit_mb: IndexLimitMb::Unlimited,
     ages_to_stay_in_cache: None,
     scan_results_limit_bytes: None,
     started_from_validator: false,
@@ -76,6 +76,22 @@ pub(crate) struct GenerateIndexResult<T: IndexValue> {
     pub count: usize,
     /// pubkeys which were present multiple times in the insertion request.
     pub duplicates: Option<Vec<(Pubkey, (Slot, T))>>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// which accounts `scan` should load from disk
+pub enum ScanFilter {
+    /// Scan both in-memory and on-disk index
+    #[default]
+    All,
+
+    /// abnormal = ref_count != 1 or slot list.len() != 1
+    /// Scan only in-memory index and skip on-disk index
+    OnlyAbnormal,
+
+    /// Similar to `OnlyAbnormal but also check on-disk index to verify the
+    /// entry on-disk is indeed normal.
+    OnlyAbnormalWithVerify,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,20 +205,14 @@ pub struct AccountSecondaryIndexesIncludeExclude {
 }
 
 /// specification of how much memory in-mem portion of account index can use
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum IndexLimitMb {
-    /// nothing explicit specified, so default
-    Unspecified,
-    /// limit was specified, use disk index for rest
-    Limit(usize),
+    /// use disk index while allowing to use as much memory as available for
+    /// in-memory index.
+    #[default]
+    Unlimited,
     /// in-mem-only was specified, no disk index
     InMemOnly,
-}
-
-impl Default for IndexLimitMb {
-    fn default() -> Self {
-        Self::Unspecified
-    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -677,6 +687,8 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub active_scans: AtomicUsize,
     /// # of slots between latest max and latest scan
     pub max_distance_to_min_scan_slot: AtomicU64,
+    // # of unref when the account's ref_count is zero
+    pub unref_zero_count: AtomicU64,
 
     /// populated at generate_index time - accounts that could possibly be rent paying
     pub rent_paying_accounts_by_partition: OnceLock<RentPayingAccountsByPartition>,
@@ -714,6 +726,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             roots_removed: AtomicUsize::default(),
             active_scans: AtomicUsize::default(),
             max_distance_to_min_scan_slot: AtomicU64::default(),
+            unref_zero_count: AtomicU64::default(),
             rent_paying_accounts_by_partition: OnceLock::default(),
         }
     }
@@ -1405,6 +1418,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         mut callback: F,
         avoid_callback_result: Option<AccountsIndexScanResult>,
         provide_entry_in_callback: bool,
+        filter: ScanFilter,
     ) where
         F: FnMut(
             &'a Pubkey,
@@ -1422,10 +1436,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 lock = Some(&self.account_maps[bin]);
                 last_bin = bin;
             }
-            // SAFETY: The caller must ensure that if `provide_entry_in_callback` is true, and
-            // if it's possible for `callback` to clone the entry Arc, then it must also add
-            // the entry to the in-mem cache if the entry is made dirty.
-            lock.as_ref().unwrap().get_internal(pubkey, |entry| {
+
+            let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
                 let mut cache = false;
                 match entry {
                     Some(locked_entry) => {
@@ -1443,6 +1455,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             AccountsIndexScanResult::Unref => {
                                 if locked_entry.unref() {
                                     info!("scan: refcount of item already at 0: {pubkey}");
+                                    self.unref_zero_count.fetch_add(1, Ordering::Relaxed);
                                 }
                                 true
                             }
@@ -1455,7 +1468,36 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                     }
                 }
                 (cache, ())
-            });
+            };
+
+            match filter {
+                ScanFilter::All => {
+                    // SAFETY: The caller must ensure that if `provide_entry_in_callback` is true, and
+                    // if it's possible for `callback` to clone the entry Arc, then it must also add
+                    // the entry to the in-mem cache if the entry is made dirty.
+                    lock.as_ref()
+                        .unwrap()
+                        .get_internal(pubkey, internal_callback);
+                }
+                ScanFilter::OnlyAbnormal | ScanFilter::OnlyAbnormalWithVerify => {
+                    let found = lock
+                        .as_ref()
+                        .unwrap()
+                        .get_only_in_mem(pubkey, false, |entry| {
+                            internal_callback(entry);
+                            entry.is_some()
+                        });
+                    if !found && matches!(filter, ScanFilter::OnlyAbnormalWithVerify) {
+                        lock.as_ref().unwrap().get_internal(pubkey, |entry| {
+                            assert!(entry.is_some(), "{pubkey}, entry: {entry:?}");
+                            let entry = entry.unwrap();
+                            assert_eq!(entry.ref_count(), 1, "{pubkey}");
+                            assert_eq!(entry.slot_list.read().unwrap().len(), 1, "{pubkey}");
+                            (false, ())
+                        });
+                    }
+                }
+            }
         });
     }
 
@@ -2487,7 +2529,7 @@ pub mod tests {
 
         let mut config = ACCOUNTS_INDEX_CONFIG_FOR_TESTING;
         config.index_limit_mb = if use_disk {
-            IndexLimitMb::Limit(10_000)
+            IndexLimitMb::Unlimited
         } else {
             IndexLimitMb::InMemOnly // in-mem only
         };

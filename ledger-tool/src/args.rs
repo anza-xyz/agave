@@ -4,7 +4,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
         accounts_file::StorageAccess,
-        accounts_index::{AccountsIndexConfig, IndexLimitMb},
+        accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
         partitioned_rewards::TestPartitionedEpochRewards,
         utils::create_and_canonicalize_directories,
     },
@@ -59,22 +59,12 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
-        Arg::with_name("accounts_index_memory_limit_mb")
-            .long("accounts-index-memory-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help(
-                "How much memory the accounts index can consume. If this is exceeded, some \
-                 account index entries will be stored on disk.",
-            ),
         Arg::with_name("disable_accounts_disk_index")
             .long("disable-accounts-disk-index")
             .help(
                 "Disable the disk-based accounts index. It is enabled by default. The entire \
                  accounts index will be kept in memory.",
-            )
-            .conflicts_with("accounts_index_memory_limit_mb"),
+            ),
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
             .help(
@@ -86,6 +76,20 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help(
                 "Debug option to scan all AppendVecs and verify account index refcounts prior to \
                 clean",
+            )
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_scan_filter_for_shrinking")
+            .long("accounts-db-scan-filter-for-shrinking")
+            .takes_value(true)
+            .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
+            .help(
+                "Debug option to use different type of filtering for accounts index scan in \
+                shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is the default. \
+                \"only-abnormal\" will scan in-memory accounts index only for abnormal entries and \
+                skip scanning on-disk accounts index by assuming that on-disk accounts index contains \
+                only normal accounts index entry. \"only-abnormal-with-verify\" is similar to \
+                \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
+                verify that on-disk account entries are indeed normal.",
             )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_test_skip_rewrites")
@@ -241,14 +245,11 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let accounts_index_index_limit_mb =
-        if let Ok(limit) = value_t!(arg_matches, "accounts_index_memory_limit_mb", usize) {
-            IndexLimitMb::Limit(limit)
-        } else if arg_matches.is_present("disable_accounts_disk_index") {
-            IndexLimitMb::InMemOnly
-        } else {
-            IndexLimitMb::Unspecified
-        };
+    let accounts_index_index_limit_mb = if arg_matches.is_present("disable_accounts_disk_index") {
+        IndexLimitMb::InMemOnly
+    } else {
+        IndexLimitMb::Unlimited
+    };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
         .map(|drives| drives.into_iter().map(PathBuf::from).collect())
@@ -309,6 +310,19 @@ pub fn get_accounts_db_config(
         })
         .unwrap_or_default();
 
+    let scan_filter_for_shrinking = arg_matches
+        .value_of("accounts_db_scan_filter_for_shrinking")
+        .map(|filter| match filter {
+            "all" => ScanFilter::All,
+            "only-abnormal" => ScanFilter::OnlyAbnormal,
+            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
+            }
+        })
+        .unwrap_or_default();
+
     AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_tool_ledger_path),
@@ -322,6 +336,7 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_test_skip_rewrites"),
         create_ancient_storage,
         storage_access,
+        scan_filter_for_shrinking,
         ..AccountsDbConfig::default()
     }
 }

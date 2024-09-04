@@ -2,11 +2,12 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, advance_offset_for_type, check_remaining,
-            optimized_read_compressed_u16, read_byte,
+            optimized_read_compressed_u16, read_byte, read_slice_data, read_type,
         },
-        result::Result,
+        result::{Result, TransactionViewError},
     },
     solana_sdk::{hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Signature},
+    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
 };
 
 // Each ATL has at least a Pubkey, one byte for the number of write indexes,
@@ -41,28 +42,36 @@ const MIN_SIZED_PACKET_WITH_ATLS: usize = {
 };
 
 /// The maximum number of ATLS that can fit in a valid packet.
-const MAX_ATLS_PER_PACKET: usize = (PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL;
+const MAX_ATLS_PER_PACKET: u8 =
+    ((PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL) as u8;
 
 /// Contains metadata about the address table lookups in a transaction packet.
-pub struct AddressTableLookupMeta {
+pub(crate) struct AddressTableLookupFrame {
     /// The number of address table lookups in the transaction.
-    pub(crate) num_address_table_lookup: u8,
+    pub(crate) num_address_table_lookups: u8,
     /// The offset to the first address table lookup in the transaction.
     pub(crate) offset: u16,
+    /// The total number of writable lookup accounts in the transaction.
+    pub(crate) total_writable_lookup_accounts: u16,
+    /// The total number of readonly lookup accounts in the transaction.
+    pub(crate) total_readonly_lookup_accounts: u16,
 }
 
-impl AddressTableLookupMeta {
+impl AddressTableLookupFrame {
     /// Get the number of address table lookups (ATL) and offset to the first.
     /// The offset will be updated to point to the first byte after the last
     /// ATL.
     /// This function will parse each ATL to ensure the data is well-formed,
     /// but will not cache data related to these ATLs.
     #[inline(always)]
-    pub fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
+    pub(crate) fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
         // Maximum number of ATLs should be represented by a single byte,
         // thus the MSB should not be set.
         const _: () = assert!(MAX_ATLS_PER_PACKET & 0b1000_0000 == 0);
         let num_address_table_lookups = read_byte(bytes, offset)?;
+        if num_address_table_lookups > MAX_ATLS_PER_PACKET {
+            return Err(TransactionViewError::ParseError);
+        }
 
         // Check that the remaining bytes are enough to hold the ATLs.
         check_remaining(
@@ -74,6 +83,13 @@ impl AddressTableLookupMeta {
         // We know the offset does not exceed packet length, and our packet
         // length is less than u16::MAX, so we can safely cast to u16.
         let address_table_lookups_offset = *offset as u16;
+
+        // Check that there is no chance of overflow when calculating the total
+        // number of writable and readonly lookup accounts using a u32.
+        const _: () =
+            assert!(u16::MAX as usize * MAX_ATLS_PER_PACKET as usize <= u32::MAX as usize);
+        let mut total_writable_lookup_accounts: u32 = 0;
+        let mut total_readonly_lookup_accounts: u32 = 0;
 
         // The ATLs do not have a fixed size. So we must iterate over
         // each ATL to find the total size of the ATLs in the packet,
@@ -89,17 +105,98 @@ impl AddressTableLookupMeta {
 
             // Read the number of write indexes, and then update the offset.
             let num_write_accounts = optimized_read_compressed_u16(bytes, offset)?;
+            total_writable_lookup_accounts =
+                total_writable_lookup_accounts.wrapping_add(u32::from(num_write_accounts));
             advance_offset_for_array::<u8>(bytes, offset, num_write_accounts)?;
 
             // Read the number of read indexes, and then update the offset.
             let num_read_accounts = optimized_read_compressed_u16(bytes, offset)?;
-            advance_offset_for_array::<u8>(bytes, offset, num_read_accounts)?
+            total_readonly_lookup_accounts =
+                total_readonly_lookup_accounts.wrapping_add(u32::from(num_read_accounts));
+            advance_offset_for_array::<u8>(bytes, offset, num_read_accounts)?;
         }
 
         Ok(Self {
-            num_address_table_lookup: num_address_table_lookups,
+            num_address_table_lookups,
             offset: address_table_lookups_offset,
+            total_writable_lookup_accounts: u16::try_from(total_writable_lookup_accounts)
+                .map_err(|_| TransactionViewError::SanitizeError)?,
+            total_readonly_lookup_accounts: u16::try_from(total_readonly_lookup_accounts)
+                .map_err(|_| TransactionViewError::SanitizeError)?,
         })
+    }
+}
+
+pub struct AddressTableLookupIterator<'a> {
+    pub(crate) bytes: &'a [u8],
+    pub(crate) offset: usize,
+    pub(crate) num_address_table_lookups: u8,
+    pub(crate) index: u8,
+}
+
+impl<'a> Iterator for AddressTableLookupIterator<'a> {
+    type Item = SVMMessageAddressTableLookup<'a>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.num_address_table_lookups {
+            self.index = self.index.wrapping_add(1);
+
+            // Each ATL has 3 pieces:
+            // 1. Address (Pubkey)
+            // 2. write indexes ([u8])
+            // 3. read indexes ([u8])
+
+            // Advance offset for address of the lookup table.
+            const _: () = assert!(core::mem::align_of::<Pubkey>() == 1, "Pubkey alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the slice.
+            // - The alignment of Pubkey is 1.
+            // - `Pubkey` is a byte array, it cannot be improperly initialized.
+            let account_key = unsafe { read_type::<Pubkey>(self.bytes, &mut self.offset) }.ok()?;
+
+            // Read the number of write indexes, and then update the offset.
+            let num_write_accounts =
+                optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
+            let writable_indexes =
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_write_accounts) }
+                    .ok()?;
+
+            // Read the number of read indexes, and then update the offset.
+            let num_read_accounts =
+                optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
+            let readonly_indexes =
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_read_accounts) }
+                    .ok()?;
+
+            Some(SVMMessageAddressTableLookup {
+                account_key,
+                writable_indexes,
+                readonly_indexes,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl ExactSizeIterator for AddressTableLookupIterator<'_> {
+    fn len(&self) -> usize {
+        usize::from(self.num_address_table_lookups.wrapping_sub(self.index))
     }
 }
 
@@ -114,10 +211,12 @@ mod tests {
     fn test_zero_atls() {
         let bytes = bincode::serialize(&ShortVec::<MessageAddressTableLookup>(vec![])).unwrap();
         let mut offset = 0;
-        let meta = AddressTableLookupMeta::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(meta.num_address_table_lookup, 0);
-        assert_eq!(meta.offset, 1);
+        let frame = AddressTableLookupFrame::try_new(&bytes, &mut offset).unwrap();
+        assert_eq!(frame.num_address_table_lookups, 0);
+        assert_eq!(frame.offset, 1);
         assert_eq!(offset, bytes.len());
+        assert_eq!(frame.total_writable_lookup_accounts, 0);
+        assert_eq!(frame.total_readonly_lookup_accounts, 0);
     }
 
     #[test]
@@ -126,7 +225,7 @@ mod tests {
         let mut offset = 0;
         // modify the number of atls to be too high
         bytes[0] = 5;
-        assert!(AddressTableLookupMeta::try_new(&bytes, &mut offset).is_err());
+        assert!(AddressTableLookupFrame::try_new(&bytes, &mut offset).is_err());
     }
 
     #[test]
@@ -140,10 +239,12 @@ mod tests {
         ]))
         .unwrap();
         let mut offset = 0;
-        let meta = AddressTableLookupMeta::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(meta.num_address_table_lookup, 1);
-        assert_eq!(meta.offset, 1);
+        let frame = AddressTableLookupFrame::try_new(&bytes, &mut offset).unwrap();
+        assert_eq!(frame.num_address_table_lookups, 1);
+        assert_eq!(frame.offset, 1);
         assert_eq!(offset, bytes.len());
+        assert_eq!(frame.total_writable_lookup_accounts, 3);
+        assert_eq!(frame.total_readonly_lookup_accounts, 3);
     }
 
     #[test]
@@ -157,15 +258,17 @@ mod tests {
             MessageAddressTableLookup {
                 account_key: Pubkey::new_unique(),
                 writable_indexes: vec![1, 2, 3],
-                readonly_indexes: vec![4, 5, 6],
+                readonly_indexes: vec![4, 5],
             },
         ]))
         .unwrap();
         let mut offset = 0;
-        let meta = AddressTableLookupMeta::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(meta.num_address_table_lookup, 2);
-        assert_eq!(meta.offset, 1);
+        let frame = AddressTableLookupFrame::try_new(&bytes, &mut offset).unwrap();
+        assert_eq!(frame.num_address_table_lookups, 2);
+        assert_eq!(frame.offset, 1);
         assert_eq!(offset, bytes.len());
+        assert_eq!(frame.total_writable_lookup_accounts, 6);
+        assert_eq!(frame.total_readonly_lookup_accounts, 5);
     }
 
     #[test]
@@ -181,7 +284,7 @@ mod tests {
         bytes[33] = 127;
 
         let mut offset = 0;
-        assert!(AddressTableLookupMeta::try_new(&bytes, &mut offset).is_err());
+        assert!(AddressTableLookupFrame::try_new(&bytes, &mut offset).is_err());
     }
 
     #[test]
@@ -197,6 +300,6 @@ mod tests {
         bytes[37] = 127;
 
         let mut offset = 0;
-        assert!(AddressTableLookupMeta::try_new(&bytes, &mut offset).is_err());
+        assert!(AddressTableLookupFrame::try_new(&bytes, &mut offset).is_err());
     }
 }

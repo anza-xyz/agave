@@ -1,14 +1,14 @@
 use {
-    crate::{
+    solana_sdk::{
+        account::AccountSharedData, nonce::state::DurableNonce, pubkey::Pubkey,
+        transaction_context::TransactionAccount,
+    },
+    solana_svm::{
         rollback_accounts::RollbackAccounts,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResult,
             TransactionProcessingResultExtensions,
         },
-    },
-    solana_sdk::{
-        account::AccountSharedData, nonce::state::DurableNonce, pubkey::Pubkey,
-        transaction_context::TransactionAccount,
     },
     solana_svm_transaction::svm_message::SVMMessage,
 };
@@ -45,10 +45,11 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
     processing_results: &'a mut [TransactionProcessingResult],
     durable_nonce: &DurableNonce,
     lamports_per_signature: u64,
-) -> (Vec<(&'a Pubkey, &'a AccountSharedData)>, Vec<Option<&'a T>>) {
+    collect_transactions: bool,
+) -> (Vec<(&'a Pubkey, &'a AccountSharedData)>, Option<Vec<&'a T>>) {
     let collect_capacity = max_number_of_accounts_to_collect(txs, processing_results);
     let mut accounts = Vec::with_capacity(collect_capacity);
-    let mut transactions = Vec::with_capacity(collect_capacity);
+    let mut transactions = collect_transactions.then(|| Vec::with_capacity(collect_capacity));
     for (processing_result, transaction) in processing_results.iter_mut().zip(txs) {
         let Some(processed_tx) = processing_result.processed_transaction_mut() else {
             // Don't store any accounts if tx wasn't executed
@@ -92,7 +93,7 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
 
 fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    collected_account_transactions: &mut Vec<Option<&'a T>>,
+    collected_account_transactions: &mut Option<Vec<&'a T>>,
     transaction: &'a T,
     transaction_accounts: &'a [TransactionAccount],
 ) {
@@ -109,13 +110,15 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
         })
     {
         collected_accounts.push((address, account));
-        collected_account_transactions.push(Some(transaction));
+        if let Some(collected_account_transactions) = collected_account_transactions {
+            collected_account_transactions.push(transaction);
+        }
     }
 }
 
 fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
-    collected_account_transactions: &mut Vec<Option<&'a T>>,
+    collected_account_transactions: &mut Option<Vec<&'a T>>,
     transaction: &'a T,
     rollback_accounts: &'a mut RollbackAccounts,
     durable_nonce: &DurableNonce,
@@ -125,7 +128,9 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
     match rollback_accounts {
         RollbackAccounts::FeePayerOnly { fee_payer_account } => {
             collected_accounts.push((fee_payer_address, &*fee_payer_account));
-            collected_account_transactions.push(Some(transaction));
+            if let Some(collected_account_transactions) = collected_account_transactions {
+                collected_account_transactions.push(transaction);
+            }
         }
         RollbackAccounts::SameNonceAndFeePayer { nonce } => {
             // Since we know we are dealing with a valid nonce account,
@@ -134,14 +139,18 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
                 .try_advance_nonce(*durable_nonce, lamports_per_signature)
                 .unwrap();
             collected_accounts.push((nonce.address(), nonce.account()));
-            collected_account_transactions.push(Some(transaction));
+            if let Some(collected_account_transactions) = collected_account_transactions {
+                collected_account_transactions.push(transaction);
+            }
         }
         RollbackAccounts::SeparateNonceAndFeePayer {
             nonce,
             fee_payer_account,
         } => {
             collected_accounts.push((fee_payer_address, &*fee_payer_account));
-            collected_account_transactions.push(Some(transaction));
+            if let Some(collected_account_transactions) = collected_account_transactions {
+                collected_account_transactions.push(transaction);
+            }
 
             // Since we know we are dealing with a valid nonce account,
             // unwrap is safe here
@@ -149,7 +158,9 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
                 .try_advance_nonce(*durable_nonce, lamports_per_signature)
                 .unwrap();
             collected_accounts.push((nonce.address(), nonce.account()));
-            collected_account_transactions.push(Some(transaction));
+            if let Some(collected_account_transactions) = collected_account_transactions {
+                collected_account_transactions.push(transaction);
+            }
         }
     }
 }
@@ -158,11 +169,6 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
 mod tests {
     use {
         super::*,
-        crate::{
-            account_loader::{FeesOnlyTransaction, LoadedTransaction},
-            nonce_info::NonceInfo,
-            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
-        },
         solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
@@ -180,6 +186,11 @@ mod tests {
             signature::{keypair_from_seed, signers::Signers, Keypair, Signer},
             system_instruction, system_program,
             transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
+        },
+        solana_svm::{
+            account_loader::{FeesOnlyTransaction, LoadedTransaction},
+            nonce_info::NonceInfo,
+            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         },
         std::collections::HashMap,
     };
@@ -284,19 +295,32 @@ mod tests {
         ];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 2);
-        let (collected_accounts, transactions) =
-            collect_accounts_to_store(&txs, &mut processing_results, &DurableNonce::default(), 0);
-        assert_eq!(collected_accounts.len(), 2);
-        assert!(collected_accounts
-            .iter()
-            .any(|(pubkey, _account)| *pubkey == &keypair0.pubkey()));
-        assert!(collected_accounts
-            .iter()
-            .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey()));
 
-        assert_eq!(transactions.len(), 2);
-        assert!(transactions.iter().any(|txn| txn.unwrap().eq(&tx0)));
-        assert!(transactions.iter().any(|txn| txn.unwrap().eq(&tx1)));
+        for collect_transactions in [false, true] {
+            let (collected_accounts, transactions) = collect_accounts_to_store(
+                &txs,
+                &mut processing_results,
+                &DurableNonce::default(),
+                0,
+                collect_transactions,
+            );
+            assert_eq!(collected_accounts.len(), 2);
+            assert!(collected_accounts
+                .iter()
+                .any(|(pubkey, _account)| *pubkey == &keypair0.pubkey()));
+            assert!(collected_accounts
+                .iter()
+                .any(|(pubkey, _account)| *pubkey == &keypair1.pubkey()));
+
+            if collect_transactions {
+                let transactions = transactions.unwrap();
+                assert_eq!(transactions.len(), 2);
+                assert!(transactions.iter().any(|txn| (*txn).eq(&tx0)));
+                assert!(transactions.iter().any(|txn| (*txn).eq(&tx1)));
+            } else {
+                assert!(transactions.is_none());
+            }
+        }
     }
 
     #[test]
@@ -342,18 +366,33 @@ mod tests {
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 1);
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let (collected_accounts, _) =
-            collect_accounts_to_store(&txs, &mut processing_results, &durable_nonce, 0);
-        assert_eq!(collected_accounts.len(), 1);
-        assert_eq!(
-            collected_accounts
-                .iter()
-                .find(|(pubkey, _account)| *pubkey == &from_address)
-                .map(|(_pubkey, account)| *account)
-                .cloned()
-                .unwrap(),
-            from_account_pre,
-        );
+
+        for collect_transactions in [false, true] {
+            let (collected_accounts, transactions) = collect_accounts_to_store(
+                &txs,
+                &mut processing_results,
+                &durable_nonce,
+                0,
+                collect_transactions,
+            );
+            assert_eq!(collected_accounts.len(), 1);
+            assert_eq!(
+                collected_accounts
+                    .iter()
+                    .find(|(pubkey, _account)| *pubkey == &from_address)
+                    .map(|(_pubkey, account)| *account)
+                    .cloned()
+                    .unwrap(),
+                from_account_pre,
+            );
+
+            if collect_transactions {
+                let transactions = transactions.unwrap();
+                assert_eq!(transactions.len(), collected_accounts.len());
+            } else {
+                assert!(transactions.is_none());
+            }
+        }
     }
 
     #[test]
@@ -427,33 +466,48 @@ mod tests {
         )];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 2);
-        let (collected_accounts, _) =
-            collect_accounts_to_store(&txs, &mut processing_results, &durable_nonce, 0);
-        assert_eq!(collected_accounts.len(), 2);
-        assert_eq!(
-            collected_accounts
+
+        for collect_transactions in [false, true] {
+            let (collected_accounts, transactions) = collect_accounts_to_store(
+                &txs,
+                &mut processing_results,
+                &durable_nonce,
+                0,
+                collect_transactions,
+            );
+            assert_eq!(collected_accounts.len(), 2);
+            assert_eq!(
+                collected_accounts
+                    .iter()
+                    .find(|(pubkey, _account)| *pubkey == &from_address)
+                    .map(|(_pubkey, account)| *account)
+                    .cloned()
+                    .unwrap(),
+                from_account_pre,
+            );
+            let collected_nonce_account = collected_accounts
                 .iter()
-                .find(|(pubkey, _account)| *pubkey == &from_address)
+                .find(|(pubkey, _account)| *pubkey == &nonce_address)
                 .map(|(_pubkey, account)| *account)
                 .cloned()
-                .unwrap(),
-            from_account_pre,
-        );
-        let collected_nonce_account = collected_accounts
-            .iter()
-            .find(|(pubkey, _account)| *pubkey == &nonce_address)
-            .map(|(_pubkey, account)| *account)
-            .cloned()
-            .unwrap();
-        assert_eq!(
-            collected_nonce_account.lamports(),
-            nonce_account_pre.lamports(),
-        );
-        assert!(nonce_account::verify_nonce_account(
-            &collected_nonce_account,
-            durable_nonce.as_hash()
-        )
-        .is_some());
+                .unwrap();
+            assert_eq!(
+                collected_nonce_account.lamports(),
+                nonce_account_pre.lamports(),
+            );
+            assert!(nonce_account::verify_nonce_account(
+                &collected_nonce_account,
+                durable_nonce.as_hash()
+            )
+            .is_some());
+
+            if collect_transactions {
+                let transactions = transactions.unwrap();
+                assert_eq!(transactions.len(), collected_accounts.len());
+            } else {
+                assert!(transactions.is_none());
+            }
+        }
     }
 
     #[test]
@@ -525,24 +579,39 @@ mod tests {
         )];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 1);
-        let (collected_accounts, _) =
-            collect_accounts_to_store(&txs, &mut processing_results, &durable_nonce, 0);
-        assert_eq!(collected_accounts.len(), 1);
-        let collected_nonce_account = collected_accounts
-            .iter()
-            .find(|(pubkey, _account)| *pubkey == &nonce_address)
-            .map(|(_pubkey, account)| *account)
-            .cloned()
-            .unwrap();
-        assert_eq!(
-            collected_nonce_account.lamports(),
-            nonce_account_pre.lamports()
-        );
-        assert!(nonce_account::verify_nonce_account(
-            &collected_nonce_account,
-            durable_nonce.as_hash()
-        )
-        .is_some());
+
+        for collect_transactions in [false, true] {
+            let (collected_accounts, transactions) = collect_accounts_to_store(
+                &txs,
+                &mut processing_results,
+                &durable_nonce,
+                0,
+                collect_transactions,
+            );
+            assert_eq!(collected_accounts.len(), 1);
+            let collected_nonce_account = collected_accounts
+                .iter()
+                .find(|(pubkey, _account)| *pubkey == &nonce_address)
+                .map(|(_pubkey, account)| *account)
+                .cloned()
+                .unwrap();
+            assert_eq!(
+                collected_nonce_account.lamports(),
+                nonce_account_pre.lamports()
+            );
+            assert!(nonce_account::verify_nonce_account(
+                &collected_nonce_account,
+                durable_nonce.as_hash()
+            )
+            .is_some());
+
+            if collect_transactions {
+                let transactions = transactions.unwrap();
+                assert_eq!(transactions.len(), collected_accounts.len());
+            } else {
+                assert!(transactions.is_none());
+            }
+        }
     }
 
     #[test]
@@ -571,17 +640,32 @@ mod tests {
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
         assert_eq!(max_collected_accounts, 1);
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let (collected_accounts, _) =
-            collect_accounts_to_store(&txs, &mut processing_results, &durable_nonce, 0);
-        assert_eq!(collected_accounts.len(), 1);
-        assert_eq!(
-            collected_accounts
-                .iter()
-                .find(|(pubkey, _account)| *pubkey == &from_address)
-                .map(|(_pubkey, account)| *account)
-                .cloned()
-                .unwrap(),
-            from_account_pre,
-        );
+
+        for collect_transactions in [false, true] {
+            let (collected_accounts, transactions) = collect_accounts_to_store(
+                &txs,
+                &mut processing_results,
+                &durable_nonce,
+                0,
+                collect_transactions,
+            );
+            assert_eq!(collected_accounts.len(), 1);
+            assert_eq!(
+                collected_accounts
+                    .iter()
+                    .find(|(pubkey, _account)| *pubkey == &from_address)
+                    .map(|(_pubkey, account)| *account)
+                    .cloned()
+                    .unwrap(),
+                from_account_pre,
+            );
+
+            if collect_transactions {
+                let transactions = transactions.unwrap();
+                assert_eq!(transactions.len(), collected_accounts.len());
+            } else {
+                assert!(transactions.is_none());
+            }
+        }
     }
 }

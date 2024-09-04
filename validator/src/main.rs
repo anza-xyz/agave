@@ -21,7 +21,7 @@ use {
         accounts_file::StorageAccess,
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
-            AccountsIndexConfig, IndexLimitMb,
+            AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
         partitioned_rewards::TestPartitionedEpochRewards,
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
@@ -34,7 +34,7 @@ use {
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorStartProgress,
+            ValidatorConfig, ValidatorError, ValidatorStartProgress,
         },
     },
     solana_gossip::{
@@ -1187,14 +1187,11 @@ pub fn main() {
             TestPartitionedEpochRewards::None
         };
 
-    accounts_index_config.index_limit_mb =
-        if let Ok(limit) = value_t!(matches, "accounts_index_memory_limit_mb", usize) {
-            IndexLimitMb::Limit(limit)
-        } else if matches.is_present("disable_accounts_disk_index") {
-            IndexLimitMb::InMemOnly
-        } else {
-            IndexLimitMb::Unspecified
-        };
+    accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
+        IndexLimitMb::InMemOnly
+    } else {
+        IndexLimitMb::Unlimited
+    };
 
     {
         let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
@@ -1274,6 +1271,19 @@ pub fn main() {
         })
         .unwrap_or_default();
 
+    let scan_filter_for_shrinking = matches
+        .value_of("accounts_db_scan_filter_for_shrinking")
+        .map(|filter| match filter {
+            "all" => ScanFilter::All,
+            "only-abnormal" => ScanFilter::OnlyAbnormal,
+            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
+            }
+        })
+        .unwrap_or_default();
+
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_path.clone()),
@@ -1290,6 +1300,7 @@ pub fn main() {
         test_skip_rewrites_but_include_in_bank_hash: matches
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
+        scan_filter_for_shrinking,
         ..AccountsDbConfig::default()
     };
 
@@ -1422,6 +1433,7 @@ pub fn main() {
                 "rpc_max_request_body_size",
                 usize
             )),
+            skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
         },
         on_start_geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -1523,6 +1535,7 @@ pub fn main() {
         replay_transactions_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
+        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         ..ValidatorConfig::default()
     };
 
@@ -1783,10 +1796,7 @@ pub fn main() {
         BlockProductionMethod
     )
     .unwrap_or_default();
-    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path
-        .as_ref()
-        .map(|_| !matches.is_present("disable_block_production_forwarding"))
-        .unwrap_or_default();
+    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
 
@@ -1965,6 +1975,11 @@ pub fn main() {
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
+        if validator_config.wen_restart_proto_path.is_some() {
+            error!("--restricted-repair-only-mode is not compatible with --wen_restart");
+            exit(1);
+        }
+
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -2045,7 +2060,7 @@ pub fn main() {
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
-    let validator = Validator::new(
+    let validator = match Validator::new(
         node,
         identity_keypair,
         &ledger_path,
@@ -2062,11 +2077,19 @@ pub fn main() {
         tpu_enable_udp,
         tpu_max_connections_per_ipaddr_per_minute,
         admin_service_post_init,
-    )
-    .unwrap_or_else(|e| {
-        error!("Failed to start validator: {:?}", e);
-        exit(1);
-    });
+    ) {
+        Ok(validator) => validator,
+        Err(err) => match err.downcast_ref() {
+            Some(ValidatorError::WenRestartFinished) => {
+                error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
+                exit(200);
+            }
+            _ => {
+                error!("Failed to start validator: {:?}", err);
+                exit(1);
+            }
+        },
+    };
 
     if let Some(filename) = init_complete_file {
         File::create(filename).unwrap_or_else(|_| {

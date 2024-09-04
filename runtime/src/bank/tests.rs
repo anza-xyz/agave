@@ -16,6 +16,7 @@ use {
         snapshot_bank_utils, snapshot_utils,
         status_cache::MAX_CACHE_ENTRIES,
     },
+    agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
     itertools::Itertools,
@@ -4012,12 +4013,8 @@ fn test_bank_epoch_vote_accounts() {
             accounts
                 .iter()
                 .filter_map(|(pubkey, (stake, account))| {
-                    if let Ok(vote_state) = account.vote_state().as_ref() {
-                        if vote_state.node_pubkey == leader_pubkey {
-                            Some((*pubkey, *stake))
-                        } else {
-                            None
-                        }
+                    if account.node_pubkey() == &leader_pubkey {
+                        Some((*pubkey, *stake))
                     } else {
                         None
                     }
@@ -6196,7 +6193,7 @@ fn test_fuzz_instructions() {
         })
         .collect();
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let max_keys = 100;
+    let max_keys = MAX_STATIC_ACCOUNTS_PER_PACKET;
     let keys: Vec<_> = (0..max_keys)
         .enumerate()
         .map(|_| {
@@ -9014,6 +9011,7 @@ fn test_epoch_schedule_from_genesis_config() {
         None,
         Arc::default(),
         None,
+        None,
     ));
 
     assert_eq!(bank.epoch_schedule(), &genesis_config.epoch_schedule);
@@ -9044,6 +9042,7 @@ where
         None,
         None,
         Arc::default(),
+        None,
         None,
     ));
     let vote_and_stake_accounts =
@@ -12649,6 +12648,7 @@ fn test_rehash_with_skipped_rewrites() {
         Some(Pubkey::new_unique()),
         Arc::new(AtomicBool::new(false)),
         None,
+        None,
     ));
     // This test is only meaningful while the bank hash contains rewrites.
     // Once this feature is enabled, it may be possible to remove this test entirely.
@@ -12710,6 +12710,7 @@ fn test_rebuild_skipped_rewrites() {
         None,
         Some(Pubkey::new_unique()),
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
     ));
     // This test is only meaningful while the bank hash contains rewrites.
@@ -12821,6 +12822,7 @@ fn test_get_accounts_for_bank_hash_details(skip_rewrites: bool) {
         None,
         Some(Pubkey::new_unique()),
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
     ));
     // This test is only meaningful while the bank hash contains rewrites.

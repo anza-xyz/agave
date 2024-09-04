@@ -35,6 +35,7 @@
 //! already been signed and verified.
 use {
     crate::{
+        account_saver::collect_accounts_to_store,
         bank::{
             builtins::{BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
             metrics::*,
@@ -43,6 +44,7 @@ use {
         bank_forks::BankForks,
         epoch_stakes::{split_epoch_stakes, EpochStakes, NodeVoteAccounts, VersionedEpochStakes},
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
+        rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
@@ -85,10 +87,11 @@ use {
         stake_rewards::StakeReward,
         storable_accounts::StorableAccounts,
     },
-    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_bpf_loader_program::syscalls::{
+        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
+    },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_cost_model::cost_tracker::CostTracker,
-    solana_loader_v4_program::create_program_runtime_environment_v2,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
@@ -152,7 +155,6 @@ use {
     solana_svm::{
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
-        account_saver::collect_accounts_to_store,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -987,6 +989,7 @@ impl Bank {
         #[allow(unused)] collector_id_for_tests: Option<Pubkey>,
         exit: Arc<AtomicBool>,
         #[allow(unused)] genesis_hash: Option<Hash>,
+        #[allow(unused)] feature_set: Option<FeatureSet>,
     ) -> Self {
         let accounts_db = AccountsDb::new_with_config(
             paths,
@@ -1004,6 +1007,11 @@ impl Bank {
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
         bank.transaction_debug_keys = debug_keys;
         bank.cluster_type = Some(genesis_config.cluster_type);
+
+        #[cfg(feature = "dev-context-only-utils")]
+        {
+            bank.feature_set = Arc::new(feature_set.unwrap_or_default());
+        }
 
         #[cfg(not(feature = "dev-context-only-utils"))]
         bank.process_genesis_config(genesis_config);
@@ -2282,12 +2290,8 @@ impl Bank {
                 invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::WrongOwner);
                 return None;
             }
-            let Ok(vote_state) = vote_account.vote_state().cloned() else {
-                invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::BadState);
-                return None;
-            };
             let vote_with_stake_delegations = VoteWithStakeDelegations {
-                vote_state: Arc::new(vote_state),
+                vote_state: Arc::new(vote_account.vote_state().clone()),
                 vote_account: AccountSharedData::from(vote_account),
                 delegations: Vec::default(),
             };
@@ -2705,7 +2709,6 @@ impl Bank {
         let vote_accounts = self.vote_accounts();
         let recent_timestamps = vote_accounts.iter().filter_map(|(pubkey, (_, account))| {
             let vote_state = account.vote_state();
-            let vote_state = vote_state.as_ref().ok()?;
             let slot_delta = self.slot().checked_sub(vote_state.last_timestamp.slot)?;
             (slot_delta <= slots_per_epoch).then_some({
                 (
@@ -2881,7 +2884,7 @@ impl Bank {
         // up and can be used to set the collector id to the highest staked
         // node. If no staked nodes exist, allow fallback to an unstaked test
         // collector id during tests.
-        let collector_id = self.stakes_cache.stakes().highest_staked_node();
+        let collector_id = self.stakes_cache.stakes().highest_staked_node().copied();
         #[cfg(feature = "dev-context-only-utils")]
         let collector_id = collector_id.or(collector_id_for_tests);
         self.collector_id =
@@ -3162,7 +3165,6 @@ impl Bank {
             w_blockhash_queue
                 .register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
         }
-        self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
 
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls
@@ -3476,6 +3478,8 @@ impl Bank {
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
+        let rent_collector_with_metrics =
+            RentCollectorWithMetrics::new(self.rent_collector.clone());
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             epoch_total_stake: self.epoch_total_stake(self.epoch()),
@@ -3483,7 +3487,7 @@ impl Bank {
             feature_set: Arc::clone(&self.feature_set),
             fee_structure: Some(&self.fee_structure),
             lamports_per_signature,
-            rent_collector: Some(&self.rent_collector),
+            rent_collector: Some(&rent_collector_with_metrics),
         };
 
         let sanitized_output = self
@@ -3800,10 +3804,12 @@ impl Bank {
                 &mut processing_results,
                 &durable_nonce,
                 lamports_per_signature,
+                self.accounts().accounts_db.has_accounts_update_notifier(),
             );
-            self.rc
-                .accounts
-                .store_cached((self.slot(), accounts_to_store.as_slice()), &transactions);
+            self.rc.accounts.store_cached(
+                (self.slot(), accounts_to_store.as_slice()),
+                transactions.as_deref(),
+            );
         });
 
         self.collect_rent(&processing_results);
@@ -5513,9 +5519,13 @@ impl Bank {
             )
         }?;
 
-        if verification_mode == TransactionVerificationMode::HashAndVerifyPrecompiles
-            || verification_mode == TransactionVerificationMode::FullVerification
-        {
+        let move_precompile_verification_to_svm = self
+            .feature_set
+            .is_active(&feature_set::move_precompile_verification_to_svm::id());
+        if !move_precompile_verification_to_svm && {
+            verification_mode == TransactionVerificationMode::HashAndVerifyPrecompiles
+                || verification_mode == TransactionVerificationMode::FullVerification
+        } {
             sanitized_tx.verify_precompiles(&self.feature_set)?;
         }
 
@@ -5896,10 +5906,6 @@ impl Bank {
             });
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
-        self.stakes_cache.stakes().staked_nodes()
-    }
-
     /// current vote accounts for this bank along with the stake
     ///   attributed to each account
     pub fn vote_accounts(&self) -> Arc<VoteAccountsHashMap> {
@@ -5914,6 +5920,15 @@ impl Bank {
         Some(vote_account.clone())
     }
 
+    /// Get the EpochStakes for the current Bank::epoch
+    pub fn current_epoch_stakes(&self) -> &EpochStakes {
+        // The stakes for a given epoch (E) in self.epoch_stakes are keyed by leader schedule epoch
+        // (E + 1) so the stakes for the current epoch are stored at self.epoch_stakes[E + 1]
+        self.epoch_stakes
+            .get(&self.epoch.saturating_add(1))
+            .expect("Current epoch stakes must exist")
+    }
+
     /// Get the EpochStakes for a given epoch
     pub fn epoch_stakes(&self, epoch: Epoch) -> Option<&EpochStakes> {
         self.epoch_stakes.get(&epoch)
@@ -5921,6 +5936,11 @@ impl Bank {
 
     pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, EpochStakes> {
         &self.epoch_stakes
+    }
+
+    /// Get the staked nodes map for the current Bank::epoch
+    pub fn current_epoch_staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+        self.current_epoch_stakes().stakes().staked_nodes()
     }
 
     pub fn epoch_staked_nodes(&self, epoch: Epoch) -> Option<Arc<HashMap<Pubkey, u64>>> {
@@ -6636,6 +6656,7 @@ impl Bank {
             Some(Pubkey::new_unique()),
             Arc::default(),
             None,
+            None,
         )
     }
 
@@ -6659,6 +6680,7 @@ impl Bank {
             None,
             Some(Pubkey::new_unique()),
             Arc::default(),
+            None,
             None,
         )
     }

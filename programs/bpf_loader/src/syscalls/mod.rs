@@ -42,7 +42,8 @@ use {
             enable_big_mod_exp_syscall, enable_get_epoch_stake_syscall,
             enable_partitioned_epoch_reward, enable_poseidon_syscall,
             error_on_syscall_bpf_function_hash_collisions, get_sysvar_syscall_enabled,
-            last_restart_slot_sysvar, reject_callx_r10, remaining_compute_units_syscall_enabled,
+            last_restart_slot_sysvar, partitioned_epoch_rewards_superfeature, reject_callx_r10,
+            remaining_compute_units_syscall_enabled,
         },
         hash::{Hash, Hasher},
         instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
@@ -273,8 +274,9 @@ pub fn create_program_runtime_environment_v1<'a>(
     let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
     let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
     let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
-    let epoch_rewards_syscall_enabled =
-        feature_set.is_active(&enable_partitioned_epoch_reward::id());
+    let epoch_rewards_syscall_enabled = feature_set
+        .is_active(&enable_partitioned_epoch_reward::id())
+        || feature_set.is_active(&partitioned_epoch_rewards_superfeature::id());
     let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
         && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
     let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
@@ -284,9 +286,6 @@ pub fn create_program_runtime_environment_v1<'a>(
     let get_sysvar_syscall_enabled = feature_set.is_active(&get_sysvar_syscall_enabled::id());
     let enable_get_epoch_stake_syscall =
         feature_set.is_active(&enable_get_epoch_stake_syscall::id());
-    // !!! ATTENTION !!!
-    // When adding new features for RBPF here,
-    // also add them to `Bank::apply_builtin_program_feature_transitions()`.
 
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,
@@ -489,6 +488,33 @@ pub fn create_program_runtime_environment_v1<'a>(
     result.register_function_hashed(*b"sol_log_data", SyscallLogData::vm)?;
 
     Ok(BuiltinProgram::new_loader(config, result))
+}
+
+pub fn create_program_runtime_environment_v2<'a>(
+    compute_budget: &ComputeBudget,
+    debugging_features: bool,
+) -> BuiltinProgram<InvokeContext<'a>> {
+    let config = Config {
+        max_call_depth: compute_budget.max_call_depth,
+        stack_frame_size: compute_budget.stack_frame_size,
+        enable_address_translation: true, // To be deactivated once we have BTF inference and verification
+        enable_stack_frame_gaps: false,
+        instruction_meter_checkpoint_distance: 10000,
+        enable_instruction_meter: true,
+        enable_instruction_tracing: debugging_features,
+        enable_symbol_and_section_labels: debugging_features,
+        reject_broken_elfs: true,
+        noop_instruction_rate: 256,
+        sanitize_user_provided_values: true,
+        external_internal_function_hash_collision: true,
+        reject_callx_r10: true,
+        enable_sbpf_v1: false,
+        enable_sbpf_v2: true,
+        optimize_rodata: true,
+        aligned_memory_mapping: true,
+        // Warning, do not use `Config::default()` so that configuration here is explicit.
+    };
+    BuiltinProgram::new_loader(config, FunctionRegistry::default())
 }
 
 fn address_is_aligned<T>(address: u64) -> bool {
@@ -1684,13 +1710,15 @@ declare_builtin_function!(
         let input_len: u64 = std::cmp::max(input_len, params.modulus_len);
 
         let budget = invoke_context.get_compute_budget();
+        // the compute units are calculated by the quadratic equation `0.5 input_len^2 + 190`
         consume_compute_meter(
             invoke_context,
             budget.syscall_base_cost.saturating_add(
                 input_len
                     .saturating_mul(input_len)
-                    .checked_div(budget.big_modular_exponentiation_cost)
-                    .unwrap_or(u64::MAX),
+                    .checked_div(budget.big_modular_exponentiation_cost_divisor)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(budget.big_modular_exponentiation_base_cost),
             ),
         )?;
 
@@ -4693,7 +4721,8 @@ mod tests {
             let budget = invoke_context.get_compute_budget();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
-                    + (MAX_LEN * MAX_LEN) / budget.big_modular_exponentiation_cost,
+                    + (MAX_LEN * MAX_LEN) / budget.big_modular_exponentiation_cost_divisor
+                    + budget.big_modular_exponentiation_base_cost,
             );
 
             let result = SyscallBigModExp::rust(
@@ -4734,7 +4763,8 @@ mod tests {
             let budget = invoke_context.get_compute_budget();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
-                    + (INV_LEN * INV_LEN) / budget.big_modular_exponentiation_cost,
+                    + (INV_LEN * INV_LEN) / budget.big_modular_exponentiation_cost_divisor
+                    + budget.big_modular_exponentiation_base_cost,
             );
 
             let result = SyscallBigModExp::rust(
@@ -4820,15 +4850,7 @@ mod tests {
         let mut vote_accounts_map = HashMap::new();
         vote_accounts_map.insert(
             vote_address,
-            (
-                expected_epoch_stake,
-                VoteAccount::try_from(AccountSharedData::new(
-                    0,
-                    0,
-                    &solana_sdk::vote::program::id(),
-                ))
-                .unwrap(),
-            ),
+            (expected_epoch_stake, VoteAccount::new_random()),
         );
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);

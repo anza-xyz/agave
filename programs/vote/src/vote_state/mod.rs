@@ -4,7 +4,6 @@ pub use solana_program::vote::state::{vote_state_versions::*, *};
 use {
     log::*,
     serde_derive::{Deserialize, Serialize},
-    solana_metrics::datapoint_debug,
     solana_program::vote::{error::VoteError, program::id},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -499,7 +498,6 @@ fn check_slots_are_valid(
             "{} dropped vote slots {:?} failed to match slot hashes: {:?}",
             vote_state.node_pubkey, vote_slots, slot_hashes,
         );
-        inc_new_counter_info!("dropped-vote-slot", 1);
         return Err(VoteError::SlotsMismatch);
     }
     if &slot_hashes[j].1 != vote_hash {
@@ -510,7 +508,6 @@ fn check_slots_are_valid(
             "{} dropped vote slots {:?} failed to match hash {} {}",
             vote_state.node_pubkey, vote_slots, vote_hash, slot_hashes[j].1
         );
-        inc_new_counter_info!("dropped-vote-hash", 1);
         return Err(VoteError::SlotHashMismatch);
     }
     Ok(())
@@ -1006,11 +1003,9 @@ pub fn withdraw<S: std::hash::BuildHasher>(
             .unwrap_or(false);
 
         if reject_active_vote_account_close {
-            datapoint_debug!("vote-account-close", ("reject-active", 1, i64));
             return Err(VoteError::ActiveVoteAccountClose.into());
         } else {
             // Deinitialize upon zero-balance
-            datapoint_debug!("vote-account-close", ("allow", 1, i64));
             set_vote_account_state(&mut vote_account, VoteState::default())?;
         }
     } else {

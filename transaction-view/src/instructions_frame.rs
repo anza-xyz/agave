@@ -2,6 +2,7 @@ use {
     crate::{
         bytes::{
             advance_offset_for_array, check_remaining, optimized_read_compressed_u16, read_byte,
+            read_slice_data,
         },
         result::Result,
     },
@@ -10,14 +11,14 @@ use {
 
 /// Contains metadata about the instructions in a transaction packet.
 #[derive(Default)]
-pub struct InstructionsMeta {
+pub(crate) struct InstructionsFrame {
     /// The number of instructions in the transaction.
     pub(crate) num_instructions: u16,
     /// The offset to the first instruction in the transaction.
     pub(crate) offset: u16,
 }
 
-impl InstructionsMeta {
+impl InstructionsFrame {
     /// Get the number of instructions and offset to the first instruction.
     /// The offset will be updated to point to the first byte after the last
     /// instruction.
@@ -25,7 +26,7 @@ impl InstructionsMeta {
     /// instruction data is well-formed, but will not cache data related to
     /// these instructions.
     #[inline(always)]
-    pub fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
+    pub(crate) fn try_new(bytes: &[u8], offset: &mut usize) -> Result<Self> {
         // Read the number of instructions at the current offset.
         // Each instruction needs at least 3 bytes, so do a sanity check here to
         // ensure we have enough bytes to read the number of instructions.
@@ -80,8 +81,11 @@ pub struct InstructionsIterator<'a> {
 impl<'a> Iterator for InstructionsIterator<'a> {
     type Item = SVMInstruction<'a>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.num_instructions {
+            self.index = self.index.wrapping_add(1);
+
             // Each instruction has 3 pieces:
             // 1. Program ID index (u8)
             // 2. Accounts indexes ([u8])
@@ -93,27 +97,29 @@ impl<'a> Iterator for InstructionsIterator<'a> {
             // Read the number of account indexes, and then update the offset
             // to skip over the account indexes.
             let num_accounts = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-            // SAFETY: Only returned after we check that there are enough bytes.
-            let accounts = unsafe {
-                core::slice::from_raw_parts(
-                    self.bytes.as_ptr().add(self.offset),
-                    usize::from(num_accounts),
-                )
-            };
-            advance_offset_for_array::<u8>(self.bytes, &mut self.offset, num_accounts).ok()?;
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
+            let accounts =
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, num_accounts) }
+                    .ok()?;
 
             // Read the length of the data, and then update the offset to skip
             // over the data.
             let data_len = optimized_read_compressed_u16(self.bytes, &mut self.offset).ok()?;
-            // SAFETY: Only returned after we check that there are enough bytes.
-            let data = unsafe {
-                core::slice::from_raw_parts(
-                    self.bytes.as_ptr().add(self.offset),
-                    usize::from(data_len),
-                )
-            };
-            advance_offset_for_array::<u8>(self.bytes, &mut self.offset, data_len).ok()?;
-            self.index = self.index.wrapping_add(1);
+
+            const _: () = assert!(core::mem::align_of::<u8>() == 1, "u8 alignment");
+            // SAFETY:
+            // - The offset is checked to be valid in the byte slice.
+            // - The alignment of u8 is 1.
+            // - The slice length is checked to be valid.
+            // - `u8` cannot be improperly initialized.
+            let data =
+                unsafe { read_slice_data::<u8>(self.bytes, &mut self.offset, data_len) }.ok()?;
 
             Some(SVMInstruction {
                 program_id_index,
@@ -143,10 +149,10 @@ mod tests {
     fn test_zero_instructions() {
         let bytes = bincode::serialize(&ShortVec(Vec::<CompiledInstruction>::new())).unwrap();
         let mut offset = 0;
-        let instructions_meta = InstructionsMeta::try_new(&bytes, &mut offset).unwrap();
+        let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
 
-        assert_eq!(instructions_meta.num_instructions, 0);
-        assert_eq!(instructions_meta.offset, 1);
+        assert_eq!(instructions_frame.num_instructions, 0);
+        assert_eq!(instructions_frame.offset, 1);
         assert_eq!(offset, bytes.len());
     }
 
@@ -161,7 +167,7 @@ mod tests {
         // modify the number of instructions to be too high
         bytes[0] = 0x02;
         let mut offset = 0;
-        assert!(InstructionsMeta::try_new(&bytes, &mut offset).is_err());
+        assert!(InstructionsFrame::try_new(&bytes, &mut offset).is_err());
     }
 
     #[test]
@@ -173,9 +179,9 @@ mod tests {
         }]))
         .unwrap();
         let mut offset = 0;
-        let instructions_meta = InstructionsMeta::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(instructions_meta.num_instructions, 1);
-        assert_eq!(instructions_meta.offset, 1);
+        let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
+        assert_eq!(instructions_frame.num_instructions, 1);
+        assert_eq!(instructions_frame.offset, 1);
         assert_eq!(offset, bytes.len());
     }
 
@@ -195,9 +201,9 @@ mod tests {
         ]))
         .unwrap();
         let mut offset = 0;
-        let instructions_meta = InstructionsMeta::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(instructions_meta.num_instructions, 2);
-        assert_eq!(instructions_meta.offset, 1);
+        let instructions_frame = InstructionsFrame::try_new(&bytes, &mut offset).unwrap();
+        assert_eq!(instructions_frame.num_instructions, 2);
+        assert_eq!(instructions_frame.offset, 1);
         assert_eq!(offset, bytes.len());
     }
 
@@ -214,7 +220,7 @@ mod tests {
         bytes[2] = 127;
 
         let mut offset = 0;
-        assert!(InstructionsMeta::try_new(&bytes, &mut offset).is_err());
+        assert!(InstructionsFrame::try_new(&bytes, &mut offset).is_err());
     }
 
     #[test]
@@ -230,6 +236,6 @@ mod tests {
         bytes[6] = 127;
 
         let mut offset = 0;
-        assert!(InstructionsMeta::try_new(&bytes, &mut offset).is_err());
+        assert!(InstructionsFrame::try_new(&bytes, &mut offset).is_err());
     }
 }
