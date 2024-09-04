@@ -1,6 +1,6 @@
 [package]
 name = "solana-serde-varint"
-description = "Integers that serialize to variable size"
+description = "Solana definitions for integers that serialize to variable size"
 documentation = "https://docs.rs/solana-serde-varint"
 version = { workspace = true }
 authors = { workspace = true }
