@@ -744,7 +744,7 @@ impl Validator {
         if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
             *start_progress.write().unwrap() = ValidatorStartProgress::CleaningBlockStore;
             backup_and_clear_blockstore(
-                ledger_path,
+                &blockstore,
                 config,
                 wait_for_supermajority_slot + 1,
                 shred_version,
@@ -2205,15 +2205,13 @@ fn blockstore_contains_incorrect_shred_version(
 /// If the blockstore contains any shreds with the incorrect shred version,
 /// copy them to a backup blockstore and purge them from the actual blockstore.
 fn backup_and_clear_blockstore(
-    ledger_path: &Path,
+    blockstore: &Blockstore,
     config: &ValidatorConfig,
     start_slot: Slot,
     expected_shred_version: u16,
 ) -> Result<(), BlockstoreError> {
-    let blockstore =
-        Blockstore::open_with_options(ledger_path, blockstore_options_from_config(config))?;
     let incorrect_shred_version = blockstore_contains_incorrect_shred_version(
-        &blockstore,
+        blockstore,
         start_slot,
         expected_shred_version,
     )?;
@@ -2238,7 +2236,7 @@ fn backup_and_clear_blockstore(
         end_slot
     );
     match Blockstore::open_with_options(
-        &ledger_path.join(backup_folder),
+        &blockstore.ledger_path().join(backup_folder),
         blockstore_options_from_config(config),
     ) {
         Ok(backup_blockstore) => {
@@ -2676,12 +2674,9 @@ mod tests {
             );
             blockstore.insert_shreds(shreds, None, true).unwrap();
         }
-        drop(blockstore);
 
         // this purges and compacts all slots greater than or equal to 5
-        backup_and_clear_blockstore(ledger_path.path(), &validator_config, 5, 2).unwrap();
-
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        backup_and_clear_blockstore(&blockstore, &validator_config, 5, 2).unwrap();
         // assert that slots less than 5 aren't affected
         assert!(blockstore.meta(4).unwrap().unwrap().next_slots.is_empty());
         for i in 5..10 {
