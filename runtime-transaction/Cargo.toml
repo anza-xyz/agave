@@ -35,5 +35,9 @@ targets = ["x86_64-unknown-linux-gnu"]
 name = "process_compute_budget_instructions"
 harness = false
 
+[[bench]]
+name = "get_signature_details"
+harness = false
+
 [lints]
 workspace = true
