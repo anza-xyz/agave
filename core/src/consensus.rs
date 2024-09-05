@@ -595,6 +595,7 @@ impl Tower {
             bank.hash(),
             bank.feature_set
                 .is_active(&feature_set::enable_tower_sync_ix::id()),
+            0,
         )
     }
 
@@ -637,6 +638,7 @@ impl Tower {
         vote_slot: Slot,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        parent_slot: u64,
     ) -> Option<Slot> {
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
         let old_root = self.root();
@@ -667,7 +669,7 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, true)
+        self.record_bank_vote_and_update_lockouts(slot, hash, true, 0)
     }
 
     /// Used for tests

@@ -698,6 +698,7 @@ impl VoteState {
         epoch: Epoch,
         current_slot: Slot,
         timely_vote_credits: bool,
+        parent_slot: u64,
     ) {
         // Ignore votes for slots earlier than we already have votes for
         if self
@@ -707,7 +708,7 @@ impl VoteState {
             return;
         }
 
-        self.pop_expired_votes(next_vote_slot);
+        self.pop_expired_votes(next_vote_slot, parent_slot);
 
         let landed_vote = LandedVote {
             latency: if timely_vote_credits {
@@ -927,9 +928,11 @@ impl VoteState {
     // allows validators to switch forks once their votes for another fork have
     // expired. This also allows validators continue voting on recent blocks in
     // the same fork without increasing lockouts.
-    pub fn pop_expired_votes(&mut self, next_vote_slot: Slot) {
+    pub fn pop_expired_votes(&mut self, next_vote_slot: Slot, parent_slot: u64) {
         while let Some(vote) = self.last_lockout() {
-            if !vote.is_locked_out_at_slot(next_vote_slot) {
+            if !vote.is_locked_out_at_slot(next_vote_slot)
+                && (parent_slot == 0 || vote.slot != parent_slot)
+            {
                 self.votes.pop_back();
             } else {
                 break;

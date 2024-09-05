@@ -749,10 +749,11 @@ pub fn process_vote_unfiltered(
     epoch: Epoch,
     current_slot: Slot,
     timely_vote_credits: bool,
+    parent_slot: u64,
 ) -> Result<(), VoteError> {
     check_slots_are_valid(vote_state, vote_slots, &vote.hash, slot_hashes)?;
     vote_slots.iter().for_each(|s| {
-        vote_state.process_next_vote_slot(*s, epoch, current_slot, timely_vote_credits)
+        vote_state.process_next_vote_slot(*s, epoch, current_slot, timely_vote_credits, parent_slot)
     });
     Ok(())
 }
@@ -786,11 +787,16 @@ pub fn process_vote(
         epoch,
         current_slot,
         timely_vote_credits,
+        0,
     )
 }
 
 /// "unchecked" functions used by tests and Tower
-pub fn process_vote_unchecked(vote_state: &mut VoteState, vote: Vote) -> Result<(), VoteError> {
+pub fn process_vote_unchecked(
+    vote_state: &mut VoteState,
+    vote: Vote,
+    parent_slot: u64,
+) -> Result<(), VoteError> {
     if vote.slots.is_empty() {
         return Err(VoteError::EmptySlots);
     }
@@ -803,6 +809,7 @@ pub fn process_vote_unchecked(vote_state: &mut VoteState, vote: Vote) -> Result<
         vote_state.current_epoch(),
         0,
         true,
+        parent_slot,
     )
 }
 
@@ -814,7 +821,7 @@ pub fn process_slot_votes_unchecked(vote_state: &mut VoteState, slots: &[Slot]) 
 }
 
 pub fn process_slot_vote_unchecked(vote_state: &mut VoteState, slot: Slot) {
-    let _ = process_vote_unchecked(vote_state, Vote::new(vec![slot], Hash::default()));
+    let _ = process_vote_unchecked(vote_state, Vote::new(vec![slot], Hash::default()), 0);
 }
 
 /// Authorize the given pubkey to withdraw or sign votes. This may be called multiple times,
@@ -1320,7 +1327,7 @@ mod tests {
             134, 135,
         ]
         .into_iter()
-        .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0, false));
+        .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0, false, 0));
 
         let version1_14_11_serialized = bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(
             VoteState1_14_11::from(vote_state.clone()),
@@ -2016,6 +2023,7 @@ mod tests {
                     hash: Hash::new_unique(),
                     timestamp: None,
                 },
+                0,
             )
             .unwrap();
 
@@ -3159,8 +3167,17 @@ mod tests {
                 .unwrap()
                 .1;
             let vote = Vote::new(vote_slots, vote_hash);
-            process_vote_unfiltered(&mut vote_state, &vote.slots, &vote, slot_hashes, 0, 0, true)
-                .unwrap();
+            process_vote_unfiltered(
+                &mut vote_state,
+                &vote.slots,
+                &vote,
+                slot_hashes,
+                0,
+                0,
+                true,
+                0,
+            )
+            .unwrap();
         }
 
         vote_state
