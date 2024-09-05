@@ -37,7 +37,7 @@ fn bench_get_signature_details_no_sigs_unique(c: &mut Criterion) {
 
         c.benchmark_group("bench_get_signature_details_no_sigs_unique")
             .throughput(Throughput::Elements(1))
-            .bench_function(&format!("{num_instructions} instructions"), |bencher| {
+            .bench_function(format!("{num_instructions} instructions"), |bencher| {
                 bencher.iter(|| {
                     let instructions =
                         black_box(instructions.iter().map(|(program_id, instruction)| {
@@ -50,7 +50,7 @@ fn bench_get_signature_details_no_sigs_unique(c: &mut Criterion) {
 }
 
 fn bench_get_signature_details_packed_sigs(c: &mut Criterion) {
-    let program_ids = vec![
+    let program_ids = [
         solana_sdk::secp256k1_program::id(),
         solana_sdk::ed25519_program::id(),
     ];
@@ -72,7 +72,7 @@ fn bench_get_signature_details_packed_sigs(c: &mut Criterion) {
 
         c.benchmark_group("bench_get_signature_details_packed_sigs")
             .throughput(Throughput::Elements(1))
-            .bench_function(&format!("{num_instructions} instructions"), |bencher| {
+            .bench_function(format!("{num_instructions} instructions"), |bencher| {
                 bencher.iter(|| {
                     let instructions =
                         black_box(instructions.iter().map(|(program_id, instruction)| {
@@ -110,7 +110,7 @@ fn bench_get_signature_details_mixed_sigs(c: &mut Criterion) {
 
         c.benchmark_group("bench_get_signature_details_mixed_sigs")
             .throughput(Throughput::Elements(1))
-            .bench_function(&format!("{num_instructions} instructions"), |bencher| {
+            .bench_function(format!("{num_instructions} instructions"), |bencher| {
                 bencher.iter(|| {
                     let instructions =
                         black_box(instructions.iter().map(|(program_id, instruction)| {
