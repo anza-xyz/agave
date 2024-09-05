@@ -89,3 +89,87 @@ impl SignatureDetailsFilter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // simple convenience function so avoid having inconsistent program_id and program_id_index
+    fn make_instruction<'a>(
+        program_ids: &'a [Pubkey],
+        program_id_index: u8,
+        data: &'a [u8],
+    ) -> (&'a Pubkey, SVMInstruction<'a>) {
+        (
+            &program_ids[program_id_index as usize],
+            SVMInstruction {
+                program_id_index,
+                accounts: &[],
+                data,
+            },
+        )
+    }
+
+    #[test]
+    fn test_get_signature_details_no_instructions() {
+        let instructions = std::iter::empty();
+        let signature_details = get_signature_details(2, instructions);
+
+        assert_eq!(signature_details.num_transaction_signatures(), 2);
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 0);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 0);
+    }
+
+    #[test]
+    fn test_get_signature_details_no_sigs_unique() {
+        let program_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let instructions = [
+            make_instruction(&program_ids, 0, &[]),
+            make_instruction(&program_ids, 1, &[]),
+        ];
+
+        let signature_details = get_signature_details(2, instructions.into_iter());
+        assert_eq!(signature_details.num_transaction_signatures(), 2);
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 0);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 0);
+    }
+
+    #[test]
+    fn test_get_signature_details_signatures_mixed() {
+        let program_ids = [
+            Pubkey::new_unique(),
+            solana_sdk::secp256k1_program::ID,
+            solana_sdk::ed25519_program::ID,
+        ];
+        let instructions = [
+            make_instruction(&program_ids, 1, &[5]),
+            make_instruction(&program_ids, 2, &[3]),
+            make_instruction(&program_ids, 0, &[]),
+            make_instruction(&program_ids, 2, &[2]),
+            make_instruction(&program_ids, 1, &[1]),
+            make_instruction(&program_ids, 0, &[]),
+        ];
+
+        let signature_details = get_signature_details(2, instructions.into_iter());
+        assert_eq!(signature_details.num_transaction_signatures(), 2);
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 6);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 5);
+    }
+
+    #[test]
+    fn test_get_signature_details_missing_num_signatures() {
+        let program_ids = [
+            solana_sdk::secp256k1_program::ID,
+            solana_sdk::ed25519_program::ID,
+        ];
+        let instructions = [
+            make_instruction(&program_ids, 0, &[]),
+            make_instruction(&program_ids, 1, &[]),
+        ];
+
+        let signature_details = get_signature_details(2, instructions.into_iter());
+        assert_eq!(signature_details.num_transaction_signatures(), 2);
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 0);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 0);
+    }
+}
