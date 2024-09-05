@@ -113,6 +113,7 @@ use {
         epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
         exit::Exit,
         genesis_config::{ClusterType, GenesisConfig},
+        hard_forks::HardForks,
         hash::Hash,
         pubkey::Pubkey,
         shred_version::compute_shred_version,
@@ -126,6 +127,7 @@ use {
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
+        cmp,
         collections::{HashMap, HashSet},
         net::SocketAddr,
         num::NonZeroUsize,
@@ -724,7 +726,10 @@ impl Validator {
             check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
         }
 
-        let hard_forks = bank_forks.read().unwrap().root_bank().hard_forks();
+        let (root_slot, hard_forks) = {
+            let root_bank = bank_forks.read().unwrap().root_bank();
+            (root_bank.slot(), root_bank.hard_forks())
+        };
         let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
         info!(
             "shred version: {shred_version}, hard forks: {:?}",
@@ -741,14 +746,14 @@ impl Validator {
             }
         }
 
-        if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
+        if let Some(start_slot) = should_check_blockstore_for_incorrect_shred_version(
+            config,
+            &blockstore,
+            root_slot,
+            &hard_forks,
+        )? {
             *start_progress.write().unwrap() = ValidatorStartProgress::CleaningBlockStore;
-            backup_and_clear_blockstore(
-                &blockstore,
-                config,
-                wait_for_supermajority_slot + 1,
-                shred_version,
-            )?;
+            backup_and_clear_blockstore(&blockstore, config, start_slot, shred_version)?;
         }
 
         node.info.set_shred_version(shred_version);
@@ -2172,6 +2177,66 @@ fn maybe_warp_slot(
         process_blockstore.process()?;
     }
     Ok(())
+}
+
+/// Returns the starting slot at which the blockstore should be scanned for
+/// shreds with an incorrect shred version, or None if the check is unnecessary
+fn should_check_blockstore_for_incorrect_shred_version(
+    config: &ValidatorConfig,
+    blockstore: &Blockstore,
+    root_slot: Slot,
+    hard_forks: &HardForks,
+) -> Result<Option<Slot>, BlockstoreError> {
+    // Perform the check if we are booting as part of a cluster restart at slot root_slot
+    let maybe_cluster_restart_slot = maybe_cluster_restart_with_hard_fork(config, root_slot);
+    if maybe_cluster_restart_slot.is_some() {
+        return Ok(Some(root_slot + 1));
+    }
+
+    // If there are no hard forks, the shred version cannot have changed
+    let Some(latest_hard_fork) = hard_forks.iter().last().map(|(slot, _)| *slot) else {
+        return Ok(None);
+    };
+
+    // If the blockstore is empty, there are certainly no shreds with an incorrect version
+    let Some(blockstore_max_slot) = blockstore.highest_slot()? else {
+        return Ok(None);
+    };
+    let blockstore_min_slot = blockstore.lowest_slot();
+
+    if latest_hard_fork < blockstore_min_slot {
+        // latest_hard_fork < blockstore_min_slot <= blockstore_max_slot
+        //
+        // All slots in the blockstore are newer than the latest hard fork, and only shreds with
+        // the correct shred version should have been inserted since the latest hard fork
+        //
+        // This is the normal case where the last cluster restart & hard fork was a while ago; we
+        // can skip the check for this case
+        Ok(None)
+    } else if latest_hard_fork < blockstore_max_slot {
+        // blockstore_min_slot < latest_hard_fork < blockstore_max_slot
+        //
+        // This could be a case where there was a cluster restart, but this node was not part of
+        // the supermajority that actually restarted the cluster. Rather, this node likely
+        // downloaded a new snapshot while retaining the blockstore, including slots beyond the
+        // chosen restart slot. We need to perform the blockstore check for this case
+        //
+        // Note that the downloaded snapshot slot (root_slot) could be greater than the latest hard
+        // fork if the serving node produces a snapshot before this node requests one. Thus, use
+        // min(latest_hard_fork + 1, root_slot + 1) as the check slot to ensure that any slot S
+        // that satisfies latest_hard_fork < S < root_slot is also checked. This node would not
+        // replay those slots since replay will start from root_slot, but checking and possibly
+        // removing them is the proper thing to do
+        Ok(Some(cmp::min(latest_hard_fork + 1, root_slot + 1)))
+    } else {
+        // blockstore_min_slot <= blockstore_max_slot <= latest_hard_fork
+        //
+        // This could be similar to the previous case of there being a cluster restart, except
+        // that the blockstore data is all older than latest hard fork (perhaps this node crashed
+        // before observing the slot chosen for cluster restart). Or, maybe there was a hard fork
+        // issued very far into the future. Regardless, perform the blockstore check for this case.
+        Ok(Some(cmp::min(latest_hard_fork + 1, root_slot + 1)))
+    }
 }
 
 /// Searches the blockstore for data shreds with a shred version that differs
