@@ -111,6 +111,7 @@ impl VoteSimulator {
                                 vec![parent],
                                 parent_bank.hash(),
                             ),
+                            0,
                         )
                         .unwrap();
                         TowerSync::new(
