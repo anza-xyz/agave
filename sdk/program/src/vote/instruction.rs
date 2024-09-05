@@ -191,6 +191,10 @@ impl VoteInstruction {
         )
     }
 
+    pub fn is_tower_sync(&self) -> bool {
+        matches!(self, Self::TowerSync(_) | Self::TowerSyncSwitch(_, _),)
+    }
+
     /// Only to be used on vote instructions (guard with is_simple_vote),  panics otherwise
     pub fn last_voted_slot(&self) -> Option<Slot> {
         assert!(self.is_simple_vote());
