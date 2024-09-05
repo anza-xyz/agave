@@ -748,10 +748,6 @@ impl Validator {
                 config,
                 wait_for_supermajority_slot + 1,
                 shred_version,
-            )
-            .context(
-                "Failed to backup and clear shreds with incorrect shred version from \
-                 blockstore",
             )?;
         }
 
@@ -2337,6 +2333,9 @@ fn initialize_rpc_transaction_history_services(
 pub enum ValidatorError {
     #[error("Bad expected bank hash")]
     BadExpectedBankHash,
+
+    #[error("blockstore error: {0}")]
+    Blockstore(#[source] BlockstoreError),
 
     #[error("genesis hash mismatch: actual={0}, expected={1}")]
     GenesisHashMismatch(Hash, Hash),
