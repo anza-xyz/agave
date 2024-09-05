@@ -596,24 +596,7 @@ impl Validator {
             ));
         }
         let genesis_config = load_genesis(config, ledger_path)?;
-
         metrics_config_sanity_check(genesis_config.cluster_type)?;
-
-        if let Some(expected_shred_version) = config.expected_shred_version {
-            if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
-                *start_progress.write().unwrap() = ValidatorStartProgress::CleaningBlockStore;
-                backup_and_clear_blockstore(
-                    ledger_path,
-                    config,
-                    wait_for_supermajority_slot + 1,
-                    expected_shred_version,
-                )
-                .context(
-                    "Failed to backup and clear shreds with incorrect shred version from \
-                     blockstore",
-                )?;
-            }
-        }
 
         info!("Cleaning accounts paths..");
         *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
@@ -756,6 +739,20 @@ impl Validator {
                 }
                 .into());
             }
+        }
+
+        if let Some(wait_for_supermajority_slot) = config.wait_for_supermajority {
+            *start_progress.write().unwrap() = ValidatorStartProgress::CleaningBlockStore;
+            backup_and_clear_blockstore(
+                ledger_path,
+                config,
+                wait_for_supermajority_slot + 1,
+                shred_version,
+            )
+            .context(
+                "Failed to backup and clear shreds with incorrect shred version from \
+                 blockstore",
+            )?;
         }
 
         node.info.set_shred_version(shred_version);
