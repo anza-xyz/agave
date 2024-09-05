@@ -514,9 +514,9 @@ impl Accounts {
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time
     #[must_use]
-    pub fn lock_accounts<'a>(
+    pub fn lock_accounts<'a, Tx: SVMMessage + 'a>(
         &self,
-        txs: impl Iterator<Item = &'a SanitizedTransaction>,
+        txs: impl Iterator<Item = &'a Tx>,
         tx_account_lock_limit: usize,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
