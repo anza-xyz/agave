@@ -3440,7 +3440,7 @@ impl AccountsDb {
                             },
                             None,
                             false,
-                            ScanFilter::All,
+                            self.scan_filter_for_shrinking,
                         );
                     });
                 found_not_zero_accum.fetch_add(found_not_zero, Ordering::Relaxed);
