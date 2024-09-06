@@ -79,7 +79,7 @@ impl From<SavedTower1_7_14> for SavedTowerVersions {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "JBXfVQ6BXHBGSNY919yEkXN4H7XxmAMA7QcGrf7DiWHP")
+    frozen_abi(digest = "EFQJxMbkB4vwvR1U6TwJsq31RG36sXiGgY8XczrbWiBS")
 )]
 #[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SavedTower {
