@@ -971,8 +971,8 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
             } => {
                 error!(
                     "Wen start finished, please remove --wen_restart and restart with \
-                    --wait-for-supermajority {} --expected-bank-hash {} --shred-version {}\
-                    --hard-fork {} --no-snapshot-fetchsnapshot",
+                    --wait-for-supermajority {} --expected-bank-hash {} --expected-shred-version {} \
+                    --hard-fork {} --no-snapshot-fetch",
                     slot, hash, shred_version, slot
                 );
                 return Ok(());
