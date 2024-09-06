@@ -127,7 +127,6 @@ use {
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
-        cmp,
         collections::{HashMap, HashSet},
         net::SocketAddr,
         num::NonZeroUsize,
@@ -2222,12 +2221,9 @@ fn should_check_blockstore_for_incorrect_shred_version(
         // chosen restart slot. We need to perform the blockstore check for this case
         //
         // Note that the downloaded snapshot slot (root_slot) could be greater than the latest hard
-        // fork if the serving node produces a snapshot before this node requests one. Thus, use
-        // min(latest_hard_fork + 1, root_slot + 1) as the check slot to ensure that any slot S
-        // that satisfies latest_hard_fork < S < root_slot is also checked. This node would not
-        // replay those slots since replay will start from root_slot, but checking and possibly
-        // removing them is the proper thing to do
-        Ok(Some(cmp::min(latest_hard_fork + 1, root_slot + 1)))
+        // fork slot. Even though this node will only replay slots after root_slot, start the check
+        // at latest_hard_fork + 1 to check (and possibly purge) any invalid state.
+        Ok(Some(latest_hard_fork + 1))
     } else {
         // blockstore_min_slot <= blockstore_max_slot <= latest_hard_fork
         //
@@ -2235,7 +2231,7 @@ fn should_check_blockstore_for_incorrect_shred_version(
         // that the blockstore data is all older than latest hard fork (perhaps this node crashed
         // before observing the slot chosen for cluster restart). Or, maybe there was a hard fork
         // issued very far into the future. Regardless, perform the blockstore check for this case.
-        Ok(Some(cmp::min(latest_hard_fork + 1, root_slot + 1)))
+        Ok(Some(latest_hard_fork + 1))
     }
 }
 
@@ -2866,7 +2862,7 @@ mod tests {
                 &hard_forks
             )
             .unwrap(),
-            Some(root_slot + 1),
+            Some(new_hard_fork + 1),
         );
     }
 
