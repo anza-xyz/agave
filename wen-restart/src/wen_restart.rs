@@ -744,6 +744,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 HeaviestForkAggregateResult::ZeroStakeIgnored => (),
                 HeaviestForkAggregateResult::AlreadyExists => (),
                 HeaviestForkAggregateResult::Malformed => (),
+                HeaviestForkAggregateResult::UnmatchedRound(i_, _) => (),
             }
         }
         let current_total_active_stake = heaviest_fork_aggregate.total_active_stake();
@@ -953,6 +954,7 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                             total_active_stake: 0,
                             wallclock: 0,
                             shred_version: config.cluster_info.my_shred_version() as u32,
+                            round: progress.round,
                         }
                     }
                 };
@@ -1092,6 +1094,7 @@ pub(crate) fn increment_and_write_wen_restart_records(
                 }
             } else {
                 progress.round = progress.round.checked_add(1).expect("round overflow");
+                progress.heaviest_fork_aggregate = None;
                 progress.set_state(RestartState::LastVotedForkSlots);
                 WenRestartProgressInternalState::LastVotedForkSlots {
                     last_voted_fork_slots: progress
@@ -1761,6 +1764,7 @@ mod tests {
                     total_active_stake: total_active_stake_during_heaviest_fork,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: now,
+                    round: 0,
                 },
             );
         }
@@ -1831,6 +1835,7 @@ mod tests {
                     total_active_stake: total_active_stake_during_heaviest_fork,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: 0,
+                    round: 0,
                 }),
                 heaviest_fork_aggregate: Some(HeaviestForkAggregateRecord {
                     received: expected_received_heaviest_fork,
@@ -2096,6 +2101,7 @@ mod tests {
                 total_active_stake: 0,
                 shred_version: SHRED_VERSION as u32,
                 wallclock: 0,
+                round: 0,
             }),
             ..Default::default()
         };
@@ -2225,6 +2231,7 @@ mod tests {
                 total_active_stake: 0,
                 shred_version: SHRED_VERSION as u32,
                 wallclock: 0,
+                round: 0,
             }),
             last_voted_fork_slots_aggregate: Some(LastVotedForkSlotsAggregateRecord {
                 received: HashMap::new(),
@@ -2288,6 +2295,7 @@ mod tests {
                 total_active_stake: 0,
                 shred_version: SHRED_VERSION as u32,
                 wallclock: 0,
+                round: 0,
             }),
             my_snapshot: Some(GenerateSnapshotRecord {
                 slot: 0,
@@ -2329,6 +2337,7 @@ mod tests {
                 total_active_stake: 0,
                 shred_version: SHRED_VERSION as u32,
                 wallclock: 0,
+                round: 0,
             }),
             my_snapshot: Some(GenerateSnapshotRecord {
                 slot: last_vote_slot,
@@ -2621,6 +2630,7 @@ mod tests {
             total_active_stake: 900,
             shred_version: SHRED_VERSION as u32,
             wallclock: 0,
+            round: 0,
         });
         let my_bankhash = Hash::new_unique();
         let new_shred_version = SHRED_VERSION + 57;
@@ -2716,6 +2726,7 @@ mod tests {
                         total_active_stake: 900,
                         shred_version: SHRED_VERSION as u32,
                         wallclock: 0,
+                        round: 0,
                     }),
                 },
                 WenRestartProgressInternalState::HeaviestFork {
@@ -3027,6 +3038,7 @@ mod tests {
                     .saturating_mul(TOTAL_VALIDATOR_COUNT as u64),
                 shred_version: SHRED_VERSION as u32,
                 wallclock: 0,
+                round: round as u32,
             }),
             ..Default::default()
         };
@@ -3164,6 +3176,7 @@ mod tests {
                 total_active_stake: expected_active_stake,
                 shred_version: SHRED_VERSION as u32,
                 wallclock: 0,
+                round: 0,
             }),
             ..Default::default()
         };

@@ -39,6 +39,7 @@ message HeaviestForkRecord {
     uint64 total_active_stake = 3;
     uint32 shred_version = 4;
     uint64 wallclock = 5;
+    uint32 round = 6;
 }
 
 message HeaviestForkAggregateFinal {

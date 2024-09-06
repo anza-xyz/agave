@@ -38,6 +38,7 @@ pub enum HeaviestForkAggregateResult {
     DifferentVersionExists(RestartHeaviestFork, RestartHeaviestFork),
     Inserted(HeaviestForkRecord),
     Malformed,
+    UnmatchedRound(RestartHeaviestForkRound, RestartHeaviestForkRound),
     ZeroStakeIgnored,
 }
 
@@ -76,6 +77,9 @@ impl HeaviestForkAggregate {
         key_string: &str,
         record: &HeaviestForkRecord,
     ) -> Result<HeaviestForkAggregateResult> {
+        if record.round as u8 != self.round {
+            return Ok(HeaviestForkAggregateResult::UnmatchedRound(record.round as u8, self.round));
+        }
         let from = Pubkey::from_str(key_string)?;
         let bankhash = Hash::from_str(&record.bankhash)?;
         let restart_heaviest_fork = RestartHeaviestFork {
@@ -114,6 +118,7 @@ impl HeaviestForkAggregate {
             total_active_stake: new_heaviest_fork.observed_stake,
             shred_version: new_heaviest_fork.shred_version as u32,
             wallclock: new_heaviest_fork.wallclock,
+            round: new_heaviest_fork.round as u32,
         })
     }
 
@@ -165,6 +170,7 @@ impl HeaviestForkAggregate {
                 total_active_stake: received_heaviest_fork.observed_stake,
                 shred_version: received_heaviest_fork.shred_version as u32,
                 wallclock: received_heaviest_fork.wallclock,
+                round: received_heaviest_fork.round as u32,
             })
         };
         self.heaviest_forks
@@ -291,6 +297,7 @@ mod tests {
                     total_active_stake: 100,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: timestamp1,
+                    round: 0,
                 }),
             );
         }
@@ -323,6 +330,7 @@ mod tests {
                 total_active_stake: 100,
                 shred_version: SHRED_VERSION as u32,
                 wallclock: now,
+                round: 0,
             }),
         );
         let expected_total_active_stake = (initial_num_active_validators + 2) as u64 * 100;
@@ -410,6 +418,7 @@ mod tests {
                     total_active_stake: 1400,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: now,
+                    round: 0,
                 }),
             );
         }
@@ -447,6 +456,7 @@ mod tests {
                     total_active_stake: 1500,
                     shred_version: SHRED_VERSION as u32,
                     wallclock: now,
+                    round: 0,
                 }),
             );
         }
@@ -496,6 +506,7 @@ mod tests {
             bankhash: test_state.heaviest_hash.to_string(),
             shred_version: SHRED_VERSION as u32,
             total_active_stake: 100,
+            round: 0,
         };
         assert_eq!(test_state.heaviest_fork_aggregate.total_active_stake(), 100);
         assert_eq!(
@@ -543,6 +554,7 @@ mod tests {
                 bankhash: test_state.heaviest_hash.to_string(),
                 shred_version: SHRED_VERSION as u32,
                 total_active_stake: 200,
+                round: 0,
             }),
         );
 
@@ -604,6 +616,7 @@ mod tests {
                         bankhash: test_state.heaviest_hash.to_string(),
                         shred_version: SHRED_VERSION as u32,
                         total_active_stake: 100,
+                        round: 0,
                     }
                 )
                 .unwrap(),
@@ -627,6 +640,7 @@ mod tests {
                         bankhash: test_state.heaviest_hash.to_string(),
                         shred_version: SHRED_VERSION as u32,
                         total_active_stake: 100,
+                        round: 0,
                     }
                 )
                 .unwrap(),
@@ -643,6 +657,7 @@ mod tests {
             bankhash: test_state.heaviest_hash.to_string(),
             shred_version: SHRED_VERSION as u32,
             total_active_stake: 100,
+            round: 0,
         };
         // First test that this is a valid record.
         assert_eq!(
