@@ -2571,7 +2571,6 @@ version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
- "serde",
  "typenum",
  "version_check",
 ]
@@ -6986,7 +6985,6 @@ dependencies = [
  "bitflags 2.6.0",
  "bs58",
  "bv",
- "generic-array 0.14.7",
  "im",
  "log",
  "memmap2",
@@ -8330,7 +8328,6 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "digest 0.10.7",
  "ed25519-dalek",
- "generic-array 0.14.7",
  "getrandom 0.1.16",
  "hex",
  "itertools 0.12.1",
