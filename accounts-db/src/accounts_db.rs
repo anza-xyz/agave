@@ -2751,15 +2751,16 @@ impl AccountsDb {
     }
 
     /// While scanning cleaning candidates obtain slots that can be
-    /// reclaimed for each pubkey. In addition if the pubkey is
-    /// removed from the index, let the caller know this.
+    /// reclaimed for each pubkey. In addition, if the pubkey is
+    /// removed from the index, insert in pubkeys_removed_from_accounts_index.
     fn collect_reclaims(
         &self,
         pubkey: &Pubkey,
         max_clean_root_inclusive: Option<Slot>,
         ancient_account_cleans: &AtomicU64,
         epoch_schedule: &EpochSchedule,
-    ) -> (SlotList<AccountInfo>, bool) {
+        pubkeys_removed_from_accounts_index: &Mutex<PubkeysRemovedFromAccountsIndex>,
+    ) -> SlotList<AccountInfo> {
         let one_epoch_old = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut clean_rooted = Measure::start("clean_old_root-ms");
         let mut reclaims = Vec::new();
@@ -2768,6 +2769,12 @@ impl AccountsDb {
             &mut reclaims,
             max_clean_root_inclusive,
         );
+        if removed_from_index {
+            pubkeys_removed_from_accounts_index
+                .lock()
+                .unwrap()
+                .insert(*pubkey);
+        }
         if !reclaims.is_empty() {
             // figure out how many ancient accounts have been reclaimed
             let old_reclaims = reclaims
@@ -2781,7 +2788,7 @@ impl AccountsDb {
         self.clean_accounts_stats
             .clean_old_root_us
             .fetch_add(clean_rooted.as_us(), Ordering::Relaxed);
-        (reclaims, removed_from_index)
+        reclaims
     }
 
     /// Reclaim older states of accounts older than max_clean_root_inclusive for AccountsDb bloat mitigation.
@@ -3335,7 +3342,7 @@ impl AccountsDb {
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
         let useful_accum = AtomicU64::new(0);
-        let reclaims: SlotList<AccountInfo> = Vec::new();
+        let reclaims: SlotList<AccountInfo> = Vec::with_capacity(num_candidates as usize);
         let reclaims = Mutex::new(reclaims);
         let pubkeys_removed_from_accounts_index: PubkeysRemovedFromAccountsIndex = HashSet::new();
         let pubkeys_removed_from_accounts_index = Mutex::new(pubkeys_removed_from_accounts_index);
@@ -3430,19 +3437,14 @@ impl AccountsDb {
                         ScanFilter::All,
                     );
                     if should_purge {
-                        let (reclaims_new, removed_from_index) = self.collect_reclaims(
+                        let reclaims_new = self.collect_reclaims(
                             candidate_pubkey,
                             max_clean_root_inclusive,
                             &ancient_account_cleans,
                             epoch_schedule,
+                            &pubkeys_removed_from_accounts_index,
                         );
                         reclaims.lock().unwrap().extend(reclaims_new);
-                        if removed_from_index {
-                            pubkeys_removed_from_accounts_index
-                                .lock()
-                                .unwrap()
-                                .insert(*candidate_pubkey);
-                        }
                     }
                     !candidate_info.slot_list.is_empty()
                 });
