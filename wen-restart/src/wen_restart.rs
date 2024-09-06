@@ -717,7 +717,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             return Err(WenRestartError::Exiting.into());
         }
         let start = timestamp();
-        for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor, 0) {
+        for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor, round) {
             info!("Received new heaviest fork: {:?}", new_heaviest_fork);
             let from = new_heaviest_fork.from.to_string();
             match heaviest_fork_aggregate.aggregate(new_heaviest_fork) {
