@@ -34,6 +34,7 @@ pub mod stake_weighted_timestamp;
 pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
+pub mod svm_message_ext;
 pub mod transaction_batch;
 pub mod vote_sender_types;
 
