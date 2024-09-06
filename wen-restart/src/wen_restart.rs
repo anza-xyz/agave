@@ -744,7 +744,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 HeaviestForkAggregateResult::ZeroStakeIgnored => (),
                 HeaviestForkAggregateResult::AlreadyExists => (),
                 HeaviestForkAggregateResult::Malformed => (),
-                HeaviestForkAggregateResult::UnmatchedRound(i_, _) => (),
+                HeaviestForkAggregateResult::UnmatchedRound(_, _) => (),
             }
         }
         let current_total_active_stake = heaviest_fork_aggregate.total_active_stake();
@@ -786,7 +786,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                     heaviest_fork_slot,
                     heaviest_fork_hash,
                     current_total_active_stake,
-                    0,
+                    round,
                 );
                 write_wen_restart_records(wen_restart_path, progress)?;
                 progress_last_sent = Instant::now();
