@@ -106,6 +106,7 @@ impl<'de> Visitor<'de> for SignatureVisitor {
             let (build_iter, position) = builder.iter_position();
 
             for dst in build_iter {
+                #[allow(clippy::arithmetic_side_effects)]
                 match seq.next_element()? {
                     Some(el) => {
                         dst.write(el);
@@ -117,6 +118,7 @@ impl<'de> Visitor<'de> for SignatureVisitor {
 
             if *position == SIGNATURE_BYTES {
                 if seq.size_hint() != Some(0) && seq.next_element::<Dummy>()?.is_some() {
+                    #[allow(clippy::arithmetic_side_effects)]
                     return Err(Error::invalid_length(*position + 1, &self));
                 }
 
