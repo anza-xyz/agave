@@ -2224,8 +2224,11 @@ fn backup_and_clear_blockstore(
         start_slot,
         expected_shred_version,
     )?;
+    let Some(incorrect_shred_version) = incorrect_shred_version else {
+        info!("Only shreds with the correct version were found in the blockstore");
+        return Ok(())
+    };
 
-    if let Some(incorrect_shred_version) = incorrect_shred_version {
         // .unwrap() safe because getting to this point implies blockstore has slots/shreds
         let end_slot = blockstore.highest_slot()?.unwrap();
 
@@ -2278,9 +2281,6 @@ fn backup_and_clear_blockstore(
         blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact);
         timer.stop();
         info!("Purging slots done. {timer}");
-    } else {
-        info!("Only shreds with the correct version were found in the blockstore");
-    }
 
     Ok(())
 }
