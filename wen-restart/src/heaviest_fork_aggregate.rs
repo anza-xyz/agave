@@ -2,7 +2,7 @@ use {
     crate::solana::wen_restart_proto::HeaviestForkRecord,
     anyhow::Result,
     log::*,
-    solana_gossip::restart_crds_values::RestartHeaviestFork,
+    solana_gossip::restart_crds_values::{RestartHeaviestFork, RestartHeaviestForkRound},
     solana_runtime::epoch_stakes::EpochStakes,
     solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     std::{
@@ -15,6 +15,7 @@ pub(crate) struct HeaviestForkAggregate {
     supermajority_threshold: f64,
     my_shred_version: u16,
     my_pubkey: Pubkey,
+    round: RestartHeaviestForkRound,
     // We use the epoch_stakes of the Epoch our heaviest bank is in. Proceed and exit only if
     // enough validator agree with me.
     epoch_stakes: EpochStakes,
@@ -48,6 +49,7 @@ impl HeaviestForkAggregate {
         my_heaviest_fork_slot: Slot,
         my_heaviest_fork_hash: Hash,
         my_pubkey: &Pubkey,
+        round: RestartHeaviestForkRound,
     ) -> Self {
         let mut active_peers = HashSet::new();
         active_peers.insert(*my_pubkey);
@@ -60,6 +62,7 @@ impl HeaviestForkAggregate {
             supermajority_threshold: wait_for_supermajority_threshold_percent as f64 / 100.0,
             my_shred_version,
             my_pubkey: *my_pubkey,
+            round,
             epoch_stakes: epoch_stakes.clone(),
             heaviest_forks: HashMap::new(),
             block_stake_map,
@@ -82,6 +85,7 @@ impl HeaviestForkAggregate {
             last_slot_hash: bankhash,
             observed_stake: record.total_active_stake,
             shred_version: record.shred_version as u16,
+            round: self.round,
         };
         Ok(self.aggregate(restart_heaviest_fork))
     }
@@ -250,6 +254,7 @@ mod tests {
                 heaviest_slot,
                 heaviest_hash,
                 &validator_voting_keypairs[MY_INDEX].node_keypair.pubkey(),
+                0,
             ),
             validator_voting_keypairs,
             heaviest_slot,
@@ -278,6 +283,7 @@ mod tests {
                         last_slot_hash: test_state.heaviest_hash,
                         observed_stake: 100,
                         shred_version: SHRED_VERSION,
+                        round: 0,
                     },),
                 HeaviestForkAggregateResult::Inserted(HeaviestForkRecord {
                     slot: test_state.heaviest_slot,
@@ -305,6 +311,7 @@ mod tests {
             last_slot_hash: test_state.heaviest_hash,
             observed_stake: 100,
             shred_version: SHRED_VERSION,
+            round: 0,
         };
         assert_eq!(
             test_state
@@ -336,6 +343,7 @@ mod tests {
             last_slot_hash: new_hash,
             observed_stake: 100,
             shred_version: SHRED_VERSION,
+            round: 0,
         };
         assert_eq!(
             test_state
@@ -349,6 +357,7 @@ mod tests {
                     last_slot_hash: test_state.heaviest_hash,
                     observed_stake: 100,
                     shred_version: SHRED_VERSION,
+                    round: 0,
                 },
                 replace_message_validator_last_fork,
             ),
@@ -370,6 +379,7 @@ mod tests {
                     last_slot_hash: test_state.heaviest_hash,
                     observed_stake: 100,
                     shred_version: SHRED_VERSION,
+                    round: 0,
                 },),
             HeaviestForkAggregateResult::ZeroStakeIgnored,
         );
@@ -392,6 +402,7 @@ mod tests {
                         last_slot_hash: test_state.heaviest_hash,
                         observed_stake: 1400,
                         shred_version: SHRED_VERSION,
+                        round: 0,
                     },),
                 HeaviestForkAggregateResult::Inserted(HeaviestForkRecord {
                     slot: test_state.heaviest_slot,
@@ -428,6 +439,7 @@ mod tests {
                         last_slot_hash: test_state.heaviest_hash,
                         observed_stake: 1500,
                         shred_version: SHRED_VERSION,
+                        round: 0,
                     },),
                 HeaviestForkAggregateResult::Inserted(HeaviestForkRecord {
                     slot: test_state.heaviest_slot,
@@ -465,6 +477,7 @@ mod tests {
                     last_slot_hash: test_state.heaviest_hash,
                     observed_stake: 100,
                     shred_version: SHRED_VERSION,
+                    round: 0,
                 },),
             HeaviestForkAggregateResult::AlreadyExists,
         );
@@ -504,6 +517,7 @@ mod tests {
                     last_slot_hash: test_state.heaviest_hash,
                     observed_stake: 100,
                     shred_version: SHRED_VERSION,
+                    round: 0,
                 },),
             HeaviestForkAggregateResult::AlreadyExists,
         );
@@ -517,6 +531,7 @@ mod tests {
             last_slot_hash: test_state.heaviest_hash,
             observed_stake: 200,
             shred_version: SHRED_VERSION,
+            round: 0,
         };
         assert_eq!(
             test_state
@@ -541,6 +556,7 @@ mod tests {
             last_slot_hash: test_state.heaviest_hash,
             observed_stake: 100,
             shred_version: SHRED_VERSION,
+            round: 0,
         };
         assert_eq!(
             test_state
@@ -561,6 +577,7 @@ mod tests {
             last_slot_hash: Hash::new_unique(),
             observed_stake: 100,
             shred_version: SHRED_VERSION,
+            round: 0,
         };
         assert_eq!(
             test_state

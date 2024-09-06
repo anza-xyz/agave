@@ -6,7 +6,9 @@ use {
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
         legacy_contact_info::LegacyContactInfo,
-        restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
+        restart_crds_values::{
+            RestartHeaviestFork, RestartHeaviestForkRound, RestartLastVotedForkSlots,
+        },
     },
     bincode::{serialize, serialized_size},
     rand::{CryptoRng, Rng},
@@ -521,7 +523,7 @@ pub enum CrdsValueLabel {
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
     RestartLastVotedForkSlots(Pubkey),
-    RestartHeaviestFork(Pubkey),
+    RestartHeaviestFork(RestartHeaviestForkRound, Pubkey),
 }
 
 impl fmt::Display for CrdsValueLabel {
@@ -548,8 +550,8 @@ impl fmt::Display for CrdsValueLabel {
             CrdsValueLabel::RestartLastVotedForkSlots(_) => {
                 write!(f, "RestartLastVotedForkSlots({})", self.pubkey())
             }
-            CrdsValueLabel::RestartHeaviestFork(_) => {
-                write!(f, "RestartHeaviestFork({})", self.pubkey())
+            CrdsValueLabel::RestartHeaviestFork(round, _) => {
+                write!(f, "RestartHeaviestFork({round} {})", self.pubkey())
             }
         }
     }
@@ -571,7 +573,7 @@ impl CrdsValueLabel {
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
             CrdsValueLabel::RestartLastVotedForkSlots(p) => *p,
-            CrdsValueLabel::RestartHeaviestFork(p) => *p,
+            CrdsValueLabel::RestartHeaviestFork(_, p) => *p,
         }
     }
 }
@@ -663,7 +665,9 @@ impl CrdsValue {
             CrdsData::RestartLastVotedForkSlots(_) => {
                 CrdsValueLabel::RestartLastVotedForkSlots(self.pubkey())
             }
-            CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(self.pubkey()),
+            CrdsData::RestartHeaviestFork(fork) => {
+                CrdsValueLabel::RestartHeaviestFork(fork.round, self.pubkey())
+            }
         }
     }
     pub(crate) fn contact_info(&self) -> Option<&ContactInfo> {
