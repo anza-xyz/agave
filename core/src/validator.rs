@@ -2720,6 +2720,157 @@ mod tests {
     }
 
     #[test]
+    fn test_should_check_blockstore_for_incorrect_shred_version() {
+        solana_logger::setup();
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let mut validator_config = ValidatorConfig::default_for_test();
+        let mut hard_forks = HardForks::default();
+        let mut root_slot;
+
+        // Do check from root_slot + 1 if wait_for_supermajority (10) == root_slot (10)
+        root_slot = 10;
+        validator_config.wait_for_supermajority = Some(root_slot);
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            Some(root_slot + 1)
+        );
+
+        // No check if wait_for_supermajority (10) < root_slot (15) (no hard forks)
+        // Arguably operator error to pass a value for wait_for_supermajority in this case
+        root_slot = 15;
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            None,
+        );
+
+        // Emulate cluster restart at slot 10
+        // No check if wait_for_supermajority (10) < root_slot (15) (empty blockstore)
+        hard_forks.register(10);
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            None,
+        );
+
+        // Insert some shreds at newer slots than hard fork
+        let entries = entry::create_ticks(1, 0, Hash::default());
+        for i in 20..35 {
+            let shreds = blockstore::entries_to_test_shreds(
+                &entries,
+                i,     // slot
+                i - 1, // parent_slot
+                true,  // is_full_slot
+                1,     // version
+                true,  // merkle_variant
+            );
+            blockstore.insert_shreds(shreds, None, true).unwrap();
+        }
+
+        // No check as all blockstore data is newer than latest hard fork
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            None,
+        );
+
+        // Emulate cluster restart at slot 25
+        // Do check from root_slot + 1 regardless of whether wait_for_supermajority set correctly
+        root_slot = 25;
+        hard_forks.register(root_slot);
+        validator_config.wait_for_supermajority = Some(root_slot);
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            Some(root_slot + 1),
+        );
+        validator_config.wait_for_supermajority = None;
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            Some(root_slot + 1),
+        );
+
+        // Do check with advanced root slot, even without wait_for_supermajority set correctly
+        // Check starts from latest hard fork + 1
+        root_slot = 30;
+        let latest_hard_fork = hard_forks.iter().last().unwrap().0;
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            Some(latest_hard_fork + 1),
+        );
+
+        // Purge blockstore up to latest hard fork
+        // No check since all blockstore data newer than latest hard fork
+        blockstore.purge_slots(0, latest_hard_fork, PurgeType::Exact);
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            None,
+        );
+
+        // Emulate cluster restart at slot 40 (past blockstore bounds)
+        // Do check from new_hard_fork
+        let new_hard_fork = 40;
+        hard_forks.register(new_hard_fork);
+        assert_eq!(
+            should_check_blockstore_for_incorrect_shred_version(
+                &validator_config,
+                &blockstore,
+                root_slot,
+                &hard_forks
+            )
+            .unwrap(),
+            Some(root_slot + 1),
+        );
+    }
+
+    #[test]
     fn test_backup_and_clear_blockstore() {
         solana_logger::setup();
 
