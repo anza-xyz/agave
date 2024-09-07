@@ -476,7 +476,7 @@ impl AncientSlotPubkeys {
 pub(crate) struct ShrinkCollect<'a, T: ShrinkCollectRefs<'a>> {
     pub(crate) slot: Slot,
     pub(crate) capacity: u64,
-    pub(crate) unrefed_pubkeys: Vec<&'a Pubkey>,
+    pub(crate) pubkeys_to_unref: Vec<&'a Pubkey>,
     pub(crate) zero_lamport_single_ref_pubkeys: Vec<&'a Pubkey>,
     pub(crate) alive_accounts: T,
     /// total size in storage of all alive accounts
@@ -3959,7 +3959,7 @@ impl AccountsDb {
 
     /// load the account index entry for the first `count` items in `accounts`
     /// store a reference to all alive accounts in `alive_accounts`
-    /// unref and optionally store a reference to all pubkeys that are in the index, but dead in `unrefed_pubkeys`
+    /// store all pubkeys dead in `slot_to_shrink` in `pubkeys_to_unref`
     /// return sum of account size for all alive accounts
     fn load_accounts_index_for_shrink<'a, T: ShrinkCollectRefs<'a>>(
         &self,
@@ -4157,7 +4157,7 @@ impl AccountsDb {
 
         let len = stored_accounts.len();
         let alive_accounts_collect = Mutex::new(T::with_capacity(len, slot));
-        let unrefed_pubkeys_collect = Mutex::new(Vec::with_capacity(len));
+        let pubkeys_to_unref_collect = Mutex::new(Vec::with_capacity(len));
         let zero_lamport_single_ref_pubkeys_collect = Mutex::new(Vec::with_capacity(len));
         stats
             .accounts_loaded
@@ -4172,7 +4172,7 @@ impl AccountsDb {
                 .for_each(|stored_accounts| {
                     let LoadAccountsIndexForShrink {
                         alive_accounts,
-                        pubkeys_to_unref: mut unrefed_pubkeys,
+                        mut pubkeys_to_unref,
                         all_are_zero_lamports,
                         mut zero_lamport_single_ref_pubkeys,
                     } = self.load_accounts_index_for_shrink(stored_accounts, stats, slot);
@@ -4182,10 +4182,10 @@ impl AccountsDb {
                         .lock()
                         .unwrap()
                         .collect(alive_accounts);
-                    unrefed_pubkeys_collect
+                    pubkeys_to_unref_collect
                         .lock()
                         .unwrap()
-                        .append(&mut unrefed_pubkeys);
+                        .append(&mut pubkeys_to_unref);
                     zero_lamport_single_ref_pubkeys_collect
                         .lock()
                         .unwrap()
@@ -4197,7 +4197,7 @@ impl AccountsDb {
         });
 
         let alive_accounts = alive_accounts_collect.into_inner().unwrap();
-        let unrefed_pubkeys = unrefed_pubkeys_collect.into_inner().unwrap();
+        let pubkeys_to_unref = pubkeys_to_unref_collect.into_inner().unwrap();
         let zero_lamport_single_ref_pubkeys = zero_lamport_single_ref_pubkeys_collect
             .into_inner()
             .unwrap();
@@ -4223,7 +4223,7 @@ impl AccountsDb {
         ShrinkCollect {
             slot,
             capacity: *capacity,
-            unrefed_pubkeys,
+            pubkeys_to_unref,
             zero_lamport_single_ref_pubkeys,
             alive_accounts,
             alive_total_bytes,
@@ -4247,6 +4247,7 @@ impl AccountsDb {
         zero_lamport_single_ref_pubkeys: &[&Pubkey],
         slot: Slot,
         stats: &ShrinkStats,
+        do_assert: bool,
     ) {
         stats.purged_zero_lamports.fetch_add(
             zero_lamport_single_ref_pubkeys.len() as u64,
@@ -4255,10 +4256,15 @@ impl AccountsDb {
 
         // we have to unref before we `purge_keys_exact`. Otherwise, we could race with the foreground with tx processing
         // reviving this index entry and then we'd unref the revived version, which is a refcount bug.
+
         self.accounts_index.scan(
             zero_lamport_single_ref_pubkeys.iter().cloned(),
             |_pubkey, _slots_refs, _entry| AccountsIndexScanResult::Unref,
-            Some(AccountsIndexScanResult::Unref),
+            if do_assert {
+                Some(AccountsIndexScanResult::UnrefAssert0)
+            } else {
+                Some(AccountsIndexScanResult::UnrefLog0)
+            },
             false,
             ScanFilter::All,
         );
@@ -4286,6 +4292,7 @@ impl AccountsDb {
             &shrink_collect.zero_lamport_single_ref_pubkeys,
             shrink_collect.slot,
             stats,
+            false,
         );
 
         // Purge old, overwritten storage entries
@@ -4304,7 +4311,7 @@ impl AccountsDb {
         if !shrink_collect.all_are_zero_lamports {
             self.add_uncleaned_pubkeys_after_shrink(
                 shrink_collect.slot,
-                shrink_collect.unrefed_pubkeys.iter().cloned().cloned(),
+                shrink_collect.pubkeys_to_unref.iter().cloned().cloned(),
             );
         }
 
@@ -4397,7 +4404,7 @@ impl AccountsDb {
             return;
         }
 
-        self.unref_shrunk_dead_accounts(shrink_collect.unrefed_pubkeys.iter().cloned(), slot);
+        self.unref_shrunk_dead_accounts(shrink_collect.pubkeys_to_unref.iter().cloned(), slot);
 
         let total_accounts_after_shrink = shrink_collect.alive_accounts.len();
         debug!(
@@ -5027,7 +5034,7 @@ impl AccountsDb {
     ) {
         /*
         This is only called during 'shrink'-type operations.
-        Original accounts were separated into 'accounts' and 'unrefed_pubkeys'.
+        Original accounts were separated into 'accounts' and 'pubkeys_to_unref'.
         These sets correspond to 'alive' and 'dead'.
         'alive' means this account in this slot is in the accounts index.
         'dead' means this account in this slot is NOT in the accounts index.
@@ -11151,6 +11158,35 @@ pub mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "ref count expected to be zero")]
+    fn test_remove_zero_lamport_multi_ref_accounts_panic() {
+        let accounts = AccountsDb::new_single_for_tests();
+        let pubkey_zero = Pubkey::from([1; 32]);
+        let one_lamport_account =
+            AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+
+        let zero_lamport_account =
+            AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+        let slot = 1;
+
+        accounts.store_for_tests(slot, &[(&pubkey_zero, &one_lamport_account)]);
+        accounts.calculate_accounts_delta_hash(slot);
+        accounts.add_root_and_flush_write_cache(slot);
+
+        accounts.store_for_tests(slot + 1, &[(&pubkey_zero, &zero_lamport_account)]);
+        accounts.calculate_accounts_delta_hash(slot + 1);
+        accounts.add_root_and_flush_write_cache(slot + 1);
+
+        // This should panic because there are 2 refs for pubkey_zero.
+        accounts.remove_zero_lamport_single_ref_accounts_after_shrink(
+            &[&pubkey_zero],
+            slot,
+            &ShrinkStats::default(),
+            true,
+        );
+    }
+
+    #[test]
     fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
         for pass in 0..3 {
             let accounts = AccountsDb::new_single_for_tests();
@@ -11195,39 +11231,67 @@ pub mod tests {
                 (false, ())
             });
 
-            let zero_lamport_single_ref_pubkeys = [&pubkey_zero];
+            let zero_lamport_single_ref_pubkeys =
+                if pass < 2 { vec![&pubkey_zero] } else { vec![] };
             accounts.remove_zero_lamport_single_ref_accounts_after_shrink(
                 &zero_lamport_single_ref_pubkeys,
                 slot,
                 &ShrinkStats::default(),
+                true,
             );
 
             accounts.accounts_index.get_and_then(&pubkey_zero, |entry| {
-                if pass == 0 {
-                    // should not exist in index at all
-                    assert!(entry.is_none(), "{pass}");
-                } else {
-                    // alive only in slot + 1
-                    assert_eq!(entry.unwrap().slot_list.read().unwrap().len(), 1);
-                    assert_eq!(
-                        entry
+                match pass {
+                    0 => {
+                        // should not exist in index at all
+                        assert!(entry.is_none(), "{pass}");
+                    }
+                    1 => {
+                        // alive only in slot + 1
+                        assert_eq!(entry.unwrap().slot_list.read().unwrap().len(), 1);
+                        assert_eq!(
+                            entry
+                                .unwrap()
+                                .slot_list
+                                .read()
+                                .unwrap()
+                                .first()
+                                .map(|(s, _)| s)
+                                .cloned()
+                                .unwrap(),
+                            slot + 1
+                        );
+                        let expected_ref_count = 0;
+                        assert_eq!(
+                            entry.map(|e| e.ref_count()),
+                            Some(expected_ref_count),
+                            "{pass}"
+                        );
+                    }
+                    2 => {
+                        // alive in both slot, slot + 1
+                        assert_eq!(entry.unwrap().slot_list.read().unwrap().len(), 2);
+
+                        let slots = entry
                             .unwrap()
                             .slot_list
                             .read()
                             .unwrap()
-                            .first()
+                            .iter()
                             .map(|(s, _)| s)
                             .cloned()
-                            .unwrap(),
-                        slot + 1
-                    );
-                    // refcount = 1 if we flushed the write cache for slot + 1
-                    let expected_ref_count = if pass < 2 { 0 } else { 1 };
-                    assert_eq!(
-                        entry.map(|e| e.ref_count()),
-                        Some(expected_ref_count),
-                        "{pass}"
-                    );
+                            .collect::<Vec<_>>();
+                        assert_eq!(slots, vec![slot, slot + 1]);
+                        let expected_ref_count = 2;
+                        assert_eq!(
+                            entry.map(|e| e.ref_count()),
+                            Some(expected_ref_count),
+                            "{pass}"
+                        );
+                    }
+                    _ => {
+                        unreachable!("Shouldn't reach here.")
+                    }
                 }
                 (false, ())
             });
@@ -16453,7 +16517,7 @@ pub mod tests {
                                 );
                                 assert_eq!(
                                     shrink_collect
-                                        .unrefed_pubkeys
+                                        .pubkeys_to_unref
                                         .iter()
                                         .sorted()
                                         .cloned()

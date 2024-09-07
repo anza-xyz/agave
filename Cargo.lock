@@ -211,6 +211,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-store-histogram"
+version = "2.1.0"
+dependencies = [
+ "clap 2.33.3",
+ "solana-version",
+]
+
+[[package]]
 name = "agave-store-tool"
 version = "2.1.0"
 dependencies = [
@@ -1144,9 +1152,9 @@ checksum = "5ce89b21cab1437276d2650d57e971f9d548a2d9037cc231abdc0562b97498ce"
 
 [[package]]
 name = "bytemuck"
-version = "1.17.1"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "773d90827bc3feecfb67fab12e24de0749aad83c74b9504ecde46237b5cd24e2"
+checksum = "94bbb0ad554ad961ddc5da507a12a29b14e4ae5bda06b19f575a3e6079d2e2ae"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -1503,18 +1511,18 @@ dependencies = [
 
 [[package]]
 name = "const_format"
-version = "0.2.32"
+version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3a214c7af3d04997541b18d432afaff4c455e79e2029079647e72fc2bd27673"
+checksum = "50c655d81ff1114fb0dcdea9225ea9f0cc712a6f8d189378e82bdf62a473a64b"
 dependencies = [
  "const_format_proc_macros",
 ]
 
 [[package]]
 name = "const_format_proc_macros"
-version = "0.2.32"
+version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f6ff08fd20f4f299298a28e2dfa8a8ba1036e6cd2460ac1de7b425d76f2500"
+checksum = "eff1a44b93f47b1bac19a27932f5c591e43d1ba357ee4f61526c8a25603f0eb1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2606,7 +2614,7 @@ dependencies = [
  "indexmap 2.5.0",
  "slab",
  "tokio",
- "tokio-util 0.7.11",
+ "tokio-util 0.7.12",
  "tracing",
 ]
 
@@ -4772,7 +4780,7 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls",
- "tokio-util 0.7.11",
+ "tokio-util 0.7.12",
  "tower-service",
  "url 2.5.2",
  "wasm-bindgen",
@@ -5131,9 +5139,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.127"
+version = "1.0.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8043c06d9f82bd7271361ed64f415fe5e12a77fdb52e573e7f06a516dea329ad"
+checksum = "6ff5456707a1de34e7e37f2a6fd3d3f808c318259cbd01ab6377795054b483d8"
 dependencies = [
  "itoa",
  "memchr",
@@ -5917,6 +5925,7 @@ dependencies = [
  "chrono",
  "clap 2.33.3",
  "rpassword",
+ "solana-derivation-path",
  "solana-remote-wallet",
  "solana-sdk",
  "tempfile",
@@ -5934,6 +5943,7 @@ dependencies = [
  "chrono",
  "clap 3.2.23",
  "rpassword",
+ "solana-derivation-path",
  "solana-remote-wallet",
  "solana-sdk",
  "solana-zk-token-sdk",
@@ -6317,6 +6327,17 @@ name = "solana-define-syscall"
 version = "2.1.0"
 
 [[package]]
+name = "solana-derivation-path"
+version = "2.1.0"
+dependencies = [
+ "assert_matches",
+ "derivation-path",
+ "qstring",
+ "thiserror",
+ "uriparse",
+]
+
+[[package]]
 name = "solana-dos"
 version = "2.1.0"
 dependencies = [
@@ -6573,6 +6594,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-hash"
+version = "2.1.0"
+dependencies = [
+ "borsh 1.5.1",
+ "bs58",
+ "bytemuck",
+ "bytemuck_derive",
+ "js-sys",
+ "rustc_version 0.4.1",
+ "serde",
+ "serde_derive",
+ "solana-atomic-u64",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-sanitize",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "solana-inline-spl"
 version = "2.1.0"
 dependencies = [
@@ -6590,6 +6631,7 @@ dependencies = [
  "num_cpus",
  "solana-clap-v3-utils",
  "solana-cli-config",
+ "solana-derivation-path",
  "solana-remote-wallet",
  "solana-sdk",
  "solana-version",
@@ -6800,7 +6842,8 @@ version = "2.1.0"
 dependencies = [
  "fast-math",
  "hex",
- "solana-program",
+ "solana-hash",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
@@ -7012,13 +7055,16 @@ dependencies = [
  "solana-define-syscall",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-hash",
  "solana-logger",
  "solana-msg",
  "solana-program-memory",
+ "solana-program-option",
  "solana-sanitize",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
  "solana-serde-varint",
+ "solana-sha256-hasher",
  "solana-short-vec",
  "static_assertions",
  "test-case",
@@ -7033,6 +7079,10 @@ dependencies = [
  "num-traits",
  "solana-define-syscall",
 ]
+
+[[package]]
+name = "solana-program-option"
+version = "2.1.0"
 
 [[package]]
 name = "solana-program-runtime"
@@ -7174,6 +7224,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "qstring",
  "semver 1.0.23",
+ "solana-derivation-path",
  "solana-sdk",
  "thiserror",
  "uriparse",
@@ -7237,7 +7288,7 @@ dependencies = [
  "symlink",
  "thiserror",
  "tokio",
- "tokio-util 0.7.11",
+ "tokio-util 0.7.12",
 ]
 
 [[package]]
@@ -7469,7 +7520,6 @@ dependencies = [
  "byteorder",
  "chrono",
  "curve25519-dalek 4.1.3",
- "derivation-path",
  "digest 0.10.7",
  "ed25519-dalek",
  "ed25519-dalek-bip32",
@@ -7487,7 +7537,6 @@ dependencies = [
  "num-traits",
  "num_enum",
  "pbkdf2 0.11.0",
- "qstring",
  "qualifier_attr",
  "rand 0.7.3",
  "rand 0.8.5",
@@ -7502,6 +7551,7 @@ dependencies = [
  "siphasher",
  "solana-bn254",
  "solana-decode-error",
+ "solana-derivation-path",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-logger",
@@ -7513,10 +7563,10 @@ dependencies = [
  "solana-secp256k1-recover",
  "solana-serde-varint",
  "solana-short-vec",
+ "solana-signature",
  "static_assertions",
  "thiserror",
  "tiny-bip39",
- "uriparse",
  "wasm-bindgen",
 ]
 
@@ -7578,6 +7628,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sha256-hasher"
+version = "2.1.0"
+dependencies = [
+ "sha2 0.10.8",
+ "solana-define-syscall",
+ "solana-hash",
+]
+
+[[package]]
 name = "solana-short-vec"
 version = "2.1.0"
 dependencies = [
@@ -7588,6 +7647,24 @@ dependencies = [
  "serde_json",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+]
+
+[[package]]
+name = "solana-signature"
+version = "2.1.0"
+dependencies = [
+ "bs58",
+ "curve25519-dalek 4.1.3",
+ "ed25519-dalek",
+ "generic-array 0.14.7",
+ "rand 0.8.5",
+ "rustc_version 0.4.1",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-program",
+ "solana-sanitize",
 ]
 
 [[package]]
@@ -8255,6 +8332,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha3",
+ "solana-derivation-path",
  "solana-program",
  "solana-sdk",
  "subtle",
@@ -8312,6 +8390,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "solana-curve25519",
+ "solana-derivation-path",
  "solana-program",
  "solana-sdk",
  "subtle",
@@ -9085,9 +9164,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-stream"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "267ac89e0bec6e691e5813911606935d77c476ff49024f98abcea3e7b15e37af"
+checksum = "4f4e6ce100d0eb49a2734f8c0812bcd324cf357d21810932c5df6b96ef2b86f1"
 dependencies = [
  "futures-core",
  "pin-project-lite",
@@ -9126,9 +9205,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.11"
+version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cf6b47b3771c49ac75ad09a6162f53ad4b8088b76ac60e8ec1455b31a189fe1"
+checksum = "61e7c3654c13bcd040d4a03abee2c75b1d14a37b423cf5a813ceae1cc903ec6a"
 dependencies = [
  "bytes",
  "futures-core",
@@ -9250,7 +9329,7 @@ dependencies = [
  "rand 0.8.5",
  "slab",
  "tokio",
- "tokio-util 0.7.11",
+ "tokio-util 0.7.12",
  "tower-layer",
  "tower-service",
  "tracing",

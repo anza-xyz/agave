@@ -23,11 +23,11 @@ default = [
 full = [
     "byteorder",
     "chrono",
-    "generic-array",
     "memmap2",
     "rand",
     "rand0-7",
     "serde_json",
+    "solana-signature",
     "ed25519-dalek",
     "ed25519-dalek-bip32",
     "libsecp256k1",
@@ -42,6 +42,7 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "solana-program/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi"
 ]
 
 [dependencies]
@@ -54,7 +55,6 @@ bytemuck_derive = { workspace = true }
 byteorder = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
-derivation-path = { workspace = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
 ed25519-dalek-bip32 = { workspace = true, optional = true }
@@ -72,7 +72,6 @@ num-derive = { workspace = true }
 num-traits = { workspace = true }
 num_enum = { workspace = true }
 pbkdf2 = { workspace = true }
-qstring = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 rand0-7 = { package = "rand", version = "0.7", optional = true }
@@ -86,6 +85,7 @@ sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-decode-error = { workspace = true }
+solana-derivation-path = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-program = { workspace = true }
@@ -95,8 +95,8 @@ solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
+solana-signature = { workspace = true, features = ["rand", "serde", "verify"], optional = true }
 thiserror = { workspace = true }
-uriparse = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.1", features = ["wasm-bindgen"] }
