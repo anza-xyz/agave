@@ -4,7 +4,7 @@ use {
         nonce_info::NonceInfo,
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_callback::{/* XXX AccountState, */ TransactionProcessingCallback,},
+        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
     itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
@@ -228,24 +228,35 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         .map(|(tx, _)| tx)
         .collect();
 
-    let account_keys: Vec<_> = checked_messages
-        .iter()
-        .flat_map(|m| m.account_keys().iter())
-        .unique()
-        .collect();
+    let mut account_key_map = HashMap::new();
+    for message in checked_messages.iter() {
+        for (account_index, account_key) in message.account_keys().iter().enumerate() {
+            if message.is_writable(account_index) {
+                account_key_map.insert(account_key, true);
+            } else {
+                account_key_map.entry(account_key).or_insert(false);
+            }
+        }
+    }
 
-    for key in account_keys {
-        if solana_sdk::sysvar::instructions::check_id(key) {
+    for (account_key, is_writable) in account_key_map {
+        if solana_sdk::sysvar::instructions::check_id(account_key) {
             continue;
         } else if let Some(account_override) =
-            account_overrides.and_then(|overrides| overrides.get(key))
+            account_overrides.and_then(|overrides| overrides.get(account_key))
         {
-            accounts_map.insert(*key, account_override.clone());
-        } else if let Some(account) = callbacks.get_account_shared_data(key) {
-            accounts_map.insert(*key, account);
+            accounts_map.insert(*account_key, account_override.clone());
+        } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
+            callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
+
+            accounts_map.insert(*account_key, account);
         }
         // XXX we do not insert the default account here because we need to know if its not found later
         // it raises the question however of whether we need to track if a program account is created in the batch
+        // XXX HANA FIXME UPDATE check with brooks on monday........ i dont know why we need to do this
+        else {
+            callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
+        }
     }
 
     // XXX it is possible we want to fully validate programs for messages here
@@ -522,18 +533,6 @@ fn load_transaction_account(
             .cloned() // XXX new clone
             .map(|mut account| {
                 let rent_collected = if is_writable {
-                    // Inspect the account prior to collecting rent, since
-                    // rent collection can modify the account.
-                    /* XXX HANA i messaged brooks asking what this is... newly added yesterday 8/22
-                    debug_assert!(!was_inspected);
-                    callbacks.inspect_account(
-                        account_key,
-                        AccountState::Alive(&account),
-                        is_writable,
-                    );
-                    was_inspected = true;
-                    */
-
                     collect_rent_from_account(
                         feature_set,
                         rent_collector,
@@ -565,17 +564,6 @@ fn load_transaction_account(
                 }
             })
     };
-
-    /* XXX as noted above
-    if !was_inspected {
-        let account_state = if account_found {
-            AccountState::Alive(&loaded_account.account)
-        } else {
-            AccountState::Dead
-        };
-        callbacks.inspect_account(account_key, account_state, is_writable);
-    }
-    */
 
     Ok((loaded_account, account_found))
 }
@@ -650,7 +638,7 @@ mod tests {
         super::*,
         crate::{
             transaction_account_state_info::TransactionAccountStateInfo,
-            transaction_processing_callback::{AccountState, TransactionProcessingCallback},
+            transaction_processing_callback::TransactionProcessingCallback,
         },
         nonce::state::Versions as NonceVersions,
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
@@ -2418,7 +2406,7 @@ mod tests {
         actual_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         let mut expected_inspected_accounts = vec![
-            // *not* key0, since it is loaded during fee payer validation
+            (address0, vec![(Some(account0), true)]),
             (address1, vec![(Some(account1), true)]),
             (address2, vec![(None, true)]),
             (address3, vec![(Some(account3), false)]),
