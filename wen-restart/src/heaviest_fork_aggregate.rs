@@ -78,7 +78,10 @@ impl HeaviestForkAggregate {
         record: &HeaviestForkRecord,
     ) -> Result<HeaviestForkAggregateResult> {
         if record.round as u8 != self.round {
-            return Ok(HeaviestForkAggregateResult::UnmatchedRound(record.round as u8, self.round));
+            return Ok(HeaviestForkAggregateResult::UnmatchedRound(
+                record.round as u8,
+                self.round,
+            ));
         }
         let from = Pubkey::from_str(key_string)?;
         let bankhash = Hash::from_str(&record.bankhash)?;
