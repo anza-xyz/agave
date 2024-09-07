@@ -212,6 +212,20 @@ pub fn validate_fee_payer(
 // but they mutated the rollback accounts. so i started another pr to roll nonces earlier
 // i am pretty sure that is almost through code review now! so i can use the saver fn now
 // i think i can just use the collect accounts function directly actually? lol so simple
+//
+// XXX ok we are finally back on this branch after finishing #2741
+// unfortunately account saver was moved out of svm so we have to move it back in
+// i also fixed the new inspect account bank feature to work with my new load_accounts function
+// i... think my accounts_map update flow works?? so the next things i want to do are...
+// * write basic tests reusing accounts. the write test covering all the stupid fee payer cases
+//   ie unfunded -> funded, funded -> unfunded, etc. and the nonce cases
+// * figure out the type signature nonsense re: collect accounts so its not so stupid
+// * make validate_transaction_fee_payer take the hashmap rather than callback
+// * oh god i have to write tests for the program cache i forgot all about thta
+//   probably remove the executed check. if this can go in without a feature gate that would be wonderful
+//   honestly if we do feature gate i have no idea how to structure it
+//   copy-paste the entire account_loader file including all tests? so we can simply delete the old one later?
+// ok just do this assuming no feature gate then ask andrew. it will be easier than weaving everything back together on spec
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,

@@ -285,7 +285,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
             let validate_result = check_result.and_then(|tx_details| {
-                // XXX this shouldnt take callback or override
+                // XXX FIXME this shouldnt take callback or override
+                // im holding off changing it just because i need to change even more tests
                 self.validate_transaction_fee_payer(
                     callbacks,
                     config.account_overrides,
