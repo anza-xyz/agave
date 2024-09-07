@@ -1,2 +1,0 @@
-cargo:rustc-cfg=int_128
-cargo:rustc-cfg=inclusive_range
