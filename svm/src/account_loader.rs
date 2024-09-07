@@ -650,7 +650,7 @@ mod tests {
         super::*,
         crate::{
             transaction_account_state_info::TransactionAccountStateInfo,
-            transaction_processing_callback::TransactionProcessingCallback,
+            transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         },
         nonce::state::Versions as NonceVersions,
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
@@ -2401,22 +2401,11 @@ mod tests {
             vec![Signature::new_unique()],
             false,
         );
-        let validation_result = Ok(ValidatedTransactionDetails {
-            loaded_fee_payer_account: LoadedTransactionAccount {
-                account: account0.clone(),
-                ..LoadedTransactionAccount::default()
-            },
-            ..ValidatedTransactionDetails::default()
-        });
         let _load_results = load_accounts(
             &mock_bank,
             &[sanitized_transaction],
-            vec![validation_result],
-            &mut TransactionErrorMetrics::default(),
+            &vec![Ok(CheckedTransactionDetails::default())],
             None,
-            &FeatureSet::default(),
-            &RentCollector::default(),
-            &ProgramCacheForTxBatch::default(),
         );
 
         // ensure the loaded accounts are inspected
