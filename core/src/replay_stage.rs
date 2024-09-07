@@ -68,7 +68,6 @@ use {
     solana_sdk::{
         clock::{BankId, Slot, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
         feature_set,
-        genesis_config::ClusterType,
         hash::Hash,
         pubkey::Pubkey,
         saturating_add_assign,
