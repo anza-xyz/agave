@@ -7,6 +7,7 @@ use {
     serde_json::Value,
     solana_account_decoder::parse_token::UiTokenAmount,
     solana_sdk::{
+        commitment_config::CommitmentConfig,
         instruction::CompiledInstruction,
         message::{
             v0::{LoadedAddresses, MessageAddressTableLookup},
@@ -566,6 +567,88 @@ impl Default for TransactionStatusMeta {
             loaded_addresses: LoadedAddresses::default(),
             return_data: None,
             compute_units_consumed: None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncodedConfirmedBlock {
+    pub previous_blockhash: String,
+    pub blockhash: String,
+    pub parent_slot: u64,
+    pub transactions: Vec<EncodedTransactionWithStatusMeta>,
+    pub rewards: Rewards,
+    pub num_partitions: Option<u64>,
+    pub block_time: Option<i64>,
+    pub block_height: Option<u64>,
+}
+
+impl From<UiConfirmedBlock> for EncodedConfirmedBlock {
+    fn from(block: UiConfirmedBlock) -> Self {
+        Self {
+            previous_blockhash: block.previous_blockhash,
+            blockhash: block.blockhash,
+            parent_slot: block.parent_slot,
+            transactions: block.transactions.unwrap_or_default(),
+            rewards: block.rewards.unwrap_or_default(),
+            num_partitions: block.num_reward_partitions,
+            block_time: block.block_time,
+            block_height: block.block_height,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncodedConfirmedTransactionWithStatusMeta {
+    pub slot: u64,
+    #[serde(flatten)]
+    pub transaction: EncodedTransactionWithStatusMeta,
+    pub block_time: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionStatus {
+    pub slot: u64,
+    pub confirmations: Option<usize>,  // None = rooted
+    pub status: TransactionResult<()>, // legacy field
+    pub err: Option<TransactionError>,
+    pub confirmation_status: Option<TransactionConfirmationStatus>,
+}
+
+impl TransactionStatus {
+    pub fn satisfies_commitment(&self, commitment_config: CommitmentConfig) -> bool {
+        if commitment_config.is_finalized() {
+            self.confirmations.is_none()
+        } else if commitment_config.is_confirmed() {
+            if let Some(status) = &self.confirmation_status {
+                *status != TransactionConfirmationStatus::Processed
+            } else {
+                // These fallback cases handle TransactionStatus RPC responses from older software
+                self.confirmations.is_some() && self.confirmations.unwrap() > 1
+                    || self.confirmations.is_none()
+            }
+        } else {
+            true
+        }
+    }
+
+    // Returns `confirmation_status`, or if is_none, determines the status from confirmations.
+    // Facilitates querying nodes on older software
+    pub fn confirmation_status(&self) -> TransactionConfirmationStatus {
+        match &self.confirmation_status {
+            Some(status) => status.clone(),
+            None => {
+                if self.confirmations.is_none() {
+                    TransactionConfirmationStatus::Finalized
+                } else if self.confirmations.unwrap() > 0 {
+                    TransactionConfirmationStatus::Confirmed
+                } else {
+                    TransactionConfirmationStatus::Processed
+                }
+            }
         }
     }
 }
