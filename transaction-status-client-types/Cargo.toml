@@ -1,6 +1,6 @@
 [package]
 name = "solana-transaction-status-client-types"
-description = "Core types for solana-transaction-status"
+description = "Core RPC client types for solana-transaction-status"
 documentation = "https://docs.rs/solana-transaction-status-client-types"
 version = { workspace = true }
 authors = { workspace = true }
