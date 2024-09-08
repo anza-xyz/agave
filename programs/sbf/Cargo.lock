@@ -5709,7 +5709,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-inline-spl",
  "solana-sdk",
- "solana-transaction-status",
+ "solana-transaction-status-client-types",
  "solana-version",
  "thiserror",
 ]
