@@ -752,7 +752,12 @@ impl Validator {
             &hard_forks,
         )? {
             *start_progress.write().unwrap() = ValidatorStartProgress::CleaningBlockStore;
-            backup_and_clear_blockstore(&blockstore, config, start_slot, shred_version)?;
+            check_blockstore_for_incorrect_shred_version(
+                &blockstore,
+                config,
+                start_slot,
+                shred_version,
+            )?;
         }
 
         node.info.set_shred_version(shred_version);
@@ -2265,7 +2270,7 @@ fn blockstore_contains_incorrect_shred_version(
 
 /// If the blockstore contains any shreds with the incorrect shred version,
 /// copy them to a backup blockstore and purge them from the actual blockstore.
-fn backup_and_clear_blockstore(
+fn check_blockstore_for_incorrect_shred_version(
     blockstore: &Blockstore,
     config: &ValidatorConfig,
     start_slot: Slot,
@@ -2867,7 +2872,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backup_and_clear_blockstore() {
+    fn test_check_blockstore_for_incorrect_shred_version() {
         solana_logger::setup();
 
         let validator_config = ValidatorConfig::default_for_test();
@@ -2888,7 +2893,7 @@ mod tests {
         }
 
         // this purges and compacts all slots greater than or equal to 5
-        backup_and_clear_blockstore(&blockstore, &validator_config, 5, 2).unwrap();
+        check_blockstore_for_incorrect_shred_version(&blockstore, &validator_config, 5, 2).unwrap();
         // assert that slots less than 5 aren't affected
         assert!(blockstore.meta(4).unwrap().unwrap().next_slots.is_empty());
         for i in 5..10 {
