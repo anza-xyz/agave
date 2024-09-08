@@ -25,7 +25,6 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
-        commitment_config::CommitmentConfig,
         hash::Hash,
         instruction::CompiledInstruction,
         message::{
@@ -35,10 +34,7 @@ use {
         pubkey::Pubkey,
         reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
-        transaction::{
-            Result as TransactionResult, Transaction, TransactionError, TransactionVersion,
-            VersionedTransaction,
-        },
+        transaction::{Transaction, TransactionError, TransactionVersion, VersionedTransaction},
     },
     std::collections::HashSet,
     thiserror::Error,
