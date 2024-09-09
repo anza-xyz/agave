@@ -2784,7 +2784,6 @@ impl AccountsDb {
             ancient_account_cleans.fetch_add(old_reclaims, Ordering::Relaxed);
         }
         clean_rooted.stop();
-        debug!("{}", clean_rooted);
         self.clean_accounts_stats
             .clean_old_root_us
             .fetch_add(clean_rooted.as_us(), Ordering::Relaxed);
