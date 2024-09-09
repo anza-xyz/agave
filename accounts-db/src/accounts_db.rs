@@ -3443,7 +3443,9 @@ impl AccountsDb {
                             epoch_schedule,
                             &pubkeys_removed_from_accounts_index,
                         );
-                        reclaims.lock().unwrap().extend(reclaims_new);
+                        if !reclaims_new.is_empty() {
+                            reclaims.lock().unwrap().extend(reclaims_new);
+                        }
                     }
                     !candidate_info.slot_list.is_empty()
                 });
