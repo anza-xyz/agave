@@ -97,7 +97,7 @@ use {
     std::{
         borrow::Cow,
         boxed::Box,
-        collections::{BTreeSet, HashMap, HashSet},
+        collections::{hash_map::Entry, BTreeSet, HashMap, HashSet},
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
@@ -1352,6 +1352,8 @@ impl StoreAccountsTiming {
 struct CleaningInfo {
     slot_list: SlotList<AccountInfo>,
     ref_count: u64,
+    /// True for pubkeys which can contain zero accounts
+    can_contain_zero: bool,
 }
 
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
@@ -2849,6 +2851,7 @@ impl AccountsDb {
                 CleaningInfo {
                     slot_list,
                     ref_count,
+                    ..
                 },
             ) in bin.iter()
             {
@@ -3119,11 +3122,11 @@ impl AccountsDb {
             .sum::<usize>() as u64
     }
 
-    fn insert_pubkey(&self, candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>], pubkey: Pubkey) {
-        let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
-        let mut candidates_bin = candidates[index].write().unwrap();
-        candidates_bin.insert(pubkey, CleaningInfo::default());
-    }
+    // fn insert_pubkey(&self, candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>], pubkey: Pubkey) {
+    //     let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
+    //     let mut candidates_bin = candidates[index].write().unwrap();
+    //     candidates_bin.insert(pubkey, CleaningInfo::default());
+    // }
 
     /// Construct a list of candidates for cleaning from:
     /// - dirty_stores      -- set of stores which had accounts
@@ -3162,6 +3165,26 @@ impl AccountsDb {
             std::iter::repeat_with(|| RwLock::new(HashMap::<Pubkey, CleaningInfo>::new()))
                 .take(num_bins)
                 .collect();
+
+        let insert_candidate = |pubkey, is_zero| {
+            let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
+            let mut candidates_bin = candidates[index].write().unwrap();
+
+            match candidates_bin.entry(pubkey) {
+                Entry::Occupied(occupied) => {
+                    if is_zero {
+                        occupied.into_mut().can_contain_zero = true;
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(CleaningInfo {
+                        can_contain_zero: is_zero,
+                        ..Default::default()
+                    });
+                }
+            }
+        };
+
         let dirty_ancient_stores = AtomicUsize::default();
         let mut dirty_store_routine = || {
             let chunk_size = 1.max(dirty_stores_len.saturating_div(rayon::current_num_threads()));
@@ -3174,9 +3197,13 @@ impl AccountsDb {
                             dirty_ancient_stores.fetch_add(1, Ordering::Relaxed);
                         }
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
-                        store
-                            .accounts
-                            .scan_pubkeys(|pubkey| self.insert_pubkey(&candidates, *pubkey));
+
+                        store.accounts.scan_index(|index| {
+                            let pubkey = index.index_info.pubkey;
+                            let is_zero = index.index_info.lamports == 0;
+
+                            insert_candidate(pubkey, is_zero);
+                        });
                     });
                     oldest_dirty_slot
                 })
@@ -3210,6 +3237,22 @@ impl AccountsDb {
         collect_delta_keys.stop();
         timings.collect_delta_keys_us += collect_delta_keys.as_us();
 
+        // let mut delta_insert = Measure::start("delta_insert");
+        // self.thread_pool_clean.install(|| {
+        //     delta_keys.par_iter().for_each(|keys| {
+        //         for key in keys {
+        //             // Conservatively mark the candidate to be zero for
+        //             // correctness so that scan WILL try to look in disk if it is
+        //             // not in-mem. These keys are from 1) recently processed
+        //             // slots, 2) zeros found in shrink. Therefore, seldomly do
+        //             // we need to look up in disk.
+        //             insert_candidate(*key, true);
+        //         }
+        //     });
+        // });
+        // delta_insert.stop();
+        // timings.delta_insert_us += delta_insert.as_us();
+
         timings.delta_key_count = Self::count_pubkeys(&candidates);
 
         // Check if we should purge any of the
@@ -3226,7 +3269,7 @@ impl AccountsDb {
                     let is_candidate_for_clean =
                         max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
-                        self.insert_pubkey(&candidates, *pubkey);
+                        insert_candidate(*pubkey, true);
                     }
                     !is_candidate_for_clean
                 });
@@ -3442,7 +3485,11 @@ impl AccountsDb {
                         },
                         None,
                         false,
-                        ScanFilter::All,
+                        if candidate_info.can_contain_zero {
+                            ScanFilter::All
+                        } else {
+                            self.scan_filter_for_shrinking
+                        },
                     );
                     if should_purge {
                         let reclaims_new = self.collect_reclaims(
@@ -3493,6 +3540,7 @@ impl AccountsDb {
                 CleaningInfo {
                     slot_list,
                     ref_count,
+                    ..
                 },
             ) in candidates_bin.write().unwrap().iter_mut()
             {
@@ -3572,6 +3620,7 @@ impl AccountsDb {
                     let CleaningInfo {
                         slot_list,
                         ref_count: _,
+                        ..
                     } = cleaning_info;
                     (!slot_list.is_empty()).then_some((
                         *pubkey,
@@ -3875,6 +3924,7 @@ impl AccountsDb {
                 let CleaningInfo {
                     slot_list,
                     ref_count: _,
+                    ..
                 } = cleaning_info;
                 debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 // Only keep candidates where the entire history of the account in the root set
@@ -12959,6 +13009,7 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: rooted_entries,
                     ref_count,
+                    ..Default::default()
                 },
             );
         }
@@ -12969,6 +13020,7 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: list,
                     ref_count,
+                    ..
                 },
             ) in candidates_bin.iter()
             {
@@ -15221,6 +15273,7 @@ pub mod tests {
                 CleaningInfo {
                     slot_list: vec![(slot, account_info)],
                     ref_count: 1,
+                    ..Default::default()
                 },
             );
             let accounts_db = AccountsDb::new_single_for_tests();
