@@ -3485,6 +3485,7 @@ impl AccountsDb {
                 },
             ) in candidates_bin.write().unwrap().iter_mut()
             {
+                debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 if purged_account_slots.contains_key(pubkey) {
                     *ref_count = self.accounts_index.ref_count_from_storage(pubkey);
                 }
@@ -3864,9 +3865,7 @@ impl AccountsDb {
                     slot_list,
                     ref_count: _,
                 } = cleaning_info;
-                if slot_list.is_empty() {
-                    return false;
-                }
+                debug_assert!(!slot_list.is_empty(), "candidate slot_list can't be empty");
                 // Only keep candidates where the entire history of the account in the root set
                 // can be purged. All AppendVecs for those updates are dead.
                 for (slot, _account_info) in slot_list.iter() {
