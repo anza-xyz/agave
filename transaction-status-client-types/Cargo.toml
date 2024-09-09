@@ -17,8 +17,8 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
-solana-signature = { workspace = true, default-features = false }
 solana-sdk = { workspace = true }
+solana-signature = { workspace = true, default-features = false }
 thiserror = { workspace = true }
 
 [package.metadata.docs.rs]
