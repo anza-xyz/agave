@@ -24,7 +24,7 @@ pub struct ResolvedTransactionView<D: TransactionData> {
     /// The parsed and sanitized transction view.
     view: TransactionView<true, D>,
     /// The resolved address lookups.
-    resolved_addresses: LoadedAddresses,
+    resolved_addresses: Option<LoadedAddresses>,
     /// A cache for whether an address is writable.
     writable_cache: Vec<bool>, // TODO: should this be a vec, bitset, or array[256].
 }
@@ -42,23 +42,29 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
     /// addresses, create a resolved transaction view.
     pub fn new(
         view: TransactionView<true, D>,
-        resolved_addresses: LoadedAddresses,
+        resolved_addresses: Option<LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>, // why does this not use ahash at least?!
     ) -> Self {
+        let resolved_addresses_ref = resolved_addresses.as_ref();
+
         // verify that the number of readable and writable match up.
         // This is a basic sanity check to make sure we're not passing a totally
         // invalid set of resolved addresses.
         assert_eq!(
-            resolved_addresses.writable.len(),
+            resolved_addresses_ref
+                .map(|loaded_addresses| loaded_addresses.writable.len())
+                .unwrap_or(0),
             usize::from(view.total_writable_lookup_accounts())
         );
         assert_eq!(
-            resolved_addresses.readonly.len(),
+            resolved_addresses_ref
+                .map(|loaded_addresses| loaded_addresses.readonly.len())
+                .unwrap_or(0),
             usize::from(view.total_readonly_lookup_accounts())
         );
 
         let writable_cache =
-            Self::cache_is_writable(&view, &resolved_addresses, reserved_account_keys);
+            Self::cache_is_writable(&view, resolved_addresses_ref, reserved_account_keys);
         Self {
             view,
             resolved_addresses,
@@ -72,12 +78,12 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
     /// `is_writable` - since there is more to it than just checking index.
     fn cache_is_writable(
         view: &TransactionView<true, D>,
-        resolved_addresses: &LoadedAddresses,
+        resolved_addresses: Option<&LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Vec<bool> {
         // Build account keys so that we can iterate over and check if
         // an address is writable.
-        let account_keys = AccountKeys::new(view.static_account_keys(), Some(resolved_addresses));
+        let account_keys = AccountKeys::new(view.static_account_keys(), resolved_addresses);
 
         let mut is_writable_cache = Vec::with_capacity(account_keys.len());
         let num_static_account_keys = usize::from(view.num_static_account_keys());
@@ -194,7 +200,7 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
     fn account_keys(&self) -> AccountKeys {
         AccountKeys::new(
             self.view.static_account_keys(),
-            Some(&self.resolved_addresses), // TODO: should this always be Some?
+            self.resolved_addresses.as_ref(),
         )
     }
 
@@ -255,6 +261,62 @@ mod tests {
 
     #[test]
     #[should_panic]
+    fn test_expected_loaded_addresses() {
+        // Expected addresses passed in, but `None` was passed.
+        let static_keys = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let transaction = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                instructions: vec![],
+                account_keys: static_keys,
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![1],
+                }],
+                recent_blockhash: Hash::default(),
+            }),
+        };
+        let bytes = bincode::serialize(&transaction).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+        let _ = ResolvedTransactionView::new(view, None, &HashSet::default());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_unexpected_loaded_addresses() {
+        // Expected no addresses passed in, but `Some` was passed.
+        let static_keys = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let loaded_addresses = LoadedAddresses {
+            writable: vec![Pubkey::new_unique()],
+            readonly: vec![],
+        };
+        let transaction = VersionedTransaction {
+            signatures: vec![Signature::default()],
+            message: VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 0,
+                },
+                instructions: vec![],
+                account_keys: static_keys,
+                address_table_lookups: vec![],
+                recent_blockhash: Hash::default(),
+            }),
+        };
+        let bytes = bincode::serialize(&transaction).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
+        let _ = ResolvedTransactionView::new(view, Some(loaded_addresses), &HashSet::default());
+    }
+
+    #[test]
+    #[should_panic]
     fn test_mismatched_loaded_address_lengths() {
         // Loaded addresses only has 1 writable address, no readonly.
         // The message ATL has 1 writable and 1 readonly.
@@ -283,7 +345,7 @@ mod tests {
         };
         let bytes = bincode::serialize(&transaction).unwrap();
         let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
-        let _ = ResolvedTransactionView::new(view, loaded_addresses, &HashSet::default());
+        let _ = ResolvedTransactionView::new(view, Some(loaded_addresses), &HashSet::default());
     }
 
     #[test]
@@ -329,7 +391,7 @@ mod tests {
             let bytes = bincode::serialize(&transaction).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
             let resolved_view =
-                ResolvedTransactionView::new(view, loaded_addresses, &reserved_account_keys);
+                ResolvedTransactionView::new(view, Some(loaded_addresses), &reserved_account_keys);
 
             // demote reserved static key to readonly
             let expected = vec![false, false, true, false];
@@ -348,7 +410,7 @@ mod tests {
             let bytes = bincode::serialize(&transaction).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
             let resolved_view =
-                ResolvedTransactionView::new(view, loaded_addresses, &reserved_account_keys);
+                ResolvedTransactionView::new(view, Some(loaded_addresses), &reserved_account_keys);
 
             // demote reserved static key to readonly
             let expected = vec![false, false, true, false];
@@ -367,7 +429,7 @@ mod tests {
             let bytes = bincode::serialize(&transaction).unwrap();
             let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
             let resolved_view =
-                ResolvedTransactionView::new(view, loaded_addresses, &reserved_account_keys);
+                ResolvedTransactionView::new(view, Some(loaded_addresses), &reserved_account_keys);
 
             // demote loaded key to readonly
             let expected = vec![true, false, false, false];
@@ -425,7 +487,7 @@ mod tests {
             let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
             let resolved_view = ResolvedTransactionView::new(
                 view,
-                loaded_addresses.clone(),
+                Some(loaded_addresses.clone()),
                 &reserved_account_keys,
             );
 
@@ -443,7 +505,7 @@ mod tests {
             let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
             let resolved_view = ResolvedTransactionView::new(
                 view,
-                loaded_addresses.clone(),
+                Some(loaded_addresses.clone()),
                 &reserved_account_keys,
             );
 
@@ -466,7 +528,7 @@ mod tests {
 
             let resolved_view = ResolvedTransactionView::new(
                 view,
-                loaded_addresses.clone(),
+                Some(loaded_addresses.clone()),
                 &reserved_account_keys,
             );
 
