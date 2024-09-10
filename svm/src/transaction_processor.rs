@@ -4,7 +4,7 @@ use {
     crate::{
         account_loader::{
             collect_rent_from_account, load_accounts, load_transaction, validate_fee_payer,
-            CheckedTransactionDetails, LoadedTransaction, LoadedTransactionAccount,
+            AccountsMap, CheckedTransactionDetails, LoadedTransaction, LoadedTransactionAccount,
             TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
@@ -285,11 +285,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
             let validate_result = check_result.and_then(|tx_details| {
-                // XXX FIXME this shouldnt take callback or override
-                // im holding off changing it just because i need to change even more tests
                 self.validate_transaction_fee_payer(
-                    callbacks,
-                    config.account_overrides,
+                    &accounts_map,
                     tx,
                     tx_details,
                     &environment.feature_set,
@@ -424,10 +421,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     // Loads transaction fee payer, collects rent if necessary, then calculates
     // transaction fees, and deducts them from the fee payer balance. If the
     // account is not found or has insufficient funds, an error is returned.
-    fn validate_transaction_fee_payer<CB: TransactionProcessingCallback>(
+    fn validate_transaction_fee_payer(
         &self,
-        callbacks: &CB,
-        account_overrides: Option<&AccountOverrides>,
+        accounts_map: &AccountsMap,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         feature_set: &FeatureSet,
@@ -443,11 +439,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         })?;
 
         let fee_payer_address = message.fee_payer();
-
-        // XXX we CANNOT use the callback here, we MUST use the hashmap
-        let fee_payer_account = account_overrides
-            .and_then(|overrides| overrides.get(fee_payer_address).cloned())
-            .or_else(|| callbacks.get_account_shared_data(fee_payer_address));
+        let fee_payer_account = accounts_map.get(fee_payer_address).cloned();
 
         let Some(mut fee_payer_account) = fee_payer_account else {
             error_counters.account_not_found += 1;

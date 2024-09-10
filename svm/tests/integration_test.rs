@@ -844,6 +844,209 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
     vec![test_entry]
 }
 
+fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+    let transfer_amount = LAMPORTS_PER_SOL;
+    let wallet_rent = Rent::default().minimum_balance(0);
+
+    // batch 0: two successful transfers from the same source
+    {
+        let mut test_entry = SvmTestEntry::default();
+
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination1 = Pubkey::new_unique();
+        let destination2 = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let destination1_data = AccountSharedData::default();
+        let destination2_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        for (destination, mut destination_data) in vec![
+            (destination1, destination1_data),
+            (destination2, destination2_data),
+        ] {
+            test_entry.push_transaction(system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ));
+
+            destination_data
+                .checked_add_lamports(transfer_amount)
+                .unwrap();
+            test_entry.create_expected_account(destination, &destination_data);
+
+            test_entry
+                .decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+        }
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 1:
+    // * successful transfer, source left with rent-exempt minimum
+    // * non-processable transfer due to underfunded fee-payer
+    {
+        let mut test_entry = SvmTestEntry::default();
+
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(transfer_amount + LAMPORTS_PER_SIGNATURE + wallet_rent);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        test_entry.push_transaction_with_status(
+            system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 2:
+    // * successful transfer to a previously unfunded account
+    // * successful transfer using the new account as a fee-payer in the same batch
+    {
+        let mut test_entry = SvmTestEntry::default();
+        let first_transfer_amount = transfer_amount + LAMPORTS_PER_SIGNATURE + wallet_rent;
+        let second_transfer_amount = transfer_amount;
+
+        let grandparent_keypair = Keypair::new();
+        let grandparent = grandparent_keypair.pubkey();
+        let parent_keypair = Keypair::new();
+        let parent = parent_keypair.pubkey();
+        let child = Pubkey::new_unique();
+
+        let mut grandparent_data = AccountSharedData::default();
+        let mut parent_data = AccountSharedData::default();
+        let mut child_data = AccountSharedData::default();
+
+        grandparent_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(grandparent, &grandparent_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &grandparent_keypair,
+            &parent,
+            first_transfer_amount,
+            Hash::default(),
+        ));
+
+        parent_data
+            .checked_add_lamports(first_transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(parent, &parent_data);
+
+        test_entry.decrease_expected_lamports(
+            &grandparent,
+            first_transfer_amount + LAMPORTS_PER_SIGNATURE,
+        );
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &parent_keypair,
+            &child,
+            second_transfer_amount,
+            Hash::default(),
+        ));
+
+        child_data
+            .checked_add_lamports(second_transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(child, &child_data);
+
+        test_entry
+            .decrease_expected_lamports(&parent, second_transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 3:
+    // * unprocessable transfer due to underfunded fee-payer (two signatures)
+    // * successful transfer with the same fee-payer (one signature)
+    {
+        let mut test_entry = SvmTestEntry::default();
+
+        let feepayer_keypair = Keypair::new();
+        let feepayer = feepayer_keypair.pubkey();
+        let separate_source_keypair = Keypair::new();
+        let separate_source = separate_source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut feepayer_data = AccountSharedData::default();
+        let mut separate_source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        feepayer_data.set_lamports(1 + LAMPORTS_PER_SIGNATURE + wallet_rent);
+        test_entry.add_initial_account(feepayer, &feepayer_data);
+
+        separate_source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(separate_source, &separate_source_data);
+
+        test_entry.push_transaction_with_status(
+            Transaction::new_signed_with_payer(
+                &[system_instruction::transfer(
+                    &separate_source,
+                    &destination,
+                    1,
+                )],
+                Some(&feepayer),
+                &[&feepayer_keypair, &separate_source_keypair],
+                Hash::default(),
+            ),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &feepayer_keypair,
+            &destination,
+            1,
+            Hash::default(),
+        ));
+
+        destination_data.checked_add_lamports(1).unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&feepayer, 1 + LAMPORTS_PER_SIGNATURE);
+    }
+
+    if enable_fee_only_transactions {
+        for test_entry in &mut test_entries {
+            test_entry
+                .enabled_features
+                .push(feature_set::enable_transaction_loading_failure_fees::id());
+        }
+    }
+
+    test_entries
+}
+
 #[test_case(program_medley())]
 #[test_case(simple_transfer(false))]
 #[test_case(simple_transfer(true))]
@@ -851,6 +1054,8 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
 #[test_case(simple_nonce(true, false))]
 #[test_case(simple_nonce(false, true))]
 #[test_case(simple_nonce(true, true))]
+#[test_case(intrabatch_account_reuse(false))]
+#[test_case(intrabatch_account_reuse(true))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);
