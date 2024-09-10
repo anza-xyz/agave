@@ -432,6 +432,137 @@ fn program_medley() -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
+fn conflicting_tranfers() -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry::default();
+    let transfer_amount = LAMPORTS_PER_SOL;
+
+    // 2 transactions with same fee-payer
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        // second transfer with the same fee payer
+        let destination = Pubkey::new_unique();
+        let mut destination_data = AccountSharedData::default();
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+    }
+
+    // 2 transfers with same fee-payer, second tx will fail due to first
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL + LAMPORTS_PER_SIGNATURE);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        // second transfer with the same fee payer which should fail
+        let destination = Pubkey::new_unique();
+        test_entry.transaction_batch.push(TransactionBatchItem {
+            transaction: system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ),
+            asserts: TransactionBatchItemAsserts::not_executed(),
+            ..TransactionBatchItem::default()
+        });
+    }
+
+    // 2 duplicate transactions
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        // second duplicate transfer which should fail
+        test_entry.transaction_batch.push(TransactionBatchItem {
+            transaction: system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ),
+            check_result: Err(TransactionError::AlreadyProcessed),
+            asserts: TransactionBatchItemAsserts::not_executed(),
+        });
+    }
+
+    vec![test_entry]
+}
+
 fn simple_transfer() -> Vec<SvmTestEntry> {
     let mut test_entry = SvmTestEntry::default();
     let transfer_amount = LAMPORTS_PER_SOL;
@@ -543,250 +674,12 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
         });
     }
 
-    // fee payer
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(80000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(fee_payer, account_data);
-
-    // Sender without enough funds
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(900000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(sender, account_data);
-
-    // recipient
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(900000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(recipient, account_data);
-
-    // A transaction whose verification has already failed
-    all_transactions.push(sanitized_transaction.unwrap());
-    transaction_checks.push(Err(TransactionError::BlockhashNotFound));
-
-    // A transaction for two transfers with same fee payer
-    let sender = Pubkey::new_unique();
-    let recipient = Pubkey::new_unique();
-    let fee_payer = Pubkey::new_unique();
-    let system_account = Pubkey::new_from_array([0; 32]);
-    let data = 5000u64.to_be_bytes().to_vec();
-    transaction_builder.create_instruction(
-        transfer_program_account,
-        vec![
-            AccountMeta {
-                pubkey: sender,
-                is_signer: true,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: recipient,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: system_account,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
-        HashMap::from([(sender, Signature::new_unique())]),
-        data,
-    );
-
-    let sanitized_transaction = transaction_builder.build(
-        Hash::new_unique(),
-        (fee_payer, Signature::new_unique()),
-        true,
-    );
-    all_transactions.push(sanitized_transaction.clone().unwrap());
-    transaction_checks.push(Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    }));
-
-    // fee payer with enough funds to pay for 2 transactions
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(25000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(fee_payer, account_data);
-
-    // Sender
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(9000000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(sender, account_data);
-
-    // recipient
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(9000000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(recipient, account_data);
-
-    //Second transaction
-    let data = 5000u64.to_be_bytes().to_vec();
-
-    transaction_builder.create_instruction(
-        transfer_program_account,
-        vec![
-            AccountMeta {
-                pubkey: sender,
-                is_signer: true,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: recipient,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: system_account,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
-        HashMap::from([(sender, Signature::new_unique())]),
-        data,
-    );
-
-    let sanitized_transaction =
-        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), true);
-    all_transactions.push(sanitized_transaction.clone().unwrap());
-    transaction_checks.push(Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    }));
-
-    //Third transaction where fee payer dont have enough to pay fee
-    let data = 5000u64.to_be_bytes().to_vec();
-
-    transaction_builder.create_instruction(
-        transfer_program_account,
-        vec![
-            AccountMeta {
-                pubkey: sender,
-                is_signer: true,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: recipient,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: system_account,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
-        HashMap::from([(sender, Signature::new_unique())]),
-        data,
-    );
-
-    let sanitized_transaction = transaction_builder.build(
-        Hash::new_unique(),
-        (fee_payer, Signature::new_unique()),
-        true,
-    );
-    all_transactions.push(sanitized_transaction.clone().unwrap());
-    transaction_checks.push(Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    }));
-
-    // Two duplicate transactions
-    let sender = Pubkey::new_unique();
-    let recipient = Pubkey::new_unique();
-    let fee_payer1 = Pubkey::new_unique();
-    let system_account = Pubkey::new_from_array([0; 32]);
-    let data = 5000u64.to_be_bytes().to_vec();
-    transaction_builder.create_instruction(
-        transfer_program_account,
-        vec![
-            AccountMeta {
-                pubkey: sender,
-                is_signer: true,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: recipient,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: system_account,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
-        HashMap::from([(sender, Signature::new_unique())]),
-        data,
-    );
-
-    let sanitized_transaction =
-        transaction_builder.build(Hash::default(), (fee_payer1, Signature::new_unique()), true);
-    all_transactions.push(sanitized_transaction.clone().unwrap());
-    transaction_checks.push(Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    }));
-
-    all_transactions.push(sanitized_transaction.clone().unwrap());
-    transaction_checks.push(Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    }));
-
-    // fee payer
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(250000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(fee_payer1, account_data);
-
-    // Sender
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(9000000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(sender, account_data);
-
-    // recipient
-    let mut account_data = AccountSharedData::default();
-    account_data.set_lamports(9000000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(recipient, account_data);
-
-    (all_transactions, transaction_checks)
+    vec![test_entry]
 }
 
 #[test_case(program_medley())]
 #[test_case(simple_transfer())]
+#[test_case(conflicting_tranfers())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);
@@ -845,28 +738,11 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         &processing_config,
     );
 
-    assert_eq!(result.execution_results.len(), 10);
-    assert!(result.execution_results[0]
-        .details()
-        .unwrap()
-        .status
-        .is_ok());
-    let logs = result.execution_results[0]
-        .details()
-        .unwrap()
-        .log_messages
-        .as_ref()
-        .unwrap();
-    assert!(logs.contains(&"Program log: Hello, Solana!".to_string()));
-
-    let executed_tx_1 = result.execution_results[1].executed_transaction().unwrap();
-    assert!(executed_tx_1.was_successful());
-
-    // The SVM does not commit the account changes in MockBank
-    let recipient_key = transactions[1].message().account_keys()[2];
-    let recipient_data = executed_tx_1
-        .loaded_transaction
-        .accounts
+    // build a hashmap of final account states incrementally, starting with all initial states, updating to all final states
+    // NOTE with SIMD-83 an account may appear multiple times in the same batch
+    let mut final_accounts_actual = test_entry.initial_accounts.clone();
+    for processed_transaction in batch_output
+        .processing_results
         .iter()
         .filter_map(|r| r.as_ref().ok())
     {
@@ -897,124 +773,247 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         );
     }
 
-    let executed_tx_3 = result.execution_results[3].executed_transaction().unwrap();
-    assert!(executed_tx_3.execution_details.status.is_err());
-    assert!(executed_tx_3
-        .execution_details
-        .log_messages
-        .as_ref()
-        .unwrap()
-        .contains(&"Transfer: insufficient lamports 900000, need 900050".to_string()));
-
-    assert!(matches!(
-        result.execution_results[4],
-        TransactionExecutionResult::NotExecuted(TransactionError::BlockhashNotFound)
-    ));
-
-    // First transactons with same fee payer
-    assert!(result.execution_results[5]
-        .details()
-        .unwrap()
-        .status
-        .is_ok());
-
-    let fee_payer_key = transactions[5].message().account_keys()[0];
-    let fee_payer_data = result.execution_results[5]
-        .executed_transaction()
-        .as_ref()
-        .unwrap()
-        .loaded_transaction
-        .accounts
+    // now run our transaction-by-transaction checks
+    for (processing_result, test_item_asserts) in batch_output
+        .processing_results
         .iter()
-        .find(|key| key.0 == fee_payer_key)
-        .unwrap();
+        .zip(test_entry.asserts())
+    {
+        match processing_result {
+            Ok(ProcessedTransaction::Executed(executed_transaction)) => test_item_asserts
+                .check_executed_transaction(&executed_transaction.execution_details),
+            Ok(ProcessedTransaction::FeesOnly(_)) => unreachable!(),
+            Err(_) => assert!(!test_item_asserts.executed),
+        }
+    }
+}
 
-    assert_eq!(fee_payer_data.1.lamports(), 15000);
+#[test]
+fn svm_inspect_account() {
+    let mock_bank = MockBankCallback::default();
+    let mut expected_inspected_accounts: HashMap<_, Vec<_>> = HashMap::new();
 
-    let sender_key = transactions[5].message().account_keys()[1];
-    let sender_data = result.execution_results[5]
-        .executed_transaction()
-        .as_ref()
+    let transfer_program =
+        deploy_program("simple-transfer".to_string(), DEPLOYMENT_SLOT, &mock_bank);
+
+    let fee_payer_keypair = Keypair::new();
+    let sender_keypair = Keypair::new();
+
+    let fee_payer = fee_payer_keypair.pubkey();
+    let sender = sender_keypair.pubkey();
+    let recipient = Pubkey::new_unique();
+    let system = system_program::id();
+
+    // Setting up the accounts for the transfer
+
+    // fee payer
+    let mut fee_payer_account = AccountSharedData::default();
+    fee_payer_account.set_lamports(80_020);
+    mock_bank
+        .account_shared_data
+        .write()
         .unwrap()
-        .loaded_transaction
-        .accounts
-        .iter()
-        .find(|key| key.0 == sender_key)
-        .unwrap();
+        .insert(fee_payer, fee_payer_account.clone());
+    expected_inspected_accounts
+        .entry(fee_payer)
+        .or_default()
+        .push((Some(fee_payer_account.clone()), true));
 
-    assert_eq!(sender_data.1.lamports(), 8995000);
-
-    let recipient_key = transactions[5].message().account_keys()[2];
-    let recipient_data = result.execution_results[5]
-        .executed_transaction()
-        .as_ref()
+    // sender
+    let mut sender_account = AccountSharedData::default();
+    sender_account.set_lamports(11_000_000);
+    mock_bank
+        .account_shared_data
+        .write()
         .unwrap()
-        .loaded_transaction
-        .accounts
-        .iter()
-        .find(|key| key.0 == recipient_key)
-        .unwrap();
+        .insert(sender, sender_account.clone());
+    expected_inspected_accounts
+        .entry(sender)
+        .or_default()
+        .push((Some(sender_account.clone()), true));
 
-    assert_eq!(recipient_data.1.lamports(), 9005000);
+    // recipient -- initially dead
+    expected_inspected_accounts
+        .entry(recipient)
+        .or_default()
+        .push((None, true));
 
-    // Second transactons with same fee payer
-    assert!(result.execution_results[6]
-        .executed_transaction()
-        .as_ref()
+    let instruction = Instruction::new_with_bytes(
+        transfer_program,
+        &u64::to_be_bytes(1_000_000),
+        vec![
+            AccountMeta::new(sender, true),
+            AccountMeta::new(recipient, false),
+            AccountMeta::new_readonly(system, false),
+        ],
+    );
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&fee_payer),
+        &[&fee_payer_keypair, &sender_keypair],
+        Hash::default(),
+    );
+    let sanitized_transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let transaction_check = Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    });
+
+    // Load and execute the transaction
+
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(
+        EXECUTION_SLOT,
+        EXECUTION_EPOCH,
+        HashSet::new(),
+    );
+
+    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+
+    create_executable_environment(
+        fork_graph.clone(),
+        &mock_bank,
+        &mut batch_processor.program_cache.write().unwrap(),
+    );
+
+    // The sysvars must be put in the cache
+    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+    register_builtins(&mock_bank, &batch_processor);
+
+    let _result = batch_processor.load_and_execute_sanitized_transactions(
+        &mock_bank,
+        &[sanitized_transaction],
+        vec![transaction_check],
+        &TransactionProcessingEnvironment::default(),
+        &TransactionProcessingConfig::default(),
+    );
+
+    // the system account is modified during transaction processing,
+    // so set the expected inspected account afterwards.
+    let system_account = mock_bank
+        .account_shared_data
+        .read()
         .unwrap()
-        .execution_details
-        .status
-        .is_ok());
+        .get(&system)
+        .cloned();
+    expected_inspected_accounts
+        .entry(system)
+        .or_default()
+        .push((system_account, false));
 
-    let fee_payer_key = transactions[6].message().account_keys()[0];
-    let fee_payer_data = result.execution_results[6]
-        .executed_transaction()
-        .as_ref()
+    // do another transfer; recipient should be alive now
+
+    // fee payer
+    let mut fee_payer_account = AccountSharedData::default();
+    fee_payer_account.set_lamports(80_000);
+    mock_bank
+        .account_shared_data
+        .write()
         .unwrap()
-        .loaded_transaction
-        .accounts
-        .iter()
-        .find(|key| key.0 == fee_payer_key)
-        .unwrap();
+        .insert(fee_payer, fee_payer_account.clone());
+    expected_inspected_accounts
+        .entry(fee_payer)
+        .or_default()
+        .push((Some(fee_payer_account.clone()), true));
 
-    assert_eq!(fee_payer_data.1.lamports(), 5000);
-
-    let sender_key = transactions[6].message().account_keys()[1];
-    let sender_data = result.execution_results[6]
-        .executed_transaction()
-        .as_ref()
+    // sender
+    let mut sender_account = AccountSharedData::default();
+    sender_account.set_lamports(10_000_000);
+    mock_bank
+        .account_shared_data
+        .write()
         .unwrap()
-        .loaded_transaction
-        .accounts
-        .iter()
-        .find(|key| key.0 == sender_key)
-        .unwrap();
+        .insert(sender, sender_account.clone());
+    expected_inspected_accounts
+        .entry(sender)
+        .or_default()
+        .push((Some(sender_account.clone()), true));
 
-    assert_eq!(sender_data.1.lamports(), 8990000);
-
-    let recipient_key = transactions[6].message().account_keys()[2];
-    let recipient_data = result.execution_results[6]
-        .executed_transaction()
-        .as_ref()
+    // recipient -- now alive
+    let mut recipient_account = AccountSharedData::default();
+    recipient_account.set_lamports(1_000_000);
+    mock_bank
+        .account_shared_data
+        .write()
         .unwrap()
-        .loaded_transaction
-        .accounts
-        .iter()
-        .find(|key| key.0 == recipient_key)
-        .unwrap();
+        .insert(recipient, recipient_account.clone());
+    expected_inspected_accounts
+        .entry(recipient)
+        .or_default()
+        .push((Some(recipient_account.clone()), true));
 
-    assert_eq!(recipient_data.1.lamports(), 9010000);
+    let instruction = Instruction::new_with_bytes(
+        transfer_program,
+        &u64::to_be_bytes(456),
+        vec![
+            AccountMeta::new(sender, true),
+            AccountMeta::new(recipient, false),
+            AccountMeta::new_readonly(system, false),
+        ],
+    );
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&fee_payer),
+        &[&fee_payer_keypair, &sender_keypair],
+        Hash::default(),
+    );
+    let sanitized_transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let transaction_check = Ok(CheckedTransactionDetails {
+        nonce: None,
+        lamports_per_signature: 20,
+    });
 
-    //Transaction where fee payer doesn't have enough funds to pay fee
-    assert!(matches!(
-        result.execution_results[7],
-        TransactionExecutionResult::NotExecuted(TransactionError::InsufficientFundsForFee)
-    ));
+    // Load and execute the second transaction
+    let _result = batch_processor.load_and_execute_sanitized_transactions(
+        &mock_bank,
+        &[sanitized_transaction],
+        vec![transaction_check],
+        &TransactionProcessingEnvironment::default(),
+        &TransactionProcessingConfig::default(),
+    );
 
-    //Two duplicate transactions
-    assert!(result.execution_results[8]
-        .details()
+    // the system account is modified during transaction processing,
+    // so set the expected inspected account afterwards.
+    let system_account = mock_bank
+        .account_shared_data
+        .read()
         .unwrap()
-        .status
-        .is_ok());
+        .get(&system)
+        .cloned();
+    expected_inspected_accounts
+        .entry(system)
+        .or_default()
+        .push((system_account, false));
+
+    // Ensure all the expected inspected accounts were inspected
+    let actual_inspected_accounts = mock_bank.inspected_accounts.read().unwrap().clone();
+    for (expected_pubkey, expected_account) in &expected_inspected_accounts {
+        let actual_account = actual_inspected_accounts.get(expected_pubkey).unwrap();
+        assert_eq!(
+            expected_account, actual_account,
+            "pubkey: {expected_pubkey}",
+        );
+    }
+
+    // The transfer program account is also loaded during transaction processing, however the
+    // account state passed to `inspect_account()` is *not* the same as what is held by
+    // MockBankCallback::account_shared_data.  So we check the transfer program differently.
+    //
+    // First ensure we have the correct number of inspected accounts, correctly counting the
+    // transfer program.
+    let num_expected_inspected_accounts: usize =
+        expected_inspected_accounts.values().map(Vec::len).sum();
+    let num_actual_inspected_accounts: usize =
+        actual_inspected_accounts.values().map(Vec::len).sum();
+    assert_eq!(
+        num_expected_inspected_accounts + 2,
+        num_actual_inspected_accounts,
+    );
+
+    // And second, ensure the inspected transfer program accounts are alive and not writable.
+    let actual_transfer_program_accounts =
+        actual_inspected_accounts.get(&transfer_program).unwrap();
+    for actual_transfer_program_account in actual_transfer_program_accounts {
+        assert!(actual_transfer_program_account.0.is_some());
+        assert!(!actual_transfer_program_account.1);
+    }
 }

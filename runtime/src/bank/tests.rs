@@ -3159,45 +3159,28 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
         genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
     );
 
-    // Use rent-paying fee payer to show that rent is not collected for fees
-    // only transactions even when they use a rent-paying account.
-    let rent_paying_fee_payer = Pubkey::new_unique();
-    bank.store_account(
-        &rent_paying_fee_payer,
-        &AccountSharedData::new(
-            genesis_config.rent.minimum_balance(0) - 1,
-            0,
-            &system_program::id(),
-        ),
+    let source_keypair = Keypair::new();
+    let source = source_keypair.pubkey();
+    let destination = Pubkey::new_unique();
+
+    let mut source_data = AccountSharedData::default();
+    let mut destination_data = AccountSharedData::default();
+
+    let data = vec![5u8; 66 * 1024 * 1024];
+    source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+    // source_data.set_data(data.clone());
+    destination_data.set_lamports(LAMPORTS_PER_SOL);
+    destination_data.set_data(data.clone());
+
+    bank.store_account(&source, &source_data);
+    bank.store_account(&destination, &destination_data);
+
+    let transaction = system_transaction::transfer(
+        &source_keypair,
+        &destination,
+        LAMPORTS_PER_SOL,
+        genesis_config.hash(),
     );
-
-    // Use nonce to show that loaded account stats also included loaded
-    // nonce account size
-    let nonce_size = nonce::State::size();
-    let nonce_balance = genesis_config.rent.minimum_balance(nonce_size);
-    let nonce_pubkey = Pubkey::new_unique();
-    let nonce_authority = rent_paying_fee_payer;
-    let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
-    let nonce_data = nonce::state::Data::new(nonce_authority, nonce_initial_hash, 5000);
-    let nonce_account = AccountSharedData::new_data(
-        nonce_balance,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce_data.clone())),
-        &system_program::id(),
-    )
-    .unwrap();
-    bank.store_account(&nonce_pubkey, &nonce_account);
-
-    // Invoke missing program to trigger load error in order to commit a
-    // fees-only transaction
-    let missing_program_id = Pubkey::new_unique();
-    let transaction = Transaction::new_unsigned(Message::new_with_blockhash(
-        &[
-            system_instruction::advance_nonce_account(&nonce_pubkey, &rent_paying_fee_payer),
-            Instruction::new_with_bincode(missing_program_id, &0, vec![]),
-        ],
-        Some(&rent_paying_fee_payer),
-        &nonce_data.blockhash(),
-    ));
 
     let batch = bank.prepare_batch_for_tests(vec![transaction]);
     let commit_results = bank
@@ -3215,7 +3198,7 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
         assert_eq!(
             commit_results,
             vec![Ok(CommittedTransaction {
-                status: Err(TransactionError::ProgramAccountNotFound),
+                status: Err(TransactionError::MaxLoadedAccountsDataSizeExceeded),
                 log_messages: None,
                 inner_instructions: None,
                 return_data: None,
@@ -3223,15 +3206,15 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
                 fee_details: FeeDetails::new(5000, 0, true),
                 rent_debits: RentDebits::default(),
                 loaded_account_stats: TransactionLoadedAccountsStats {
-                    loaded_accounts_count: 2,
-                    loaded_accounts_data_size: nonce_size as u32,
+                    loaded_accounts_count: 1,
+                    loaded_accounts_data_size: 0,
                 },
             })]
         );
     } else {
         assert_eq!(
             commit_results,
-            vec![Err(TransactionError::ProgramAccountNotFound)]
+            vec![Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)]
         );
     }
 }
