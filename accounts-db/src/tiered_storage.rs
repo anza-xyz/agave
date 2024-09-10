@@ -164,6 +164,11 @@ impl TieredStorage {
         self.reader()
             .map_or(MAX_TIERED_STORAGE_FILE_SIZE, |reader| reader.capacity())
     }
+
+    pub fn dead_bytes_due_to_zero_lamport_single_ref(&self, count: usize) -> usize {
+        // approximately 42 bytes per zero lamport account
+        count * 42
+    }
 }
 
 #[cfg(test)]
