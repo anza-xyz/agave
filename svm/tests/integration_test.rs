@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![allow(clippy::arithmetic_side_effects)]
 
 use {
     crate::mock_bank::{
@@ -865,7 +866,7 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
         source_data.set_lamports(LAMPORTS_PER_SOL * 10);
         test_entry.add_initial_account(source, &source_data);
 
-        for (destination, mut destination_data) in vec![
+        for (destination, mut destination_data) in [
             (destination1, destination1_data),
             (destination2, destination2_data),
         ] {
