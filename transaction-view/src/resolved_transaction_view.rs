@@ -129,12 +129,11 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
     }
 
     fn num_readonly_accounts(&self) -> usize {
-        usize::from(
-            self.view
-                .total_readonly_lookup_accounts()
-                .wrapping_add(u16::from(self.view.num_readonly_signed_static_accounts()))
-                .wrapping_add(u16::from(self.view.num_readonly_unsigned_static_accounts())),
-        )
+        usize::from(self.view.total_readonly_lookup_accounts())
+            .wrapping_add(usize::from(self.view.num_readonly_signed_static_accounts()))
+            .wrapping_add(usize::from(
+                self.view.num_readonly_unsigned_static_accounts(),
+            ))
     }
 
     fn signature_details(&self) -> TransactionSignatureDetails {
