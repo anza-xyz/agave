@@ -597,10 +597,9 @@ pub mod sdk_ids {
 
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
 pub use solana_decode_error as decode_error;
+pub use solana_pubkey::declare_id;
 /// Same as [`declare_id`] except that it reports that this ID has been deprecated.
 pub use solana_sdk_macro::program_declare_deprecated_id as declare_deprecated_id;
-pub use solana_pubkey::declare_id;
-
 /// Convenience macro to define a static public key.
 ///
 /// Input: a single literal base58 string representation of a Pubkey.
