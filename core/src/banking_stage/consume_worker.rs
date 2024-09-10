@@ -718,7 +718,7 @@ mod tests {
             vote_sender_types::ReplayVoteReceiver,
         },
         solana_sdk::{
-            genesis_config::GenesisConfig, poh_config::PohConfig, pubkey::Pubkey,
+            feature_set, genesis_config::GenesisConfig, poh_config::PohConfig, pubkey::Pubkey,
             signature::Keypair, system_transaction,
         },
         std::{
@@ -931,10 +931,17 @@ mod tests {
             .unwrap();
 
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.work.batch_id, bid);
-        assert_eq!(consumed.work.ids, vec![id1, id2]);
-        assert_eq!(consumed.work.max_age_slots, vec![bank.slot(), bank.slot()]);
-        assert_eq!(consumed.retryable_indexes, vec![1]); // id2 is retryable since lock conflict
+
+        let allow_self_conflicting_txns = bank
+            .feature_set
+            .is_active(&feature_set::allow_self_conflicting_entries::id());
+
+        if !allow_self_conflicting_txns {
+            assert_eq!(consumed.work.batch_id, bid);
+            assert_eq!(consumed.work.ids, vec![id1, id2]);
+            assert_eq!(consumed.work.max_age_slots, vec![bank.slot(), bank.slot()]);
+            assert_eq!(consumed.retryable_indexes, vec![1]); // id2 is retryable since lock conflict
+        }
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();

@@ -9,6 +9,7 @@ use {
         ancestors::Ancestors,
         storable_accounts::StorableAccounts,
     },
+    ahash::AHashSet,
     dashmap::DashMap,
     log::*,
     solana_sdk::{
@@ -18,13 +19,14 @@ use {
         message::v0::LoadedAddresses,
         pubkey::Pubkey,
         slot_hashes::SlotHashes,
-        transaction::{Result, SanitizedTransaction},
+        transaction::{Result, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
         transaction_context::TransactionAccount,
     },
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
     std::{
+        cell::RefCell,
         cmp::Reverse,
         collections::{BinaryHeap, HashSet},
         ops::RangeBounds,
@@ -35,10 +37,44 @@ use {
     },
 };
 
+// max number of accts in a default size entry 64 * 128
+const BATCH_ACCOUNTS_LOOKUP_TABLE_SIZE: usize = 64 * MAX_TX_ACCOUNT_LOCKS;
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
     transaction: &'a T,
+}
+
+#[derive(Debug, Default)]
+pub struct BatchAccountLocks {
+    pub writables: AHashSet<Pubkey>,
+    pub readables: AHashSet<Pubkey>,
+}
+
+thread_local! {
+    static BATCH_ACCOUNT_LOCKS: RefCell<BatchAccountLocks> = RefCell::new(BatchAccountLocks::with_capacity(BATCH_ACCOUNTS_LOOKUP_TABLE_SIZE));
+}
+
+impl BatchAccountLocks {
+    pub fn with_capacity(capacity: usize) -> Self {
+        BatchAccountLocks {
+            writables: AHashSet::with_capacity(capacity),
+            readables: AHashSet::with_capacity(capacity),
+        }
+    }
+
+    pub fn insert_read_lock(&mut self, key: &Pubkey) {
+        self.readables.insert(*key);
+    }
+
+    pub fn insert_write_lock(&mut self, key: &Pubkey) {
+        self.writables.insert(*key);
+    }
+
+    fn clear(&mut self) {
+        self.writables.clear();
+        self.readables.clear();
+    }
 }
 
 impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
@@ -518,7 +554,8 @@ impl Accounts {
         &self,
         txs: impl Iterator<Item = &'a SanitizedTransaction>,
         tx_account_lock_limit: usize,
-    ) -> Vec<Result<()>> {
+        allow_self_conflicting_entries: bool,
+    ) -> (Vec<Result<()>>, bool) {
         // Validate the account locks, then get iterator if successful validation.
         let tx_account_locks_results: Vec<Result<_>> = txs
             .map(|tx| {
@@ -526,7 +563,7 @@ impl Accounts {
                     .map(|_| TransactionAccountLocksIterator::new(tx))
             })
             .collect();
-        self.lock_accounts_inner(tx_account_locks_results)
+        self.lock_accounts_inner(tx_account_locks_results, allow_self_conflicting_entries)
     }
 
     #[must_use]
@@ -535,6 +572,7 @@ impl Accounts {
         txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limit: usize,
+        allow_self_conflicting_entries: bool,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
         let tx_account_locks_results: Vec<Result<_>> = txs
@@ -545,24 +583,58 @@ impl Accounts {
                 Err(err) => Err(err),
             })
             .collect();
-        self.lock_accounts_inner(tx_account_locks_results)
+        let (res, _) =
+            self.lock_accounts_inner(tx_account_locks_results, allow_self_conflicting_entries);
+        res
     }
 
     #[must_use]
     fn lock_accounts_inner(
         &self,
         tx_account_locks_results: Vec<Result<TransactionAccountLocksIterator<impl SVMMessage>>>,
-    ) -> Vec<Result<()>> {
+        allow_self_conflicting_entries: bool,
+    ) -> (Vec<Result<()>>, bool) {
         let account_locks = &mut self.account_locks.lock().unwrap();
-        tx_account_locks_results
-            .into_iter()
-            .map(|tx_account_locks_result| match tx_account_locks_result {
-                Ok(tx_account_locks) => {
-                    account_locks.try_lock_accounts(tx_account_locks.accounts_with_is_writable())
-                }
-                Err(err) => Err(err),
+        let mut self_conflicting_batch = false;
+        if allow_self_conflicting_entries {
+            BATCH_ACCOUNT_LOCKS.with(|batch_account_locks| {
+                let mut batch_account_locks = batch_account_locks.borrow_mut();
+                let (lock_results, self_conflicting_batch) = (
+                    tx_account_locks_results
+                        .into_iter()
+                        .map(|tx_account_locks_result| match tx_account_locks_result {
+                            Ok(tx_account_locks) => {
+                                let (res, conflicting_tx) = account_locks
+                                    .try_lock_accounts_with_conflicting_batches(
+                                        tx_account_locks.accounts_with_is_writable(),
+                                        &mut batch_account_locks,
+                                    );
+                                self_conflicting_batch = self_conflicting_batch || conflicting_tx;
+                                res
+                            }
+                            Err(err) => Err(err),
+                        })
+                        .collect(),
+                    self_conflicting_batch,
+                );
+                // clear up the entry level locks lookup table
+                batch_account_locks.clear();
+                (lock_results, self_conflicting_batch)
             })
-            .collect()
+        } else {
+            (
+                tx_account_locks_results
+                    .into_iter()
+                    .map(|tx_account_locks_result| match tx_account_locks_result {
+                        Ok(tx_account_locks) => account_locks
+                            .try_lock_accounts(tx_account_locks.accounts_with_is_writable()),
+                        Err(err) => Err(err),
+                    })
+                    .collect(),
+                // in case the self conflicting batches are not allowed then this flag is always false
+                self_conflicting_batch,
+            )
+        }
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
@@ -861,7 +933,9 @@ mod tests {
         };
 
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
-        let results = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let (results, self_conflicting_batch) =
+            accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert!(!self_conflicting_batch);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
     }
 
@@ -889,7 +963,10 @@ mod tests {
             };
 
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
-            let results = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let (results, self_conflicting_batch) =
+                accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+            assert!(!self_conflicting_batch);
+
             assert_eq!(results, vec![Ok(())]);
             accounts.unlock_accounts(txs.iter().zip(&results));
         }
@@ -911,7 +988,9 @@ mod tests {
             };
 
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
-            let results = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let (results, self_conflicting_batch) =
+                accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+            assert!(!self_conflicting_batch);
             assert_eq!(results[0], Err(TransactionError::TooManyAccountLocks));
         }
     }
@@ -945,8 +1024,10 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let (results0, self_conflicting_batch) =
+            accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, false);
 
+        assert!(!self_conflicting_batch);
         assert_eq!(results0, vec![Ok(())]);
         assert!(accounts
             .account_locks
@@ -975,7 +1056,9 @@ mod tests {
         );
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
         let txs = vec![tx0, tx1];
-        let results1 = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+        let (results1, self_conflicting_batch) =
+            accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert!(!self_conflicting_batch);
         assert_eq!(
             results1,
             vec![
@@ -1001,7 +1084,262 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let results2 = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let (results2, self_conflicting_batch) =
+            accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert!(!self_conflicting_batch);
+        assert_eq!(
+            results2,
+            vec![Ok(())] // Now keypair1 account can be locked as writable
+        );
+
+        // Check that read-only lock with zero references is deleted
+        assert!(!accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair1.pubkey()));
+    }
+
+    #[test]
+    fn test_conflicting_accounts_locks() {
+        let keypair0 = Keypair::new();
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+        let keypair3 = Keypair::new();
+
+        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
+        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
+        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+
+        let accounts_db = AccountsDb::new_single_for_tests();
+        let accounts = Accounts::new(Arc::new(accounts_db));
+        accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
+        accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
+        accounts.store_for_tests(0, &keypair2.pubkey(), &account2);
+        accounts.store_for_tests(0, &keypair3.pubkey(), &account3);
+
+        // no conflicting locks
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair0.pubkey(), keypair1.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
+        let (results0, self_conflicting_batch) =
+            accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
+
+        assert!(!self_conflicting_batch);
+        assert_eq!(results0, vec![Ok(())]);
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair1.pubkey()));
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_write(&keypair0.pubkey()));
+
+        accounts.unlock_accounts(iter::once(&tx).zip(&results0));
+
+        // batch write-read conflict. no outstanding conflicting lock
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair2.pubkey(), keypair1.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx0 = new_sanitized_tx(&[&keypair2], message, Hash::default());
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair1.pubkey(), keypair3.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
+        let txs = vec![tx0, tx1];
+        let (results1, self_conflicting_batch) =
+            accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, true);
+
+        assert!(self_conflicting_batch);
+        assert_eq!(
+            results1,
+            vec![
+                Ok(()), // Read-only account (keypair1) can be referenced multiple times
+                Ok(()), // Read-only account (keypair1) should also be locked as writable
+            ],
+        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_readonly(&keypair1.pubkey()));
+
+        accounts.unlock_accounts(txs.iter().zip(&results1));
+
+        // batch write-write conflict. no outstanding conflicting lock
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair1.pubkey(), keypair2.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx0 = new_sanitized_tx(&[&keypair1], message, Hash::default());
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair1.pubkey(), keypair3.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
+        let txs = vec![tx0, tx1];
+        let (results1, self_conflicting_batch) =
+            accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, true);
+
+        assert!(self_conflicting_batch);
+        assert_eq!(
+            results1,
+            vec![
+                Ok(()),
+                Ok(()), // Both transactions acquire same account as writeable
+            ],
+        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_write(&keypair1.pubkey()));
+
+        // batch write-write conflict. outstanding (read/write lock)
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair1.pubkey(), keypair2.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx0 = new_sanitized_tx(&[&keypair1], message, Hash::default());
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair0.pubkey(), keypair3.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx1 = new_sanitized_tx(&[&keypair0], message, Hash::default());
+        let txs2 = vec![tx0, tx1];
+        let (results2, self_conflicting_batch) =
+            accounts.lock_accounts(txs2.iter(), MAX_TX_ACCOUNT_LOCKS, true);
+
+        assert!(!self_conflicting_batch);
+        // the first tx conflicts with the previous batch
+        assert_eq!(
+            results2,
+            vec![
+                Err(TransactionError::AccountInUse), // outstanding write lock
+                Ok(()),                              // outstanding read lock, acquired read lock
+            ],
+        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_write(&keypair1.pubkey()));
+
+        accounts.unlock_accounts(txs.iter().zip(&results1));
+        accounts.unlock_accounts(txs2.iter().zip(&results2));
+
+        // batch write-read conflict. outstanding (read/write lock)
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair3.pubkey(), keypair0.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx = new_sanitized_tx(&[&keypair3], message, Hash::default());
+        let (results0, self_conflicting_batch) =
+            accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS, true);
+        assert!(!self_conflicting_batch);
+
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair2.pubkey(), keypair1.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx0 = new_sanitized_tx(&[&keypair2], message, Hash::default());
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair1.pubkey(), keypair3.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
+        let txs = vec![tx0, tx1];
+        let (results1, self_conflicting_batch) =
+            accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, true);
+
+        assert!(!self_conflicting_batch);
+        assert_eq!(
+            results1,
+            vec![
+                Ok(()),
+                Err(TransactionError::AccountInUse), // acquiring read lock on (keypair3) which is write locked in another batch
+            ],
+        );
+        assert!(accounts
+            .account_locks
+            .lock()
+            .unwrap()
+            .is_locked_write(&keypair3.pubkey()));
+
+        accounts.unlock_accounts(iter::once(&tx).zip(&results0));
+        accounts.unlock_accounts(txs.iter().zip(&results1));
+
+        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
+        let message = Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![keypair1.pubkey(), keypair3.pubkey(), native_loader::id()],
+            Hash::default(),
+            instructions,
+        );
+        let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
+        let (results2, self_conflicting_batch) =
+            accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert!(!self_conflicting_batch);
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -1063,9 +1401,10 @@ mod tests {
         let exit_clone = exit.clone();
         thread::spawn(move || loop {
             let txs = vec![writable_tx.clone()];
-            let results = accounts_clone
-                .clone()
-                .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let (results, _) =
+                accounts_clone
+                    .clone()
+                    .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
             for result in results.iter() {
                 if result.is_ok() {
                     counter_clone.clone().fetch_add(1, Ordering::SeqCst);
@@ -1079,9 +1418,10 @@ mod tests {
         let counter_clone = counter;
         for _ in 0..5 {
             let txs = vec![readonly_tx.clone()];
-            let results = accounts_arc
-                .clone()
-                .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let (results, _) =
+                accounts_arc
+                    .clone()
+                    .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS, false);
             if results[0].is_ok() {
                 let counter_value = counter_clone.clone().load(Ordering::SeqCst);
                 thread::sleep(time::Duration::from_millis(50));
@@ -1122,8 +1462,9 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
-
+        let (results0, self_conflicting_batch) =
+            accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS, false);
+        assert!(!self_conflicting_batch);
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
         assert!(accounts
@@ -1219,6 +1560,7 @@ mod tests {
             txs.iter(),
             qos_results.into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
+            false,
         );
 
         assert_eq!(

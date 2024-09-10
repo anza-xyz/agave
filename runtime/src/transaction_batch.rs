@@ -100,7 +100,9 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
-        solana_sdk::{signature::Keypair, system_transaction, transaction::TransactionError},
+        solana_sdk::{
+            feature_set, signature::Keypair, system_transaction, transaction::TransactionError,
+        },
     };
 
     #[test]
@@ -108,21 +110,30 @@ mod tests {
         let (bank, txs) = setup(false);
 
         // Test getting locked accounts
-        let batch = bank.prepare_sanitized_batch(&txs);
+        let (batch, self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
 
         // Grab locks
         assert!(batch.lock_results().iter().all(|x| x.is_ok()));
 
+        // Not conflicting batch
+        assert!(!self_conflicting_batch);
+
         // Trying to grab locks again should fail
-        let batch2 = bank.prepare_sanitized_batch(&txs);
+        let (batch2, self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
         assert!(batch2.lock_results().iter().all(|x| x.is_err()));
+
+        // Not conflicting batch
+        assert!(!self_conflicting_batch);
 
         // Drop the first set of locks
         drop(batch);
 
         // Now grabbing locks should work again
-        let batch2 = bank.prepare_sanitized_batch(&txs);
+        let (batch2, self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
         assert!(batch2.lock_results().iter().all(|x| x.is_ok()));
+
+        // Not conflicting batch
+        assert!(!self_conflicting_batch);
     }
 
     #[test]
@@ -134,8 +145,10 @@ mod tests {
         assert!(batch.lock_results().iter().all(|x| x.is_ok()));
 
         // Grab locks
-        let batch2 = bank.prepare_sanitized_batch(&txs);
+        let (batch2, self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
         assert!(batch2.lock_results().iter().all(|x| x.is_ok()));
+        // Not conflicting batch
+        assert!(!self_conflicting_batch);
 
         // Prepare another batch without locks
         let batch3 = bank.prepare_unlocked_batch_from_single_tx(&txs[0]);
@@ -146,18 +159,38 @@ mod tests {
     fn test_unlock_failures() {
         let (bank, txs) = setup(true);
 
-        // Test getting locked accounts
-        let mut batch = bank.prepare_sanitized_batch(&txs);
-        assert_eq!(
-            batch.lock_results,
-            vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
-        );
+        let allow_self_conflicting_txns = bank
+            .feature_set
+            .is_active(&feature_set::allow_self_conflicting_entries::id());
 
-        let qos_results = vec![
-            Ok(()),
-            Err(TransactionError::AccountInUse),
-            Err(TransactionError::WouldExceedMaxBlockCostLimit),
-        ];
+        // Test getting locked accounts
+        let (mut batch, self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
+        if !allow_self_conflicting_txns {
+            assert_eq!(
+                batch.lock_results,
+                vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
+            );
+            // Not conflicting batch
+            assert!(!self_conflicting_batch);
+        } else {
+            assert_eq!(batch.lock_results, vec![Ok(()), Ok(()), Ok(())]);
+            // conflicting batch
+            assert!(self_conflicting_batch);
+        }
+
+        let qos_results = if !allow_self_conflicting_txns {
+            vec![
+                Ok(()),
+                Err(TransactionError::AccountInUse),
+                Err(TransactionError::WouldExceedMaxBlockCostLimit),
+            ]
+        } else {
+            vec![
+                Ok(()),
+                Ok(()),
+                Err(TransactionError::WouldExceedMaxBlockCostLimit),
+            ]
+        };
         batch.unlock_failures(qos_results.clone());
         assert_eq!(batch.lock_results, qos_results);
 
@@ -165,11 +198,19 @@ mod tests {
         drop(batch);
 
         // The next batch should be able to lock all but the conflicting tx
-        let batch2 = bank.prepare_sanitized_batch(&txs);
-        assert_eq!(
-            batch2.lock_results,
-            vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
-        );
+        let (batch2, self_conflicting_batch) = bank.prepare_sanitized_batch(&txs);
+        if !allow_self_conflicting_txns {
+            assert_eq!(
+                batch2.lock_results,
+                vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
+            );
+            // Not conflicting batch
+            assert!(!self_conflicting_batch);
+        } else {
+            assert_eq!(batch2.lock_results, vec![Ok(()), Ok(()), Ok(())]);
+            // Not conflicting batch
+            assert!(self_conflicting_batch);
+        }
     }
 
     fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<SanitizedTransaction>) {
