@@ -73,7 +73,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
     fn cache_is_writable(
         view: &TransactionView<true, D>,
         resolved_addresses: &LoadedAddresses,
-        reserved_account_keys: &HashSet<Pubkey>, // why does this not use ahash at least?!
+        reserved_account_keys: &HashSet<Pubkey>,
     ) -> Vec<bool> {
         // Build account keys so that we can iterate over and check if
         // an address is writable.
