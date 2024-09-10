@@ -3054,6 +3054,44 @@ fn test_readonly_accounts() {
 }
 
 #[test]
+fn test_check_transaction_age() {
+    let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
+    let bank = Bank::new_with_bank_forks_for_tests(&genesis_config).0;
+    let alice = Keypair::new();
+    let amount = genesis_config.rent.minimum_balance(0);
+
+    let tx1 = system_transaction::transfer(
+        &mint_keypair,
+        &alice.pubkey(),
+        amount,
+        genesis_config.hash(),
+    );
+
+    let tx2 = system_transaction::transfer(
+        &mint_keypair,
+        &alice.pubkey(),
+        amount,
+        genesis_config.hash(),
+    );
+    let pay_alice = vec![tx1, tx2];
+
+    let batch = bank.prepare_batch_for_tests(pay_alice);
+    let mut error_counters = TransactionErrorMetrics::default();
+    let lock_result = vec![Ok(()), Ok(())];
+    let check_age_results = bank.check_age(
+        batch.sanitized_transactions(),
+        &lock_result,
+        MAX_PROCESSING_AGE,
+        &mut error_counters,
+    );
+
+    assert_eq!(
+        check_age_results[1],
+        Err(TransactionError::AlreadyProcessed)
+    ); //Duplicate transactions in check_age should give AlreadyProcessed error
+}
+
+#[test]
 fn test_interleaving_locks() {
     let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -3121,45 +3159,28 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
         genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
     );
 
-    // Use rent-paying fee payer to show that rent is not collected for fees
-    // only transactions even when they use a rent-paying account.
-    let rent_paying_fee_payer = Pubkey::new_unique();
-    bank.store_account(
-        &rent_paying_fee_payer,
-        &AccountSharedData::new(
-            genesis_config.rent.minimum_balance(0) - 1,
-            0,
-            &system_program::id(),
-        ),
+    let source_keypair = Keypair::new();
+    let source = source_keypair.pubkey();
+    let destination = Pubkey::new_unique();
+
+    let mut source_data = AccountSharedData::default();
+    let mut destination_data = AccountSharedData::default();
+
+    let data = vec![5u8; 66 * 1024 * 1024];
+    source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+    // source_data.set_data(data.clone());
+    destination_data.set_lamports(LAMPORTS_PER_SOL);
+    destination_data.set_data(data.clone());
+
+    bank.store_account(&source, &source_data);
+    bank.store_account(&destination, &destination_data);
+
+    let transaction = system_transaction::transfer(
+        &source_keypair,
+        &destination,
+        LAMPORTS_PER_SOL,
+        genesis_config.hash(),
     );
-
-    // Use nonce to show that loaded account stats also included loaded
-    // nonce account size
-    let nonce_size = nonce::State::size();
-    let nonce_balance = genesis_config.rent.minimum_balance(nonce_size);
-    let nonce_pubkey = Pubkey::new_unique();
-    let nonce_authority = rent_paying_fee_payer;
-    let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
-    let nonce_data = nonce::state::Data::new(nonce_authority, nonce_initial_hash, 5000);
-    let nonce_account = AccountSharedData::new_data(
-        nonce_balance,
-        &nonce::state::Versions::new(nonce::State::Initialized(nonce_data.clone())),
-        &system_program::id(),
-    )
-    .unwrap();
-    bank.store_account(&nonce_pubkey, &nonce_account);
-
-    // Invoke missing program to trigger load error in order to commit a
-    // fees-only transaction
-    let missing_program_id = Pubkey::new_unique();
-    let transaction = Transaction::new_unsigned(Message::new_with_blockhash(
-        &[
-            system_instruction::advance_nonce_account(&nonce_pubkey, &rent_paying_fee_payer),
-            Instruction::new_with_bincode(missing_program_id, &0, vec![]),
-        ],
-        Some(&rent_paying_fee_payer),
-        &nonce_data.blockhash(),
-    ));
 
     let batch = bank.prepare_batch_for_tests(vec![transaction]);
     let commit_results = bank
@@ -3177,7 +3198,7 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
         assert_eq!(
             commit_results,
             vec![Ok(CommittedTransaction {
-                status: Err(TransactionError::ProgramAccountNotFound),
+                status: Err(TransactionError::MaxLoadedAccountsDataSizeExceeded),
                 log_messages: None,
                 inner_instructions: None,
                 return_data: None,
@@ -3185,15 +3206,15 @@ fn test_load_and_execute_commit_transactions_fees_only(enable_fees_only_txs: boo
                 fee_details: FeeDetails::new(5000, 0, true),
                 rent_debits: RentDebits::default(),
                 loaded_account_stats: TransactionLoadedAccountsStats {
-                    loaded_accounts_count: 2,
-                    loaded_accounts_data_size: nonce_size as u32,
+                    loaded_accounts_count: 1,
+                    loaded_accounts_data_size: 0,
                 },
             })]
         );
     } else {
         assert_eq!(
             commit_results,
-            vec![Err(TransactionError::ProgramAccountNotFound)]
+            vec![Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)]
         );
     }
 }
@@ -5223,6 +5244,114 @@ fn test_nonce_transaction() {
     assert_eq!(
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::BlockhashNotFound),
+    );
+}
+
+#[test]
+fn test_two_nonce_transactions() {
+    let (mut bank, _mint_keypair, custodian_keypair, nonce_keypair, bank_forks) =
+        setup_nonce_with_bank(
+            10_000_000,
+            |_| {},
+            5_000_000,
+            250_000,
+            None,
+            FeatureSet::all_enabled(),
+        )
+        .unwrap();
+    let alice_keypair = Keypair::new();
+    let alice_pubkey = alice_keypair.pubkey();
+    let custodian_pubkey = custodian_keypair.pubkey();
+    let nonce_pubkey = nonce_keypair.pubkey();
+
+    assert_eq!(bank.get_balance(&custodian_pubkey), 4_750_000);
+    assert_eq!(bank.get_balance(&nonce_pubkey), 250_000);
+
+    /* Grab the hash stored in the nonce account */
+    let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
+
+    /* Kick nonce hash off the blockhash_queue */
+    for _ in 0..MAX_RECENT_BLOCKHASHES + 1 {
+        goto_end_of_slot(bank.clone());
+        bank = new_from_parent_with_fork_next_slot(bank, bank_forks.as_ref());
+    }
+
+    /* Expect a non-Nonce transfer to fail */
+    assert_eq!(
+        bank.process_transaction(&system_transaction::transfer(
+            &custodian_keypair,
+            &alice_pubkey,
+            100_000,
+            nonce_hash
+        ),),
+        Err(TransactionError::BlockhashNotFound),
+    );
+    /* Check fee not charged */
+    assert_eq!(bank.get_balance(&custodian_pubkey), 4_750_000);
+
+    /* Nonce transfer */
+    let nonce_tx = Transaction::new_signed_with_payer(
+        &[
+            system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
+            system_instruction::transfer(&custodian_pubkey, &alice_pubkey, 100_000),
+        ],
+        Some(&custodian_pubkey),
+        &[&custodian_keypair, &nonce_keypair],
+        nonce_hash,
+    );
+    // assert_eq!(bank.process_transaction(&nonce_tx), Ok(()));
+    let mut all_transactions = Vec::new();
+    all_transactions.push(nonce_tx.clone());
+
+    let nonce_tx2 = Transaction::new_signed_with_payer(
+        &[
+            system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
+            system_instruction::transfer(&custodian_pubkey, &alice_pubkey, 100_000),
+        ],
+        Some(&custodian_pubkey),
+        &[&custodian_keypair, &nonce_keypair],
+        nonce_hash,
+    );
+
+    all_transactions.push(nonce_tx2.clone());
+    let _execution_results = bank.try_process_transactions(&mut all_transactions.iter());
+
+    /* Check balances */
+    let mut recent_message = nonce_tx.message;
+    recent_message.recent_blockhash = bank.last_blockhash();
+    let expected_balance = 4_650_000
+        - bank
+            .get_fee_for_message(&new_sanitized_message(recent_message))
+            .unwrap();
+    assert_eq!(bank.get_balance(&custodian_pubkey), expected_balance);
+    assert_eq!(bank.get_balance(&nonce_pubkey), 250_000);
+    assert_eq!(bank.get_balance(&alice_pubkey), 100_000);
+
+    /* Confirm stored nonce has advanced */
+    let new_nonce = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
+    assert_ne!(nonce_hash, new_nonce);
+
+    // /* Nonce re-use fails */
+    // let nonce_tx = Transaction::new_signed_with_payer(
+    //     &[
+    //         system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
+    //         system_instruction::transfer(&custodian_pubkey, &alice_pubkey, 100_000),
+    //     ],
+    //     Some(&custodian_pubkey),
+    //     &[&custodian_keypair, &nonce_keypair],
+    //     nonce_hash,
+    // );
+    // assert_eq!(
+    //     execution_results.,
+    //     Err(TransactionError::BlockhashNotFound)
+    // );
+
+    // println!("results: {:?}", execution_results);
+    /* Check fee not charged and nonce not advanced */
+    assert_eq!(bank.get_balance(&custodian_pubkey), expected_balance);
+    assert_eq!(
+        new_nonce,
+        get_nonce_blockhash(&bank, &nonce_pubkey).unwrap()
     );
 }
 

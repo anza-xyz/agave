@@ -432,6 +432,137 @@ fn program_medley() -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
+fn conflicting_tranfers() -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry::default();
+    let transfer_amount = LAMPORTS_PER_SOL;
+
+    // 2 transactions with same fee-payer
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        // second transfer with the same fee payer
+        let destination = Pubkey::new_unique();
+        let mut destination_data = AccountSharedData::default();
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+    }
+
+    // 2 transfers with same fee-payer, second tx will fail due to first
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL + LAMPORTS_PER_SIGNATURE);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        // second transfer with the same fee payer which should fail
+        let destination = Pubkey::new_unique();
+        test_entry.transaction_batch.push(TransactionBatchItem {
+            transaction: system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ),
+            asserts: TransactionBatchItemAsserts::not_executed(),
+            ..TransactionBatchItem::default()
+        });
+    }
+
+    // 2 duplicate transactions
+    {
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry.decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE);
+
+        // second duplicate transfer which should fail
+        test_entry.transaction_batch.push(TransactionBatchItem {
+            transaction: system_transaction::transfer(
+                &source_keypair,
+                &destination,
+                transfer_amount,
+                Hash::default(),
+            ),
+            check_result: Err(TransactionError::AlreadyProcessed),
+            asserts: TransactionBatchItemAsserts::not_executed(),
+        });
+    }
+
+    vec![test_entry]
+}
+
 fn simple_transfer() -> Vec<SvmTestEntry> {
     let mut test_entry = SvmTestEntry::default();
     let transfer_amount = LAMPORTS_PER_SOL;
@@ -548,6 +679,7 @@ fn simple_transfer() -> Vec<SvmTestEntry> {
 
 #[test_case(program_medley())]
 #[test_case(simple_transfer())]
+#[test_case(conflicting_tranfers())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);

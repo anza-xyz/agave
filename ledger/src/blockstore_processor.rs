@@ -3827,15 +3827,10 @@ pub mod tests {
             &[&mint_keypair],
             bank.last_blockhash(),
         );
-        // First process attempt will fail but still update status cache
+        // First process attempt will fail
         assert_eq!(
             bank.process_transaction(&tx),
             Err(TransactionError::ProgramAccountNotFound)
-        );
-        // Second attempt will be rejected since tx was already in status cache
-        assert_eq!(
-            bank.process_transaction(&tx),
-            Err(TransactionError::AlreadyProcessed)
         );
 
         // Make sure other errors don't update the signature cache
