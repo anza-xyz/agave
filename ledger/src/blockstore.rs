@@ -3577,6 +3577,91 @@ impl Blockstore {
         Ok((entries, num_shreds, slot_meta.is_full()))
     }
 
+    pub fn get_chunked_slot_entries_in_block(
+        &self,
+        slot: Slot,
+        start_index: u64,
+        allow_dead_slots: bool,
+        mut on_load: impl FnMut(
+            (Vec<Entry>, u64, bool),
+        ) -> std::result::Result<(), BlockstoreProcessorError>,
+    ) -> std::result::Result<(), BlockstoreProcessorError> {
+        let slot_meta = self.meta_cf.get(slot)?;
+
+        let Some(slot_meta) = slot_meta else {
+            return Ok(());
+        };
+        // `consumed` is the next missing shred index, but shred `i` existing in
+        // completed_data_end_indexes implies it's not missing
+        assert!(!slot_meta
+            .completed_data_indexes
+            .contains(&(slot_meta.consumed as u32)));
+
+        if self.is_dead(slot) && !allow_dead_slots {
+            Err(BlockstoreError::DeadSlot)?;
+        }
+
+        let mut chunked_entries = self
+            .do_get_chunked_slot_entries_in_block(&slot_meta, start_index as u32)
+            .peekable();
+        let is_full = slot_meta.is_full();
+        while let Some(load_result) = chunked_entries.next() {
+            let (entries, num_shreds) = load_result?;
+            on_load((
+                entries,
+                num_shreds,
+                is_full && chunked_entries.peek().is_none(),
+            ))?
+        }
+        Ok(())
+    }
+
+    fn do_get_chunked_slot_entries_in_block<'a>(
+        &'a self,
+        slot_meta: &'a SlotMeta,
+        start_index: u32,
+    ) -> impl Iterator<Item = std::result::Result<(Vec<Entry>, u64), BlockstoreProcessorError>> + 'a
+    {
+        slot_meta
+            .completed_data_indexes
+            .range(start_index..slot_meta.consumed as u32)
+            .scan(start_index, |begin, index| {
+                let out = (*begin, *index);
+                *begin = index + 1;
+                Some(out)
+            })
+            .map(move |(start, end)| {
+                let keys = (start..=end).map(|index| (slot_meta.slot, u64::from(index)));
+                let range_shreds = self
+                    .data_shred_cf
+                    .multi_get_bytes(keys)
+                    .into_iter()
+                    .map(|shred_bytes| {
+                        Shred::new_from_serialized_shred(shred_bytes?.unwrap()).map_err(|err| {
+                            BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                                format!("Could not reconstruct shred from shred payload: {err:?}"),
+                            )))
+                        })
+                    })
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                let last_shred = range_shreds.last().unwrap();
+                assert!(last_shred.data_complete() || last_shred.last_in_slot());
+                let payload = Shredder::deshred(&range_shreds).map_err(|e| {
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("could not reconstruct entries buffer from shreds: {e:?}"),
+                    )))
+                })?;
+
+                let entries = bincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("could not reconstruct entries: {e:?}"),
+                    )))
+                })?;
+
+                Ok((entries, (end - start + 1) as u64))
+            })
+    }
+
     /// Gets accounts used in transactions in the slot range [starting_slot, ending_slot].
     /// Additionally returns a bool indicating if the set may be incomplete.
     /// Used by ledger-tool to create a minimized snapshot
