@@ -7009,9 +7009,11 @@ fn test_bank_load_program() {
 
 #[test]
 fn test_bpf_loader_upgradeable_deploy_with_max_len() {
-    let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    let (mut genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
+    genesis_config
+        .accounts
+        .remove(&feature_set::enable_loader_v4::id());
+    let bank = Bank::new_for_tests(&genesis_config);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -12997,9 +12999,8 @@ fn test_deploy_last_epoch_slot() {
     let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     genesis_config
         .accounts
-        .remove(&feature_set::reject_callx_r10::id());
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::reject_callx_r10::id());
+        .remove(&feature_set::enable_loader_v4::id());
+    let bank = Bank::new_for_tests(&genesis_config);
 
     // go to the last slot in the epoch
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();

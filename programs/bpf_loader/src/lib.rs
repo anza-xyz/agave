@@ -36,6 +36,7 @@ use {
         entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
         feature_set::{
             bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
+            enable_loader_v4,
         },
         instruction::{AccountMeta, InstructionError},
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
@@ -525,6 +526,14 @@ fn process_loader_upgradeable_instruction(
             )?;
         }
         UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len } => {
+            if invoke_context
+                .get_feature_set()
+                .is_active(&enable_loader_v4::id())
+            {
+                ic_logger_msg!(log_collector, "Unsupported instruction");
+                return Err(InstructionError::InvalidInstructionData);
+            }
+
             instruction_context.check_number_of_instruction_accounts(4)?;
             let payer_key = *transaction_context.get_key_of_account_at_index(
                 instruction_context.get_index_of_instruction_account_in_transaction(0)?,
@@ -1614,6 +1623,9 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
+                let mut feature_set = invoke_context.get_feature_set().clone();
+                feature_set.deactivate(&enable_loader_v4::id());
+                invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},

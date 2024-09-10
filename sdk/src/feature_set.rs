@@ -689,8 +689,8 @@ pub mod remaining_compute_units_syscall_enabled {
     solana_sdk::declare_id!("5TuppMutoyzhUSfuYdhgzD47F92GL1g89KpCZQKqedxP");
 }
 
-pub mod enable_program_runtime_v2_and_loader_v4 {
-    solana_sdk::declare_id!("8oBxsYqnCvUTGzgEpxPcnVf7MLbWWPYddE33PftFeBBd");
+pub mod enable_loader_v4 {
+    solana_sdk::declare_id!("8Cb77yHjPWe9wuWUfXeh6iszFGCDGNCoFk3tprViYHNm");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1025,7 +1025,7 @@ lazy_static! {
         (enable_poseidon_syscall::id(), "Enable Poseidon syscall"),
         (timely_vote_credits::id(), "use timeliness of votes in determining credits to award"),
         (remaining_compute_units_syscall_enabled::id(), "enable the remaining_compute_units syscall"),
-        (enable_program_runtime_v2_and_loader_v4::id(), "Enable Program-Runtime-v2 and Loader-v4 #33293"),
+        (enable_loader_v4::id(), "Enable Loader-v4 SIMD-0167"),
         (require_rent_exempt_split_destination::id(), "Require stake split destination account to be rent exempt"),
         (better_error_codes_for_tx_lamport_check::id(), "better error codes for tx lamport check #33353"),
         (enable_alt_bn128_compression_syscall::id(), "add alt_bn128 compression syscalls"),

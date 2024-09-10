@@ -117,7 +117,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: loader_v4,
-        enable_feature_id: Some(feature_set::enable_program_runtime_v2_and_loader_v4::id()),
+        enable_feature_id: Some(feature_set::enable_loader_v4::id()),
         program_id: solana_sdk::loader_v4::id(),
         entrypoint: solana_loader_v4_program::Entrypoint::vm,
     }),

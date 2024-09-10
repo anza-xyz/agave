@@ -32,7 +32,7 @@ use {
         bank::Bank,
         bank_client::BankClient,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        loader_utils::{load_program_from_file, load_upgradeable_program_and_advance_slot},
+        loader_utils::{load_program_from_file, load_program_of_loader_v4},
     },
     solana_sdk::{
         account::AccountSharedData,
@@ -202,9 +202,9 @@ fn bench_program_execute_noop(bencher: &mut Bencher) {
     let authority_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
 
-    let (_, invoke_program_id) = load_upgradeable_program_and_advance_slot(
+    let (_bank, invoke_program_id) = load_program_of_loader_v4(
         &mut bank_client,
-        bank_forks.as_ref(),
+        &bank_forks,
         &mint_keypair,
         &authority_keypair,
         "noop",
