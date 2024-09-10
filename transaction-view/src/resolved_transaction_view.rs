@@ -88,11 +88,9 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         let num_writable_signed_static_accounts =
             usize::from(view.num_writable_signed_static_accounts());
 
-        let is_upgradable_loader_present = account_keys
-            .iter()
-            .any(|key| bpf_loader_upgradeable::ID == *key);
-
+        let mut is_upgradable_loader_present = false;
         for (index, key) in account_keys.iter().enumerate() {
+            is_upgradable_loader_present |= key == &bpf_loader_upgradeable::ID;
             let is_requested_write = {
                 // If the account is a resolved address, check if it is writable.
                 if index >= num_static_account_keys {
