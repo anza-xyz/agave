@@ -48,7 +48,7 @@ use {
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
-        transaction::{self, TransactionError},
+        transaction::{self, SanitizedTransaction, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
@@ -344,8 +344,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     let processing_results = [Ok(ProcessedTransaction::Executed(Box::new(
                         executed_tx.clone(),
                     )))];
-                    let (update_accounts, _) =
-                        collect_accounts_to_store(sanitized_txs, &processing_results);
+                    let (update_accounts, _) = collect_accounts_to_store(
+                        sanitized_txs,
+                        &None::<Vec<SanitizedTransaction>>,
+                        &processing_results,
+                    );
                     for (pubkey, account) in update_accounts {
                         accounts_map.insert(*pubkey, account.clone());
                     }
