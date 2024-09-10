@@ -332,15 +332,28 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         config,
                     );
 
-                    // XXX TODO FIXME im going to go INSANE. first off, i really dont want to clone executed_tx
-                    // second off WHY do we lose type specificity at some point??? im passing `sanitized_tx here` (wrongly)
-                    // because if i try to create &[tx] it tells me
-                    // "the trait `SVMMessage` is not implemented for `&impl SVMTransaction`"
-                    // which i dont understand because the exact same type signature is used for `load_accounts()` et al
-                    // i guess it becomes a reference with the `iter()` call? but `into_iter()` doesnt change it
+                    // Update batch specific cache of the loaded programs with the modifications
+                    // made by the transaction, if it executed successfully.
+                    if executed_tx.was_successful() {
+                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                    }
+
+                    // XXX TODO FIXME figure out the least bad way to get rid of this clone
+                    // i need to change the type signature of `collect_accounts_to_store()` again
+                    // but its already pretty ugly and i wonder if i should just give up on this
+                    // maybe instead i want to carve out the account selection logic in account_saver
+                    // and have two external intergfaces that use it in different ways
+                    // since we dont care at all about the sanitized tx
+                    // we literally just want to know what accounts may have changed
+                    // even just returning a list of indexes is fine
+                    // the problem im trying to solve here is we want to reuse the same logic as account_saver
+                    // because it would be catastrophic if we skipped and reused an account that account_saver would commit
+                    // but maybe im overthinking this and i should write my own simplified selection logic
+                    // anyway the first obvious optimization is to let the cache go stale on accounts we dont need later
                     let processing_results = [Ok(ProcessedTransaction::Executed(Box::new(
                         executed_tx.clone(),
                     )))];
+
                     let (update_accounts, _) = collect_accounts_to_store(
                         sanitized_txs,
                         &None::<Vec<SanitizedTransaction>>,
@@ -350,15 +363,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         accounts_map.insert(*pubkey, account.clone());
                     }
 
-                    // Update batch specific cache of the loaded programs with the modifications
-                    // made by the transaction, if it executed successfully.
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
-                    }
-
-                    Ok(ProcessedTransaction::Executed(Box::new(
-                        executed_tx.clone(),
-                    )))
+                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
             };
 
