@@ -70,16 +70,16 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         self.frame.num_required_signatures()
     }
 
-    /// Return the number of readonly signed accounts in the transaction.
+    /// Return the number of readonly signed static accounts in the transaction.
     #[inline]
-    pub fn num_readonly_signed_accounts(&self) -> u8 {
-        self.frame.num_readonly_signed_accounts()
+    pub fn num_readonly_signed_static_accounts(&self) -> u8 {
+        self.frame.num_readonly_signed_static_accounts()
     }
 
-    /// Return the number of readonly unsigned accounts in the transaction.
+    /// Return the number of readonly unsigned static accounts in the transaction.
     #[inline]
-    pub fn num_readonly_unsigned_accounts(&self) -> u8 {
-        self.frame.num_readonly_unsigned_accounts()
+    pub fn num_readonly_unsigned_static_accounts(&self) -> u8 {
+        self.frame.num_readonly_unsigned_static_accounts()
     }
 
     /// Return the number of static account keys in the transaction.
@@ -168,12 +168,34 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
 
 // Implementation that relies on sanitization checks having been run.
 impl<D: TransactionData> TransactionView<true, D> {
+    /// Return an iterator over the instructions paired with their program ids.
     pub fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
         self.instructions_iter().map(|ix| {
             let program_id_index = usize::from(ix.program_id_index);
             let program_id = &self.static_account_keys()[program_id_index];
             (program_id, ix)
         })
+    }
+
+    /// Return the number of unsigned static account keys.
+    #[inline]
+    pub(crate) fn num_static_unsigned_static_accounts(&self) -> u8 {
+        self.num_static_account_keys()
+            .wrapping_sub(self.num_required_signatures())
+    }
+
+    /// Return the number of writable unsigned static accounts.
+    #[inline]
+    pub(crate) fn num_writable_unsigned_static_accounts(&self) -> u8 {
+        self.num_static_unsigned_static_accounts()
+            .wrapping_sub(self.num_readonly_unsigned_static_accounts())
+    }
+
+    /// Return the number of writable unsigned static accounts.
+    #[inline]
+    pub(crate) fn num_writable_signed_static_accounts(&self) -> u8 {
+        self.num_required_signatures()
+            .wrapping_sub(self.num_readonly_signed_static_accounts())
     }
 }
 
@@ -216,11 +238,11 @@ mod tests {
             tx.message.header().num_required_signatures
         );
         assert_eq!(
-            view.num_readonly_signed_accounts(),
+            view.num_readonly_signed_static_accounts(),
             tx.message.header().num_readonly_signed_accounts
         );
         assert_eq!(
-            view.num_readonly_unsigned_accounts(),
+            view.num_readonly_unsigned_static_accounts(),
             tx.message.header().num_readonly_unsigned_accounts
         );
 

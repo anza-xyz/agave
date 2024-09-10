@@ -80,14 +80,13 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         let account_keys = AccountKeys::new(view.static_account_keys(), Some(resolved_addresses));
 
         let mut is_writable_cache = Vec::with_capacity(account_keys.len());
-        let num_static_accounts = usize::from(view.num_static_account_keys());
+        let num_static_account_keys = usize::from(view.num_static_account_keys());
         let num_writable_lookup_accounts = usize::from(view.total_writable_lookup_accounts());
         let num_signed_accounts = usize::from(view.num_required_signatures());
-        let num_unsigned_accounts = num_static_accounts.wrapping_sub(num_signed_accounts);
-        let num_writable_unsigned_accounts =
-            num_unsigned_accounts.wrapping_sub(usize::from(view.num_readonly_unsigned_accounts()));
-        let num_writable_signed_accounts =
-            num_signed_accounts.wrapping_sub(usize::from(view.num_readonly_signed_accounts()));
+        let num_writable_unsigned_static_accounts =
+            usize::from(view.num_writable_unsigned_static_accounts());
+        let num_writable_signed_static_accounts =
+            usize::from(view.num_writable_signed_static_accounts());
 
         let is_upgradable_loader_present = account_keys
             .iter()
@@ -96,14 +95,14 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         for (index, key) in account_keys.iter().enumerate() {
             let is_requested_write = {
                 // If the account is a resolved address, check if it is writable.
-                if index >= num_static_accounts {
-                    let loaded_address_index = index.wrapping_sub(num_static_accounts);
+                if index >= num_static_account_keys {
+                    let loaded_address_index = index.wrapping_sub(num_static_account_keys);
                     loaded_address_index < num_writable_lookup_accounts
                 } else if index >= num_signed_accounts {
                     let unsigned_account_index = index.wrapping_sub(num_signed_accounts);
-                    unsigned_account_index < num_writable_unsigned_accounts
+                    unsigned_account_index < num_writable_unsigned_static_accounts
                 } else {
-                    index < num_writable_signed_accounts
+                    index < num_writable_signed_static_accounts
                 }
             };
 
@@ -129,8 +128,8 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         usize::from(
             self.view
                 .total_readonly_lookup_accounts()
-                .wrapping_add(u16::from(self.view.num_readonly_signed_accounts()))
-                .wrapping_add(u16::from(self.view.num_readonly_unsigned_accounts())),
+                .wrapping_add(u16::from(self.view.num_readonly_signed_static_accounts()))
+                .wrapping_add(u16::from(self.view.num_readonly_unsigned_static_accounts())),
         )
     }
 
