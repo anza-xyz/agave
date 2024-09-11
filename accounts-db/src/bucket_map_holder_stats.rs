@@ -1,6 +1,6 @@
 use {
     crate::{
-        accounts_index::{DiskIndexValue, IndexValue},
+        accounts_index::{in_mem_accounts_index::InMemAccountsIndex, DiskIndexValue, IndexValue},
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
     },
     solana_sdk::timing::AtomicInterval,
@@ -262,7 +262,8 @@ impl BucketMapHolderStats {
                 },
                 (
                     "estimate_mem_bytes",
-                    self.count_in_mem.load(Ordering::Relaxed) * 48, // each index entry in memory takes approx 48 bytes.
+                    self.count_in_mem.load(Ordering::Relaxed)
+                        * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
                     i64
                 ),
                 (
