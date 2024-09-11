@@ -981,7 +981,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 
     /// assumes 1 entry in the slot list. Ignores overhead of the HashMap and such
-    pub(crate) fn approx_size_of_one_entry() -> usize {
+    pub const fn approx_size_of_one_entry() -> usize {
         std::mem::size_of::<T>()
             + std::mem::size_of::<Pubkey>()
             + std::mem::size_of::<AccountMapEntry<T>>()
