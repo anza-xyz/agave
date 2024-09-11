@@ -5,7 +5,7 @@ pub use self::legacy::{LegacyVersion1, LegacyVersion2};
 use {
     serde_derive::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
-    solana_sdk::serde_varint,
+    solana_serde_varint as serde_varint,
     std::{convert::TryInto, fmt},
 };
 #[cfg_attr(feature = "frozen-abi", macro_use)]
@@ -68,11 +68,8 @@ impl From<LegacyVersion2> for Version {
 
 impl Default for Version {
     fn default() -> Self {
-        let feature_set = u32::from_le_bytes(
-            solana_sdk::feature_set::ID.as_ref()[..4]
-                .try_into()
-                .unwrap(),
-        );
+        let feature_set =
+            u32::from_le_bytes(solana_feature_set::ID.as_ref()[..4].try_into().unwrap());
         Self {
             major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
             minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),

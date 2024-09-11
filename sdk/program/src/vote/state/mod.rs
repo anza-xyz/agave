@@ -9,7 +9,6 @@ use {
 };
 use {
     crate::{
-        clock::{Epoch, Slot, UnixTimestamp},
         hash::Hash,
         instruction::InstructionError,
         pubkey::Pubkey,
@@ -20,6 +19,7 @@ use {
     },
     bincode::{serialize_into, ErrorKind},
     serde_derive::{Deserialize, Serialize},
+    solana_clock::{Epoch, Slot, UnixTimestamp},
     std::{
         collections::VecDeque,
         fmt::Debug,
@@ -54,7 +54,7 @@ pub const VOTE_CREDITS_MAXIMUM_PER_SLOT: u8 = 16;
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "Ch2vVEwos2EjAVqSHCyJjnN2MNX1yrpapZTGhMSCjWUH"),
+    frozen_abi(digest = "GvUzgtcxhKVVxPAjSntXGPqjLZK5ovgZzCiUP1tDpB9q"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -168,7 +168,7 @@ impl From<Lockout> for LandedVote {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "GwJfVFsATSj7nvKwtUkHYzqPRaPY6SLxPGXApuCya3x5"),
+    frozen_abi(digest = "DRKTb72wifCUcCTSJs6PqWrQQK5Pfis4SCLEvXqWnDaL"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -221,7 +221,7 @@ impl VoteStateUpdate {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "5VUusSTenF9vZ9eHiCprVe9ABJUHCubeDNCCDxykybZY"),
+    frozen_abi(digest = "5PFw9pyF1UG1DXVsw7gpjHegNyRycAAxWf2GA9wUXPs5"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -406,7 +406,7 @@ impl<I> CircBuf<I> {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "EeenjJaSrm9hRM39gK6raRNtzG61hnk7GciUCJJRDUSQ"),
+    frozen_abi(digest = "87ULMjjHnMsPmCTEyzj4KPn2u5gdX1rmgtSdycpbSaLs"),
     derive(AbiExample)
 )]
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -978,13 +978,9 @@ impl VoteState {
 pub mod serde_compact_vote_state_update {
     use {
         super::*,
-        crate::{
-            clock::{Slot, UnixTimestamp},
-            serde_varint,
-            vote::state::Lockout,
-        },
+        crate::vote::state::Lockout,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
-        solana_short_vec as short_vec,
+        solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -1076,13 +1072,9 @@ pub mod serde_compact_vote_state_update {
 pub mod serde_tower_sync {
     use {
         super::*,
-        crate::{
-            clock::{Slot, UnixTimestamp},
-            serde_varint,
-            vote::state::Lockout,
-        },
+        crate::vote::state::Lockout,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
-        solana_short_vec as short_vec,
+        solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

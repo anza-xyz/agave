@@ -16,6 +16,7 @@ use {
         snapshot_bank_utils, snapshot_utils,
         status_cache::MAX_CACHE_ENTRIES,
     },
+    agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
     itertools::Itertools,
@@ -37,6 +38,7 @@ use {
         compute_budget_limits::{self, MAX_COMPUTE_UNIT_LIMIT},
         prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
     },
+    solana_feature_set::{self as feature_set, FeatureSet},
     solana_inline_spl::token,
     solana_logger,
     solana_program_runtime::{
@@ -62,7 +64,6 @@ use {
         entrypoint::MAX_PERMITTED_DATA_INCREASE,
         epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
         feature::{self, Feature},
-        feature_set::{self, FeatureSet},
         fee::FeeStructure,
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
@@ -1644,9 +1645,9 @@ fn test_rent_eager_collect_rent_in_partition(should_collect_rent: bool) {
     solana_logger::setup();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
     for feature_id in FeatureSet::default().inactive {
-        if feature_id != solana_sdk::feature_set::skip_rent_rewrites::id()
+        if feature_id != solana_feature_set::skip_rent_rewrites::id()
             && (!should_collect_rent
-                || feature_id != solana_sdk::feature_set::disable_rent_fees_collection::id())
+                || feature_id != solana_feature_set::disable_rent_fees_collection::id())
         {
             activate_feature(&mut genesis_config, feature_id);
         }
@@ -5731,10 +5732,12 @@ fn test_check_ro_durable_nonce_fails() {
         bank.process_transaction(&tx),
         Err(TransactionError::BlockhashNotFound)
     );
+    let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
     assert_eq!(
-        bank.check_and_load_message_nonce_account(
+        bank.check_load_and_advance_message_nonce_account(
             &new_sanitized_message(tx.message().clone()),
             &bank.next_durable_nonce(),
+            lamports_per_signature,
         ),
         None
     );
@@ -6192,7 +6195,7 @@ fn test_fuzz_instructions() {
         })
         .collect();
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let max_keys = 100;
+    let max_keys = MAX_STATIC_ACCOUNTS_PER_PACKET;
     let keys: Vec<_> = (0..max_keys)
         .enumerate()
         .map(|_| {
@@ -6342,7 +6345,7 @@ fn test_bank_hash_consistency() {
     genesis_config.rent.burn_percent = 100;
     activate_feature(
         &mut genesis_config,
-        solana_sdk::feature_set::set_exempt_rent_epoch_max::id(),
+        solana_feature_set::set_exempt_rent_epoch_max::id(),
     );
 
     let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -9010,6 +9013,7 @@ fn test_epoch_schedule_from_genesis_config() {
         None,
         Arc::default(),
         None,
+        None,
     ));
 
     assert_eq!(bank.epoch_schedule(), &genesis_config.epoch_schedule);
@@ -9040,6 +9044,7 @@ where
         None,
         None,
         Arc::default(),
+        None,
         None,
     ));
     let vote_and_stake_accounts =
@@ -11573,7 +11578,7 @@ fn test_accounts_data_size_and_rent_collection(should_collect_rent: bool) {
     if should_collect_rent {
         genesis_config
             .accounts
-            .remove(&solana_sdk::feature_set::disable_rent_fees_collection::id());
+            .remove(&solana_feature_set::disable_rent_fees_collection::id());
     }
 
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
@@ -12645,6 +12650,7 @@ fn test_rehash_with_skipped_rewrites() {
         Some(Pubkey::new_unique()),
         Arc::new(AtomicBool::new(false)),
         None,
+        None,
     ));
     // This test is only meaningful while the bank hash contains rewrites.
     // Once this feature is enabled, it may be possible to remove this test entirely.
@@ -12706,6 +12712,7 @@ fn test_rebuild_skipped_rewrites() {
         None,
         Some(Pubkey::new_unique()),
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
     ));
     // This test is only meaningful while the bank hash contains rewrites.
@@ -12817,6 +12824,7 @@ fn test_get_accounts_for_bank_hash_details(skip_rewrites: bool) {
         None,
         Some(Pubkey::new_unique()),
         Arc::new(AtomicBool::new(false)),
+        None,
         None,
     ));
     // This test is only meaningful while the bank hash contains rewrites.

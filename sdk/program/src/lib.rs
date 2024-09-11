@@ -482,7 +482,6 @@ pub mod borsh1;
 pub mod bpf_loader;
 pub mod bpf_loader_deprecated;
 pub mod bpf_loader_upgradeable;
-pub mod clock;
 pub mod compute_units;
 pub mod debug_account_data;
 pub mod ed25519_program;
@@ -509,14 +508,11 @@ pub mod native_token;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
-pub mod program_option;
 pub mod program_pack;
 pub mod program_stubs;
 pub mod program_utils;
-pub mod pubkey;
 pub mod rent;
 pub mod secp256k1_program;
-pub mod serde_varint;
 pub mod serialize_utils;
 pub mod slot_hashes;
 pub mod slot_history;
@@ -530,17 +526,22 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
-pub use solana_msg::msg;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
+#[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
+pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
+pub use {
+    solana_clock as clock, solana_msg::msg, solana_program_option as program_option,
+    solana_pubkey as pubkey,
+};
 
 /// The [config native program][np].
 ///

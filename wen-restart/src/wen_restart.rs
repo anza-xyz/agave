@@ -2,13 +2,14 @@
 
 use {
     crate::{
-        heaviest_fork_aggregate::HeaviestForkAggregate,
+        heaviest_fork_aggregate::{HeaviestForkAggregate, HeaviestForkAggregateResult},
         last_voted_fork_slots_aggregate::{
-            LastVotedForkSlotsAggregate, LastVotedForkSlotsEpochInfo, LastVotedForkSlotsFinalResult,
+            LastVotedForkSlotsAggregate, LastVotedForkSlotsAggregateResult,
+            LastVotedForkSlotsEpochInfo, LastVotedForkSlotsFinalResult,
         },
         solana::wen_restart_proto::{
-            self, GenerateSnapshotRecord, HeaviestForkAggregateFinal, HeaviestForkAggregateRecord,
-            HeaviestForkRecord, LastVotedForkSlotsAggregateFinal,
+            self, ConflictMessage, GenerateSnapshotRecord, HeaviestForkAggregateFinal,
+            HeaviestForkAggregateRecord, HeaviestForkRecord, LastVotedForkSlotsAggregateFinal,
             LastVotedForkSlotsAggregateRecord, LastVotedForkSlotsEpochInfoRecord,
             LastVotedForkSlotsRecord, State as RestartState, WenRestartProgress,
         },
@@ -256,15 +257,29 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
         for new_last_voted_fork_slots in cluster_info.get_restart_last_voted_fork_slots(&mut cursor)
         {
             let from = new_last_voted_fork_slots.from.to_string();
-            if let Some(record) =
-                last_voted_fork_slots_aggregate.aggregate(new_last_voted_fork_slots)
-            {
-                progress
-                    .last_voted_fork_slots_aggregate
-                    .as_mut()
-                    .unwrap()
-                    .received
-                    .insert(from, record);
+            match last_voted_fork_slots_aggregate.aggregate(new_last_voted_fork_slots) {
+                LastVotedForkSlotsAggregateResult::Inserted(record) => {
+                    progress
+                        .last_voted_fork_slots_aggregate
+                        .as_mut()
+                        .unwrap()
+                        .received
+                        .insert(from, record);
+                }
+                LastVotedForkSlotsAggregateResult::DifferentVersionExists(
+                    old_record,
+                    new_record,
+                ) => {
+                    info!("Different LastVotedForkSlots message exists from {from}: {old_record:#?} vs {new_record:#?}");
+                    progress.conflict_message.insert(
+                        from,
+                        ConflictMessage {
+                            old_message: format!("{:?}", old_record),
+                            new_message: format!("{:?}", new_record),
+                        },
+                    );
+                }
+                LastVotedForkSlotsAggregateResult::AlreadyExists => (),
             }
         }
         // Because all operations on the aggregate are called from this single thread, we can
@@ -666,10 +681,9 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     );
     if let Some(aggregate_record) = &progress.heaviest_fork_aggregate {
         for (key_string, message) in &aggregate_record.received {
-            match heaviest_fork_aggregate.aggregate_from_record(key_string, message) {
-                Err(e) => error!("Failed to aggregate from record: {:?}", e),
-                Ok(None) => info!("Record {:?} ignored", message),
-                Ok(_) => (),
+            if let Err(e) = heaviest_fork_aggregate.aggregate_from_record(key_string, message) {
+                // Do not abort wen_restart if we got one malformed message.
+                error!("Failed to aggregate from record: {:?}", e);
             }
         }
     } else {
@@ -686,13 +700,15 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         .unwrap()
         .total_active_stake = total_active_stake;
 
-    let mut progress_last_sent = Instant::now();
     let mut cursor = solana_gossip::crds::Cursor::default();
-    let mut progress_changed = false;
+    // Init progress_changed to true and progress_last_sent to old time so we can send out the first Gossip message.
+    let mut progress_changed = true;
+    let mut progress_last_sent = Instant::now()
+        .checked_sub(Duration::from_secs(HEAVIEST_REFRESH_INTERVAL_IN_SECONDS))
+        .unwrap();
     let majority_stake_required =
         (total_stake as f64 / 100.0 * adjusted_threshold_percent as f64).round() as u64;
     let mut total_active_stake_higher_than_supermajority = false;
-    let mut first_time_entering_loop = true;
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
@@ -701,15 +717,30 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor) {
             info!("Received new heaviest fork: {:?}", new_heaviest_fork);
             let from = new_heaviest_fork.from.to_string();
-            if let Some(record) = heaviest_fork_aggregate.aggregate(new_heaviest_fork) {
-                info!("Successfully aggregated new heaviest fork: {:?}", record);
-                progress
-                    .heaviest_fork_aggregate
-                    .as_mut()
-                    .unwrap()
-                    .received
-                    .insert(from, record);
-                progress_changed = true;
+            match heaviest_fork_aggregate.aggregate(new_heaviest_fork) {
+                HeaviestForkAggregateResult::Inserted(record) => {
+                    info!("Successfully aggregated new heaviest fork: {:?}", record);
+                    progress
+                        .heaviest_fork_aggregate
+                        .as_mut()
+                        .unwrap()
+                        .received
+                        .insert(from, record);
+                    progress_changed = true;
+                }
+                HeaviestForkAggregateResult::DifferentVersionExists(old_record, new_record) => {
+                    warn!("Different version from {from} exists old {old_record:#?} vs new {new_record:#?}");
+                    progress.conflict_message.insert(
+                        from,
+                        ConflictMessage {
+                            old_message: format!("{:?}", old_record),
+                            new_message: format!("{:?}", new_record),
+                        },
+                    );
+                }
+                HeaviestForkAggregateResult::ZeroStakeIgnored => (),
+                HeaviestForkAggregateResult::AlreadyExists => (),
+                HeaviestForkAggregateResult::Malformed => (),
             }
         }
         let current_total_active_stake = heaviest_fork_aggregate.total_active_stake();
@@ -745,10 +776,8 @@ pub(crate) fn aggregate_restart_heaviest_fork(
             // the first time.
             if progress_last_sent.elapsed().as_secs() >= HEAVIEST_REFRESH_INTERVAL_IN_SECONDS
                 || can_exit
-                || first_time_entering_loop
                 || saw_supermajority_first_time
             {
-                first_time_entering_loop = false;
                 cluster_info.push_restart_heaviest_fork(
                     heaviest_fork_slot,
                     heaviest_fork_hash,
@@ -971,9 +1000,9 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
             } => {
                 error!(
                     "Wen start finished, please remove --wen_restart and restart with \
-                    --wait-for-supermajority {} --expected-bank-hash {} --shred-version {}\
-                    --hard-fork {} --no-snapshot-fetchsnapshot",
-                    slot, hash, shred_version, slot
+                    --wait-for-supermajority {} --expected-bank-hash {} --expected-shred-version {} \
+                    --no-snapshot-fetch",
+                    slot, hash, shred_version,
                 );
                 return Ok(());
             }
@@ -1793,6 +1822,7 @@ mod tests {
                     shred_version: progress.my_snapshot.as_ref().unwrap().shred_version,
                     path: progress.my_snapshot.as_ref().unwrap().path.clone(),
                 }),
+                ..Default::default()
             }
         );
     }
@@ -2726,6 +2756,7 @@ mod tests {
                     my_heaviest_fork: my_heaviest_fork.clone(),
                     heaviest_fork_aggregate,
                     my_snapshot: my_snapshot.clone(),
+                    ..Default::default()
                 },
             ),
         ] {
@@ -3014,6 +3045,22 @@ mod tests {
             exit.clone(),
             Some(WenRestartError::Exiting),
         );
+        // Find the first HeaviestFork message sent out entering the loop.
+        let my_pubkey = test_state.cluster_info.id();
+        let mut found_myself = false;
+        while !found_myself {
+            sleep(Duration::from_millis(100));
+            test_state.cluster_info.flush_push_queue();
+            for gossip_record in test_state
+                .cluster_info
+                .get_restart_heaviest_fork(&mut cursor)
+            {
+                if gossip_record.from == my_pubkey && gossip_record.observed_stake > 0 {
+                    found_myself = true;
+                    break;
+                }
+            }
+        }
         // Simulating everyone sending out the first RestartHeaviestFork message, Gossip propagation takes
         // time, so the observed_stake is probably smaller than actual active stake. We should send out
         // heaviest fork indicating we have active stake exceeding supermajority.
@@ -3042,7 +3089,6 @@ mod tests {
                 now,
             );
         }
-        let my_pubkey = test_state.cluster_info.id();
         let mut found_myself = false;
         let expected_active_stake = (WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT
             - NON_CONFORMING_VALIDATOR_PERCENT)
@@ -3086,6 +3132,7 @@ mod tests {
             }),
             ..Default::default()
         };
+
         let different_bankhash = Hash::new_unique();
         let validators_to_take: usize = ((WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT
             - NON_CONFORMING_VALIDATOR_PERCENT)

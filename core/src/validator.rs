@@ -609,8 +609,8 @@ impl Validator {
                     expected_shred_version,
                 )
                 .context(
-                    "Failed to backup and clear shreds with incorrect \
-                        shred version from blockstore",
+                    "Failed to backup and clear shreds with incorrect shred version from \
+                     blockstore",
                 )?;
             }
         }
@@ -682,9 +682,8 @@ impl Validator {
             .and_then(|geyser_plugin_service| geyser_plugin_service.get_block_metadata_notifier());
 
         info!(
-            "Geyser plugin: accounts_update_notifier: {}, \
-            transaction_notifier: {}, \
-            entry_notifier: {}",
+            "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
+             entry_notifier: {}",
             accounts_update_notifier.is_some(),
             transaction_notifier.is_some(),
             entry_notifier.is_some()
@@ -743,27 +742,25 @@ impl Validator {
         }
 
         let hard_forks = bank_forks.read().unwrap().root_bank().hard_forks();
-        if !hard_forks.is_empty() {
-            info!("Hard forks: {:?}", hard_forks);
-        }
-
-        node.info.set_wallclock(timestamp());
-        node.info.set_shred_version(compute_shred_version(
-            &genesis_config.hash(),
-            Some(&hard_forks),
-        ));
-        Self::print_node_info(&node);
+        let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
+        info!(
+            "shred version: {shred_version}, hard forks: {:?}",
+            hard_forks
+        );
 
         if let Some(expected_shred_version) = config.expected_shred_version {
-            if expected_shred_version != node.info.shred_version() {
-                return Err(ValidatorError::Other(format!(
-                    "shred version mismatch: expected {} found: {}",
-                    expected_shred_version,
-                    node.info.shred_version(),
-                ))
+            if expected_shred_version != shred_version {
+                return Err(ValidatorError::ShredVersionMismatch {
+                    actual: shred_version,
+                    expected: expected_shred_version,
+                }
                 .into());
             }
         }
+
+        node.info.set_shred_version(shred_version);
+        node.info.set_wallclock(timestamp());
+        Self::print_node_info(&node);
 
         let mut cluster_info = ClusterInfo::new(
             node.info.clone(),
@@ -1450,7 +1447,7 @@ impl Validator {
             ("cluster_type", genesis_config.cluster_type as u32, i64),
             ("elapsed_ms", start_time.elapsed().as_millis() as i64, i64),
             ("waited_for_supermajority", waited_for_supermajority, bool),
-            ("expected_shred_version", config.expected_shred_version, Option<i64>),
+            ("shred_version", shred_version as i64, i64),
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
@@ -1695,9 +1692,8 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
         (hashes_per_slot as f64 / target_slot_duration.as_secs_f64()) as u64;
 
     info!(
-        "PoH speed check: \
-            computed hashes per second {my_hashes_per_second}, \
-            target hashes per second {target_hashes_per_second}"
+        "PoH speed check: computed hashes per second {my_hashes_per_second}, target hashes per \
+         second {target_hashes_per_second}"
     );
     if my_hashes_per_second < target_hashes_per_second {
         return Err(ValidatorError::PohTooSlow {
@@ -1777,20 +1773,21 @@ fn post_process_restored_tower(
             }
             if should_require_tower && voting_has_been_active {
                 return Err(format!(
-                    "Requested mandatory tower restore failed: {err}. \
-                     And there is an existing vote_account containing actual votes. \
-                     Aborting due to possible conflicting duplicate votes"
+                    "Requested mandatory tower restore failed: {err}. And there is an existing \
+                     vote_account containing actual votes. Aborting due to possible conflicting \
+                     duplicate votes"
                 ));
             }
             if err.is_file_missing() && !voting_has_been_active {
                 // Currently, don't protect against spoofed snapshots with no tower at all
                 info!(
-                    "Ignoring expected failed tower restore because this is the initial \
-                      validator start with the vote account..."
+                    "Ignoring expected failed tower restore because this is the initial validator \
+                     start with the vote account..."
                 );
             } else {
                 error!(
-                    "Rebuilding a new tower from the latest vote account due to failed tower restore: {}",
+                    "Rebuilding a new tower from the latest vote account due to failed tower \
+                     restore: {}",
                     err
                 );
             }
@@ -2227,63 +2224,63 @@ fn backup_and_clear_blockstore(
         start_slot,
         expected_shred_version,
     )?;
-
-    if let Some(incorrect_shred_version) = incorrect_shred_version {
-        // .unwrap() safe because getting to this point implies blockstore has slots/shreds
-        let end_slot = blockstore.highest_slot()?.unwrap();
-
-        // Backing up the shreds that will be deleted from primary blockstore is
-        // not critical, so swallow errors from backup blockstore operations.
-        let backup_folder = format!(
-            "{}_backup_{}_{}_{}",
-            config
-                .ledger_column_options
-                .shred_storage_type
-                .blockstore_directory(),
-            incorrect_shred_version,
-            start_slot,
-            end_slot
-        );
-        match Blockstore::open_with_options(
-            &ledger_path.join(backup_folder),
-            blockstore_options_from_config(config),
-        ) {
-            Ok(backup_blockstore) => {
-                info!("Backing up slots from {start_slot} to {end_slot}");
-                let mut timer = Measure::start("blockstore backup");
-
-                const PRINT_INTERVAL: Duration = Duration::from_secs(5);
-                let mut print_timer = Instant::now();
-                let mut num_slots_copied = 0;
-                let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
-                for (slot, _meta) in slot_meta_iterator {
-                    let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
-                    let _ = backup_blockstore.insert_shreds(shreds, None, true);
-                    num_slots_copied += 1;
-
-                    if print_timer.elapsed() > PRINT_INTERVAL {
-                        info!("Backed up {num_slots_copied} slots thus far");
-                        print_timer = Instant::now();
-                    }
-                }
-
-                timer.stop();
-                info!("Backing up slots done. {timer}");
-            }
-            Err(err) => {
-                warn!("Unable to backup shreds with incorrect shred version: {err}");
-            }
-        }
-
-        info!("Purging slots {start_slot} to {end_slot} from blockstore");
-        let mut timer = Measure::start("blockstore purge");
-        blockstore.purge_from_next_slots(start_slot, end_slot);
-        blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact);
-        timer.stop();
-        info!("Purging slots done. {timer}");
-    } else {
+    let Some(incorrect_shred_version) = incorrect_shred_version else {
         info!("Only shreds with the correct version were found in the blockstore");
+        return Ok(());
+    };
+
+    // .unwrap() safe because getting to this point implies blockstore has slots/shreds
+    let end_slot = blockstore.highest_slot()?.unwrap();
+
+    // Backing up the shreds that will be deleted from primary blockstore is
+    // not critical, so swallow errors from backup blockstore operations.
+    let backup_folder = format!(
+        "{}_backup_{}_{}_{}",
+        config
+            .ledger_column_options
+            .shred_storage_type
+            .blockstore_directory(),
+        incorrect_shred_version,
+        start_slot,
+        end_slot
+    );
+    match Blockstore::open_with_options(
+        &ledger_path.join(backup_folder),
+        blockstore_options_from_config(config),
+    ) {
+        Ok(backup_blockstore) => {
+            info!("Backing up slots from {start_slot} to {end_slot}");
+            let mut timer = Measure::start("blockstore backup");
+
+            const PRINT_INTERVAL: Duration = Duration::from_secs(5);
+            let mut print_timer = Instant::now();
+            let mut num_slots_copied = 0;
+            let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
+            for (slot, _meta) in slot_meta_iterator {
+                let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
+                let _ = backup_blockstore.insert_shreds(shreds, None, true);
+                num_slots_copied += 1;
+
+                if print_timer.elapsed() > PRINT_INTERVAL {
+                    info!("Backed up {num_slots_copied} slots thus far");
+                    print_timer = Instant::now();
+                }
+            }
+
+            timer.stop();
+            info!("Backing up slots done. {timer}");
+        }
+        Err(err) => {
+            warn!("Unable to backup shreds with incorrect shred version: {err}");
+        }
     }
+
+    info!("Purging slots {start_slot} to {end_slot} from blockstore");
+    let mut timer = Measure::start("blockstore purge");
+    blockstore.purge_from_next_slots(start_slot, end_slot);
+    blockstore.purge_slots(start_slot, end_slot, PurgeType::Exact);
+    timer.stop();
+    info!("Purging slots done. {timer}");
 
     Ok(())
 }
@@ -2361,6 +2358,9 @@ pub enum ValidatorError {
     )]
     PohTooSlow { mine: u64, target: u64 },
 
+    #[error("shred version mistmatch: actual {actual}, expected {expected}")]
+    ShredVersionMismatch { actual: u16, expected: u16 },
+
     #[error(transparent)]
     TraceError(#[from] TraceError),
 
@@ -2396,8 +2396,8 @@ fn wait_for_supermajority(
                 std::cmp::Ordering::Less => return Ok(false),
                 std::cmp::Ordering::Greater => {
                     error!(
-                        "Ledger does not have enough data to wait for supermajority, \
-                             please enable snapshot fetch. Has {} needs {}",
+                        "Ledger does not have enough data to wait for supermajority, please \
+                         enable snapshot fetch. Has {} needs {}",
                         bank.slot(),
                         wait_for_supermajority_slot
                     );

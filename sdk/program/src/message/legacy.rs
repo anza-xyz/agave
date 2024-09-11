@@ -63,8 +63,8 @@ mod builtins {
         // the value is "false"), or might be in one of these lists (if the value is "true")
         pub static ref MAYBE_BUILTIN_KEY_OR_SYSVAR: [bool; 256] = {
             let mut temp_table: [bool; 256] = [false; 256];
-            BUILTIN_PROGRAMS_KEYS.iter().for_each(|key| temp_table[key.0[0] as usize] = true);
-            sysvar::ALL_IDS.iter().for_each(|key| temp_table[key.0[0] as usize] = true);
+            BUILTIN_PROGRAMS_KEYS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
+            sysvar::ALL_IDS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
             temp_table
         };
     }
@@ -76,7 +76,7 @@ mod builtins {
 )]
 #[allow(deprecated)]
 pub fn is_builtin_key_or_sysvar(key: &Pubkey) -> bool {
-    if MAYBE_BUILTIN_KEY_OR_SYSVAR[key.0[0] as usize] {
+    if MAYBE_BUILTIN_KEY_OR_SYSVAR[key.as_ref()[0] as usize] {
         return sysvar::is_sysvar_id(key) || BUILTIN_PROGRAMS_KEYS.contains(key);
     }
     false
@@ -123,7 +123,7 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "hPGFnQYLp3Ps4XLg7NHHvC7tDfNGMMBCN3x2jGXpF3G"),
+    frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
@@ -153,7 +153,7 @@ pub struct Message {
 #[wasm_bindgen]
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "hPGFnQYLp3Ps4XLg7NHHvC7tDfNGMMBCN3x2jGXpF3G"),
+    frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
@@ -523,11 +523,12 @@ impl Message {
     /// Compute the blake3 hash of a raw transaction message.
     #[cfg(not(target_os = "solana"))]
     pub fn hash_raw_message(message_bytes: &[u8]) -> Hash {
-        use blake3::traits::digest::Digest;
+        use {blake3::traits::digest::Digest, solana_hash::HASH_BYTES};
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"solana-tx-message-v1");
         hasher.update(message_bytes);
-        Hash(hasher.finalize().into())
+        let hash_bytes: [u8; HASH_BYTES] = hasher.finalize().into();
+        hash_bytes.into()
     }
 
     pub fn compile_instruction(&self, ix: &Instruction) -> CompiledInstruction {

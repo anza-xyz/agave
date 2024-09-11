@@ -42,7 +42,7 @@ pub enum TraceError {
     TooSmallDirByteLimit(DirByteLimit, DirByteLimit),
 }
 
-const BASENAME: &str = "events";
+pub(crate) const BASENAME: &str = "events";
 const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under normal load
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;
@@ -65,7 +65,7 @@ pub struct BankingTracer {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "Eq6YrAFtTbtPrCEvh6Et1mZZDCARUg1gcK2qiZdqyjUz")
+    frozen_abi(digest = "F5GH1poHbPqipU4DB3MczhSxHZw4o27f3C7QnMVirFci")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
@@ -358,6 +358,14 @@ impl TracedSender {
             }
         }
         self.sender.send(batch)
+    }
+
+    pub fn len(&self) -> usize {
+        self.sender.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

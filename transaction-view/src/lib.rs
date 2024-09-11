@@ -4,16 +4,13 @@ pub mod bytes;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod bytes;
 
-#[allow(dead_code)]
-pub mod address_table_lookup_meta;
-#[allow(dead_code)]
-mod instructions_meta;
-#[allow(dead_code)]
-mod message_header_meta;
+mod address_table_lookup_frame;
+mod instructions_frame;
+mod message_header_frame;
 pub mod result;
-#[allow(dead_code)]
-mod signature_meta;
-#[allow(dead_code)]
-pub mod static_account_keys_meta;
-#[allow(dead_code)]
-pub mod transaction_meta;
+mod sanitize;
+mod signature_frame;
+pub mod static_account_keys_frame;
+pub mod transaction_data;
+mod transaction_frame;
+pub mod transaction_view;

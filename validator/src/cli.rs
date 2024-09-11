@@ -287,6 +287,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ),
         )
         .arg(
+            Arg::with_name("skip_preflight_health_check")
+                .long("skip-preflight-health-check")
+                .takes_value(false)
+                .help(
+                    "Skip health check when running a preflight check",
+                ),
+        )
+        .arg(
             Arg::with_name("rpc_faucet_addr")
                 .long("rpc-faucet-address")
                 .value_name("HOST:PORT")
@@ -1306,6 +1314,22 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced()),
         )
         .arg(
+            Arg::with_name("accounts_db_scan_filter_for_shrinking")
+                .long("accounts-db-scan-filter-for-shrinking")
+                .takes_value(true)
+                .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
+                .help(
+                    "Debug option to use different type of filtering for accounts index scan in \
+                    shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is the default. \
+                    \"only-abnormal\" will scan in-memory accounts index only for abnormal entries and \
+                    skip scanning on-disk accounts index by assuming that on-disk accounts index contains \
+                    only normal accounts index entry. \"only-abnormal-with-verify\" is similar to \
+                    \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
+                    verify that on-disk account entries are indeed normal.",
+                )
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
             Arg::with_name("accounts_db_test_skip_rewrites")
                 .long("accounts-db-test-skip-rewrites")
                 .help(
@@ -1390,17 +1414,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help(
                     "How large accumulated results from an accounts index scan can become. If \
                      this is exceeded, the scan aborts.",
-                ),
-        )
-        .arg(
-            Arg::with_name("accounts_index_memory_limit_mb")
-                .long("accounts-index-memory-limit-mb")
-                .value_name("MEGABYTES")
-                .validator(is_parsable::<usize>)
-                .takes_value(true)
-                .help(
-                    "How much memory the accounts index can consume. If this is exceeded, some \
-                     account index entries will be stored on disk.",
                 ),
         )
         .arg(
@@ -1554,16 +1567,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help(BlockProductionMethod::cli_message()),
         )
         .arg(
-            Arg::with_name("disable_block_production_forwarding")
-            .long("disable-block-production-forwarding")
-            .requires("staked_nodes_overrides")
-            .takes_value(false)
-            .help("Disable forwarding of non-vote transactions in block production. \
-                   By default, forwarding is already disabled, it is enabled by setting \
-                   \"staked-nodes-overrides\". This flag can be used to disable forwarding \
-                   even when \"staked-nodes-overrides\" is set."),
-        )
-        .arg(
             Arg::with_name("unified_scheduler_handler_threads")
                 .long("unified-scheduler-handler-threads")
                 .value_name("COUNT")
@@ -1575,7 +1578,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
             Arg::with_name("wen_restart")
                 .long("wen-restart")
                 .hidden(hidden_unless_forced())
-                .value_name("DIR")
+                .value_name("FILE")
                 .takes_value(true)
                 .required(false)
                 .conflicts_with("wait_for_supermajority")
@@ -2011,6 +2014,18 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
                 Ok(())
             }
         }));
+    // deprecated in v2.1 by PR #2721
+    add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
+        .long("accounts-index-memory-limit-mb")
+        .value_name("MEGABYTES")
+        .validator(is_parsable::<usize>)
+        .takes_value(true)
+        .help(
+            "How much memory the accounts index can consume. If this is exceeded, some \
+         account index entries will be stored on disk.",
+        ),
+        usage_warning: "index memory limit has been deprecated. The limit arg has no effect now.",
+    );
     add_arg!(Arg::with_name("accountsdb_repl_bind_address")
         .long("accountsdb-repl-bind-address")
         .value_name("HOST")

@@ -54,6 +54,7 @@ solana-compute-budget = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-config-program = { workspace = true }
 solana-cost-model = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-fee = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
@@ -68,6 +69,7 @@ solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true }
 solana-timings = { workspace = true }
@@ -93,6 +95,7 @@ crate-type = ["lib"]
 name = "solana_runtime"
 
 [dev-dependencies]
+agave-transaction-view = { workspace = true }
 assert_matches = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }

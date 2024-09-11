@@ -52,6 +52,7 @@ solana-compute-budget = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-fee = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
@@ -104,7 +105,6 @@ solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true, features = [
@@ -122,7 +122,9 @@ sysctl = { workspace = true }
 rustc_version = { workspace = true, optional = true }
 
 [features]
-dev-context-only-utils = []
+dev-context-only-utils = [
+    "solana-runtime/dev-context-only-utils",
+]
 frozen-abi = [
     "dep:rustc_version",
     "dep:solana-frozen-abi",

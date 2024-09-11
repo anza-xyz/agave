@@ -126,9 +126,9 @@ use {
         signers::Signers,
     },
     serde::Serialize,
+    solana_feature_set as feature_set,
     solana_program::{system_instruction::SystemInstruction, system_program},
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::feature_set,
     solana_short_vec as short_vec,
     std::result,
 };
@@ -172,7 +172,7 @@ pub type Result<T> = result::Result<T, TransactionError>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5LPHxp7TKPeV7GZ9pcT4NxNxJa3ZhvToDekCMAPvNWLv")
+    frozen_abi(digest = "686AAhRhjXpqKidmJEdHHcJCL9XxCxebu8Xmku9shp83")
 )]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -200,7 +200,7 @@ pub struct Transaction {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5LPHxp7TKPeV7GZ9pcT4NxNxJa3ZhvToDekCMAPvNWLv")
+    frozen_abi(digest = "5mA54x7skHmXUoVfvwNSDrSo4F8kXJSrDrKrLMcUkAib")
 )]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
 pub struct Transaction {

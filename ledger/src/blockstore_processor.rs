@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     crate::{
         block_error::BlockError,
@@ -44,7 +42,6 @@ use {
     },
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
-        feature_set,
         genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
@@ -77,6 +74,8 @@ use {
     thiserror::Error,
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
 pub struct TransactionBatchWithIndexes<'a, 'b> {
     pub batch: TransactionBatch<'a, 'b>,
@@ -173,7 +172,7 @@ pub fn execute_batch(
 
     let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
         .feature_set
-        .is_active(&feature_set::apply_cost_tracker_during_replay::id())
+        .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
     {
         check_block_cost_limits(bank, &commit_results, batch.sanitized_transactions())
     } else {
@@ -769,6 +768,10 @@ pub struct ProcessOptions {
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
+    #[cfg(feature = "dev-context-only-utils")]
+    pub hash_overrides: Option<HashOverrides>,
+    pub abort_on_invalid_block: bool,
+    pub no_block_cost_limits: bool,
 }
 
 pub fn test_process_blockstore(
@@ -865,6 +868,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         None,
         exit,
         None,
+        None,
     );
     let bank0_slot = bank0.slot();
     let bank_forks = BankForks::new_rw_arc(bank0);
@@ -903,6 +907,20 @@ pub fn process_blockstore_from_root(
         // Starting slot must be a root, and thus has no parents
         assert_eq!(bank_forks.read().unwrap().banks().len(), 1);
         let bank = bank_forks.read().unwrap().root_bank();
+        #[cfg(feature = "dev-context-only-utils")]
+        if let Some(hash_overrides) = &opts.hash_overrides {
+            info!(
+                "Will override following slots' hashes: {:#?}",
+                hash_overrides
+            );
+            bank.set_hash_overrides(hash_overrides.clone());
+        }
+        if opts.no_block_cost_limits {
+            warn!("setting block cost limits to MAX");
+            bank.write_cost_tracker()
+                .unwrap()
+                .set_limits(u64::MAX, u64::MAX, u64::MAX);
+        }
         assert!(bank.parent().is_none());
         (bank.slot(), bank.hash())
     };
@@ -1837,7 +1855,7 @@ fn load_frozen_forks(
             let mut progress = ConfirmationProgress::new(last_entry_hash);
             let mut m = Measure::start("process_single_slot");
             let bank = bank_forks.write().unwrap().insert_from_ledger(bank);
-            if process_single_slot(
+            if let Err(error) = process_single_slot(
                 blockstore,
                 &bank,
                 replay_tx_thread_pool,
@@ -1849,10 +1867,11 @@ fn load_frozen_forks(
                 entry_notification_sender,
                 None,
                 timing,
-            )
-            .is_err()
-            {
+            ) {
                 assert!(bank_forks.write().unwrap().remove(bank.slot()).is_some());
+                if opts.abort_on_invalid_block {
+                    Err(error)?
+                }
                 continue;
             }
             txs += progress.num_txs;
@@ -2055,6 +2074,13 @@ pub fn process_single_slot(
         replay_vote_sender,
         timing,
     )
+    .and_then(|()| {
+        if let Some((result, completed_timings)) = bank.wait_for_completed_scheduler() {
+            timing.accumulate(&completed_timings);
+            result?
+        }
+        Ok(())
+    })
     .map_err(|err| {
         let slot = bank.slot();
         warn!("slot {} failed to verify: {}", slot, err);

@@ -22,6 +22,7 @@ use {
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_entry::entry::Entry,
     solana_faucet::faucet::request_airdrop_transaction,
+    solana_feature_set as feature_set,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_inline_spl::{
         token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
@@ -67,7 +68,6 @@ use {
         epoch_rewards_hasher::EpochRewardsHasher,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set,
         hash::Hash,
         message::SanitizedMessage,
         pubkey::{Pubkey, PUBKEY_BYTES},
@@ -146,6 +146,7 @@ pub struct JsonRpcConfig {
     pub enable_extended_tx_metadata_storage: bool,
     pub faucet_addr: Option<SocketAddr>,
     pub health_check_slot_distance: u64,
+    pub skip_preflight_health_check: bool,
     pub rpc_bigtable_config: Option<RpcBigtableConfig>,
     pub max_multiple_accounts: Option<usize>,
     pub account_indexes: AccountSecondaryIndexes,
@@ -609,16 +610,6 @@ impl JsonRpcRequestProcessor {
         // epoch
         let bank = self.get_bank_with_config(context_config)?;
 
-        // DO NOT CLEAN UP with feature_set::enable_partitioned_epoch_reward
-        // This logic needs to be retained indefinitely to support historical
-        // rewards before and after feature activation.
-        let partitioned_epoch_reward_enabled_slot = bank
-            .feature_set
-            .activated_slot(&feature_set::enable_partitioned_epoch_reward::id());
-        let partitioned_epoch_reward_enabled = partitioned_epoch_reward_enabled_slot
-            .map(|slot| slot <= first_confirmed_block_in_epoch)
-            .unwrap_or(false);
-
         // Get first block in the epoch
         let Ok(Some(epoch_boundary_block)) = self
             .get_block(
@@ -633,6 +624,22 @@ impl JsonRpcRequestProcessor {
             .into());
         };
 
+        // If there is a gap in blockstore or long-term historical storage that
+        // includes the epoch boundary, the `get_blocks_with_limit()` call above
+        // will return the slot of the block at the end of that gap, not a
+        // legitimate epoch-boundary block. Therefore, verify that the parent of
+        // `epoch_boundary_block` occurred before the `first_slot_in_epoch`. If
+        // it didn't, return an error; it will be impossible to locate
+        // rewards properly.
+        if epoch_boundary_block.parent_slot >= first_slot_in_epoch {
+            return Err(RpcCustomError::SlotNotEpochBoundary {
+                slot: first_confirmed_block_in_epoch,
+            }
+            .into());
+        }
+
+        let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
+
         // Collect rewards from first block in the epoch if partitioned epoch
         // rewards not enabled, or address is a vote account
         let mut reward_map: HashMap<String, (Reward, Slot)> = {
@@ -644,17 +651,17 @@ impl JsonRpcRequestProcessor {
                 &addresses,
                 &|reward_type| -> bool {
                     reward_type == RewardType::Voting
-                        || (!partitioned_epoch_reward_enabled && reward_type == RewardType::Staking)
+                        || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
                 },
             )
         };
 
         // Append stake account rewards from partitions if partitions epoch
         // rewards is enabled
-        if partitioned_epoch_reward_enabled {
+        if epoch_has_partitioned_rewards {
             let num_partitions = epoch_boundary_block.num_reward_partitions.expect(
-                "epoch-boundary block should have num_reward_partitions after partitioned epoch \
-                 rewards enabled",
+                "epoch-boundary block should have num_reward_partitions for epochs with \
+                 partitioned rewards enabled",
             );
 
             let num_partitions = usize::try_from(num_partitions)
@@ -2250,8 +2257,12 @@ fn verify_transaction(
         return Err(RpcCustomError::TransactionSignatureVerificationFailure.into());
     }
 
-    if let Err(e) = transaction.verify_precompiles(feature_set) {
-        return Err(RpcCustomError::TransactionPrecompileVerificationFailure(e).into());
+    let move_precompile_verification_to_svm =
+        feature_set.is_active(&feature_set::move_precompile_verification_to_svm::id());
+    if !move_precompile_verification_to_svm {
+        if let Err(e) = transaction.verify_precompiles(feature_set) {
+            return Err(RpcCustomError::TransactionPrecompileVerificationFailure(e).into());
+        }
     }
 
     Ok(())
@@ -3695,21 +3706,23 @@ pub mod rpc_full {
             if !skip_preflight {
                 verify_transaction(&transaction, &preflight_bank.feature_set)?;
 
-                match meta.health.check() {
-                    RpcHealthStatus::Ok => (),
-                    RpcHealthStatus::Unknown => {
-                        inc_new_counter_info!("rpc-send-tx_health-unknown", 1);
-                        return Err(RpcCustomError::NodeUnhealthy {
-                            num_slots_behind: None,
+                if !meta.config.skip_preflight_health_check {
+                    match meta.health.check() {
+                        RpcHealthStatus::Ok => (),
+                        RpcHealthStatus::Unknown => {
+                            inc_new_counter_info!("rpc-send-tx_health-unknown", 1);
+                            return Err(RpcCustomError::NodeUnhealthy {
+                                num_slots_behind: None,
+                            }
+                            .into());
                         }
-                        .into());
-                    }
-                    RpcHealthStatus::Behind { num_slots } => {
-                        inc_new_counter_info!("rpc-send-tx_health-behind", 1);
-                        return Err(RpcCustomError::NodeUnhealthy {
-                            num_slots_behind: Some(num_slots),
+                        RpcHealthStatus::Behind { num_slots } => {
+                            inc_new_counter_info!("rpc-send-tx_health-behind", 1);
+                            return Err(RpcCustomError::NodeUnhealthy {
+                                num_slots_behind: Some(num_slots),
+                            }
+                            .into());
                         }
-                        .into());
                     }
                 }
 

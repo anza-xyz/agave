@@ -14,10 +14,12 @@ log = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-sanitize = { workspace = true }
 solana-sdk = { workspace = true }
+solana-serde-varint = { workspace = true }
 
 [features]
 dummy-for-ci-check = []

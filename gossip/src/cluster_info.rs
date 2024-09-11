@@ -45,6 +45,7 @@ use {
     rand::{seq::SliceRandom, thread_rng, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     serde::ser::Serialize,
+    solana_feature_set::FeatureSet,
     solana_ledger::shred::Shred,
     solana_measure::measure::Measure,
     solana_net_utils::{
@@ -62,7 +63,6 @@ use {
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
-        feature_set::FeatureSet,
         hash::Hash,
         pubkey::Pubkey,
         quic::QUIC_PORT_OFFSET,
@@ -311,7 +311,7 @@ pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "6YaMJand6tKtNLUrqvusC5QVDmVLCWYRg5LtxYNi6XN4")
+    frozen_abi(digest = "GfVFxfPfYcFLCaa29uxQxyKJAuTZ1cYqcRKhVrEKwDK7")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -1895,7 +1895,7 @@ impl ClusterInfo {
                         Some(ref bank_forks) => {
                             let root_bank = bank_forks.read().unwrap().root_bank();
                             (
-                                root_bank.staked_nodes(),
+                                root_bank.current_epoch_staked_nodes(),
                                 Some(root_bank.feature_set.clone()),
                             )
                         }
@@ -2704,7 +2704,7 @@ impl ClusterInfo {
             Some(bank_forks) => {
                 let bank = bank_forks.read().unwrap().root_bank();
                 let feature_set = bank.feature_set.clone();
-                (Some(feature_set), bank.staked_nodes())
+                (Some(feature_set), bank.current_epoch_staked_nodes())
             }
         };
         self.process_packets(

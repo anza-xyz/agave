@@ -11,6 +11,7 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
+    solana_feature_set as feature_set,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{
@@ -24,7 +25,6 @@ use {
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
-        feature_set,
         fee::FeeBudgetLimits,
         message::SanitizedMessage,
         saturating_add_assign,
@@ -392,11 +392,20 @@ impl Consumer {
         let check_results =
             bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
         // If checks passed, verify pre-compiles and continue processing on success.
+        let move_precompile_verification_to_svm = bank
+            .feature_set
+            .is_active(&feature_set::move_precompile_verification_to_svm::id());
         let check_results: Vec<_> = txs
             .iter()
             .zip(check_results)
             .map(|(tx, result)| match result {
-                Ok(_) => tx.verify_precompiles(&bank.feature_set),
+                Ok(_) => {
+                    if !move_precompile_verification_to_svm {
+                        tx.verify_precompiles(&bank.feature_set)
+                    } else {
+                        Ok(())
+                    }
+                }
                 Err(err) => Err(err),
             })
             .collect();
@@ -421,7 +430,10 @@ impl Consumer {
         txs: &[SanitizedTransaction],
         max_slot_ages: &[Slot],
     ) -> ProcessTransactionBatchOutput {
-        // Verify pre-compiles.
+        let move_precompile_verification_to_svm = bank
+            .feature_set
+            .is_active(&feature_set::move_precompile_verification_to_svm::id());
+
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
         //  or account lookup tables may have been closed.
@@ -439,7 +451,10 @@ impl Consumer {
                 }
             } else {
                 // Verify pre-compiles.
-                tx.verify_precompiles(&bank.feature_set)?;
+                if !move_precompile_verification_to_svm {
+                    tx.verify_precompiles(&bank.feature_set)?;
+                }
+
                 // Any transaction executed between sanitization time and now may have closed the lookup table(s).
                 // Above re-sanitization already loads addresses, so don't need to re-check in that case.
                 let lookup_tables = tx.message().message_address_table_lookups();
@@ -651,17 +666,6 @@ impl Consumer {
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
-        // In order to avoid a race condition, leaders must get the last
-        // blockhash *before* recording transactions because recording
-        // transactions will only succeed if the block max tick height hasn't
-        // been reached yet. If they get the last blockhash *after* recording
-        // transactions, the block max tick height could have already been
-        // reached and the blockhash queue could have already been updated with
-        // a new blockhash.
-        let ((last_blockhash, lamports_per_signature), last_blockhash_us) =
-            measure_us!(bank.last_blockhash_and_lamports_per_signature());
-        execute_and_commit_timings.last_blockhash_us = last_blockhash_us;
-
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
             .record_transactions(bank.slot(), processed_transactions));
@@ -698,8 +702,6 @@ impl Consumer {
                 self.committer.commit_transactions(
                     batch,
                     processing_results,
-                    last_blockhash,
-                    lamports_per_signature,
                     starting_transaction_index,
                     bank,
                     &mut pre_balance_info,
