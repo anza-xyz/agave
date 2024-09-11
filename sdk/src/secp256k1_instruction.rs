@@ -733,7 +733,7 @@
 //!     // Sign some messages.
 //!     let mut signatures = vec![];
 //!     for idx in 0..2 {
-//!         let secret_key = libsecp256k1::SecretKey::random(&mut rand0_7::thread_rng());
+//!         let secret_key = libsecp256k1::SecretKey::random(&mut rand::thread_rng());
 //!         let message = format!("hello world {}", idx).into_bytes();
 //!         let message_hash = {
 //!             let mut hasher = keccak::Hasher::default();
@@ -1045,7 +1045,7 @@ pub mod test {
             signature::{Keypair, Signer},
             transaction::Transaction,
         },
-        rand0_7::{thread_rng, Rng},
+        rand::{thread_rng, Rng},
     };
 
     fn test_case(
@@ -1231,7 +1231,7 @@ pub mod test {
 
         assert!(tx.verify_precompiles(&feature_set).is_ok());
 
-        let index = thread_rng().gen_range(0, secp_instruction.data.len());
+        let index = thread_rng().gen_range(0..secp_instruction.data.len());
         secp_instruction.data[index] = secp_instruction.data[index].wrapping_add(12);
         let tx = Transaction::new_signed_with_payer(
             &[secp_instruction],

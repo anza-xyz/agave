@@ -8,7 +8,7 @@ use {
     crate::{instruction::Instruction, precompiles::PrecompileError},
     bytemuck::bytes_of,
     bytemuck_derive::{Pod, Zeroable},
-    ed25519_dalek::{ed25519::signature::Signature, Signer, Verifier},
+    ed25519_dalek::{Signature, Signer, Verifier},
     solana_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
 };
 
@@ -31,9 +31,9 @@ pub struct Ed25519SignatureOffsets {
     message_instruction_index: u16,    // index of instruction data to get message data
 }
 
-pub fn new_ed25519_instruction(keypair: &ed25519_dalek::Keypair, message: &[u8]) -> Instruction {
+pub fn new_ed25519_instruction(keypair: &ed25519_dalek::SigningKey, message: &[u8]) -> Instruction {
     let signature = keypair.sign(message).to_bytes();
-    let pubkey = keypair.public.to_bytes();
+    let pubkey = keypair.verifying_key().to_bytes();
 
     assert_eq!(pubkey.len(), PUBKEY_SERIALIZED_SIZE);
     assert_eq!(signature.len(), SIGNATURE_SERIALIZED_SIZE);
@@ -123,7 +123,7 @@ pub fn verify(
         )?;
 
         let signature =
-            Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+            Signature::from_slice(signature).map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -134,7 +134,7 @@ pub fn verify(
             PUBKEY_SERIALIZED_SIZE,
         )?;
 
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey)
+        let publickey = ed25519_dalek::VerifyingKey::try_from(pubkey)
             .map_err(|_| PrecompileError::InvalidPublicKey)?;
 
         // Parse out message
@@ -196,7 +196,7 @@ pub mod test {
             transaction::Transaction,
         },
         hex,
-        rand0_7::{thread_rng, Rng},
+        rand::{thread_rng, Rng},
         solana_feature_set::FeatureSet,
     };
 
@@ -410,7 +410,7 @@ pub mod test {
     fn test_ed25519() {
         solana_logger::setup();
 
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let message_arr = b"hello";
         let mut instruction = new_ed25519_instruction(&privkey, message_arr);
         let mint_keypair = Keypair::new();
@@ -426,7 +426,7 @@ pub mod test {
         assert!(tx.verify_precompiles(&feature_set).is_ok());
 
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            let index = thread_rng().gen_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -449,7 +449,7 @@ pub mod test {
         let mint_keypair = Keypair::new();
 
         // sig created via ed25519_dalek: both pass
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let message_arr = b"hello";
         let instruction = new_ed25519_instruction(&privkey, message_arr);
         let tx = Transaction::new_signed_with_payer(

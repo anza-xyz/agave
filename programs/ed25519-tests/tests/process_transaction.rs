@@ -14,15 +14,13 @@ use {
 // Since ed25519_dalek is still using the old version of rand, this test
 // copies the `generate` implementation at:
 // https://docs.rs/ed25519-dalek/1.0.1/src/ed25519_dalek/secret.rs.html#167
-fn generate_keypair() -> ed25519_dalek::Keypair {
+fn generate_keypair() -> ed25519_dalek::SigningKey {
     use rand::RngCore;
     let mut rng = rand::thread_rng();
-    let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-    rng.fill_bytes(&mut seed);
-    let secret =
-        ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH]).unwrap();
-    let public = ed25519_dalek::PublicKey::from(&secret);
-    ed25519_dalek::Keypair { secret, public }
+    let mut secret = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
+    rng.fill_bytes(&mut secret);
+
+    ed25519_dalek::SigningKey::from_bytes(&secret)
 }
 
 #[tokio::test]
