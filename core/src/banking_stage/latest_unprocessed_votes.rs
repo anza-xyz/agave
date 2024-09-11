@@ -74,7 +74,10 @@ impl LatestValidatorVotePacket {
 
         let instruction_filter = |ix: &VoteInstruction| {
             if deprecate_legacy_vote_ixs {
-                ix.is_tower_sync()
+                matches!(
+                    ix,
+                    VoteInstruction::TowerSync(_) | VoteInstruction::TowerSyncSwitch(_, _),
+                )
             } else {
                 ix.is_single_vote_state_update()
             }
