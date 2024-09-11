@@ -2232,11 +2232,12 @@ fn should_check_blockstore_for_incorrect_shred_version(
     } else {
         // blockstore_min_slot <= blockstore_max_slot <= latest_hard_fork
         //
-        // This could be similar to the previous case of there being a cluster restart, except
-        // that the blockstore data is all older than latest hard fork (perhaps this node crashed
-        // before observing the slot chosen for cluster restart). Or, maybe there was a hard fork
-        // issued very far into the future. Regardless, perform the blockstore check for this case.
-        Ok(Some(latest_hard_fork + 1))
+        // All slots in the blockstore are older than the latest hard fork. The blockstore check
+        // would start from latest_hard_fork + 1; skip the check as there are no slots to check
+        //
+        // This is kind of an unusual case to hit, maybe a node has been offline for a long time
+        // and just restarted with a new downloaded snapshot but the old blockstore
+        Ok(None)
     }
 }
 
