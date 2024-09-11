@@ -781,15 +781,14 @@ mod tests {
         tx: Transaction,
         accounts: &[TransactionAccount],
         error_metrics: &mut TransactionErrorMetrics,
-    ) -> Vec<TransactionLoadResult> {
-        // XXX
-        vec![load_accounts_with_features_and_rent(
+    ) -> TransactionLoadResult {
+        load_accounts_with_features_and_rent(
             tx,
             accounts,
             &RentCollector::default(),
             error_metrics,
             &mut FeatureSet::all_enabled(),
-        )]
+        )
     }
 
     fn load_accounts_with_excluded_features(
@@ -797,15 +796,14 @@ mod tests {
         accounts: &[TransactionAccount],
         error_metrics: &mut TransactionErrorMetrics,
         exclude_features: Option<&[Pubkey]>,
-    ) -> Vec<TransactionLoadResult> {
-        // XXX
-        vec![load_accounts_with_features_and_rent(
+    ) -> TransactionLoadResult {
+        load_accounts_with_features_and_rent(
             tx,
             accounts,
             &RentCollector::default(),
             error_metrics,
             &mut all_features_except(exclude_features),
-        )]
+        )
     }
 
     #[test]
@@ -832,12 +830,11 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let load_result = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
         assert_eq!(error_metrics.account_not_found, 1);
-        assert_eq!(load_results.len(), 1);
         assert!(matches!(
-            load_results[0],
+            load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                 load_error: TransactionError::ProgramAccountNotFound,
                 ..
@@ -875,8 +872,7 @@ mod tests {
             load_accounts_with_excluded_features(tx, &accounts, &mut error_metrics, None);
 
         assert_eq!(error_metrics.account_not_found, 0);
-        assert_eq!(loaded_accounts.len(), 1);
-        match &loaded_accounts[0] {
+        match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
@@ -914,12 +910,11 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let load_result = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
         assert_eq!(error_metrics.account_not_found, 1);
-        assert_eq!(load_results.len(), 1);
         assert!(matches!(
-            load_results[0],
+            load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                 load_error: TransactionError::ProgramAccountNotFound,
                 ..
@@ -951,12 +946,11 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let load_result = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
-        assert_eq!(load_results.len(), 1);
         assert!(matches!(
-            load_results[0],
+            load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                 load_error: TransactionError::InvalidProgramForExecution,
                 ..
@@ -1006,8 +1000,7 @@ mod tests {
             load_accounts_with_excluded_features(tx, &accounts, &mut error_metrics, None);
 
         assert_eq!(error_metrics.account_not_found, 0);
-        assert_eq!(loaded_accounts.len(), 1);
-        match &loaded_accounts[0] {
+        match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 4);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
@@ -1024,7 +1017,7 @@ mod tests {
         accounts: &[TransactionAccount],
         tx: Transaction,
         account_overrides: Option<&AccountOverrides>,
-    ) -> Vec<TransactionLoadResult> {
+    ) -> TransactionLoadResult {
         let tx = SanitizedTransaction::from_transaction_for_tests(tx);
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1042,8 +1035,7 @@ mod tests {
             &vec![Ok(CheckedTransactionDetails::default())],
             account_overrides,
         );
-        // XXX
-        vec![load_transaction(
+        load_transaction(
             &loaded_accounts_map,
             &tx,
             Ok(ValidatedTransactionDetails::default()),
@@ -1051,7 +1043,7 @@ mod tests {
             &FeatureSet::all_enabled(),
             &RentCollector::default(),
             &ProgramCacheForTxBatch::default(),
-        )]
+        )
     }
 
     #[test]
@@ -1068,10 +1060,9 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_no_store(&[], tx, None);
-        assert_eq!(load_results.len(), 1);
+        let load_result = load_accounts_no_store(&[], tx, None);
         assert!(matches!(
-            load_results[0],
+            load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                 load_error: TransactionError::ProgramAccountNotFound,
                 ..
@@ -1101,8 +1092,7 @@ mod tests {
 
         let loaded_accounts =
             load_accounts_no_store(&[(keypair.pubkey(), account)], tx, Some(&account_overrides));
-        assert_eq!(loaded_accounts.len(), 1);
-        match &loaded_accounts[0] {
+        match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts[0].0, keypair.pubkey());
                 assert_eq!(loaded_transaction.accounts[1].0, slot_history_id);
