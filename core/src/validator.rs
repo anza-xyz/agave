@@ -745,14 +745,14 @@ impl Validator {
             }
         }
 
-        if let Some(start_slot) = should_check_blockstore_for_incorrect_shred_version(
+        if let Some(start_slot) = should_cleanup_blockstore_incorrect_shred_versions(
             config,
             &blockstore,
             root_slot,
             &hard_forks,
         )? {
             *start_progress.write().unwrap() = ValidatorStartProgress::CleaningBlockStore;
-            check_blockstore_for_incorrect_shred_version(
+            cleanup_blockstore_incorrect_shred_versions(
                 &blockstore,
                 config,
                 start_slot,
@@ -2185,7 +2185,7 @@ fn maybe_warp_slot(
 
 /// Returns the starting slot at which the blockstore should be scanned for
 /// shreds with an incorrect shred version, or None if the check is unnecessary
-fn should_check_blockstore_for_incorrect_shred_version(
+fn should_cleanup_blockstore_incorrect_shred_versions(
     config: &ValidatorConfig,
     blockstore: &Blockstore,
     root_slot: Slot,
@@ -2243,7 +2243,7 @@ fn should_check_blockstore_for_incorrect_shred_version(
 
 /// Searches the blockstore for data shreds with a shred version that differs
 /// from the passed `expected_shred_version`
-fn blockstore_contains_incorrect_shred_version(
+fn scan_blockstore_for_incorrect_shred_version(
     blockstore: &Blockstore,
     start_slot: Slot,
     expected_shred_version: u16,
@@ -2271,13 +2271,13 @@ fn blockstore_contains_incorrect_shred_version(
 
 /// If the blockstore contains any shreds with the incorrect shred version,
 /// copy them to a backup blockstore and purge them from the actual blockstore.
-fn check_blockstore_for_incorrect_shred_version(
+fn cleanup_blockstore_incorrect_shred_versions(
     blockstore: &Blockstore,
     config: &ValidatorConfig,
     start_slot: Slot,
     expected_shred_version: u16,
 ) -> Result<(), BlockstoreError> {
-    let incorrect_shred_version = blockstore_contains_incorrect_shred_version(
+    let incorrect_shred_version = scan_blockstore_for_incorrect_shred_version(
         blockstore,
         start_slot,
         expected_shred_version,
@@ -2722,7 +2722,7 @@ mod tests {
     }
 
     #[test]
-    fn test_should_check_blockstore_for_incorrect_shred_version() {
+    fn test_should_cleanup_blockstore_incorrect_shred_versions() {
         solana_logger::setup();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -2736,7 +2736,7 @@ mod tests {
         root_slot = 10;
         validator_config.wait_for_supermajority = Some(root_slot);
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2750,7 +2750,7 @@ mod tests {
         // Arguably operator error to pass a value for wait_for_supermajority in this case
         root_slot = 15;
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2764,7 +2764,7 @@ mod tests {
         // No check if wait_for_supermajority (10) < root_slot (15) (empty blockstore)
         hard_forks.register(10);
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2790,7 +2790,7 @@ mod tests {
 
         // No check as all blockstore data is newer than latest hard fork
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2806,7 +2806,7 @@ mod tests {
         hard_forks.register(root_slot);
         validator_config.wait_for_supermajority = Some(root_slot);
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2817,7 +2817,7 @@ mod tests {
         );
         validator_config.wait_for_supermajority = None;
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2832,7 +2832,7 @@ mod tests {
         root_slot = 30;
         let latest_hard_fork = hard_forks.iter().last().unwrap().0;
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2846,7 +2846,7 @@ mod tests {
         // No check since all blockstore data newer than latest hard fork
         blockstore.purge_slots(0, latest_hard_fork, PurgeType::Exact);
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2861,7 +2861,7 @@ mod tests {
         let new_hard_fork = 40;
         hard_forks.register(new_hard_fork);
         assert_eq!(
-            should_check_blockstore_for_incorrect_shred_version(
+            should_cleanup_blockstore_incorrect_shred_versions(
                 &validator_config,
                 &blockstore,
                 root_slot,
@@ -2894,7 +2894,7 @@ mod tests {
         }
 
         // this purges and compacts all slots greater than or equal to 5
-        check_blockstore_for_incorrect_shred_version(&blockstore, &validator_config, 5, 2).unwrap();
+        cleanup_blockstore_incorrect_shred_versions(&blockstore, &validator_config, 5, 2).unwrap();
         // assert that slots less than 5 aren't affected
         assert!(blockstore.meta(4).unwrap().unwrap().next_slots.is_empty());
         for i in 5..10 {
