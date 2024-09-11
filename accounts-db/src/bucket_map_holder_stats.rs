@@ -61,7 +61,6 @@ pub struct BucketMapHolderStats {
     last_was_startup: AtomicBool,
     last_time: AtomicInterval,
     bins: u64,
-    pub estimate_mem: AtomicU64,
     pub flush_should_evict_us: AtomicU64,
 }
 
@@ -263,7 +262,7 @@ impl BucketMapHolderStats {
                 },
                 (
                     "estimate_mem_bytes",
-                    self.estimate_mem.load(Ordering::Relaxed),
+                    self.count_in_mem.load(Ordering::Relaxed) * 48, // each index entry in memory takes approx 48 bytes.
                     i64
                 ),
                 (
