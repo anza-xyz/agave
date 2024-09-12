@@ -2,7 +2,7 @@
 
 extern crate test;
 use {
-    rand0_7::{thread_rng, Rng},
+    rand::{thread_rng, Rng},
     solana_feature_set::FeatureSet,
     solana_sdk::{
         hash::Hash,

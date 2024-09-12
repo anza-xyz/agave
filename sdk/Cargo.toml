@@ -25,7 +25,6 @@ full = [
     "chrono",
     "memmap2",
     "rand",
-    "rand0-7",
     "serde_json",
     "solana-signature",
     "ed25519-dalek",
@@ -43,7 +42,7 @@ frozen-abi = [
     "solana-feature-set/frozen-abi",
     "solana-program/frozen-abi",
     "solana-short-vec/frozen-abi",
-    "solana-signature/frozen-abi"
+    "solana-signature/frozen-abi",
 ]
 
 [dependencies]
@@ -75,7 +74,6 @@ num_enum = { workspace = true }
 pbkdf2 = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
-rand0-7 = { package = "rand", version = "0.7", optional = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
@@ -97,7 +95,11 @@ solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
-solana-signature = { workspace = true, features = ["rand", "serde", "verify"], optional = true }
+solana-signature = { workspace = true, features = [
+    "rand",
+    "serde",
+    "verify",
+], optional = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

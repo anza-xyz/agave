@@ -24,7 +24,7 @@ pub fn new_dummy_x509_certificate(keypair: &Keypair) -> (rustls::Certificate, ru
     ];
     let mut key_pkcs8_der = Vec::<u8>::with_capacity(PKCS8_PREFIX.len() + 32);
     key_pkcs8_der.extend_from_slice(&PKCS8_PREFIX);
-    key_pkcs8_der.extend_from_slice(keypair.secret().as_bytes());
+    key_pkcs8_der.extend_from_slice(keypair.secret());
 
     // Create a dummy certificate. Only the SubjectPublicKeyInfo field
     // is relevant to the peer-to-peer protocols. The signature of the
