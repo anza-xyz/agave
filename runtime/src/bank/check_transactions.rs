@@ -1,6 +1,6 @@
 use {
     super::{Bank, BankStatusCache},
-    crate::svm_message_ext::{get_durable_nonce, get_ix_signers},
+    crate::nonce_extraction::{get_durable_nonce, get_ix_signers},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_perf::perf_libs,
     solana_sdk::{
