@@ -2864,7 +2864,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_blockstore_for_incorrect_shred_version() {
+    fn test_cleanup_blockstore_incorrect_shred_versions() {
         solana_logger::setup();
 
         let validator_config = ValidatorConfig::default_for_test();
