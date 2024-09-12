@@ -50,7 +50,7 @@ const LAST_BLOCKHASH: Hash = Hash::new_from_array([7; 32]); // Arbitrary constan
 pub type AccountsMap = HashMap<Pubkey, AccountSharedData>;
 
 // container for a transaction batch and all data needed to run and verify it against svm
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SvmTestEntry {
     // features are disabled by default; these will be enabled
     pub enabled_features: Vec<Pubkey>,
@@ -157,12 +157,14 @@ impl SvmTestEntry {
         mut nonce_info: NonceInfo,
         status: ExecutionStatus,
     ) {
-        nonce_info
-            .try_advance_nonce(
-                DurableNonce::from_blockhash(&LAST_BLOCKHASH),
-                LAMPORTS_PER_SIGNATURE,
-            )
-            .unwrap();
+        if status != ExecutionStatus::Discarded {
+            nonce_info
+                .try_advance_nonce(
+                    DurableNonce::from_blockhash(&LAST_BLOCKHASH),
+                    LAMPORTS_PER_SIGNATURE,
+                )
+                .unwrap();
+        }
 
         self.transaction_batch.push(TransactionBatchItem {
             transaction,
@@ -1048,6 +1050,133 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
     test_entries
 }
 
+fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+
+    let program_name = "hello-solana";
+    let program_id = program_address(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+    let nonce_pubkey = if fee_paying_nonce {
+        fee_payer
+    } else {
+        Pubkey::new_unique()
+    };
+
+    let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
+    let initial_nonce_data =
+        nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
+    let initial_nonce_account = AccountSharedData::new_data(
+        LAMPORTS_PER_SOL,
+        &nonce::state::Versions::new(nonce::State::Initialized(initial_nonce_data.clone())),
+        &system_program::id(),
+    )
+    .unwrap();
+    let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
+
+    let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
+    let mut advanced_nonce_info = initial_nonce_info.clone();
+    advanced_nonce_info
+        .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
+        .unwrap();
+
+    let advance_instruction = system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer);
+    let successful_noop_instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
+
+    let second_transaction = Transaction::new_signed_with_payer(
+        &[
+            advance_instruction.clone(),
+            successful_noop_instruction.clone(),
+        ],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        *advanced_durable.as_hash(),
+    );
+
+    let mut common_test_entry = SvmTestEntry::default();
+
+    common_test_entry.add_initial_account(nonce_pubkey, &initial_nonce_account);
+
+    if !fee_paying_nonce {
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
+    }
+
+    // TODO this could be a utility function
+    common_test_entry
+        .final_accounts
+        .get_mut(&nonce_pubkey)
+        .unwrap()
+        .data_as_mut_slice()
+        .copy_from_slice(advanced_nonce_info.account().data());
+
+    common_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+    // batch 0:
+    // * a successful nonce transaction
+    // * a nonce transaction that reuses the same nonce; this transaction must be dropped
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[
+                advance_instruction.clone(),
+                successful_noop_instruction.clone(),
+            ],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            *initial_durable.as_hash(),
+        );
+
+        test_entry.push_nonce_transaction(first_transaction, initial_nonce_info.clone());
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction,
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entries.push(test_entry);
+    }
+
+    /*
+        // batch 1:
+        // * an executable failed nonce transaction
+        // * a nonce transaction that reuses the same nonce; this transaction must be dropped
+        {
+            let mut test_entry = SvmTestEntry::default();
+
+            test_entries.push(test_entry);
+        }
+
+        // batch 2:
+        // * a processable non-executable nonce transaction, if fee-only transactions are enabled
+        // * a nonce transaction that reuses the same nonce; this transaction must be dropped
+        {
+            let mut test_entry = SvmTestEntry::default();
+
+            test_entries.push(test_entry);
+        }
+    */
+
+    // TODO very evil idea: tx1 is a non-nonce txn that nevertheless advances the nonce. tx2 dropped
+
+    for test_entry in &mut test_entries {
+        test_entry
+            .initial_programs
+            .push((program_name.to_string(), DEPLOYMENT_SLOT));
+
+        if enable_fee_only_transactions {
+            test_entry
+                .enabled_features
+                .push(feature_set::enable_transaction_loading_failure_fees::id());
+        }
+    }
+
+    test_entries
+}
+
 #[test_case(program_medley())]
 #[test_case(simple_transfer(false))]
 #[test_case(simple_transfer(true))]
@@ -1057,6 +1186,10 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
 #[test_case(simple_nonce(true, true))]
 #[test_case(intrabatch_account_reuse(false))]
 #[test_case(intrabatch_account_reuse(true))]
+#[test_case(nonce_reuse(false, false))]
+#[test_case(nonce_reuse(true, false))]
+#[test_case(nonce_reuse(false, true))]
+#[test_case(nonce_reuse(true, true))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);

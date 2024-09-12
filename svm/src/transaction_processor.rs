@@ -484,9 +484,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_details.total_fee(),
         )?;
 
-        // XXX i need to do some kind of nonce validation here
-        // we are switching to hashmap so, i think we just check "is actual nonce data same as rollback nonce data"
-        // if so, we already used it, and should drop the transaction. perhaps charging fees or not, dunno
+        // If the nonce has been used in this batch already, we must drop the transaction
+        // This is the same as if it was used is different batches in the same slot
+        // If the nonce account was closed in the batch, we behave as if the blockhash didn't validate
+        // XXX TODO FIXME uhhh how do i handle closed accounts?? do i need to drop them...
+        if let Some(ref expected_nonce_info) = nonce {
+            // XXX HANA this is clever... perhaps too clever
+            // need to check for any possible edge cases where blockhashes match but data doesnt
+            // otherwise we need to parse the nonce account into a NonceInfo
+            let nonces_are_equal =
+                accounts_map
+                    .get(expected_nonce_info.address())
+                    .map(|current_nonce_account| {
+                        current_nonce_account.data() == expected_nonce_info.account().data()
+                    });
+
+            match nonces_are_equal {
+                Some(false) => (),
+                Some(true) => {
+                    error_counters.account_not_found += 1;
+                    return Err(TransactionError::AccountNotFound);
+                }
+                None => {
+                    error_counters.blockhash_not_found += 1;
+                    return Err(TransactionError::BlockhashNotFound);
+                }
+            }
+        }
 
         // Capture fee-subtracted fee payer account and next nonce account state
         // to commit if transaction execution fails.
