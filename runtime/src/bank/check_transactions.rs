@@ -227,7 +227,7 @@ mod tests {
             setup_nonce_with_bank,
         },
         solana_sdk::{
-            self, feature_set::FeatureSet, hash::Hash, message::Message, signature::Keypair,
+            feature_set::FeatureSet, hash::Hash, message::Message, signature::Keypair,
             signer::Signer, system_instruction,
         },
     };
