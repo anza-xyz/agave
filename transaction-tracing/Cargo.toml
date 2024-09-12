@@ -1,0 +1,22 @@
+[package]
+name = "solana-transaction-tracing"
+description = "Solana transaction tracing"
+documentation = "https://docs.rs/solana-transaction-tracing"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bs58 = { workspace = true }
+log = { workspace = true }
+solana-perf = { workspace = true }
+solana-sdk = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

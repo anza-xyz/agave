@@ -357,6 +357,7 @@ fn receive_quic_datagrams(
                     addr: addr.ip(),
                     port: addr.port(),
                     flags: PacketFlags::empty(),
+                    remote_pubkey: None,
                 };
                 packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
             })
@@ -402,6 +403,7 @@ pub(crate) fn receive_repair_quic_packets(
                     addr: addr.ip(),
                     port: addr.port(),
                     flags: PacketFlags::REPAIR,
+                    remote_pubkey: None,
                 };
                 packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
             })

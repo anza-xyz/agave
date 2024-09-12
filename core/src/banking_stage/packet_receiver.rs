@@ -11,6 +11,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{saturating_add_assign, timing::timestamp},
+    solana_transaction_tracing::maybe_trace_packet,
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         time::Duration,
@@ -52,6 +53,7 @@ impl PacketReceiver {
                     |packet| {
                         packet.check_insufficent_compute_unit_limit()?;
                         packet.check_excessive_precompiles()?;
+                        maybe_trace_packet("bank-recv", &packet.original_packet());
                         Ok(packet)
                     },
                 )
