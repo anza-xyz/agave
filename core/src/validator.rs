@@ -758,6 +758,8 @@ impl Validator {
                 start_slot,
                 shred_version,
             )?;
+        } else {
+            info!("Skipping the blockstore check for shreds with incorrect version");
         }
 
         node.info.set_shred_version(shred_version);
@@ -2207,6 +2209,10 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
         return Ok(None);
     };
     let blockstore_min_slot = blockstore.lowest_slot();
+    info!(
+        "Blockstore contains data from slot {blockstore_min_slot} to {blockstore_max_slot}, the \
+        latest hard fork is {latest_hard_fork}"
+    );
 
     if latest_hard_fork < blockstore_min_slot {
         // latest_hard_fork < blockstore_min_slot <= blockstore_max_slot
@@ -2253,7 +2259,7 @@ fn scan_blockstore_for_incorrect_shred_version(
     // Search for shreds with incompatible version in blockstore
     let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
 
-    info!("Searching blockstore for shred with incorrect version..");
+    info!("Searching blockstore for shred with incorrect version from slot {start_slot}");
     for (slot, _meta) in slot_meta_iterator {
         let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
         for shred in &shreds {
