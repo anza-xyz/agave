@@ -249,7 +249,9 @@ fn main() {
             for entry in dir.flatten() {
                 if let Some(name) = entry.path().file_name() {
                     let name = name.to_str().unwrap().split_once(".").unwrap().0;
-                    let len = fs::metadata(entry.path()).unwrap().len();
+                    let len = fs::metadata(entry.path())
+                        .unwrap_or_else(|_| panic!("{:?} not found!", entry.path()))
+                        .len();
                     info.push((name.parse::<usize>().unwrap(), len as usize));
                     // eprintln!("{name}, {len}");
                 }
