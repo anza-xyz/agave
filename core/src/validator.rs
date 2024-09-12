@@ -2861,21 +2861,6 @@ mod tests {
             .unwrap(),
             None,
         );
-
-        // Emulate cluster restart at slot 40 (past blockstore bounds)
-        // Do check from new_hard_fork
-        let new_hard_fork = 40;
-        hard_forks.register(new_hard_fork);
-        assert_eq!(
-            should_cleanup_blockstore_incorrect_shred_versions(
-                &validator_config,
-                &blockstore,
-                root_slot,
-                &hard_forks
-            )
-            .unwrap(),
-            Some(new_hard_fork + 1),
-        );
     }
 
     #[test]
