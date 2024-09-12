@@ -250,7 +250,7 @@ fn main() {
                 if let Some(name) = entry.path().file_name() {
                     let name = name.to_str().unwrap().split_once(".").unwrap().0;
                     let len = fs::metadata(entry.path())
-                        .unwrap_or_else(|_| panic!("{:?} not found!", entry.path()))
+                        .unwrap_or_else(|err| panic!("failed to get metadata '{}': {err}", entry.path().display()))
                         .len();
                     info.push((name.parse::<usize>().unwrap(), len as usize));
                     // eprintln!("{name}, {len}");
