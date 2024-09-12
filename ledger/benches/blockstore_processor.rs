@@ -142,6 +142,7 @@ fn bench_execute_batch(
             TransactionBatchWithIndexes {
                 batch,
                 transaction_indexes: (0..batch_size).collect(),
+                self_conflicting_batch: false,
             }
         })
         .collect();
