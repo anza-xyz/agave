@@ -1039,6 +1039,56 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
         test_entry.decrease_expected_lamports(&feepayer, 1 + LAMPORTS_PER_SIGNATURE);
     }
 
+    // batch 4:
+    // * processable non-executable transaction
+    // * successful transfer
+    // this confirms we update the AccountsMap from RollbackAccounts intrabatch
+    if enable_fee_only_transactions {
+        let mut test_entry = SvmTestEntry::default();
+
+        let source_keypair = Keypair::new();
+        let source = source_keypair.pubkey();
+        let destination = Pubkey::new_unique();
+
+        let mut source_data = AccountSharedData::default();
+        let mut destination_data = AccountSharedData::default();
+
+        source_data.set_lamports(LAMPORTS_PER_SOL * 10);
+        test_entry.add_initial_account(source, &source_data);
+
+        let mut load_program_fail_instruction =
+            system_instruction::transfer(&source, &Pubkey::new_unique(), transfer_amount);
+        load_program_fail_instruction.program_id = Pubkey::new_unique();
+
+        test_entry.push_transaction_with_status(
+            Transaction::new_signed_with_payer(
+                &[load_program_fail_instruction],
+                Some(&source),
+                &[&source_keypair],
+                Hash::default(),
+            ),
+            ExecutionStatus::ProcessedFailed,
+        );
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &source_keypair,
+            &destination,
+            transfer_amount,
+            Hash::default(),
+        ));
+
+        destination_data
+            .checked_add_lamports(transfer_amount)
+            .unwrap();
+        test_entry.create_expected_account(destination, &destination_data);
+
+        test_entry
+            .decrease_expected_lamports(&source, transfer_amount + LAMPORTS_PER_SIGNATURE * 2);
+
+        test_entries.push(test_entry);
+    }
+
+
     // XXX ugh next i need to check a non-executable followed by a successful
     // i dont think i update the accounts map from rollback accounts
     // or do i??? collect accounts is supposed to do that
