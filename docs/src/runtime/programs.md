@@ -27,7 +27,7 @@ transfer lamports from System Program owned accounts and pay transaction fees.
 
 ## Config Program
 
-Add configuration data to the chain, followed by the list of public keys that 
+Add configuration data to the chain, followed by the list of public keys that
 are allowed to modify it
 
 - Program id: `Config1111111111111111111111111111111111111`
