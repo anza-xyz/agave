@@ -172,5 +172,5 @@ by the signature cost verify multiplier.
 
 The operation will have to take place after (at least partial) deserialization,
 but all inputs come from the transaction data itself, which allows it to be
-relatively easy to execute in parallel to the transaction processing and the PoH
+relatively easy to execute in parallel to transaction processing and PoH
 verification.
