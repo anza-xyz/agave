@@ -4,14 +4,14 @@
 // Allows macro expansion of `use ::solana_frozen_abi::*` to work within this crate
 extern crate self as solana_frozen_abi;
 
-#[cfg(RUSTC_WITH_SPECIALIZATION)]
+#[cfg(feature = "frozen-abi")]
 pub mod abi_digester;
-#[cfg(RUSTC_WITH_SPECIALIZATION)]
+#[cfg(feature = "frozen-abi")]
 pub mod abi_example;
-#[cfg(RUSTC_WITH_SPECIALIZATION)]
+#[cfg(feature = "frozen-abi")]
 mod hash;
 
-#[cfg(RUSTC_WITH_SPECIALIZATION)]
+#[cfg(feature = "frozen-abi")]
 #[macro_use]
 extern crate solana_frozen_abi_macro;
 

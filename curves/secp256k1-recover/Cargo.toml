@@ -11,8 +11,12 @@ edition = { workspace = true }
 
 [dependencies]
 borsh = { workspace = true, optional = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "solana")'.dependencies]

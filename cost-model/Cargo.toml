@@ -16,8 +16,12 @@ log = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-metrics = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }

@@ -6612,7 +6612,6 @@ dependencies = [
  "im",
  "log",
  "memmap2",
- "rustc_version 0.4.1",
  "serde",
  "serde_bytes",
  "serde_derive",
@@ -6628,7 +6627,6 @@ version = "2.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "rustc_version 0.4.1",
  "syn 2.0.77",
 ]
 

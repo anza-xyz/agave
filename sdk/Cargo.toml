@@ -88,8 +88,12 @@ solana-bn254 = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
 solana-sanitize = { workspace = true }

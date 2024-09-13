@@ -33,8 +33,12 @@ solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
