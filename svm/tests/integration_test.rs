@@ -1169,7 +1169,27 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
 
     common_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
-    // batch 0:
+    // batch 0: one transaction that advances the nonce twice
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let transaction = Transaction::new_signed_with_payer(
+            &[advance_instruction.clone(), advance_instruction.clone()],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            *initial_durable.as_hash(),
+        );
+
+        test_entry.push_nonce_transaction_with_status(
+            transaction,
+            initial_nonce_info.clone(),
+            ExecutionStatus::ExecutedFailed,
+        );
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 1:
     // * a successful nonce transaction
     // * a nonce transaction that reuses the same nonce; this transaction must be dropped
     {
@@ -1195,7 +1215,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         test_entries.push(test_entry);
     }
 
-    // batch 1:
+    // batch 2:
     // * an executable failed nonce transaction
     // * a nonce transaction that reuses the same nonce; this transaction must be dropped
     {
@@ -1223,7 +1243,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         test_entries.push(test_entry);
     }
 
-    // batch 2:
+    // batch 3:
     // * a processable non-executable nonce transaction, if fee-only transactions are enabled
     // * a nonce transaction that reuses the same nonce; this transaction must be dropped
     if enable_fee_only_transactions {
@@ -1260,7 +1280,31 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         test_entries.push(test_entry);
     }
 
-    // TODO very evil idea: tx1 is a non-nonce txn that nevertheless advances the nonce. tx2 dropped
+    // batch 4:
+    // * a successful blockhash transaction that also advances the nonce
+    // * a nonce transaction that reuses the same nonce; this transaction must be dropped
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[
+                successful_noop_instruction.clone(),
+                advance_instruction.clone(),
+            ],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        test_entry.push_nonce_transaction(first_transaction, initial_nonce_info.clone());
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entries.push(test_entry);
+    }
 
     for test_entry in &mut test_entries {
         test_entry

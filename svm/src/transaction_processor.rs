@@ -381,7 +381,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &None::<Vec<SanitizedTransaction>>,
                         &processing_results,
                     );
-                    println!("HANA update acocunts: {:#?}", update_accounts);
                     for (pubkey, account) in update_accounts {
                         accounts_map.insert(*pubkey, account.clone());
                     }
@@ -537,7 +536,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         }
                     });
 
-            println!("HANA nonces equal: {:?}", nonces_are_equal);
             match nonces_are_equal {
                 Some(false) => (),
                 Some(true) => {
