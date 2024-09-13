@@ -122,15 +122,12 @@ test-case = { workspace = true }
 [target."cfg(unix)".dependencies]
 sysctl = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 dev-context-only-utils = [
     "solana-runtime/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dep:rustc_version",
+    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",

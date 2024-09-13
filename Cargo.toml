@@ -338,7 +338,6 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustc_version = "0.4"
 rustls = { version = "0.23.13", default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.23"

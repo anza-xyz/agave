@@ -29,13 +29,10 @@ curve25519-dalek = { workspace = true }
 ed25519-dalek = { workspace = true }
 solana-program = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 default = ["std"]
 frozen-abi = [
-    "dep:rustc_version",
+    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "std"

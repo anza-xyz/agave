@@ -59,9 +59,6 @@ solana-pubkey = { path = ".", features = [
 strum = { workspace = true }
 strum_macros = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 borsh = ["dep:borsh", "dep:borsh0-10", "std"]
 bytemuck = ["dep:bytemuck", "dep:bytemuck_derive"]
@@ -69,7 +66,7 @@ curve25519 = ["dep:curve25519-dalek", "sha2"]
 default = ["std"]
 dev-context-only-utils = ["dep:arbitrary", "std"]
 frozen-abi = [
-    "dep:rustc_version",
+    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro"
 ]
