@@ -121,7 +121,6 @@ borsh = [
 dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-hash/frozen-abi",
     "solana-instruction/frozen-abi",

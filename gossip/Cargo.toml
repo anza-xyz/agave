@@ -69,7 +69,6 @@ test-case = { workspace = true }
 [features]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-bloom/frozen-abi",
     "solana-ledger/frozen-abi",

@@ -22,7 +22,6 @@ solana-program = { workspace = true }
 [features]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
 ]
 

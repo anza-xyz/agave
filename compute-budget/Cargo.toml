@@ -18,7 +18,6 @@ solana-sdk = { workspace = true }
 [features]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "solana-sdk/frozen-abi",
 ]
 

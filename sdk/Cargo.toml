@@ -38,7 +38,6 @@ borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
 dev-context-only-utils = ["qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-feature-set/frozen-abi",
     "solana-program/frozen-abi",

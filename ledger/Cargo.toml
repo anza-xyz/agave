@@ -98,7 +98,6 @@ test-case = { workspace = true }
 dev-context-only-utils = []
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-runtime/frozen-abi",
 ]

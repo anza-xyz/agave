@@ -121,7 +121,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 dev-context-only-utils = ["solana-svm/dev-context-only-utils"]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-compute-budget/frozen-abi",

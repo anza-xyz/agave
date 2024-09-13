@@ -42,7 +42,6 @@ default = ["std"]
 dev-context-only-utils = ["bs58/alloc"]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "std"
 ]

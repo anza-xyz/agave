@@ -33,7 +33,6 @@ solana-program = { workspace = true }
 default = ["std"]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "std"
 ]

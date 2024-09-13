@@ -67,7 +67,6 @@ default = ["std"]
 dev-context-only-utils = ["dep:arbitrary", "std"]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro"
 ]
 serde = ["dep:serde", "dep:serde_derive"]

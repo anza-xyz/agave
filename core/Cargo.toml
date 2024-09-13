@@ -128,7 +128,6 @@ dev-context-only-utils = [
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-accounts-db/frozen-abi",
     "solana-bloom/frozen-abi",
