@@ -5,7 +5,7 @@ sidebar_label: Native Programs
 ---
 
 Solana contains a small handful of native programs, which are required to run
-validator nodes. Unlike the third-party programs, the native programs are part of
+validator nodes. Unlike third-party programs, the native programs are part of
 the validator implementation and can be upgraded as part of cluster upgrades.
 Upgrades may occur to add features, fix bugs, or improve performance. Interface
 changes to individual instructions should rarely, if ever, occur. Instead, when
@@ -27,7 +27,8 @@ transfer lamports from System Program owned accounts and pay transaction fees.
 
 ## Config Program
 
-Add configuration data to the chain, alongside the list of public keys that are allowed to modify it
+Add configuration data to the chain, followed by the list of public keys that 
+are allowed to modify it
 
 - Program id: `Config1111111111111111111111111111111111111`
 - Instructions: [config_instruction](https://docs.rs/solana-config-program/VERSION_FOR_DOCS_RS/solana_config_program/config_instruction/index.html)
@@ -35,7 +36,7 @@ Add configuration data to the chain, alongside the list of public keys that are 
 Unlike the other programs, the Config program does not define any individual
 instructions. It has just one implicit instruction: "store". Its
 instruction data is a set of keys that gate access to the account and the
-data stored inside it.
+data to stored inside of it.
 
 ## Stake Program
 
@@ -78,7 +79,7 @@ The program for verifying ed25519 signatures. It takes an ed25519 signature, a p
 Multiple signatures can be verified. If any of the signatures fail to verify, an error is returned.
 
 - Program id: `Ed25519SigVerify111111111111111111111111111`
-- Instructions: [ed25519_instruction](https://docs.rs/solana-sdk/1.18.18/solana_sdk/ed25519_instruction/index.html)
+- Instructions: [ed25519_instruction](https://docs.rs/solana-sdk/VERSION_FOR_DOCS_RS/solana_sdk/ed25519_instruction/index.html)
 
 The ed25519 program processes an instruction. The first `u8` is a count of the number of
 signatures to check, which is followed by a single byte padding. After that, the
@@ -139,7 +140,7 @@ struct Secp256k1SignatureOffsets {
 }
 ```
 
-The pseudo code of the verification:
+The pseudo code of the recovery verification:
 
 ```
 process_instruction() {
@@ -169,7 +170,7 @@ by the signature cost verify multiplier.
 
 ### Optimization notes
 
-The operation will have to take place after (at least, partial) deserialization,
+The operation will have to take place after (at least partial) deserialization,
 but all inputs come from the transaction data itself, which allows it to be
 relatively easy to execute in parallel to the transaction processing and the PoH
 verification.
