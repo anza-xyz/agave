@@ -70,6 +70,4 @@ level = "warn"
 check-cfg = [
     'cfg(build_target_feature_avx)',
     'cfg(build_target_feature_avx2)',
-    'cfg(RUSTC_WITH_SPECIALIZATION)',
-    'cfg(RUSTC_WITHOUT_SPECIALIZATION)',
 ]
