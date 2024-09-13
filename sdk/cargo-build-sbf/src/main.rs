@@ -208,6 +208,11 @@ fn semver_version(version: &str) -> String {
 }
 
 fn validate_platform_tools_version(requested_version: &str, builtin_version: &str) -> String {
+    // Early return here in case it's the first time we're running `cargo build-sbf`
+    // and we need to create the cache folders
+    if requested_version == builtin_version {
+        return builtin_version.to_string();
+    }
     let normalized_requested = semver_version(requested_version);
     let requested_semver = semver::Version::parse(&normalized_requested).unwrap();
     let installed_versions = find_installed_platform_tools();
