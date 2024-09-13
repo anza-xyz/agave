@@ -11185,6 +11185,52 @@ pub mod tests {
         );
     }
 
+    // TODO
+    #[test]
+    fn test_all_zeros_clean_and_shrink() {
+        // Test case
+        //    200 100
+        // X   1   0
+        // Y       0
+        // Z       0
+        // W       0
+        // U       0
+
+        // Set up slots with accounts
+        let db = AccountsDb::new_single_for_tests();
+        let pubkey_zero = Pubkey::from([1; 32]);
+        let one_lamport_account =
+            AccountSharedData::new(1, 0, AccountSharedData::default().owner());
+
+        let zero_lamport_account =
+            AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+        let slot = 1;
+
+        db.store_for_tests(slot, &[(&pubkey_zero, &one_lamport_account)]);
+        db.calculate_accounts_delta_hash(slot);
+        db.add_root_and_flush_write_cache(slot);
+
+        db.store_for_tests(slot + 1, &[(&pubkey_zero, &zero_lamport_account)]);
+        db.calculate_accounts_delta_hash(slot + 1);
+        db.add_root_and_flush_write_cache(slot + 1);
+
+        // Clean
+        db.clean_accounts(Some(1), false, &EpochSchedule::default());
+
+        // assert shrink candidates
+
+        // Shrink Slot 0
+        {
+            let mut shrink_candidate_slots = db.shrink_candidate_slots.lock().unwrap();
+            shrink_candidate_slots.insert(0);
+        }
+
+        // Do shrink: expect that we drop the all zero stores and call remove_zero_lamport_single_ref_accounts_after_shrink
+        // assert index that those zero pubkeys are removed...
+        let epoch_schedule = EpochSchedule::default();
+        db.shrink_candidate_slots(&epoch_schedule);
+    }
+
     #[test]
     fn test_remove_zero_lamport_single_ref_accounts_after_shrink() {
         for pass in 0..3 {
