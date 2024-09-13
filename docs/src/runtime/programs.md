@@ -36,7 +36,7 @@ are allowed to modify it
 Unlike the other programs, the Config program does not define any individual
 instructions. It has just one implicit instruction: "store". Its
 instruction data is a set of keys that gate access to the account and the
-data to stored inside of it.
+data to store inside of it.
 
 ## Stake Program
 
