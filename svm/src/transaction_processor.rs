@@ -40,11 +40,13 @@ use {
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
+        account_utils::StateMut,
         clock::{Epoch, Slot},
         fee::{FeeBudgetLimits, FeeStructure},
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
+        nonce::state::{State as NonceState, Versions as NonceVersions},
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
@@ -316,6 +318,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     if enable_transaction_loading_failure_fees {
+                        // XXX store rollback accounts here
                         Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                     } else {
                         Err(fees_only_tx.load_error)
@@ -359,6 +362,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &None::<Vec<SanitizedTransaction>>,
                         &processing_results,
                     );
+                    println!("HANA update acocunts: {:#?}", update_accounts);
                     for (pubkey, account) in update_accounts {
                         accounts_map.insert(*pubkey, account.clone());
                     }
@@ -488,17 +492,37 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // This is the same as if it was used is different batches in the same slot
         // If the nonce account was closed in the batch, we behave as if the blockhash didn't validate
         // XXX TODO FIXME uhhh how do i handle closed accounts?? do i need to drop them...
-        if let Some(ref expected_nonce_info) = nonce {
-            // XXX HANA this is clever... perhaps too clever
-            // need to check for any possible edge cases where blockhashes match but data doesnt
-            // otherwise we need to parse the nonce account into a NonceInfo
+        if let Some(ref nonce_info) = nonce {
             let nonces_are_equal =
                 accounts_map
-                    .get(expected_nonce_info.address())
-                    .map(|current_nonce_account| {
-                        current_nonce_account.data() == expected_nonce_info.account().data()
+                    .get(nonce_info.address())
+                    .and_then(|nonce_account| {
+                        // NOTE we cannot directly compare nonce account data because rent epochs may differ
+                        // XXX TODO FIXME this is fundamentally evil on a number of levels:
+                        // * we dont have a State impl so we have to use StateMut
+                        //   but we shouldnt add one because...
+                        // * we have to parse both nonce accounts. we could compare current to DurableNonce(last_blockhash)...
+                        //   but we would still need to parse one acccount, and i dont think i want to parse either
+                        // i believe the best way would be to add some bytemuck thing to NonceVersions
+                        // which returns Option<&Hash> or Option<&DurableNonce> (ie, None if we arent NonceState::Initialized)
+                        // but i would like feeback on this idea before i implement it
+                        let current_nonce = StateMut::<NonceVersions>::state(nonce_account).ok()?;
+                        let future_nonce =
+                            StateMut::<NonceVersions>::state(nonce_info.account()).ok()?;
+                        println!(
+                            "HANA current: {:#?}\n    future: {:#?}",
+                            current_nonce, future_nonce
+                        );
+                        match (current_nonce.state(), future_nonce.state()) {
+                            (
+                                NonceState::Initialized(ref current_data),
+                                NonceState::Initialized(ref future_data),
+                            ) => Some(current_data.blockhash() == future_data.blockhash()),
+                            _ => None,
+                        }
                     });
 
+            println!("HANA nonces equal: {:?}", nonces_are_equal);
             match nonces_are_equal {
                 Some(false) => (),
                 Some(true) => {

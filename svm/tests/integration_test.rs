@@ -991,7 +991,7 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
     }
 
     // batch 3:
-    // * unprocessable transfer due to underfunded fee-payer (two signatures)
+    // * non-processable transfer due to underfunded fee-payer (two signatures)
     // * successful transfer with the same fee-payer (one signature)
     {
         let mut test_entry = SvmTestEntry::default();
@@ -1039,6 +1039,10 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
         test_entry.decrease_expected_lamports(&feepayer, 1 + LAMPORTS_PER_SIGNATURE);
     }
 
+    // XXX ugh next i need to check a non-executable followed by a successful
+    // i dont think i update the accounts map from rollback accounts
+    // or do i??? collect accounts is supposed to do that
+
     if enable_fee_only_transactions {
         for test_entry in &mut test_entries {
             test_entry
@@ -1083,6 +1087,8 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
 
     let advance_instruction = system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer);
     let successful_noop_instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
+    let failing_noop_instruction = Instruction::new_with_bytes(system_program::id(), &[], vec![]);
+    let fee_only_noop_instruction = Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]);
 
     let second_transaction = Transaction::new_signed_with_payer(
         &[
@@ -1132,7 +1138,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
 
         test_entry.push_nonce_transaction(first_transaction, initial_nonce_info.clone());
         test_entry.push_nonce_transaction_with_status(
-            second_transaction,
+            second_transaction.clone(),
             advanced_nonce_info.clone(),
             ExecutionStatus::Discarded,
         );
@@ -1140,25 +1146,72 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         test_entries.push(test_entry);
     }
 
-    /*
-        // batch 1:
-        // * an executable failed nonce transaction
-        // * a nonce transaction that reuses the same nonce; this transaction must be dropped
-        {
-            let mut test_entry = SvmTestEntry::default();
+    // batch 1:
+    // * an executable failed nonce transaction
+    // * a nonce transaction that reuses the same nonce; this transaction must be dropped
+    {
+        let mut test_entry = common_test_entry.clone();
 
-            test_entries.push(test_entry);
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[advance_instruction.clone(), failing_noop_instruction],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            *initial_durable.as_hash(),
+        );
+
+        test_entry.push_nonce_transaction_with_status(
+            first_transaction,
+            initial_nonce_info.clone(),
+            ExecutionStatus::ExecutedFailed,
+        );
+
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 2:
+    // * a processable non-executable nonce transaction, if fee-only transactions are enabled
+    // * a nonce transaction that reuses the same nonce; this transaction must be dropped
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[advance_instruction.clone(), fee_only_noop_instruction],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            *initial_durable.as_hash(),
+        );
+
+        test_entry.push_nonce_transaction_with_status(
+            first_transaction,
+            initial_nonce_info.clone(),
+            ExecutionStatus::ProcessedFailed,
+        );
+
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        // if the nonce account pays fees, it keeps its new rent epoch, otherwise it resets
+        /* XXX
+        if !fee_paying_nonce {
+            test_entry
+                .final_accounts
+                .get_mut(&nonce_pubkey)
+                .unwrap()
+                .set_rent_epoch(0);
         }
+        */
 
-        // batch 2:
-        // * a processable non-executable nonce transaction, if fee-only transactions are enabled
-        // * a nonce transaction that reuses the same nonce; this transaction must be dropped
-        {
-            let mut test_entry = SvmTestEntry::default();
-
-            test_entries.push(test_entry);
-        }
-    */
+        test_entries.push(test_entry);
+    }
 
     // TODO very evil idea: tx1 is a non-nonce txn that nevertheless advances the nonce. tx2 dropped
 
