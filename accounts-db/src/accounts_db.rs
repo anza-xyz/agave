@@ -821,8 +821,8 @@ impl<'a> MultiThreadProgress<'a> {
 pub type AtomicAccountsFileId = AtomicU32;
 pub type AccountsFileId = u32;
 
-type AccountSlots = HashMap<Pubkey, HashSet<Slot>>;
-type SlotOffsets = HashMap<Slot, IntSet<usize>>;
+type AccountSlots = HashMap<Pubkey, IntSet<Slot>>;
+type SlotOffsets = IntMap<Slot, IntSet<usize>>;
 type ReclaimResult = (AccountSlots, SlotOffsets);
 type PubkeysRemovedFromAccountsIndex = HashSet<Pubkey>;
 type ShrinkCandidates = IntSet<Slot>;
@@ -4353,7 +4353,9 @@ impl AccountsDb {
         );
     }
 
-    fn do_shrink_slot_store(&self, slot: Slot, store: &AccountStorageEntry) {
+    /// Shrinks `store` by rewriting the alive accounts to a new storage
+    fn shrink_storage(&self, store: &AccountStorageEntry) {
+        let slot = store.slot();
         if self.accounts_cache.contains(slot) {
             // It is not correct to shrink a slot while it is in the write cache until flush is complete and the slot is removed from the write cache.
             // There can exist a window after a slot is made a root and before the write cache flushing for that slot begins and then completes.
@@ -4555,10 +4557,9 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
-            if !Self::is_shrinking_productive(slot, &store) {
-                return;
+            if Self::is_shrinking_productive(&store) {
+                self.shrink_storage(&store)
             }
-            self.do_shrink_slot_store(slot, &store)
         }
     }
 
@@ -5104,7 +5105,7 @@ impl AccountsDb {
                             .fetch_add(1, Ordering::Relaxed);
                     }
                     let mut measure = Measure::start("shrink_candidate_slots-ms");
-                    self.do_shrink_slot_store(slot, &slot_shrink_candidate);
+                    self.shrink_storage(&slot_shrink_candidate);
                     measure.stop();
                     inc_new_counter_info!("shrink_candidate_slots-ms", measure.as_ms() as usize);
                 });
@@ -8028,7 +8029,7 @@ impl AccountsDb {
         alive_bytes >= total_bytes
     }
 
-    fn is_shrinking_productive(slot: Slot, store: &AccountStorageEntry) -> bool {
+    fn is_shrinking_productive(store: &AccountStorageEntry) -> bool {
         let alive_count = store.count();
         let stored_count = store.approx_stored_count();
         let alive_bytes = store.alive_bytes() as u64;
@@ -8037,7 +8038,7 @@ impl AccountsDb {
         if Self::should_not_shrink(alive_bytes, total_bytes) {
             trace!(
                 "shrink_slot_forced ({}): not able to shrink at all: alive/stored: {}/{} ({}b / {}b) save: {}",
-                slot,
+                store.slot(),
                 alive_count,
                 stored_count,
                 alive_bytes,
@@ -8129,7 +8130,7 @@ impl AccountsDb {
                         offsets.sort_unstable();
                         let dead_bytes = store.accounts.get_account_sizes(&offsets).iter().sum();
                         store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
-                        if Self::is_shrinking_productive(*slot, &store)
+                        if Self::is_shrinking_productive(&store)
                             && self.is_candidate_for_shrink(&store)
                         {
                             // Checking that this single storage entry is ready for shrinking,
@@ -14929,7 +14930,7 @@ pub mod tests {
             AccountsFileProvider::AppendVec,
         ));
         store.add_account(file_size as usize);
-        assert!(!AccountsDb::is_shrinking_productive(slot, &store));
+        assert!(!AccountsDb::is_shrinking_productive(&store));
 
         let store = Arc::new(AccountStorageEntry::new(
             path,
@@ -14941,10 +14942,10 @@ pub mod tests {
         store.add_account(file_size as usize / 2);
         store.add_account(file_size as usize / 4);
         store.remove_accounts(file_size as usize / 4, false, 1);
-        assert!(AccountsDb::is_shrinking_productive(slot, &store));
+        assert!(AccountsDb::is_shrinking_productive(&store));
 
         store.add_account(file_size as usize / 2);
-        assert!(!AccountsDb::is_shrinking_productive(slot, &store));
+        assert!(!AccountsDb::is_shrinking_productive(&store));
     }
 
     #[test]
@@ -15443,7 +15444,7 @@ pub mod tests {
                 &pubkeys_removed_from_accounts_index,
             );
             assert_eq!(
-                vec![(pk1, vec![slot1].into_iter().collect::<HashSet<_>>())],
+                vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
                 purged_stored_account_slots.into_iter().collect::<Vec<_>>()
             );
             let expected = u64::from(already_removed);
@@ -15497,7 +15498,7 @@ pub mod tests {
                     &pubkeys_removed_from_accounts_index,
                 );
                 assert_eq!(
-                    vec![(pk1, vec![slot1].into_iter().collect::<HashSet<_>>())],
+                    vec![(pk1, vec![slot1].into_iter().collect::<IntSet<_>>())],
                     purged_stored_account_slots.into_iter().collect::<Vec<_>>()
                 );
                 assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
@@ -15535,7 +15536,7 @@ pub mod tests {
                 );
                 for (pk, slots) in [(pk1, vec![slot1, slot2]), (pk2, vec![slot1])] {
                     let result = purged_stored_account_slots.remove(&pk).unwrap();
-                    assert_eq!(result, slots.into_iter().collect::<HashSet<_>>());
+                    assert_eq!(result, slots.into_iter().collect::<IntSet<_>>());
                 }
                 assert!(purged_stored_account_slots.is_empty());
                 assert_eq!(db.accounts_index.ref_count_from_storage(&pk1), 0);
