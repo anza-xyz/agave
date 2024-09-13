@@ -318,7 +318,26 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     if enable_transaction_loading_failure_fees {
-                        // XXX store rollback accounts here
+                        // XXX HANA when we replace `collect_accounts_to_store` we want to encapsulate this code too
+                        let fee_payer_address = tx.fee_payer();
+                        match fees_only_tx.rollback_accounts {
+                            RollbackAccounts::FeePayerOnly {
+                                ref fee_payer_account,
+                            } => {
+                                accounts_map.insert(*fee_payer_address, fee_payer_account.clone());
+                            }
+                            RollbackAccounts::SameNonceAndFeePayer { ref nonce } => {
+                                accounts_map.insert(*nonce.address(), nonce.account().clone());
+                            }
+                            RollbackAccounts::SeparateNonceAndFeePayer {
+                                ref nonce,
+                                ref fee_payer_account,
+                            } => {
+                                accounts_map.insert(*nonce.address(), nonce.account().clone());
+                                accounts_map.insert(*fee_payer_address, fee_payer_account.clone());
+                            }
+                        }
+
                         Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                     } else {
                         Err(fees_only_tx.load_error)
@@ -509,10 +528,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         let current_nonce = StateMut::<NonceVersions>::state(nonce_account).ok()?;
                         let future_nonce =
                             StateMut::<NonceVersions>::state(nonce_info.account()).ok()?;
-                        println!(
-                            "HANA current: {:#?}\n    future: {:#?}",
-                            current_nonce, future_nonce
-                        );
                         match (current_nonce.state(), future_nonce.state()) {
                             (
                                 NonceState::Initialized(ref current_data),

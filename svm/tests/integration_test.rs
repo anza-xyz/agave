@@ -1088,7 +1088,6 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
         test_entries.push(test_entry);
     }
 
-
     // XXX ugh next i need to check a non-executable followed by a successful
     // i dont think i update the accounts map from rollback accounts
     // or do i??? collect accounts is supposed to do that
@@ -1227,7 +1226,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     // batch 2:
     // * a processable non-executable nonce transaction, if fee-only transactions are enabled
     // * a nonce transaction that reuses the same nonce; this transaction must be dropped
-    {
+    if enable_fee_only_transactions {
         let mut test_entry = common_test_entry.clone();
 
         let first_transaction = Transaction::new_signed_with_payer(
@@ -1250,7 +1249,6 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         );
 
         // if the nonce account pays fees, it keeps its new rent epoch, otherwise it resets
-        /* XXX
         if !fee_paying_nonce {
             test_entry
                 .final_accounts
@@ -1258,7 +1256,6 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
                 .unwrap()
                 .set_rent_epoch(0);
         }
-        */
 
         test_entries.push(test_entry);
     }
