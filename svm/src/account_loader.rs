@@ -226,6 +226,11 @@ pub fn validate_fee_payer(
 //   honestly if we do feature gate i have no idea how to structure it
 //   copy-paste the entire account_loader file including all tests? so we can simply delete the old one later?
 // ok just do this assuming no feature gate then ask andrew. it will be easier than weaving everything back together on spec
+//
+// XXX OK latest update. program cache tests next?
+// also acocunt dealloc tests, i think i should write a custom program that does something like
+// ixn to write to account, ixn to remove lamports, ixn that succeeds or fails depending on account data
+// then... grew through for comments of things to clean up.
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
@@ -262,13 +267,8 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
             accounts_map.insert(*account_key, account_override.clone());
         } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
-
             accounts_map.insert(*account_key, account);
-        }
-        // XXX we do not insert the default account here because we need to know if its not found later
-        // it raises the question however of whether we need to track if a program account is created in the batch
-        // XXX HANA FIXME UPDATE check with brooks on monday........ i dont know why we need to do this
-        else {
+        } else {
             callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
         }
     }
@@ -514,7 +514,6 @@ fn load_transaction_account(
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<(LoadedTransactionAccount, bool)> {
     let mut account_found = true;
-    let mut _was_inspected = false;
     let is_instruction_account = u8::try_from(account_index)
         .map(|i| instruction_accounts.contains(&&i))
         .unwrap_or(false);
