@@ -851,6 +851,12 @@ impl AccountsDb {
             }
         }
         let unpackable_slots_count = remove.len();
+
+        // Remove skipped slots
+        for i in remove.iter().rev() {
+            accounts_to_combine.remove(*i);
+        }
+
         target_slots_sorted.sort_unstable();
         self.shrink_ancient_stats
             .slots_cannot_move_count
