@@ -7051,7 +7051,6 @@ dependencies = [
  "serde_derive",
  "solana-program",
  "solana-sanitize",
- "thiserror",
 ]
 
 [[package]]

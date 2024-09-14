@@ -16,7 +16,6 @@ solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-sanitize = { workspace = true }
-thiserror = { workspace = true }
 
 [build-dependencies]
 rustc_version = { workspace = true, optional = true }
