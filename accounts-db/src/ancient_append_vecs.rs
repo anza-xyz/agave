@@ -1761,7 +1761,14 @@ pub mod tests {
                             &tuning,
                             many_ref_slots,
                         );
-                        let expected_accounts_to_combine = num_slots;
+                        let expected_accounts_to_combine = if num_slots >= 3
+                            && two_refs
+                            && many_ref_slots == IncludeManyRefSlots::Skip
+                        {
+                            0
+                        } else {
+                            num_slots
+                        };
                         (0..accounts_to_combine
                             .target_slots_sorted
                             .len()
@@ -1864,7 +1871,8 @@ pub mod tests {
                                 assert_eq!(
                                     accounts_to_combine.accounts_to_combine.len(),
                                     // if we are only trying to pack a single slot of multi-refs, it will succeed
-                                    if !two_refs || many_ref_slots == IncludeManyRefSlots::Include || num_slots == 1 || num_slots == 2 {num_slots} else {0},
+                                    // if num_slots = 2 and skip multi-ref slots, accounts_to_combine should be empty.
+                                    if !two_refs || many_ref_slots == IncludeManyRefSlots::Include || num_slots == 1 || (num_slots == 2 && many_ref_slots != IncludeManyRefSlots::Skip) {num_slots} else {0},
                                     "method: {method:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
 
