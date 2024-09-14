@@ -1,6 +1,13 @@
-//! The [`Pack`] serialization trait.
+//! The [`Pack`] serialization trait
+//! This is a Solana-specific serialization API that is used by many
+//! older programs in the [Solana Program Library][spl] to define their
+//! account format. It is difficult to implement and does not define a
+//! language-independent serialization format. It is not generally recommended
+//! for new code.
+//!
+//! [spl]: https://github.com/solana-labs/solana-program-library
 
-use crate::program_error::ProgramError;
+use solana_program_error::ProgramError;
 
 /// Check if a program account state is initialized
 pub trait IsInitialized {
