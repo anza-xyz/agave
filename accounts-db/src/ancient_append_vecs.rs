@@ -1765,6 +1765,12 @@ pub mod tests {
                             && two_refs
                             && many_ref_slots == IncludeManyRefSlots::Skip
                         {
+                            // In this test setup, 2.5 regular slots fits into 1 ancient slot.
+                            // When there are two_refs and when slots < 3, all regular slots can fit into one ancient slots.
+                            // Therefore, we should have all slots that can be combined for slots < 3.
+                            // However, when slots >=3, we need more than one ancient slots. The pack algorithm will need to first
+                            // find at least [ceiling(num_slots/2.5) - 1] slots that's doesn't have many_refs before we can pack slots with many_refs.
+                            // Since all the slots have many_refs, we can't find any eligible slot to combine.
                             0
                         } else {
                             num_slots
