@@ -52,7 +52,11 @@ macro_rules! socketaddr {
 const ERROR_RESPONSE: [u8; 2] = 0u16.to_le_bytes();
 
 pub const TIME_SLICE: u64 = 60;
+/// The default faucet port: `9900`
 pub const FAUCET_PORT: u16 = 9900;
+/// The default faucet socket: `127.0.0.1:9900`
+pub const FAUCET_SOCKET: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), FAUCET_PORT);
 
 #[derive(Error, Debug)]
 pub enum FaucetError {

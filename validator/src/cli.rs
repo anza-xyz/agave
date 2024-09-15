@@ -23,7 +23,7 @@ use {
         banking_trace::{DirByteLimit, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, BlockVerificationMethod},
     },
-    solana_faucet::faucet::{self, FAUCET_PORT},
+    solana_faucet::faucet::{self, FAUCET_SOCKET},
     solana_ledger::use_snapshot_archives_at_startup,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_rayon_threadlimit::get_thread_count,
@@ -2856,7 +2856,7 @@ impl DefaultTestArgs {
     pub fn new() -> Self {
         DefaultTestArgs {
             rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
-            faucet_addr: format!("127.0.0.1:{FAUCET_PORT}"),
+            faucet_addr: format!("{}", FAUCET_SOCKET),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the
              * 40MB-150MB range when running `solana-test-validator`
