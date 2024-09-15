@@ -3,8 +3,6 @@
 use serde_derive::{Deserialize, Serialize};
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
-#[cfg(not(target_os = "solana"))]
-use solana_program::message::{AddressLoaderError, SanitizeMessageError};
 use {core::fmt, solana_instruction::error::InstructionError, solana_sanitize::SanitizeError};
 
 /// Reasons a transaction might be rejected.
@@ -240,6 +238,51 @@ impl From<SanitizeMessageError> for TransactionError {
 }
 
 #[cfg(not(target_os = "solana"))]
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum AddressLoaderError {
+    /// Address loading from lookup tables is disabled
+    Disabled,
+
+    /// Failed to load slot hashes sysvar
+    SlotHashesSysvarNotFound,
+
+    /// Attempted to lookup addresses from a table that does not exist
+    LookupTableAccountNotFound,
+
+    /// Attempted to lookup addresses from an account owned by the wrong program
+    InvalidAccountOwner,
+
+    /// Attempted to lookup addresses from an invalid account
+    InvalidAccountData,
+
+    /// Address lookup contains an invalid index
+    InvalidLookupIndex,
+}
+
+#[cfg(not(target_os = "solana"))]
+impl std::error::Error for AddressLoaderError {}
+
+#[cfg(not(target_os = "solana"))]
+impl fmt::Display for AddressLoaderError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Disabled => f.write_str("Address loading from lookup tables is disabled"),
+            Self::SlotHashesSysvarNotFound => f.write_str("Failed to load slot hashes sysvar"),
+            Self::LookupTableAccountNotFound => {
+                f.write_str("Attempted to lookup addresses from a table that does not exist")
+            }
+            Self::InvalidAccountOwner => f.write_str(
+                "Attempted to lookup addresses from an account owned by the wrong program",
+            ),
+            Self::InvalidAccountData => {
+                f.write_str("Attempted to lookup addresses from an invalid account")
+            }
+            Self::InvalidLookupIndex => f.write_str("Address lookup contains an invalid index"),
+        }
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
 impl From<AddressLoaderError> for TransactionError {
     fn from(err: AddressLoaderError) -> Self {
         match err {
@@ -249,6 +292,58 @@ impl From<AddressLoaderError> for TransactionError {
             AddressLoaderError::InvalidAccountOwner => Self::InvalidAddressLookupTableOwner,
             AddressLoaderError::InvalidAccountData => Self::InvalidAddressLookupTableData,
             AddressLoaderError::InvalidLookupIndex => Self::InvalidAddressLookupTableIndex,
+        }
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+#[derive(PartialEq, Debug, Eq, Clone)]
+pub enum SanitizeMessageError {
+    IndexOutOfBounds,
+    ValueOutOfBounds,
+    InvalidValue,
+    AddressLoaderError(AddressLoaderError),
+}
+
+#[cfg(not(target_os = "solana"))]
+impl std::error::Error for SanitizeMessageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IndexOutOfBounds => None,
+            Self::ValueOutOfBounds => None,
+            Self::InvalidValue => None,
+            Self::AddressLoaderError(e) => Some(e),
+        }
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+impl fmt::Display for SanitizeMessageError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::IndexOutOfBounds => f.write_str("index out of bounds"),
+            Self::ValueOutOfBounds => f.write_str("value out of bounds"),
+            Self::InvalidValue => f.write_str("invalid value"),
+            Self::AddressLoaderError(e) => {
+                write!(f, "{e}")
+            }
+        }
+    }
+}
+#[cfg(not(target_os = "solana"))]
+impl From<AddressLoaderError> for SanitizeMessageError {
+    fn from(source: AddressLoaderError) -> Self {
+        SanitizeMessageError::AddressLoaderError { 0: source }
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+impl From<SanitizeError> for SanitizeMessageError {
+    fn from(err: SanitizeError) -> Self {
+        match err {
+            SanitizeError::IndexOutOfBounds => Self::IndexOutOfBounds,
+            SanitizeError::ValueOutOfBounds => Self::ValueOutOfBounds,
+            SanitizeError::InvalidValue => Self::InvalidValue,
         }
     }
 }

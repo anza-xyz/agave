@@ -14,15 +14,13 @@ serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
 solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
-solana-instruction = { workspace = true }
-solana-program = { workspace = true }
+solana-instruction = { workspace = true, default-features = false, features = [
+    "std",
+] }
 solana-sanitize = { workspace = true }
 
 [features]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro"
-]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 serde = ["dep:serde", "dep:serde_derive"]
 
 [package.metadata.docs.rs]
