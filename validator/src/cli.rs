@@ -2472,13 +2472,16 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Enable an accounts index, indexed by the selected account field"),
         )
         .arg(
-            Arg::with_name("faucet_port")
-                .long("faucet-port")
-                .value_name("PORT")
+            Arg::with_name("rpc_faucet_addr")
+                .long("rpc-faucet-address")
+                .value_name("HOST:PORT")
                 .takes_value(true)
-                .default_value(&default_args.faucet_port)
-                .validator(port_validator)
-                .help("Enable the faucet on this port"),
+                .default_value(&default_args.faucet_addr)
+                .validator(solana_net_utils::is_host_port)
+                .help(
+                    "Enable the JSON RPC 'requestAirdrop' API with this faucet address + port.\
+                    Defaults to 127.0.0.1:9900",
+                ),
         )
         .arg(
             Arg::with_name("rpc_port")
@@ -2843,7 +2846,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
 
 pub struct DefaultTestArgs {
     pub rpc_port: String,
-    pub faucet_port: String,
+    pub faucet_addr: String,
     pub limit_ledger_size: String,
     pub faucet_sol: String,
     pub faucet_time_slice_secs: String,
@@ -2853,7 +2856,7 @@ impl DefaultTestArgs {
     pub fn new() -> Self {
         DefaultTestArgs {
             rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
-            faucet_port: FAUCET_PORT.to_string(),
+            faucet_addr: format!("127.0.0.1:{FAUCET_PORT}"),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the
              * 40MB-150MB range when running `solana-test-validator`

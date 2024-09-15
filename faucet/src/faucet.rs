@@ -325,6 +325,10 @@ pub fn request_airdrop_transaction(
     Ok(transaction)
 }
 
+/// Runs a faucet on the localhost with the given `port`. If port 0 is used, a random available
+/// port will be automatically assigned.
+///
+/// If a non localhost listening address is required use [run_local_faucet_with_socket] instead.
 pub fn run_local_faucet_with_port(
     faucet_keypair: Keypair,
     sender: Sender<Result<SocketAddr, String>>,
@@ -333,8 +337,28 @@ pub fn run_local_faucet_with_port(
     per_request_cap: Option<u64>,
     port: u16, // 0 => auto assign
 ) {
+    let socket = socketaddr!(Ipv4Addr::LOCALHOST, port);
+    run_local_faucet_with_socket(
+        faucet_keypair,
+        sender,
+        time_input,
+        per_time_cap,
+        per_request_cap,
+        socket,
+    )
+}
+
+/// Runs a faucet on the given [SocketAddr]. If the SocketAddr port is 0, a random available
+/// port will be automatically assigned.
+pub fn run_local_faucet_with_socket(
+    faucet_keypair: Keypair,
+    sender: Sender<Result<SocketAddr, String>>,
+    time_input: Option<u64>,
+    per_time_cap: Option<u64>,
+    per_request_cap: Option<u64>,
+    socket: SocketAddr,
+) {
     thread::spawn(move || {
-        let faucet_addr = socketaddr!(Ipv4Addr::UNSPECIFIED, port);
         let faucet = Arc::new(Mutex::new(Faucet::new(
             faucet_keypair,
             time_input,
@@ -342,11 +366,11 @@ pub fn run_local_faucet_with_port(
             per_request_cap,
         )));
         let runtime = Runtime::new().unwrap();
-        runtime.block_on(run_faucet(faucet, faucet_addr, Some(sender)));
+        runtime.block_on(run_faucet(faucet, socket, Some(sender)));
     });
 }
 
-// For integration tests. Listens on random open port and reports port to Sender.
+/// For integration tests. Listens on random open port and reports port to Sender.
 pub fn run_local_faucet(faucet_keypair: Keypair, per_time_cap: Option<u64>) -> SocketAddr {
     let (sender, receiver) = unbounded();
     run_local_faucet_with_port(faucet_keypair, sender, None, per_time_cap, None, 0);
