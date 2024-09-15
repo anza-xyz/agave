@@ -7049,6 +7049,7 @@ version = "2.1.0"
 dependencies = [
  "serde",
  "serde_derive",
+ "solana-instruction",
  "solana-program",
  "solana-sanitize",
 ]

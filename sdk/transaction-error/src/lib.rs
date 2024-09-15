@@ -5,7 +5,7 @@ use serde_derive::{Deserialize, Serialize};
 use solana_frozen_abi_macro::{AbiEnumVisitor, AbiExample};
 #[cfg(not(target_os = "solana"))]
 use solana_program::message::{AddressLoaderError, SanitizeMessageError};
-use {core::fmt, solana_program::instruction::InstructionError, solana_sanitize::SanitizeError};
+use {core::fmt, solana_instruction::error::InstructionError, solana_sanitize::SanitizeError};
 
 /// Reasons a transaction might be rejected.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
