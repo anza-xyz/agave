@@ -1,6 +1,7 @@
 //! The solana-program-test provides a BanksClient-based test framework SBF programs
 #![allow(clippy::arithmetic_side_effects)]
 
+use solana_sdk::entrypoint::HEAP_LENGTH;
 // Export tokio for test clients
 pub use tokio;
 use {
@@ -811,6 +812,7 @@ impl ProgramTest {
             Arc::new(RuntimeConfig {
                 compute_budget: self.compute_max_units.map(|max_units| ComputeBudget {
                     compute_unit_limit: max_units,
+                    heap_size: (HEAP_LENGTH * 4) as u32,
                     ..ComputeBudget::default()
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,
