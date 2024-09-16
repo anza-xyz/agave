@@ -1,5 +1,5 @@
 use {
-    crate::bank::Bank, solana_sdk::transaction::Result,
+    crate::bank::Bank, core::ops::Deref, solana_sdk::transaction::Result,
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
@@ -8,7 +8,7 @@ pub enum OwnedOrBorrowed<'a, T> {
     Borrowed(&'a [T]),
 }
 
-impl<T> core::ops::Deref for OwnedOrBorrowed<'_, T> {
+impl<T> Deref for OwnedOrBorrowed<'_, T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
