@@ -27,7 +27,7 @@ solana-program-runtime = "1.18.23"
 solana-runtime = "1.18.23"
 solana-sdk = "1.18.23"
 solana-vote-program = "1.18.23"
-solana_rbpf = "1.18.23"
+solana_rbpf = { workspace = true }
 test-case = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
