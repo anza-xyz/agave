@@ -17,17 +17,17 @@ chrono-humanize = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
-solana-accounts-db = { workspace = true }
-solana-banks-client = { workspace = true }
-solana-banks-interface = { workspace = true }
-solana-banks-server = { workspace = true }
-solana-bpf-loader-program = { workspace = true }
-solana-logger = { workspace = true }
-solana-program-runtime = { workspace = true }
-solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
-solana-vote-program = { workspace = true }
-solana_rbpf = { workspace = true }
+solana-accounts-db = "1.18.23"
+solana-banks-client = "1.18.23"
+solana-banks-interface = "1.18.23"
+solana-banks-server = "1.18.23"
+solana-bpf-loader-program = "1.18.23"
+solana-logger = "1.18.23"
+solana-program-runtime = "1.18.23"
+solana-runtime = "1.18.23"
+solana-sdk = "1.18.23"
+solana-vote-program = "1.18.23"
+solana_rbpf = "1.18.23"
 test-case = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
