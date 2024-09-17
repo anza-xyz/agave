@@ -6351,6 +6351,7 @@ dependencies = [
  "rayon",
  "rolling-file",
  "rustls 0.23.13",
+ "serde",
  "serde_bytes",
  "serde_derive",
  "serde_json",
