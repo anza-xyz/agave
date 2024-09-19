@@ -3082,9 +3082,9 @@ impl AccountsDb {
             if let Some((_removed_slot, removed_pubkeys)) =
                 self.uncleaned_pubkeys.remove(&uncleaned_slot)
             {
-                removed_pubkeys
-                    .iter()
-                    .for_each(|pubkey| self.insert_pubkey(candidates, pubkey))
+                for removed_pubkey in removed_pubkeys {
+                    self.insert_pubkey(candidates, removed_pubkey);
+                }
             }
         }
     }
@@ -3096,10 +3096,10 @@ impl AccountsDb {
             .sum::<usize>() as u64
     }
 
-    fn insert_pubkey(&self, candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>], pubkey: &Pubkey) {
-        let index = self.accounts_index.bin_calculator.bin_from_pubkey(pubkey);
+    fn insert_pubkey(&self, candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>], pubkey: Pubkey) {
+        let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
         let mut candidates_bin = candidates[index].write().unwrap();
-        candidates_bin.insert(*pubkey, CleaningInfo::default());
+        candidates_bin.insert(pubkey, CleaningInfo::default());
     }
 
     /// Construct a list of candidates for cleaning from:
@@ -3153,7 +3153,7 @@ impl AccountsDb {
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
                         store
                             .accounts
-                            .scan_pubkeys(|pubkey| self.insert_pubkey(&candidates, pubkey));
+                            .scan_pubkeys(|pubkey| self.insert_pubkey(&candidates, *pubkey));
                     });
                     oldest_dirty_slot
                 })
@@ -3203,7 +3203,7 @@ impl AccountsDb {
                     let is_candidate_for_clean =
                         max_slot_inclusive >= *slot && latest_full_snapshot_slot >= *slot;
                     if is_candidate_for_clean {
-                        self.insert_pubkey(&candidates, pubkey);
+                        self.insert_pubkey(&candidates, *pubkey);
                     }
                     !is_candidate_for_clean
                 });
