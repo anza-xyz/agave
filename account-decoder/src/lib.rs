@@ -20,6 +20,7 @@ pub mod validator_info;
 use {
     crate::parse_account_data::{parse_account_data_v2, AccountAdditionalDataV2, ParsedAccount},
     base64::{prelude::BASE64_STANDARD, Engine},
+    serde::Deserialize,
     solana_sdk::{
         account::{ReadableAccount, WritableAccount},
         clock::Epoch,
@@ -44,6 +45,7 @@ pub struct UiAccount {
     pub data: UiAccountData,
     pub owner: String,
     pub executable: bool,
+    #[serde(deserialize_with = "deser_rent_epoch")]
     pub rent_epoch: Epoch,
     pub space: Option<u64>,
 }
@@ -218,12 +220,23 @@ fn slice_data(data: &[u8], data_slice_config: Option<UiDataSliceConfig>) -> &[u8
     }
 }
 
+fn deser_rent_epoch<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::de::Deserializer<'de>,
+{
+    let rent_epoch: u128 = Deserialize::deserialize(deserializer)?;
+    Ok(rent_epoch.min(u64::MAX as u128) as u64)
+}
+
 #[cfg(test)]
 mod test {
     use {
         super::*,
         assert_matches::assert_matches,
-        solana_sdk::account::{Account, AccountSharedData},
+        solana_sdk::{
+            account::{Account, AccountSharedData},
+            rent_collector::RENT_EXEMPT_RENT_EPOCH,
+        },
     };
 
     #[test]
@@ -326,5 +339,37 @@ mod test {
         assert_eq!(decoded_account.data(), &vec![0; 1024]);
         let decoded_account = encoded_account.decode::<AccountSharedData>().unwrap();
         assert_eq!(decoded_account.data(), &vec![0; 1024]);
+    }
+
+    #[test]
+    fn deserialize_rent_epoch_issue_2950() {
+        let response_with_overflow = r#"{
+                "data": [
+                    "KLUv/SAAAQAA",
+                    "base64+zstd"
+                ],
+                "executable": false,
+                "lamports": 2088540689624,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709552000,
+                "space": 0
+            }"#;
+        let result: UiAccount = serde_json::from_str(&response_with_overflow).unwrap();
+        assert_eq!(result.rent_epoch, RENT_EXEMPT_RENT_EPOCH);
+
+        let response = r#"{
+            "data": [
+                "KLUv/SAAAQAA",
+                "base64+zstd"
+            ],
+            "executable": false,
+            "lamports": 2088540689624,
+            "owner": "11111111111111111111111111111111",
+            "rentEpoch": 12345,
+            "space": 0
+        }"#;
+
+        let result: UiAccount = serde_json::from_str(&response).unwrap();
+        assert_eq!(result.rent_epoch, 12345);
     }
 }
