@@ -1033,7 +1033,7 @@ pub fn process_vote_authorize(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -1117,7 +1117,7 @@ pub fn process_vote_update_validator(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
 
     if sign_only {
@@ -1195,7 +1195,7 @@ pub fn process_vote_update_commission(
     } else {
         Message::new(&ixs, Some(&fee_payer.pubkey()))
     };
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
     if sign_only {
         tx.try_partial_sign(&config.signers, recent_blockhash)?;
@@ -1479,7 +1479,7 @@ pub fn process_close_vote_account(
     });
 
     let mut message = Message::new(&ixs, Some(&fee_payer.pubkey()));
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
     check_account_for_fee_with_commitment(
