@@ -225,7 +225,10 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
     exit: Arc<AtomicBool>,
     progress: &mut WenRestartProgress,
 ) -> Result<LastVotedForkSlotsFinalResult> {
-    let root_bank = bank_forks.read().unwrap().root_bank();
+    let root_bank;
+    {
+        root_bank = bank_forks.read().unwrap().root_bank();
+    }
     let root_slot = root_bank.slot();
     let mut last_voted_fork_slots_aggregate = LastVotedForkSlotsAggregate::new(
         root_bank.clone(),
@@ -354,7 +357,10 @@ pub(crate) fn find_heaviest_fork(
     blockstore: Arc<Blockstore>,
     exit: Arc<AtomicBool>,
 ) -> Result<(Slot, Hash)> {
-    let root_bank = bank_forks.read().unwrap().root_bank();
+    let root_bank;
+    {
+        root_bank = bank_forks.read().unwrap().root_bank();
+    }
     let root_slot = root_bank.slot();
     let mut slots = aggregate_final_result
         .slots_stake_map
@@ -555,13 +561,15 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
     root_bank: Arc<Bank>,
     exit: &AtomicBool,
 ) -> Result<Hash> {
-    let heaviest_fork_bankhash = bank_forks
-        .read()
-        .unwrap()
-        .get(heaviest_fork_slot)
-        .map(|bank| bank.hash());
-    if let Some(hash) = heaviest_fork_bankhash {
-        return Ok(hash);
+    {
+        if let Some(hash) = bank_forks
+            .read()
+            .unwrap()
+            .get(heaviest_fork_slot)
+            .map(|bank| bank.hash())
+        {
+            return Ok(hash);
+        }
     }
 
     let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
@@ -646,7 +654,10 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     exit: Arc<AtomicBool>,
     progress: &mut WenRestartProgress,
 ) -> Result<()> {
-    let root_bank = bank_forks.read().unwrap().root_bank();
+    let root_bank;
+    {
+        root_bank = bank_forks.read().unwrap().root_bank();
+    }
     if progress.my_heaviest_fork.is_none() {
         return Err(WenRestartError::MalformedProgress(
             RestartState::HeaviestFork,
