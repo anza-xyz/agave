@@ -4,6 +4,8 @@
 #![no_std]
 
 use log::*;
+#[cfg(feature = "frozen-abi")]
+extern crate std;
 
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
