@@ -1088,10 +1088,6 @@ fn intrabatch_account_reuse(enable_fee_only_transactions: bool) -> Vec<SvmTestEn
         test_entries.push(test_entry);
     }
 
-    // XXX ugh next i need to check a non-executable followed by a successful
-    // i dont think i update the accounts map from rollback accounts
-    // or do i??? collect accounts is supposed to do that
-
     if enable_fee_only_transactions {
         for test_entry in &mut test_entries {
             test_entry
@@ -1321,6 +1317,96 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     test_entries
 }
 
+fn account_deallocate() -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+
+    // batch 0: sanity check, the program actually sets data
+    // batch 1: removing lamports from account hides it from subsequent in-batch transactions
+    for remove_lamports in [false, true] {
+        let mut test_entry = SvmTestEntry::default();
+
+        let program_name = "write-to-account".to_string();
+        let program_id = program_address(&program_name);
+        test_entry
+            .initial_programs
+            .push((program_name, DEPLOYMENT_SLOT));
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+
+        let mut fee_payer_data = AccountSharedData::default();
+        fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+        let target = Pubkey::new_unique();
+
+        let mut target_data = AccountSharedData::create(
+            Rent::default().minimum_balance(1),
+            vec![0],
+            program_id,
+            false,
+            u64::MAX,
+        );
+        test_entry.add_initial_account(target, &target_data);
+
+        let account_metas = vec![
+            AccountMeta::new(target, false),
+            AccountMeta::new(solana_sdk::incinerator::id(), false),
+        ];
+
+        let set_data_transaction = Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bytes(
+                program_id,
+                &[0],
+                account_metas.clone(),
+            )],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+        test_entry.push_transaction(set_data_transaction.clone());
+
+        target_data.data_as_mut_slice()[0] = 100;
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+        test_entry.update_expected_account_data(target, &target_data);
+
+        if remove_lamports {
+            let dealloc_transaction = Transaction::new_signed_with_payer(
+                &[Instruction::new_with_bytes(
+                    program_id,
+                    &[1],
+                    account_metas.clone(),
+                )],
+                Some(&fee_payer),
+                &[&fee_payer_keypair],
+                Hash::default(),
+            );
+            test_entry.push_transaction(dealloc_transaction.clone());
+
+            // NOTE we cannot test here that the account has been dropped
+            // because, as-designed, the account returned from tx processing is "live" with zero lamports
+            // instead, we test to confirm the batch correctly pretends it has been dropped
+            test_entry.push_transaction_with_status(
+                set_data_transaction.clone(),
+                ExecutionStatus::ExecutedFailed,
+            );
+
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+            // XXX FIXME this is BAD and WRONG, see notes in transaction_processor.rs
+            test_entry
+                .final_accounts
+                .insert(target, AccountSharedData::default())
+                .unwrap();
+        }
+
+        test_entries.push(test_entry);
+    }
+
+    test_entries
+}
+
 #[test_case(program_medley())]
 #[test_case(simple_transfer(false))]
 #[test_case(simple_transfer(true))]
@@ -1334,6 +1420,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
 #[test_case(nonce_reuse(true, false))]
 #[test_case(nonce_reuse(false, true))]
 #[test_case(nonce_reuse(true, true))]
+#[test_case(account_deallocate())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);
@@ -1452,6 +1539,7 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     }
 
     // now run our transaction-by-transaction checks
+    // TODO check tx status first... its too annoying to debug test-driven development
     for (processing_result, test_item_asserts) in batch_output
         .processing_results
         .iter()

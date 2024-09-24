@@ -382,7 +382,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &processing_results,
                     );
                     for (pubkey, account) in update_accounts {
-                        accounts_map.insert(*pubkey, account.clone());
+                        if account.lamports() == 0 {
+                            // XXX HANA im VERY not sure if this is correct, as i havent found the code that deallocs accounts
+                            // zero-lamport accounts come back from tx processing with their data intact
+                            // so we need to emulate the account-dropping behavior the runtime enforces later
+                            // it appears accounts-db does this with `clean_accounts()`... but might only be backing storage?
+                            // the line that accounts can only be purged if "there are no live append vecs in the ancestors"
+                            // is very mysterious to me. absolutely need guidance on this point
+                            // UPDATE: this ALSO creates a horrifying catch-22
+                            // where, if one transaction drops an account, the next one needs to see a fake dropped account
+                            // which means it *returns* the fake dropped account, which works its way back to the runtime
+                            // in other words, if you zero lamports, an otherwise-identical account is returned
+                            // but if *another* transaction accepts the account, we return AccountShardedData::default()
+                            // so either we need to double-fake the account, or we should mutate the LoadedTransaction... :/
+                            accounts_map.insert(*pubkey, AccountSharedData::default());
+                        } else {
+                            accounts_map.insert(*pubkey, account.clone());
+                        }
                     }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
@@ -2221,6 +2237,7 @@ mod tests {
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
+    // XXX TODO FIXME i broke this :(
     #[test]
     fn test_validate_transaction_fee_payer_is_nonce() {
         let feature_set = FeatureSet::default();

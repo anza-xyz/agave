@@ -228,9 +228,9 @@ pub fn validate_fee_payer(
 // ok just do this assuming no feature gate then ask andrew. it will be easier than weaving everything back together on spec
 //
 // XXX OK latest update. program cache tests next?
-// also acocunt dealloc tests, i think i should write a custom program that does something like
+// also account dealloc tests, i think i should write a custom program that does something like
 // ixn to write to account, ixn to remove lamports, ixn that succeeds or fails depending on account data
-// then... grew through for comments of things to clean up.
+// then... go through for comments of things to clean up.
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
