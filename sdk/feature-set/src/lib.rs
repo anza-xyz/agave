@@ -788,7 +788,7 @@ pub mod remove_rounding_in_fee_calculation {
 }
 
 pub mod enable_tower_sync_ix {
-    solana_program::declare_id!("tSynMCspg4xFiCj1v3TDb4c7crMR5tSBhLz4sF7rrNA");
+    solana_program::declare_id!("tsYNCXjuS3M2Bj1GMeXv1gRjdaKgMj5PwNnYdJMc3SK");
 }
 
 pub mod deprecate_unused_legacy_vote_plumbing {
