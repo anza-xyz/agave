@@ -153,7 +153,7 @@ mod test {
         test_read(read_bool, true);
     }
 
-    fn test_read<T: Debug + PartialEq + serde::Serialize + borsh0_10::BorshSerialize>(
+    fn test_read<T: Debug + PartialEq + serde::Serialize + borsh::BorshSerialize>(
         reader: fn(&mut Cursor<Vec<u8>>) -> Result<T, InstructionError>,
         test_value: T,
     ) {
@@ -161,7 +161,7 @@ mod test {
         let mut cursor = Cursor::new(bincode_bytes);
         let bincode_read = reader(&mut cursor).unwrap();
 
-        let borsh_bytes = borsh0_10::to_vec(&test_value).unwrap();
+        let borsh_bytes = borsh::to_vec(&test_value).unwrap();
         let mut cursor = Cursor::new(borsh_bytes);
         let borsh_read = reader(&mut cursor).unwrap();
 

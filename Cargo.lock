@@ -7845,7 +7845,7 @@ name = "solana-serialize-utils"
 version = "2.1.0"
 dependencies = [
  "bincode",
- "borsh 0.10.3",
+ "borsh 1.5.1",
  "rand 0.8.5",
  "serde",
  "solana-instruction",

@@ -18,7 +18,7 @@ solana-sanitize = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
-borsh0-10 = { workspace = true }
+borsh = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false, features = [
