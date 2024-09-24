@@ -3108,7 +3108,18 @@ impl AccountsDb {
                             candidates_bin = candidates[curr_bin].write().unwrap();
                             prev_bin = curr_bin;
                         }
-                        candidates_bin.insert(removed_pubkey, CleaningInfo::default());
+                        // Conservatively mark the candidate to be zero for
+                        // correctness so that scan WILL try to look in disk if it is
+                        // not in-mem. These keys are from 1) recently processed
+                        // slots, 2) zeros found in shrink. Therefore, they are very likely
+                        // to be in-memory, and seldomly do we need to look them up in disk.
+                        candidates_bin.insert(
+                            removed_pubkey,
+                            CleaningInfo {
+                                can_contain_zero: true,
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
             }
@@ -3121,12 +3132,6 @@ impl AccountsDb {
             .map(|x| x.read().unwrap().len())
             .sum::<usize>() as u64
     }
-
-    // fn insert_pubkey(&self, candidates: &[RwLock<HashMap<Pubkey, CleaningInfo>>], pubkey: Pubkey) {
-    //     let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
-    //     let mut candidates_bin = candidates[index].write().unwrap();
-    //     candidates_bin.insert(pubkey, CleaningInfo::default());
-    // }
 
     /// Construct a list of candidates for cleaning from:
     /// - dirty_stores      -- set of stores which had accounts
@@ -3201,7 +3206,6 @@ impl AccountsDb {
                         store.accounts.scan_index(|index| {
                             let pubkey = index.index_info.pubkey;
                             let is_zero = index.index_info.lamports == 0;
-
                             insert_candidate(pubkey, is_zero);
                         });
                     });
@@ -3236,22 +3240,6 @@ impl AccountsDb {
         self.remove_uncleaned_slots_up_to_slot_and_move_pubkeys(max_slot_inclusive, &candidates);
         collect_delta_keys.stop();
         timings.collect_delta_keys_us += collect_delta_keys.as_us();
-
-        // let mut delta_insert = Measure::start("delta_insert");
-        // self.thread_pool_clean.install(|| {
-        //     delta_keys.par_iter().for_each(|keys| {
-        //         for key in keys {
-        //             // Conservatively mark the candidate to be zero for
-        //             // correctness so that scan WILL try to look in disk if it is
-        //             // not in-mem. These keys are from 1) recently processed
-        //             // slots, 2) zeros found in shrink. Therefore, seldomly do
-        //             // we need to look up in disk.
-        //             insert_candidate(*key, true);
-        //         }
-        //     });
-        // });
-        // delta_insert.stop();
-        // timings.delta_insert_us += delta_insert.as_us();
 
         timings.delta_key_count = Self::count_pubkeys(&candidates);
 
