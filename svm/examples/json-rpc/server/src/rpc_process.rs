@@ -58,7 +58,7 @@ use {
     },
     solana_system_program::system_processor,
     solana_transaction_status::{
-        map_inner_instructions, TransactionBinaryEncoding, UiInnerInstructions,
+        map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
         UiTransactionEncoding,
     },
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -749,7 +749,7 @@ pub mod rpc {
 
             let inner_instructions = inner_instructions.map(|info| {
                 map_inner_instructions(info)
-                    .map(|converted| UiInnerInstructions::parse(converted, &account_keys))
+                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
                     .collect()
             });
 
