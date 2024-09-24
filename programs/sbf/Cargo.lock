@@ -5315,6 +5315,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-fee-calculator"
+version = "2.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "solana-genesis-utils"
 version = "2.1.0"
 dependencies = [
@@ -5702,6 +5711,7 @@ dependencies = [
  "solana-decode-error",
  "solana-define-syscall",
  "solana-epoch-schedule",
+ "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
  "solana-msg",
