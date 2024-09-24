@@ -217,7 +217,8 @@ fn new_transport_config() -> TransportConfig {
         .keep_alive_interval(Some(KEEP_ALIVE_INTERVAL))
         .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS)
         .max_concurrent_uni_streams(VarInt::from(0u8))
-        .max_idle_timeout(Some(max_idle_timeout));
+        .max_idle_timeout(Some(max_idle_timeout))
+        .crypto_buffer_size(2048);
     config
 }
 
