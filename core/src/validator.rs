@@ -1277,7 +1277,7 @@ impl Validator {
                 (None, RepairQuicAsyncSenders::new_dummy(), None)
             } else {
                 let repair_quic_sockets = RepairQuicSockets {
-                    repair_service_quic_socket: node.sockets.serve_repair_quic,
+                    repair_server_quic_socket: node.sockets.serve_repair_quic,
                     repair_client_quic_socket: node.sockets.repair_quic,
                     ancestor_hashes_quic_socket: node.sockets.ancestor_hashes_requests_quic,
                 };
