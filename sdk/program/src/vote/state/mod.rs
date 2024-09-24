@@ -221,16 +221,21 @@ impl VoteStateUpdate {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "5PFw9pyF1UG1DXVsw7gpjHegNyRycAAxWf2GA9wUXPs5"),
+    frozen_abi(digest = "DqMoZ6hSsG1wguKx49kjZmU8sEu7jjzDWqg14qxoeinM"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub struct TowerSync {
-    /// The proposed tower
+    /// the proposed tower
     pub lockouts: VecDeque<Lockout>,
-    /// The proposed root
+    /// the proposed root
     pub root: Option<Slot>,
-    /// signature of the bank's state at the last slot
+    /// signature of the VoteState's at the latest slot in `lockouts`
+    pub yolo_hash: Hash,
+    /// the latest fully replayed slot, equal to the last
+    /// slot in `lockouts` until asynchronous execution.
+    pub replay_tip: Slot,
+    /// signature of the bank's state at `replay_tip`
     pub hash: Hash,
     /// processing timestamp of last slot
     pub timestamp: Option<UnixTimestamp>,
@@ -251,6 +256,8 @@ impl From<Vec<(Slot, u32)>> for TowerSync {
         Self {
             lockouts,
             root: None,
+            yolo_hash: Hash::default(),
+            replay_tip: 0,
             hash: Hash::default(),
             timestamp: None,
             block_id: Hash::default(),
@@ -265,9 +272,13 @@ impl TowerSync {
         hash: Hash,
         block_id: Hash,
     ) -> Self {
+        let replay_tip = lockouts.back().map(|l| l.slot).unwrap_or(0);
+        let yolo_hash = hash;
         Self {
             lockouts,
             root,
+            yolo_hash,
+            replay_tip,
             hash,
             timestamp: None,
             block_id,
@@ -298,8 +309,11 @@ impl TowerSync {
             .map(|(cc, s)| Lockout::new_with_confirmation_count(s, cc.saturating_add(1) as u32))
             .rev()
             .collect();
+        let replay_tip = lockouts.back().map(|l| l.slot).unwrap_or(0);
         Self {
             lockouts,
+            replay_tip,
+            yolo_hash: hash,
             hash,
             root,
             timestamp: None,
@@ -1090,6 +1104,8 @@ pub mod serde_tower_sync {
         root: Slot,
         #[serde(with = "short_vec")]
         lockout_offsets: Vec<LockoutOffset>,
+        replay_tip: Slot,
+        yolo_hash: Hash,
         hash: Hash,
         timestamp: Option<UnixTimestamp>,
         block_id: Hash,
@@ -1119,6 +1135,8 @@ pub mod serde_tower_sync {
         let compact_tower_sync = CompactTowerSync {
             root: tower_sync.root.unwrap_or(Slot::MAX),
             lockout_offsets: lockout_offsets.collect::<Result<_, _>>()?,
+            replay_tip: tower_sync.replay_tip,
+            yolo_hash: tower_sync.yolo_hash,
             hash: tower_sync.hash,
             timestamp: tower_sync.timestamp,
             block_id: tower_sync.block_id,
@@ -1133,6 +1151,8 @@ pub mod serde_tower_sync {
         let CompactTowerSync {
             root,
             lockout_offsets,
+            replay_tip,
+            yolo_hash,
             hash,
             timestamp,
             block_id,
@@ -1157,6 +1177,8 @@ pub mod serde_tower_sync {
         Ok(TowerSync {
             root,
             lockouts: lockouts.collect::<Result<_, _>>()?,
+            replay_tip,
+            yolo_hash,
             hash,
             timestamp,
             block_id,
