@@ -1,15 +1,18 @@
 // static account keys has max
 use {
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET as FILTER_SIZE,
-    solana_sdk::{message::TransactionSignatureDetails, pubkey::Pubkey},
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_pubkey::Pubkey, solana_svm_transaction::instruction::SVMInstruction,
 };
 
+pub struct PrecompileSignatureDetails {
+    pub num_secp256k1_instruction_signatures: u64,
+    pub num_ed25519_instruction_signatures: u64,
+}
+
 /// Get transaction signature details.
-pub fn get_signature_details<'a>(
-    num_transaction_signatures: u64,
+pub fn get_precompile_signature_details<'a>(
     instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
-) -> TransactionSignatureDetails {
+) -> PrecompileSignatureDetails {
     let mut filter = SignatureDetailsFilter::new();
 
     // Wrapping arithmetic is safe below because the maximum number of signatures
@@ -23,25 +26,24 @@ pub fn get_signature_details<'a>(
             ProgramIdStatus::NotSignature => {}
             ProgramIdStatus::Secp256k1 => {
                 num_secp256k1_instruction_signatures = num_secp256k1_instruction_signatures
-                    .wrapping_add(u64::from(get_num_signatures_in_instruction(&instruction)));
+                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
             }
             ProgramIdStatus::Ed25519 => {
                 num_ed25519_instruction_signatures = num_ed25519_instruction_signatures
-                    .wrapping_add(u64::from(get_num_signatures_in_instruction(&instruction)));
+                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
             }
         }
     }
 
-    TransactionSignatureDetails::new(
-        num_transaction_signatures,
+    PrecompileSignatureDetails {
         num_secp256k1_instruction_signatures,
         num_ed25519_instruction_signatures,
-    )
+    }
 }
 
 #[inline]
-fn get_num_signatures_in_instruction(instruction: &SVMInstruction) -> u8 {
-    instruction.data.first().copied().unwrap_or(0)
+fn get_num_signatures_in_instruction(instruction: &SVMInstruction) -> u64 {
+    u64::from(instruction.data.first().copied().unwrap_or(0))
 }
 
 #[derive(Copy, Clone)]
@@ -113,11 +115,10 @@ mod tests {
     #[test]
     fn test_get_signature_details_no_instructions() {
         let instructions = std::iter::empty();
-        let signature_details = get_signature_details(2, instructions);
+        let signature_details = get_precompile_signature_details(instructions);
 
-        assert_eq!(signature_details.num_transaction_signatures(), 2);
-        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 0);
-        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 0);
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
     }
 
     #[test]
@@ -128,10 +129,9 @@ mod tests {
             make_instruction(&program_ids, 1, &[]),
         ];
 
-        let signature_details = get_signature_details(2, instructions.into_iter());
-        assert_eq!(signature_details.num_transaction_signatures(), 2);
-        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 0);
-        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 0);
+        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
     }
 
     #[test]
@@ -150,10 +150,9 @@ mod tests {
             make_instruction(&program_ids, 0, &[]),
         ];
 
-        let signature_details = get_signature_details(2, instructions.into_iter());
-        assert_eq!(signature_details.num_transaction_signatures(), 2);
-        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 6);
-        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 5);
+        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures, 6);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures, 5);
     }
 
     #[test]
@@ -167,9 +166,8 @@ mod tests {
             make_instruction(&program_ids, 1, &[]),
         ];
 
-        let signature_details = get_signature_details(2, instructions.into_iter());
-        assert_eq!(signature_details.num_transaction_signatures(), 2);
-        assert_eq!(signature_details.num_secp256k1_instruction_signatures(), 0);
-        assert_eq!(signature_details.num_ed25519_instruction_signatures(), 0);
+        let signature_details = get_precompile_signature_details(instructions.into_iter());
+        assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
+        assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
     }
 }

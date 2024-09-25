@@ -1,6 +1,6 @@
 use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
-    solana_runtime_transaction::signature_details::get_signature_details,
+    solana_runtime_transaction::signature_details::get_precompile_signature_details,
     solana_sdk::{instruction::CompiledInstruction, pubkey::Pubkey},
     solana_svm_transaction::instruction::SVMInstruction,
 };
@@ -13,7 +13,7 @@ fn bench_get_signature_details_empty(c: &mut Criterion) {
         .bench_function("0 instructions", |bencher| {
             bencher.iter(|| {
                 let instructions = black_box(instructions.clone());
-                let _ = get_signature_details(0, instructions);
+                let _ = get_precompile_signature_details(instructions);
             });
         });
 }
@@ -43,7 +43,7 @@ fn bench_get_signature_details_no_sigs_unique(c: &mut Criterion) {
                         black_box(instructions.iter().map(|(program_id, instruction)| {
                             (*program_id, SVMInstruction::from(instruction))
                         }));
-                    let _ = get_signature_details(0, instructions);
+                    let _ = get_precompile_signature_details(instructions);
                 });
             });
     }
@@ -78,7 +78,7 @@ fn bench_get_signature_details_packed_sigs(c: &mut Criterion) {
                         black_box(instructions.iter().map(|(program_id, instruction)| {
                             (*program_id, SVMInstruction::from(instruction))
                         }));
-                    let _ = get_signature_details(0, instructions);
+                    let _ = get_precompile_signature_details(instructions);
                 });
             });
     }
@@ -116,7 +116,7 @@ fn bench_get_signature_details_mixed_sigs(c: &mut Criterion) {
                         black_box(instructions.iter().map(|(program_id, instruction)| {
                             (*program_id, SVMInstruction::from(instruction))
                         }));
-                    let _ = get_signature_details(0, instructions);
+                    let _ = get_precompile_signature_details(instructions);
                 });
             });
     }
