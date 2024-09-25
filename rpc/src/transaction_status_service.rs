@@ -73,6 +73,8 @@ impl TransactionStatusService {
                 token_balances,
                 transaction_indexes,
             }) => {
+                let mut batch = blockstore.db_ref().batch().unwrap();
+
                 for (
                     transaction,
                     commit_result,
@@ -177,9 +179,17 @@ impl TransactionStatusService {
                                 keys_with_writable,
                                 transaction_status_meta,
                                 transaction_index,
+                                Some(&mut batch),
                             )
-                            .expect("Expect database write to succeed: TransactionStatus");
+                            .expect("Expect database batching to succeed: TransactionStatus");
                     }
+                }
+
+                if enable_rpc_transaction_history {
+                    blockstore
+                        .db_ref()
+                        .write(batch)
+                        .expect("Expect database batched write to succeed: TransactionStatus");
                 }
             }
             TransactionStatusMessage::Freeze(slot) => {

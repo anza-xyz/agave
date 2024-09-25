@@ -589,6 +589,7 @@ pub mod tests {
                     .into_iter(),
                     TransactionStatusMeta::default(),
                     0,
+                    None,
                 )
                 .unwrap();
         }
@@ -650,6 +651,7 @@ pub mod tests {
                     .into_iter(),
                     TransactionStatusMeta::default(),
                     0,
+                    None,
                 )
                 .unwrap();
         }
@@ -728,6 +730,7 @@ pub mod tests {
                             .map(|key| (key, true)),
                         TransactionStatusMeta::default(),
                         0,
+                        None,
                     )
                     .unwrap();
             }
