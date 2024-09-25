@@ -3207,7 +3207,7 @@ impl AccountsDb {
 
                         store.accounts.scan_index(|index| {
                             let pubkey = index.index_info.pubkey;
-                            let is_zero = index.index_info.lamports == 0;
+                            let is_zero_lamport = index.index_info.is_zero_lamport();
                             insert_candidate(pubkey, is_zero);
                         });
                     });
