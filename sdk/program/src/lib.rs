@@ -469,7 +469,6 @@
 // Allows macro expansion of `use ::solana_program::*` to work within this crate
 extern crate self as solana_program;
 
-pub mod account_info;
 pub mod address_lookup_table;
 pub mod big_mod_exp;
 pub mod blake3;
@@ -483,7 +482,6 @@ pub mod bpf_loader;
 pub mod bpf_loader_deprecated;
 pub mod bpf_loader_upgradeable;
 pub mod compute_units;
-pub mod debug_account_data;
 pub mod ed25519_program;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
@@ -513,7 +511,6 @@ pub mod program_stubs;
 pub mod program_utils;
 pub mod rent;
 pub mod secp256k1_program;
-pub mod serialize_utils;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stable_layout;
@@ -534,13 +531,17 @@ pub use solana_sanitize as sanitize;
 pub use solana_secp256k1_recover as secp256k1_recover;
 #[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
 pub use solana_serde_varint as serde_varint;
+#[deprecated(since = "2.1.0", note = "Use `solana-serialize-utils` crate instead")]
+pub use solana_serialize_utils as serialize_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
 pub use {
-    solana_clock as clock, solana_msg::msg, solana_program_option as program_option,
-    solana_pubkey as pubkey,
+    solana_account_info::{self as account_info, debug_account_data},
+    solana_clock as clock,
+    solana_msg::msg,
+    solana_program_option as program_option, solana_pubkey as pubkey,
 };
 
 /// The [config native program][np].
