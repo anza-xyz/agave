@@ -3110,10 +3110,10 @@ impl AccountsDb {
                             candidates_bin = candidates[curr_bin].write().unwrap();
                             prev_bin = curr_bin;
                         }
-                        // Conservatively mark the candidate to be zero for
+                        // Conservatively mark the candidate might have a zero lamport entry for
                         // correctness so that scan WILL try to look in disk if it is
                         // not in-mem. These keys are from 1) recently processed
-                        // slots, 2) zeros found in shrink. Therefore, they are very likely
+                        // slots, 2) zero lamports found in shrink. Therefore, they are very likely
                         // to be in-memory, and seldomly do we need to look them up in disk.
                         candidates_bin.insert(
                             removed_pubkey,
