@@ -3173,7 +3173,7 @@ impl AccountsDb {
                 .take(num_bins)
                 .collect();
 
-        let insert_candidate = |pubkey, is_zero| {
+        let insert_candidate = |pubkey, is_zero_lamport| {
             let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
             let mut candidates_bin = candidates[index].write().unwrap();
 
