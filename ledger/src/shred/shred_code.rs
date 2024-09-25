@@ -10,6 +10,7 @@ use {
     static_assertions::const_assert_eq,
 };
 
+#[cfg(test)]
 const_assert_eq!(MAX_CODE_SHREDS_PER_SLOT, 32_768);
 pub const MAX_CODE_SHREDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT;
 

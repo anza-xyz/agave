@@ -172,6 +172,9 @@ pub enum TransactionError {
     /// Program cache hit max limit.
     #[error("Program cache hit max limit")]
     ProgramCacheHitMaxLimit,
+
+    #[error("Commit Failed")]
+    CommitFailed,
 }
 
 impl From<SanitizeError> for TransactionError {

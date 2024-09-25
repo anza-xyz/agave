@@ -102,6 +102,7 @@ dependencies = [
  "libc",
  "libloading 0.7.4",
  "log",
+ "mimalloc",
  "num_cpus",
  "rand 0.8.5",
  "rayon",
@@ -1127,6 +1128,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpu-time"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9e393a7668fe1fad3075085b86c781883000b4ede868f43627b34a87c8b7ded"
+dependencies = [
+ "libc",
+ "winapi 0.3.9",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1340,6 +1351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
+ "serde",
 ]
 
 [[package]]
@@ -2100,6 +2112,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fed44880c466736ef9a5c5b5facefb5ed0785676d0c02d612db14e54f0d84286"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "histogram"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2351,6 +2369,7 @@ checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg",
  "hashbrown 0.12.3",
+ "serde",
 ]
 
 [[package]]
@@ -2362,6 +2381,7 @@ dependencies = [
  "equivalent",
  "hashbrown 0.14.3",
  "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -2667,6 +2687,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23aa6811d3bd4deb8a84dde645f943476d13b248d818edcf8ce0b2f37f036b44"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "librocksdb-sys"
 version = "0.16.0+8.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2905,6 +2935,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimalloc"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68914350ae34959d83f732418d51e2427a794055d0b9529f48259ac07af65633"
+dependencies = [
+ "libmimalloc-sys",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3008,6 +3047,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "more-asserts"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fafa6961cabd9c63bcd77a45d7e3b7f3b552b70417831fb0f56db717e72407e"
 
 [[package]]
 name = "multimap"
@@ -4461,7 +4506,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07ff71d2c147a7b57362cead5e22f772cd52f6ab31cfcd9edcd7f6aeb2a0afbe"
 dependencies = [
  "serde",
- "serde_with_macros",
+ "serde_with_macros 2.3.3",
+]
+
+[[package]]
+name = "serde_with"
+version = "3.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cecfa94848272156ea67b2b1a53f20fc7bc638c4a46d2f8abde08f05f4b857"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "indexmap 1.9.3",
+ "indexmap 2.5.0",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_with_macros 3.9.0",
+ "time",
 ]
 
 [[package]]
@@ -4469,6 +4532,18 @@ name = "serde_with_macros"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "881b6f881b17d13214e5d494c939ebab463d01264ce1811e9d4ac3a882e7695f"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.58",
+]
+
+[[package]]
+name = "serde_with_macros"
+version = "3.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8fee4991ef4f274617a51ad4af30519438dacb2f56ac773b08a1922ff743350"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -4955,6 +5030,7 @@ dependencies = [
  "console",
  "humantime",
  "indicatif",
+ "log",
  "pretty-hex",
  "semver",
  "serde",
@@ -6567,7 +6643,7 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "serde_json",
- "serde_with",
+ "serde_with 2.3.3",
  "sha2 0.10.8",
  "sha3",
  "siphasher",
@@ -6774,12 +6850,17 @@ dependencies = [
 name = "solana-svm"
 version = "2.1.0"
 dependencies = [
+ "cpu-time",
+ "crossbeam-channel",
  "itertools 0.12.1",
  "log",
+ "once_cell",
  "percentage",
  "qualifier_attr",
  "serde",
  "serde_derive",
+ "serde_json",
+ "serde_with 3.9.0",
  "solana-bpf-loader-program",
  "solana-compute-budget",
  "solana-feature-set",
@@ -6787,6 +6868,7 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-log-collector",
  "solana-measure",
+ "solana-metrics",
  "solana-program-runtime",
  "solana-runtime-transaction",
  "solana-sdk",
@@ -7020,6 +7102,7 @@ name = "solana-unified-scheduler-logic"
 version = "2.1.0"
 dependencies = [
  "assert_matches",
+ "more-asserts",
  "solana-sdk",
  "static_assertions",
 ]
@@ -7028,16 +7111,22 @@ dependencies = [
 name = "solana-unified-scheduler-pool"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "assert_matches",
+ "cpu-time",
  "crossbeam-channel",
  "dashmap",
  "derivative",
  "log",
  "qualifier_attr",
  "scopeguard",
+ "solana-cost-model",
  "solana-ledger",
+ "solana-poh",
+ "solana-program-runtime",
  "solana-runtime",
  "solana-sdk",
+ "solana-svm",
  "solana-timings",
  "solana-unified-scheduler-logic",
  "static_assertions",

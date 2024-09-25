@@ -10,7 +10,7 @@
 //! execute in parallel. Lastly, `SchedulingStateMachine` should be notified about the completion
 //! of the exeuction via [`::deschedule_task()`](SchedulingStateMachine::deschedule_task), so that
 //! conflicting tasks can be returned from
-//! [`::schedule_next_unblocked_task()`](SchedulingStateMachine::schedule_next_unblocked_task) as
+//! [`::schedule_next_buffered_task()`](SchedulingStateMachine::schedule_next_buffered_task) as
 //! newly-unblocked runnable ones.
 //!
 //! The design principle of this crate (`solana-unified-scheduler-logic`) is simplicity for the
@@ -98,9 +98,13 @@
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
-    solana_sdk::{pubkey::Pubkey, transaction::SanitizedTransaction},
+    more_asserts::assert_gt,
+    solana_sdk::{pubkey::Pubkey, scheduling::SchedulingMode, transaction::SanitizedTransaction},
     static_assertions::const_assert_eq,
-    std::{collections::VecDeque, mem, sync::Arc},
+    std::{
+        mem,
+        sync::Arc,
+    },
 };
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
@@ -128,10 +132,6 @@ mod utils {
             Self(1)
         }
 
-        pub(super) fn is_one(&self) -> bool {
-            self.0 == 1
-        }
-
         pub(super) fn is_zero(&self) -> bool {
             self.0 == 0
         }
@@ -141,20 +141,24 @@ mod utils {
         }
 
         #[must_use]
+        #[track_caller]
         pub(super) fn increment(self) -> Self {
-            Self(self.0.checked_add(1).unwrap())
+            Self(self.0 + 1)
         }
 
         #[must_use]
+        #[track_caller]
         pub(super) fn decrement(self) -> Self {
-            Self(self.0.checked_sub(1).unwrap())
+            Self(self.0 - 1)
         }
 
+        #[track_caller]
         pub(super) fn increment_self(&mut self) -> &mut Self {
             *self = self.increment();
             self
         }
 
+        #[track_caller]
         pub(super) fn decrement_self(&mut self) -> &mut Self {
             *self = self.decrement();
             self
@@ -249,6 +253,7 @@ mod utils {
     /// existence of mutable access over them by requiring the token itself to be mutably borrowed
     /// to get a mutable reference to the internal value of `TokenCell`.
     // *mut is used to make this type !Send and !Sync
+    #[derive(Debug)]
     pub(super) struct Token<V: 'static>(PhantomData<*mut V>);
 
     impl<V> Token<V> {
@@ -399,7 +404,39 @@ type LockResult = Result<(), ()>;
 const_assert_eq!(mem::size_of::<LockResult>(), 1);
 
 /// Something to be scheduled; usually a wrapper of [`SanitizedTransaction`].
-pub type Task = Arc<TaskInner>;
+#[derive(Clone, Debug)]
+pub struct Task(rclite::Rc<TaskInner>);
+
+unsafe impl enum_ptr::Aligned for Task {
+    const ALIGNMENT: usize = std::mem::align_of::<TaskInner>();
+}
+
+unsafe impl Sync for Task {}
+unsafe impl Send for Task {}
+
+impl Task {
+    fn new(task: TaskInner) -> Self {
+        Self(rclite::Rc::new(task))
+    }
+
+    #[must_use]
+    fn try_unblock(self, token: &mut BlockedUsageCountToken) -> Option<Task> {
+        let did_unblock = self
+            .blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                let c = counter_with_status.count();
+                counter_with_status.set_count(c - 1);
+                c == 1
+            });
+        did_unblock.then_some(self)
+    }
+}
+
+impl std::ops::Deref for Task {
+    type Target = TaskInner;
+    fn deref(&self) -> &<Self as std::ops::Deref>::Target { &*self.0 }
+}
+
 const_assert_eq!(mem::size_of::<Task>(), 8);
 
 /// [`Token`] for [`UsageQueue`].
@@ -407,64 +444,179 @@ type UsageQueueToken = Token<UsageQueueInner>;
 const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
 
 /// [`Token`] for [task](Task)'s [internal mutable data](`TaskInner::blocked_usage_count`).
-type BlockedUsageCountToken = Token<ShortCounter>;
+type BlockedUsageCountToken = Token<CounterWithStatus>;
 const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
+
+pub type Index = u128;
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(u8)]
+enum TaskStatus {
+    Buffered,
+    Executed,
+    Unlocked,
+}
+
+impl TaskStatus {
+    const fn into_bits(self) -> u8 {
+        self as _
+    }
+    const fn from_bits(value: u8) -> Self {
+        match value {
+            0 => Self::Buffered,
+            1 => Self::Executed,
+            _ => Self::Unlocked,
+        }
+    }
+}
+
+use bitfield_struct::bitfield;
+#[bitfield(u32)]
+struct CounterWithStatus {
+    #[bits(2)]
+    status: TaskStatus,
+    #[bits(30)]
+    count: u32,
+}
 
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
 pub struct TaskInner {
-    transaction: SanitizedTransaction,
     /// The index of a transaction in ledger entries; not used by SchedulingStateMachine by itself.
     /// Carrying this along with the transaction is needed to properly record the execution result
     /// of it.
-    index: usize,
-    lock_contexts: Vec<LockContext>,
-    blocked_usage_count: TokenCell<ShortCounter>,
+    lock_contexts: Box<(Vec<Compact<LockContext>>, SanitizedTransaction)>,
+    index: Index,
+    blocked_usage_count: TokenCell<CounterWithStatus>,
+}
+
+struct RcInnerDemo {
+  data: TaskInner,
+  counter: std::cell::Cell<u32>,
 }
 
 impl TaskInner {
-    pub fn task_index(&self) -> usize {
+    pub fn task_index(&self) -> Index {
         self.index
     }
 
     pub fn transaction(&self) -> &SanitizedTransaction {
-        &self.transaction
+        &self.lock_contexts.1
     }
 
-    fn lock_contexts(&self) -> &[LockContext] {
-        &self.lock_contexts
+    fn lock_contexts(&self) -> &[Compact<LockContext>] {
+        &self.lock_contexts.0
+    }
+
+    fn blocked_usage_count(&self, token: &mut BlockedUsageCountToken) -> u32 {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| counter_with_status.count())
+    }
+
+    fn has_blocked_usage(&self, token: &mut BlockedUsageCountToken) -> bool {
+        self.blocked_usage_count(token) > 0
     }
 
     fn set_blocked_usage_count(&self, token: &mut BlockedUsageCountToken, count: ShortCounter) {
         self.blocked_usage_count
-            .with_borrow_mut(token, |usage_count| {
-                *usage_count = count;
+            .with_borrow_mut(token, |(counter_with_status)| {
+                counter_with_status.set_count(count.current());
             })
     }
 
-    #[must_use]
-    fn try_unblock(self: Task, token: &mut BlockedUsageCountToken) -> Option<Task> {
-        let did_unblock = self
-            .blocked_usage_count
-            .with_borrow_mut(token, |usage_count| usage_count.decrement_self().is_zero());
-        did_unblock.then_some(self)
+    fn increment_blocked_usage_count(&self, token: &mut BlockedUsageCountToken) {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                counter_with_status.set_count(counter_with_status.count() + 1)
+            })
+    }
+
+    fn mark_as_executed(&self, token: &mut BlockedUsageCountToken) {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                counter_with_status.set_status(TaskStatus::Executed);
+            })
+    }
+
+    fn mark_as_buffered(&self, token: &mut BlockedUsageCountToken) {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                counter_with_status.set_status(TaskStatus::Buffered);
+            })
+    }
+
+    fn mark_as_unlocked(&self, token: &mut BlockedUsageCountToken) {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                counter_with_status.set_status(TaskStatus::Unlocked);
+            })
+    }
+
+    fn is_buffered(&self, token: &mut BlockedUsageCountToken) -> bool {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                matches!(counter_with_status.status(), TaskStatus::Buffered)
+            })
+    }
+
+    fn is_executed(&self, token: &mut BlockedUsageCountToken) -> bool {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                matches!(counter_with_status.status(), TaskStatus::Executed)
+            })
+    }
+
+    fn is_unlocked(&self, token: &mut BlockedUsageCountToken) -> bool {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                matches!(counter_with_status.status(), TaskStatus::Unlocked)
+            })
+    }
+
+    fn status(&self, token: &mut BlockedUsageCountToken) -> TaskStatus {
+        self.blocked_usage_count
+            .with_borrow_mut(token, |counter_with_status| {
+                counter_with_status.status()
+            })
     }
 }
 
 /// [`Task`]'s per-address context to lock a [usage_queue](UsageQueue) with [certain kind of
 /// request](RequestedUsage).
-#[derive(Debug)]
-struct LockContext {
-    usage_queue: UsageQueue,
-    requested_usage: RequestedUsage,
+#[derive(Debug, EnumPtr)]
+#[repr(C, usize)]
+enum LockContext {
+    Readonly(UsageQueue),
+    Writable(UsageQueue),
 }
 const_assert_eq!(mem::size_of::<LockContext>(), 16);
+const_assert_eq!(mem::size_of::<Compact<LockContext>>(), 8);
 
 impl LockContext {
     fn new(usage_queue: UsageQueue, requested_usage: RequestedUsage) -> Self {
-        Self {
-            usage_queue,
-            requested_usage,
+        match requested_usage {
+            RequestedUsage::Readonly => Self::Readonly(usage_queue),
+            RequestedUsage::Writable => Self::Writable(usage_queue),
+        }
+    }
+
+    fn requested_usage2(&self) -> RequestedUsage {
+        match self {
+            Self::Readonly(_) => RequestedUsage::Readonly,
+            Self::Writable(_) => RequestedUsage::Writable,
+        }
+    }
+
+    fn usage_from_task(&self, task: Task) -> UsageFromTask {
+        match self {
+            Self::Readonly(_) => UsageFromTask::Readonly(task),
+            Self::Writable(_) => UsageFromTask::Writable(task),
+        }
+    }
+
+    fn usage_queue(&self) -> &UsageQueue {
+        match self {
+            Self::Readonly(u) | Self::Writable(u) => &u,
         }
     }
 
@@ -473,33 +625,28 @@ impl LockContext {
         usage_queue_token: &mut UsageQueueToken,
         f: impl FnOnce(&mut UsageQueueInner) -> R,
     ) -> R {
-        self.usage_queue.0.with_borrow_mut(usage_queue_token, f)
+        self.usage_queue().0.with_borrow_mut(usage_queue_token, f)
     }
 }
+
+use std::cmp::Reverse;
 
 /// Status about how the [`UsageQueue`] is used currently.
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 enum Usage {
     Readonly(ShortCounter),
-    Writable,
-}
-const_assert_eq!(mem::size_of::<Usage>(), 8);
-
-impl From<RequestedUsage> for Usage {
-    fn from(requested_usage: RequestedUsage) -> Self {
-        match requested_usage {
-            RequestedUsage::Readonly => Usage::Readonly(ShortCounter::one()),
-            RequestedUsage::Writable => Usage::Writable,
-        }
-    }
+    Writable(Task),
 }
 
 /// Status about how a task is requesting to use a particular [`UsageQueue`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum RequestedUsage {
     Readonly,
     Writable,
 }
+
+//use std::collections::binary_heap::PeekMut;
+use dary_heap::PeekMut;
 
 /// Internal scheduling data about a particular address.
 ///
@@ -509,10 +656,92 @@ enum RequestedUsage {
 #[derive(Debug)]
 struct UsageQueueInner {
     current_usage: Option<Usage>,
-    blocked_usages_from_tasks: VecDeque<UsageFromTask>,
+    current_readonly_tasks:  dary_heap::OctonaryHeap<Reverse<Task>>,
+    blocked_usages_from_tasks:  dary_heap::OctonaryHeap<Compact<UsageFromTask>>,
 }
 
-type UsageFromTask = (RequestedUsage, Task);
+use enum_ptr::EnumPtr;
+use enum_ptr::Compact;
+
+#[repr(C, usize)]
+#[derive(Debug, EnumPtr)]
+enum UsageFromTask {
+    Readonly(Task),
+    Writable(Task),
+}
+const_assert_eq!(mem::size_of::<UsageFromTask>(), 16);
+const_assert_eq!(mem::size_of::<Compact<UsageFromTask>>(), 8);
+
+impl UsageFromTask {
+    fn index(&self) -> Index {
+        match self {
+            Self::Readonly(t) => t.index,
+            Self::Writable(t) => t.index,
+        }
+    }
+
+    fn usage(&self) -> RequestedUsage {
+        match self {
+            Self::Readonly(_t) => RequestedUsage::Readonly,
+            Self::Writable(_t) => RequestedUsage::Writable,
+        }
+    }
+
+    fn task(&self) -> &Task {
+        match self {
+            Self::Readonly(t) | Self::Writable(t) => t,
+        }
+    }
+}
+
+impl From<(RequestedUsage, Task)> for UsageFromTask {
+    fn from((usage, task): (RequestedUsage, Task)) -> Self {
+        match usage {
+            RequestedUsage::Readonly => Self::Readonly(task),
+            RequestedUsage::Writable => Self::Writable(task),
+        }
+    }
+}
+
+impl Ord for Task {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.index.cmp(&self.index)
+        //self.index.cmp(&other.index)
+    }
+}
+
+impl PartialOrd for Task {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for Task {}
+impl PartialEq<Task> for Task {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Ord for UsageFromTask {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.index().cmp(&self.index())
+        //self.index().cmp(&other.index())
+    }
+}
+
+impl PartialOrd for UsageFromTask {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for UsageFromTask {}
+impl PartialEq<UsageFromTask> for UsageFromTask {
+    fn eq(&self, other: &Self) -> bool {
+        self.index() == other.index()
+    }
+}
 
 impl Default for UsageQueueInner {
     fn default() -> Self {
@@ -527,72 +756,105 @@ impl Default for UsageQueueInner {
             //
             // Note that large cap should be accompanied with proper scheduler cleaning after use,
             // which should be handled by higher layers (i.e. scheduler pool).
-            blocked_usages_from_tasks: VecDeque::with_capacity(128),
+            current_readonly_tasks:  dary_heap::OctonaryHeap::with_capacity(128),
+            blocked_usages_from_tasks:  dary_heap::OctonaryHeap::with_capacity(128),
         }
     }
 }
 
 impl UsageQueueInner {
-    fn try_lock(&mut self, requested_usage: RequestedUsage) -> LockResult {
-        match self.current_usage {
-            None => Some(Usage::from(requested_usage)),
+    fn try_lock(&mut self, requested_usage: RequestedUsage, task: &Task) -> LockResult {
+        match &mut self.current_usage {
+            None => {
+                match requested_usage {
+                    RequestedUsage::Readonly => {
+                        self.current_usage = Some(Usage::Readonly(ShortCounter::one()));
+                        self.current_readonly_tasks.push(Reverse(task.clone()));
+                    },
+                    RequestedUsage::Writable => {
+                        self.current_usage = Some(Usage::Writable(task.clone()));
+                    },
+                }
+                Ok(())
+            }
             Some(Usage::Readonly(count)) => match requested_usage {
-                RequestedUsage::Readonly => Some(Usage::Readonly(count.increment())),
-                RequestedUsage::Writable => None,
+                RequestedUsage::Readonly => {
+                    //dbg!(&self.current_readonly_tasks.keys());
+                    self.current_readonly_tasks.push(Reverse(task.clone()));
+                    count.increment_self();
+                    Ok(())
+                }
+                RequestedUsage::Writable => Err(()),
             },
-            Some(Usage::Writable) => None,
+            Some(Usage::Writable(_current_task)) => Err(()),
         }
-        .inspect(|&new_usage| {
-            self.current_usage = Some(new_usage);
-        })
-        .map(|_| ())
-        .ok_or(())
     }
 
     #[must_use]
-    fn unlock(&mut self, requested_usage: RequestedUsage) -> Option<UsageFromTask> {
+    fn unlock(
+        &mut self,
+        unlocked_task_context: &LockContext,
+        unlocked_task_index: Index,
+        token: &mut BlockedUsageCountToken,
+    ) -> Option<UsageFromTask> {
         let mut is_unused_now = false;
         match &mut self.current_usage {
-            Some(Usage::Readonly(ref mut count)) => match requested_usage {
-                RequestedUsage::Readonly => {
-                    if count.is_one() {
-                        is_unused_now = true;
-                    } else {
-                        count.decrement_self();
+            Some(Usage::Readonly(count)) => match unlocked_task_context {
+                LockContext::Readonly(_) => {
+                    count.decrement_self();
+                    // todo test this for unbounded growth of inifnite readable only locks....
+                    //dbg!(self.current_readonly_tasks.len());
+                    while let Some(peeked_task) = self.current_readonly_tasks.peek_mut() {
+                        if peeked_task.0.is_unlocked(token) {
+                            PeekMut::pop(peeked_task);
+                        } else {
+                            break;
+                        }
                     }
+                    if count.is_zero() {
+                        is_unused_now = true;
+                    }
+                    //dbg!(is_unused_now);
                 }
-                RequestedUsage::Writable => unreachable!(),
+                LockContext::Writable(_) => unreachable!(),
             },
-            Some(Usage::Writable) => match requested_usage {
-                RequestedUsage::Writable => {
-                    is_unused_now = true;
-                }
-                RequestedUsage::Readonly => unreachable!(),
+            Some(Usage::Writable(blocking_task)) => {
+                is_unused_now = true;
             },
             None => unreachable!(),
         }
 
         if is_unused_now {
             self.current_usage = None;
-            self.blocked_usages_from_tasks.pop_front()
+            self.blocked_usages_from_tasks
+                .pop()
+                .map(|uft| uft.into())
         } else {
             None
         }
     }
 
-    fn push_blocked_usage_from_task(&mut self, usage_from_task: UsageFromTask) {
-        assert_matches!(self.current_usage, Some(_));
-        self.blocked_usages_from_tasks.push_back(usage_from_task);
+    fn insert_blocked_usage_from_task(&mut self, uft: UsageFromTask) {
+        self
+            .blocked_usages_from_tasks
+            .push(uft.into());
+    }
+
+    fn first_blocked_task_index(&self) -> Option<Index> {
+        self.blocked_usages_from_tasks.peek().map(|uft| uft.map_ref(|u| u.index()))
     }
 
     #[must_use]
-    fn pop_unblocked_readonly_usage_from_task(&mut self) -> Option<UsageFromTask> {
+    fn pop_buffered_readonly_usage_from_task(&mut self) -> Option<UsageFromTask> {
         if matches!(
-            self.blocked_usages_from_tasks.front(),
-            Some((RequestedUsage::Readonly, _))
+            self.blocked_usages_from_tasks
+                .peek()
+                .map(|uft| uft.map_ref(|u| u.usage())),
+            Some(RequestedUsage::Readonly)
         ) {
-            assert_matches!(self.current_usage, Some(Usage::Readonly(_)));
-            self.blocked_usages_from_tasks.pop_front()
+            self.blocked_usages_from_tasks
+                .pop()
+                .map(|uft| uft.into())
         } else {
             None
         }
@@ -603,7 +865,7 @@ impl UsageQueueInner {
     }
 }
 
-const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
+//const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
 
 /// Scheduler's internal data for each address ([`Pubkey`](`solana_sdk::pubkey::Pubkey`)). Very
 /// opaque wrapper type; no methods just with [`::clone()`](Clone::clone) and
@@ -612,46 +874,100 @@ const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
 pub struct UsageQueue(Arc<TokenCell<UsageQueueInner>>);
 const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
 
+unsafe impl enum_ptr::Aligned for UsageQueue {
+    const ALIGNMENT: usize = std::mem::align_of::<TokenCell<UsageQueueInner>>();
+}
+
 /// A high-level `struct`, managing the overall scheduling of [tasks](Task), to be used by
 /// `solana-unified-scheduler-pool`.
+#[derive(Debug)]
 pub struct SchedulingStateMachine {
-    unblocked_task_queue: VecDeque<Task>,
-    active_task_count: ShortCounter,
-    handled_task_count: ShortCounter,
-    unblocked_task_count: ShortCounter,
-    total_task_count: ShortCounter,
+    buffered_task_queue:  dary_heap::OctonaryHeap<Task>,
+    alive_task_count: ShortCounter,
+    executing_task_count: ShortCounter,
+    max_executing_task_count: u32,
+    executed_task_total: ShortCounter,
+    buffered_task_total: ShortCounter,
+    blocked_task_count: ShortCounter,
+    reblocked_lock_total: ShortCounter,
+    task_total: ShortCounter,
     count_token: BlockedUsageCountToken,
     usage_queue_token: UsageQueueToken,
+    scheduling_mode: SchedulingMode,
 }
-const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 48);
+
+#[cfg(test)]
+impl Drop for SchedulingStateMachine {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.reinitialize_for_test();
+        }
+    }
+}
+//const_assert_eq!(mem::size_of::<SchedulingStateMachine>(), 56);
 
 impl SchedulingStateMachine {
-    pub fn has_no_active_task(&self) -> bool {
-        self.active_task_count.is_zero()
+    pub fn mode(&self) -> SchedulingMode {
+        self.scheduling_mode
     }
 
-    pub fn has_unblocked_task(&self) -> bool {
-        !self.unblocked_task_queue.is_empty()
+    pub fn has_no_alive_task(&self) -> bool {
+        self.alive_task_count.is_zero()
     }
 
-    pub fn unblocked_task_queue_count(&self) -> usize {
-        self.unblocked_task_queue.len()
+    pub fn has_buffered_task(&mut self) -> bool {
+        while let Some(task) = self.buffered_task_queue.peek_mut() {
+            let status = task.status(&mut self.count_token);
+            if task.has_blocked_usage(&mut self.count_token) {
+                PeekMut::pop(task);
+                continue;
+            } else if status == TaskStatus::Executed || status == TaskStatus::Unlocked {
+                PeekMut::pop(task);
+                continue;
+            } else {
+                return true;
+            }
+        }
+        false
     }
 
-    pub fn active_task_count(&self) -> u32 {
-        self.active_task_count.current()
+    pub fn has_runnable_task(&mut self) -> bool {
+        self.is_task_runnable() && self.has_buffered_task()
     }
 
-    pub fn handled_task_count(&self) -> u32 {
-        self.handled_task_count.current()
+    pub fn has_no_executing_task(&self) -> bool {
+        self.executing_task_count.current() == 0
     }
 
-    pub fn unblocked_task_count(&self) -> u32 {
-        self.unblocked_task_count.current()
+    pub fn is_task_runnable(&self) -> bool {
+        self.executing_task_count.current() < self.max_executing_task_count
     }
 
-    pub fn total_task_count(&self) -> u32 {
-        self.total_task_count.current()
+    pub fn buffered_task_queue_count(&self) -> usize {
+        self.buffered_task_queue.len()
+    }
+
+    pub fn alive_task_count(&self) -> u32 {
+        self.alive_task_count.current()
+    }
+
+    pub fn executed_task_total(&self) -> u32 {
+        self.executed_task_total.current()
+    }
+
+    pub fn buffered_task_total(&self) -> u32 {
+        self.buffered_task_total.current()
+    }
+
+    pub fn blocked_task_count(&self) -> u32 {
+        self.blocked_task_count.current()
+    }
+
+    pub fn reblocked_lock_total(&self) -> u32 {
+        self.reblocked_lock_total.current()
+    }
+    pub fn task_total(&self) -> u32 {
+        self.task_total.current()
     }
 
     /// Schedules given `task`, returning it if successful.
@@ -662,16 +978,40 @@ impl SchedulingStateMachine {
     /// Note that this function takes ownership of the task to allow for future optimizations.
     #[must_use]
     pub fn schedule_task(&mut self, task: Task) -> Option<Task> {
-        self.total_task_count.increment_self();
-        self.active_task_count.increment_self();
-        self.try_lock_usage_queues(task)
+        self.task_total.increment_self();
+        self.alive_task_count.increment_self();
+        self.try_lock_usage_queues(task).and_then(|task| {
+            if self.is_task_runnable() {
+                self.executing_task_count.increment_self();
+                task.mark_as_executed(&mut self.count_token);
+                Some(task)
+            } else {
+                self.buffered_task_total.increment_self();
+                self.buffered_task_queue.push(task);
+                None
+            }
+        })
+    }
+
+    pub fn rebuffer_executing_task(&mut self, task: Task) {
+        self.executing_task_count.decrement_self();
+        self.buffered_task_total.increment_self();
+        task.mark_as_buffered(&mut self.count_token);
+        self.buffered_task_queue.push(task);
     }
 
     #[must_use]
-    pub fn schedule_next_unblocked_task(&mut self) -> Option<Task> {
-        self.unblocked_task_queue.pop_front().inspect(|_| {
-            self.unblocked_task_count.increment_self();
-        })
+    pub fn schedule_next_buffered_task(&mut self) -> Option<Task> {
+        while let Some(task) = self.buffered_task_queue.pop() {
+            if task.has_blocked_usage(&mut self.count_token) {
+                continue;
+            } else {
+                self.executing_task_count.increment_self();
+                task.mark_as_executed(&mut self.count_token);
+                return Some(task);
+            }
+        }
+        None
     }
 
     /// Deschedules given scheduled `task`.
@@ -685,64 +1025,184 @@ impl SchedulingStateMachine {
     /// tasks inside `SchedulingStateMachine` to provide an offloading-based optimization
     /// opportunity for callers.
     pub fn deschedule_task(&mut self, task: &Task) {
-        self.active_task_count.decrement_self();
-        self.handled_task_count.increment_self();
+        task.mark_as_unlocked(&mut self.count_token);
+        self.executing_task_count.decrement_self();
+        self.alive_task_count.decrement_self();
+        self.executed_task_total.increment_self();
         self.unlock_usage_queues(task);
     }
 
+    fn try_reblock_task(blocking_task: &Task, blocked_task_count: &mut ShortCounter, token: &mut BlockedUsageCountToken) -> bool {
+        if blocking_task.has_blocked_usage(token) {
+            true
+        } else if blocking_task.is_buffered(token) {
+            blocked_task_count.increment_self();
+            true
+        } else {
+            false
+        }
+    }
+
     #[must_use]
-    fn try_lock_usage_queues(&mut self, task: Task) -> Option<Task> {
+    fn try_lock_usage_queues(&mut self, new_task: Task) -> Option<Task> {
         let mut blocked_usage_count = ShortCounter::zero();
 
-        for context in task.lock_contexts() {
+        for context in new_task.lock_contexts() {
+            context.map_ref(|context| {
             context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
-                let lock_result = if usage_queue.has_no_blocked_usage() {
-                    usage_queue.try_lock(context.requested_usage)
-                } else {
-                    LockResult::Err(())
-                };
+                let lock_result = (match usage_queue.current_usage.as_mut() {
+                    Some(mut current_usage) => {
+                        match (&mut current_usage, context.requested_usage2()) {
+                            (Usage::Writable(blocking_task), RequestedUsage::Writable) => {
+                                if new_task.index < blocking_task.index && Self::try_reblock_task(blocking_task, &mut self.blocked_task_count, &mut self.count_token) {
+                                    let old_usage = std::mem::replace(current_usage, Usage::Writable(new_task.clone()));
+                                    let Usage::Writable(reblocked_task) = old_usage else { panic!() };
+                                    reblocked_task.increment_blocked_usage_count(&mut self.count_token);
+                                    usage_queue.insert_blocked_usage_from_task(
+                                        UsageFromTask::Writable(reblocked_task),
+                                    );
+                                    self.reblocked_lock_total.increment_self();
+                                    Some(Ok(()))
+                                } else {
+                                    None
+                                }
+                            }
+                            (Usage::Writable(blocking_task), RequestedUsage::Readonly) => {
+                                if new_task.index < blocking_task.index && Self::try_reblock_task(blocking_task, &mut self.blocked_task_count, &mut self.count_token) {
+                                    let old_usage = std::mem::replace(current_usage, Usage::Readonly(ShortCounter::one()));
+                                    let Usage::Writable(reblocked_task) = old_usage else { panic!() };
+                                    reblocked_task.increment_blocked_usage_count(&mut self.count_token);
+                                    usage_queue.current_readonly_tasks.push(Reverse(new_task.clone()));
+                                    usage_queue.insert_blocked_usage_from_task(
+                                        UsageFromTask::Writable(reblocked_task),
+                                    );
+                                    self.reblocked_lock_total.increment_self();
+                                    Some(Ok(()))
+                                } else {
+                                    None
+                                }
+                            }
+                            (Usage::Readonly(_count), RequestedUsage::Readonly) => {
+                                let first_blocked_task_index = usage_queue.first_blocked_task_index();
+                                if let Some(first_blocked_task_index) = first_blocked_task_index {
+                                    if new_task.index < first_blocked_task_index {
+                                        usage_queue
+                                            .try_lock(context.requested_usage2(), &new_task)
+                                            .unwrap();
+                                        Some(Ok(()))
+                                        // even the following passes the unit tests... think about this
+                                        /*
+                                        if usage_queue.has_no_blocked_usage() {
+                                            usage_queue.try_lock(context.requested_usage, &new_task)
+                                        } else {
+                                            Err(())
+                                        }
+                                        */
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                            (Usage::Readonly(count), RequestedUsage::Writable) => {
+                                let mut reblocked_tasks = vec![];
+                                while let Some(blocking_task) = usage_queue.current_readonly_tasks.peek_mut() {
+                                    let index = blocking_task.0.0.index;
+                                    if new_task.index < index || blocking_task.0.is_unlocked(&mut self.count_token) {
+                                        let blocking_task = PeekMut::pop(blocking_task).0;
+
+                                        if Self::try_reblock_task(&blocking_task, &mut self.blocked_task_count, &mut self.count_token) {
+                                            count.decrement_self();
+                                            reblocked_tasks.push(blocking_task);
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if !reblocked_tasks.is_empty() {
+                                    let lock_result = if count.is_zero() {
+                                        *current_usage = Usage::Writable(new_task.clone());
+                                        Ok(())
+                                    } else {
+                                        Err(())
+                                    };
+                                    for reblocked_task in reblocked_tasks {
+                                        reblocked_task.increment_blocked_usage_count(&mut self.count_token);
+                                        usage_queue.insert_blocked_usage_from_task(
+                                            UsageFromTask::Readonly(reblocked_task),
+                                        );
+                                        self.reblocked_lock_total.increment_self();
+                                    }
+                                    Some(lock_result)
+                                } else {
+                                    None
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        None
+                    }
+                }).unwrap_or_else(|| {
+                    if usage_queue.has_no_blocked_usage() {
+                        usage_queue.try_lock(context.requested_usage2(), &new_task)
+                    } else {
+                        Err(())
+                    }
+                });
+
                 if let Err(()) = lock_result {
                     blocked_usage_count.increment_self();
-                    let usage_from_task = (context.requested_usage, task.clone());
-                    usage_queue.push_blocked_usage_from_task(usage_from_task);
+                    let usage_from_task = context.usage_from_task(new_task.clone());
+                    usage_queue.insert_blocked_usage_from_task(usage_from_task.into());
                 }
+            });
             });
         }
 
         // no blocked usage count means success
         if blocked_usage_count.is_zero() {
-            Some(task)
+            Some(new_task)
         } else {
-            task.set_blocked_usage_count(&mut self.count_token, blocked_usage_count);
+            self.blocked_task_count.increment_self();
+            new_task.set_blocked_usage_count(&mut self.count_token, blocked_usage_count);
             None
         }
     }
 
     fn unlock_usage_queues(&mut self, task: &Task) {
         for context in task.lock_contexts() {
+            context.map_ref(|context| {
             context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
-                let mut unblocked_task_from_queue = usage_queue.unlock(context.requested_usage);
+                let mut buffered_task_from_queue =
+                    usage_queue.unlock(context, task.index, &mut self.count_token);
 
-                while let Some((requested_usage, task_with_unblocked_queue)) =
-                    unblocked_task_from_queue
-                {
+                while let Some(buffered_task_from_queue2) = buffered_task_from_queue {
                     // When `try_unblock()` returns `None` as a failure of unblocking this time,
                     // this means the task is still blocked by other active task's usages. So,
-                    // don't push task into unblocked_task_queue yet. It can be assumed that every
+                    // don't push task into buffered_task_queue yet. It can be assumed that every
                     // task will eventually succeed to be unblocked, and enter in this condition
                     // clause as long as `SchedulingStateMachine` is used correctly.
-                    if let Some(task) = task_with_unblocked_queue.try_unblock(&mut self.count_token)
+                    if let Some(task) = buffered_task_from_queue2.task()
+                        .clone()
+                        .try_unblock(&mut self.count_token)
                     {
-                        self.unblocked_task_queue.push_back(task);
+                        self.blocked_task_count.decrement_self();
+                        self.buffered_task_total.increment_self();
+                        self.buffered_task_queue.push(task);
                     }
 
-                    match usage_queue.try_lock(requested_usage) {
+                    match usage_queue.try_lock(
+                        buffered_task_from_queue2.usage(),
+                        &buffered_task_from_queue2.task(), /* was `task` and had bug.. write test...*/
+                    ) {
                         LockResult::Ok(()) => {
                             // Try to further schedule blocked task for parallelism in the case of
                             // readonly usages
-                            unblocked_task_from_queue =
-                                if matches!(requested_usage, RequestedUsage::Readonly) {
-                                    usage_queue.pop_unblocked_readonly_usage_from_task()
+                            buffered_task_from_queue =
+                                if matches!(buffered_task_from_queue2.usage(), RequestedUsage::Readonly) {
+                                    usage_queue.pop_buffered_readonly_usage_from_task()
                                 } else {
                                     None
                                 };
@@ -750,6 +1210,7 @@ impl SchedulingStateMachine {
                         LockResult::Err(()) => panic!("should never fail in this context"),
                     }
                 }
+            });
             });
         }
     }
@@ -765,11 +1226,11 @@ impl SchedulingStateMachine {
     /// Closure is used here to delegate the responsibility of primary ownership of `UsageQueue`
     /// (and caching/pruning if any) to the caller. `SchedulingStateMachine` guarantees that all of
     /// shared owndership of `UsageQueue`s are released and UsageQueue state is identical to just
-    /// after created, if `has_no_active_task()` is `true`. Also note that this is desired for
+    /// after created, if `has_no_alive_task()` is `true`. Also note that this is desired for
     /// separation of concern.
     pub fn create_task(
         transaction: SanitizedTransaction,
-        index: usize,
+        index: Index,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         // It's crucial for tasks to be validated with
@@ -816,16 +1277,23 @@ impl SchedulingStateMachine {
                     } else {
                         RequestedUsage::Readonly
                     },
-                )
+                ).into()
             })
             .collect();
 
         Task::new(TaskInner {
-            transaction,
             index,
-            lock_contexts,
-            blocked_usage_count: TokenCell::new(ShortCounter::zero()),
+            lock_contexts: Box::new((lock_contexts, transaction)),
+            blocked_usage_count: TokenCell::new(CounterWithStatus::default()),
         })
+    }
+
+    pub fn reset_task_total(&mut self) {
+        self.task_total.reset_to_zero();
+    }
+
+    pub fn reset_executed_task_total(&mut self) {
+        self.executed_task_total.reset_to_zero();
     }
 
     /// Rewind the inactive state machine to be initialized
@@ -838,24 +1306,39 @@ impl SchedulingStateMachine {
     /// [constructor](SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling)
     /// as much as possible) and its (possibly cached) associated [`UsageQueue`]s for processing
     /// other slots.
-    pub fn reinitialize(&mut self) {
-        assert!(self.has_no_active_task());
-        assert_eq!(self.unblocked_task_queue.len(), 0);
+    pub fn reinitialize(&mut self, mode: SchedulingMode) {
+        assert!(self.has_no_alive_task());
+        assert_eq!(self.executing_task_count.current(), 0);
+        assert_eq!(self.buffered_task_queue.len(), 0);
+        assert_eq!(self.blocked_task_count(), 0);
+
+        self.reset_task_total();
+        self.reset_executed_task_total();
         // nice trick to ensure all fields are handled here if new one is added.
         let Self {
-            unblocked_task_queue: _,
-            active_task_count,
-            handled_task_count,
-            unblocked_task_count,
-            total_task_count,
+            buffered_task_queue: _,
+            alive_task_count,
+            executing_task_count,
+            max_executing_task_count: _,
+            executed_task_total: _,
+            buffered_task_total,
+            blocked_task_count: _,
+            reblocked_lock_total,
+            task_total: _,
             count_token: _,
             usage_queue_token: _,
+            scheduling_mode,
             // don't add ".." here
         } = self;
-        active_task_count.reset_to_zero();
-        handled_task_count.reset_to_zero();
-        unblocked_task_count.reset_to_zero();
-        total_task_count.reset_to_zero();
+        alive_task_count.reset_to_zero();
+        executing_task_count.reset_to_zero();
+        buffered_task_total.reset_to_zero();
+        reblocked_lock_total.reset_to_zero();
+        *scheduling_mode = mode;
+    }
+
+    pub fn reinitialize_for_test(&mut self) {
+        self.reinitialize(SchedulingMode::BlockProduction);
     }
 
     /// Creates a new instance of [`SchedulingStateMachine`] with its `unsafe` fields created as
@@ -864,18 +1347,29 @@ impl SchedulingStateMachine {
     /// # Safety
     /// Call this exactly once for each thread. See [`TokenCell`] for details.
     #[must_use]
-    pub unsafe fn exclusively_initialize_current_thread_for_scheduling() -> Self {
+    pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
+        scheduling_mode: SchedulingMode,
+    ) -> Self {
         Self {
             // It's very unlikely this is desired to be configurable, like
             // `UsageQueueInner::blocked_usages_from_tasks`'s cap.
-            unblocked_task_queue: VecDeque::with_capacity(1024),
-            active_task_count: ShortCounter::zero(),
-            handled_task_count: ShortCounter::zero(),
-            unblocked_task_count: ShortCounter::zero(),
-            total_task_count: ShortCounter::zero(),
+            buffered_task_queue:  dary_heap::OctonaryHeap::with_capacity(1024), // BTreeMap::new(), //VecDeque::with_capacity(1024),
+            alive_task_count: ShortCounter::zero(),
+            executing_task_count: ShortCounter::zero(),
+            max_executing_task_count: 200,
+            executed_task_total: ShortCounter::zero(),
+            buffered_task_total: ShortCounter::zero(),
+            blocked_task_count: ShortCounter::zero(),
+            reblocked_lock_total: ShortCounter::zero(),
+            task_total: ShortCounter::zero(),
             count_token: unsafe { BlockedUsageCountToken::assume_exclusive_mutating_thread() },
             usage_queue_token: unsafe { UsageQueueToken::assume_exclusive_mutating_thread() },
+            scheduling_mode,
         }
+    }
+
+    pub unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
+        Self::exclusively_initialize_current_thread_for_scheduling(SchedulingMode::BlockProduction)
     }
 }
 
@@ -923,6 +1417,37 @@ mod tests {
         SanitizedTransaction::from_transaction_for_tests(unsigned)
     }
 
+    fn transaction_with_writable_address2(
+        address: Pubkey,
+        address2: Pubkey,
+    ) -> SanitizedTransaction {
+        let instruction = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![
+                AccountMeta::new(address, false),
+                AccountMeta::new(address2, false),
+            ],
+            data: vec![],
+        };
+        let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
+        let unsigned = Transaction::new_unsigned(message);
+        SanitizedTransaction::from_transaction_for_tests(unsigned)
+    }
+
+    fn transaction_with_writable_read2(address: Pubkey, address2: Pubkey) -> SanitizedTransaction {
+        let instruction = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![
+                AccountMeta::new(address, false),
+                AccountMeta::new_readonly(address2, false),
+            ],
+            data: vec![],
+        };
+        let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
+        let unsigned = Transaction::new_unsigned(message);
+        SanitizedTransaction::from_transaction_for_tests(unsigned)
+    }
+
     fn create_address_loader(
         usage_queues: Option<Rc<RefCell<HashMap<Pubkey, UsageQueue>>>>,
     ) -> impl FnMut(Pubkey) -> UsageQueue {
@@ -939,34 +1464,34 @@ mod tests {
     #[test]
     fn test_scheduling_state_machine_creation() {
         let state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
-        assert_eq!(state_machine.active_task_count(), 0);
-        assert_eq!(state_machine.total_task_count(), 0);
-        assert!(state_machine.has_no_active_task());
+        assert_eq!(state_machine.alive_task_count(), 0);
+        assert_eq!(state_machine.task_total(), 0);
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
     fn test_scheduling_state_machine_good_reinitialization() {
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
-        state_machine.total_task_count.increment_self();
-        assert_eq!(state_machine.total_task_count(), 1);
-        state_machine.reinitialize();
-        assert_eq!(state_machine.total_task_count(), 0);
+        state_machine.task_total.increment_self();
+        assert_eq!(state_machine.task_total(), 1);
+        state_machine.reinitialize_for_test();
+        assert_eq!(state_machine.task_total(), 0);
     }
 
     #[test]
-    #[should_panic(expected = "assertion failed: self.has_no_active_task()")]
+    #[should_panic(expected = "assertion failed: self.has_no_alive_task()")]
     fn test_scheduling_state_machine_bad_reinitialization() {
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         let address_loader = &mut create_address_loader(None);
         let task = SchedulingStateMachine::create_task(simplest_transaction(), 3, address_loader);
         state_machine.schedule_task(task).unwrap();
-        state_machine.reinitialize();
+        state_machine.reinitialize_for_test();
     }
 
     #[test]
@@ -986,15 +1511,15 @@ mod tests {
         let task = SchedulingStateMachine::create_task(sanitized.clone(), 3, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         let task = state_machine.schedule_task(task).unwrap();
-        assert_eq!(state_machine.active_task_count(), 1);
-        assert_eq!(state_machine.total_task_count(), 1);
+        assert_eq!(state_machine.alive_task_count(), 1);
+        assert_eq!(state_machine.task_total(), 1);
         state_machine.deschedule_task(&task);
-        assert_eq!(state_machine.active_task_count(), 0);
-        assert_eq!(state_machine.total_task_count(), 1);
-        assert!(state_machine.has_no_active_task());
+        assert_eq!(state_machine.alive_task_count(), 0);
+        assert_eq!(state_machine.task_total(), 1);
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1006,7 +1531,7 @@ mod tests {
         let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1017,26 +1542,26 @@ mod tests {
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
 
         state_machine.deschedule_task(&task1);
-        assert!(state_machine.has_unblocked_task());
-        assert_eq!(state_machine.unblocked_task_queue_count(), 1);
+        assert!(state_machine.has_buffered_task());
+        assert_eq!(state_machine.buffered_task_queue_count(), 1);
 
-        // unblocked_task_count() should be incremented
-        assert_eq!(state_machine.unblocked_task_count(), 0);
+        assert_eq!(state_machine.buffered_task_total(), 1);
         assert_eq!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(102)
         );
-        assert_eq!(state_machine.unblocked_task_count(), 1);
+        // buffered_task_total() should be incremented
+        assert_eq!(state_machine.buffered_task_total(), 1);
 
-        // there's no blocked task anymore; calling schedule_next_unblocked_task should be noop and
-        // shouldn't increment the unblocked_task_count().
-        assert!(!state_machine.has_unblocked_task());
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
-        assert_eq!(state_machine.unblocked_task_count(), 1);
+        // there's no blocked task anymore; calling schedule_next_buffered_task should be noop and
+        // shouldn't increment the buffered_task_total().
+        assert!(!state_machine.has_buffered_task());
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
+        assert_eq!(state_machine.buffered_task_total(), 1);
 
-        assert_eq!(state_machine.unblocked_task_queue_count(), 0);
+        assert_eq!(state_machine.buffered_task_queue_count(), 0);
         state_machine.deschedule_task(&task2);
 
         assert_matches!(
@@ -1046,7 +1571,7 @@ mod tests {
             Some(103)
         );
         state_machine.deschedule_task(&task3);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1058,7 +1583,7 @@ mod tests {
         let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1068,34 +1593,35 @@ mod tests {
         );
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
 
-        assert_eq!(state_machine.unblocked_task_queue_count(), 0);
+        assert_eq!(state_machine.buffered_task_queue_count(), 0);
         state_machine.deschedule_task(&task1);
-        assert_eq!(state_machine.unblocked_task_queue_count(), 1);
+        assert_eq!(state_machine.buffered_task_queue_count(), 1);
 
         // new task is arriving after task1 is already descheduled and task2 got unblocked
         assert_matches!(state_machine.schedule_task(task3.clone()), None);
 
-        assert_eq!(state_machine.unblocked_task_count(), 0);
+        assert_eq!(state_machine.buffered_task_total(), 1);
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(102)
         );
-        assert_eq!(state_machine.unblocked_task_count(), 1);
+        // buffered_task_total() should be incremented
+        assert_eq!(state_machine.buffered_task_total(), 1);
 
         state_machine.deschedule_task(&task2);
 
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(103)
         );
-        assert_eq!(state_machine.unblocked_task_count(), 2);
+        assert_eq!(state_machine.buffered_task_total(), 2);
 
         state_machine.deschedule_task(&task3);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1108,7 +1634,7 @@ mod tests {
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         // both of read-only tasks should be immediately runnable
         assert_matches!(
@@ -1124,17 +1650,17 @@ mod tests {
             Some(102)
         );
 
-        assert_eq!(state_machine.active_task_count(), 2);
-        assert_eq!(state_machine.handled_task_count(), 0);
-        assert_eq!(state_machine.unblocked_task_queue_count(), 0);
+        assert_eq!(state_machine.alive_task_count(), 2);
+        assert_eq!(state_machine.executed_task_total(), 0);
+        assert_eq!(state_machine.buffered_task_queue_count(), 0);
         state_machine.deschedule_task(&task1);
-        assert_eq!(state_machine.active_task_count(), 1);
-        assert_eq!(state_machine.handled_task_count(), 1);
-        assert_eq!(state_machine.unblocked_task_queue_count(), 0);
+        assert_eq!(state_machine.alive_task_count(), 1);
+        assert_eq!(state_machine.executed_task_total(), 1);
+        assert_eq!(state_machine.buffered_task_queue_count(), 0);
         state_machine.deschedule_task(&task2);
-        assert_eq!(state_machine.active_task_count(), 0);
-        assert_eq!(state_machine.handled_task_count(), 2);
-        assert!(state_machine.has_no_active_task());
+        assert_eq!(state_machine.alive_task_count(), 0);
+        assert_eq!(state_machine.executed_task_total(), 2);
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1149,7 +1675,7 @@ mod tests {
         let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1165,27 +1691,27 @@ mod tests {
         );
         assert_matches!(state_machine.schedule_task(task3.clone()), None);
 
-        assert_eq!(state_machine.active_task_count(), 3);
-        assert_eq!(state_machine.handled_task_count(), 0);
-        assert_eq!(state_machine.unblocked_task_queue_count(), 0);
+        assert_eq!(state_machine.alive_task_count(), 3);
+        assert_eq!(state_machine.executed_task_total(), 0);
+        assert_eq!(state_machine.buffered_task_queue_count(), 0);
         state_machine.deschedule_task(&task1);
-        assert_eq!(state_machine.active_task_count(), 2);
-        assert_eq!(state_machine.handled_task_count(), 1);
-        assert_eq!(state_machine.unblocked_task_queue_count(), 0);
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
+        assert_eq!(state_machine.alive_task_count(), 2);
+        assert_eq!(state_machine.executed_task_total(), 1);
+        assert_eq!(state_machine.buffered_task_queue_count(), 0);
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
         state_machine.deschedule_task(&task2);
-        assert_eq!(state_machine.active_task_count(), 1);
-        assert_eq!(state_machine.handled_task_count(), 2);
-        assert_eq!(state_machine.unblocked_task_queue_count(), 1);
+        assert_eq!(state_machine.alive_task_count(), 1);
+        assert_eq!(state_machine.executed_task_total(), 2);
+        assert_eq!(state_machine.buffered_task_queue_count(), 1);
         // task3 is finally unblocked after all of readable tasks (task1 and task2) is finished.
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(103)
         );
         state_machine.deschedule_task(&task3);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1200,7 +1726,7 @@ mod tests {
         let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1211,25 +1737,25 @@ mod tests {
         assert_matches!(state_machine.schedule_task(task2.clone()), None);
         assert_matches!(state_machine.schedule_task(task3.clone()), None);
 
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
         state_machine.deschedule_task(&task1);
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(102)
         );
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
         state_machine.deschedule_task(&task2);
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(103)
         );
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
         state_machine.deschedule_task(&task3);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1242,7 +1768,7 @@ mod tests {
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1256,12 +1782,12 @@ mod tests {
         state_machine.deschedule_task(&task1);
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(102)
         );
         state_machine.deschedule_task(&task2);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1278,7 +1804,7 @@ mod tests {
         let task4 = SchedulingStateMachine::create_task(sanitized4, 104, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1293,34 +1819,34 @@ mod tests {
         state_machine.deschedule_task(&task1);
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(102)
         );
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(103)
         );
         // the above deschedule_task(task1) call should only unblock task2 and task3 because these
         // are read-locking. And shouldn't unblock task4 because it's write-locking
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
 
         state_machine.deschedule_task(&task2);
         // still task4 is blocked...
-        assert_matches!(state_machine.schedule_next_unblocked_task(), None);
+        assert_matches!(state_machine.schedule_next_buffered_task(), None);
 
         state_machine.deschedule_task(&task3);
         // finally task4 should be unblocked
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(104)
         );
         state_machine.deschedule_task(&task4);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
     }
 
     #[test]
@@ -1334,7 +1860,7 @@ mod tests {
         let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         assert_matches!(
             state_machine
@@ -1348,7 +1874,7 @@ mod tests {
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                assert_matches!(usage_queue.current_usage, Some(Usage::Writable));
+                assert_matches!(usage_queue.current_usage, Some(Usage::Writable(_)));
             });
         // task2's fee payer should have been locked already even if task2 is blocked still via the
         // above the schedule_task(task2) call
@@ -1357,45 +1883,423 @@ mod tests {
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                assert_matches!(usage_queue.current_usage, Some(Usage::Writable));
+                assert_matches!(usage_queue.current_usage, Some(Usage::Writable(_)));
             });
         state_machine.deschedule_task(&task1);
         assert_matches!(
             state_machine
-                .schedule_next_unblocked_task()
+                .schedule_next_buffered_task()
                 .map(|t| t.task_index()),
             Some(102)
         );
         state_machine.deschedule_task(&task2);
-        assert!(state_machine.has_no_active_task());
+        assert!(state_machine.has_no_alive_task());
+    }
+
+    #[test]
+    fn test_higher_priority_locking_write_read() {
+        let conflicting_address1 = Pubkey::new_unique();
+        let conflicting_address2 = Pubkey::new_unique();
+        let sanitized1 =
+            transaction_with_writable_address2(conflicting_address1, conflicting_address2);
+        let sanitized2 =
+            transaction_with_writable_read2(conflicting_address1, conflicting_address2);
+        let sanitized0_1 = transaction_with_writable_address(conflicting_address1);
+        //let sanitized0_2 = transaction_with_writable_address(
+        let usage_queues = Rc::new(RefCell::new(HashMap::new()));
+        let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_1.clone())
+                .map(|t| t.task_index()),
+            Some(50)
+        );
+        // now
+        // addr1: locked by task_0_1, queue: []
+        // addr2: unlocked, queue: []
+
+        assert_matches!(state_machine.schedule_task(task1.clone()), None);
+        // now
+        // addr1: locked by task_0_1, queue: [task1]
+        // addr2: locked by task1, queue: []
+        //
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        // now
+        // addr1: locked by task_0_1, queue: [task2, task1]
+        // addr2: locked by task2, queue: [task1]
+
+        assert!(!state_machine.has_buffered_task());
+        state_machine.deschedule_task(&task0_1);
+        assert!(state_machine.has_buffered_task());
+        // now
+        // addr1: locked by task2, queue: [task1]
+        // addr2: locked by task2, queue: [task1]
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(99)
+        );
+
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_buffered_task());
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(101)
+        );
+        state_machine.deschedule_task(&task1);
+
+        dbg!(state_machine);
+        // task1
+        //      blocked by addr1
+        //      locking addr2
+        // task2
+        //      locking addr1
+        //      blocked by addr2
+        //
+        /*
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_2.clone())
+                .map(|t| t.task_index()),
+            Some(51)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        */
+    }
+
+    #[test]
+    fn test_higher_priority_locking_write_write_and_read_read() {
+        let conflicting_address1 = Pubkey::new_unique();
+        let conflicting_address2 = Pubkey::new_unique();
+        let sanitized1 =
+            transaction_with_writable_address2(conflicting_address1, conflicting_address2);
+        let sanitized2 =
+            transaction_with_writable_address2(conflicting_address1, conflicting_address2);
+        let sanitized0_1 = transaction_with_writable_address(conflicting_address1);
+        //let sanitized0_2 = transaction_with_writable_address(
+        let usage_queues = Rc::new(RefCell::new(HashMap::new()));
+        let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_1.clone())
+                .map(|t| t.task_index()),
+            Some(50)
+        );
+        // now
+        // addr1: locked by task_0_1, queue: []
+        // addr2: unlocked, queue: []
+
+        assert_matches!(state_machine.schedule_task(task1.clone()), None);
+        // now
+        // addr1: locked by task_0_1, queue: [task1]
+        // addr2: locked by task1, queue: []
+        //
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        // now
+        // addr1: locked by task_0_1, queue: [task2, task1]
+        // addr2: locked by task2, queue: [task1]
+
+        assert!(!state_machine.has_buffered_task());
+        state_machine.deschedule_task(&task0_1);
+        assert!(state_machine.has_buffered_task());
+        // now
+        // addr1: locked by task2, queue: [task1]
+        // addr2: locked by task2, queue: [task1]
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(99)
+        );
+
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_buffered_task());
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(101)
+        );
+        state_machine.deschedule_task(&task1);
+
+        dbg!(state_machine);
+        // task1
+        //      blocked by addr1
+        //      locking addr2
+        // task2
+        //      locking addr1
+        //      blocked by addr2
+        //
+        /*
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_2.clone())
+                .map(|t| t.task_index()),
+            Some(51)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        */
+    }
+
+    #[test]
+    fn test_higher_priority_locking_read_write_simple() {
+        let conflicting_address1 = Pubkey::new_unique();
+        let conflicting_address2 = Pubkey::new_unique();
+        let sanitized1 =
+            transaction_with_writable_read2(conflicting_address1, conflicting_address2);
+        let sanitized2 =
+            transaction_with_writable_address2(conflicting_address1, conflicting_address2);
+        let sanitized0_1 = transaction_with_writable_address(conflicting_address1);
+        //let sanitized0_2 = transaction_with_writable_address(
+        let usage_queues = Rc::new(RefCell::new(HashMap::new()));
+        let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_1.clone())
+                .map(|t| t.task_index()),
+            Some(50)
+        );
+        // now
+        // addr1: locked by task_0_1, queue: []
+        // addr2: unlocked, queue: []
+
+        assert_matches!(state_machine.schedule_task(task1.clone()), None);
+        // now
+        // addr1: locked by task_0_1, queue: [task1]
+        // addr2: locked by task1, queue: []
+        //
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        // now
+        // addr1: locked by task_0_1, queue: [task2, task1]
+        // addr2: locked by task2, queue: [task1]
+
+        assert!(!state_machine.has_buffered_task());
+        state_machine.deschedule_task(&task0_1);
+        assert!(state_machine.has_buffered_task());
+        // now
+        // addr1: locked by task2, queue: [task1]
+        // addr2: locked by task2, queue: [task1]
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(99)
+        );
+
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_buffered_task());
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(101)
+        );
+        state_machine.deschedule_task(&task1);
+
+        dbg!(state_machine);
+        // task1
+        //      blocked by addr1
+        //      locking addr2
+        // task2
+        //      locking addr1
+        //      blocked by addr2
+        //
+        /*
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_2.clone())
+                .map(|t| t.task_index()),
+            Some(51)
+        );
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        */
+    }
+
+    #[test]
+    fn test_higher_priority_locking_read_write_complex() {
+        let conflicting_address1 = Pubkey::new_unique();
+        let conflicting_address2 = Pubkey::new_unique();
+        let sanitized0_1 = transaction_with_readonly_address(conflicting_address2);
+        let sanitized1 = transaction_with_writable_read2(
+            *sanitized0_1.message().fee_payer(),
+            conflicting_address2,
+        );
+        let sanitized1_2 =
+            transaction_with_writable_read2(conflicting_address1, conflicting_address2);
+        let sanitized1_3 =
+            transaction_with_writable_read2(conflicting_address1, conflicting_address2);
+        let sanitized2 =
+            transaction_with_writable_address2(Pubkey::new_unique(), conflicting_address2);
+        //let sanitized0_2 = transaction_with_writable_address(
+        let usage_queues = Rc::new(RefCell::new(HashMap::new()));
+        let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task1_2 = SchedulingStateMachine::create_task(sanitized1_2, 103, address_loader);
+        let task1_3 = SchedulingStateMachine::create_task(sanitized1_3, 104, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
+
+        let mut state_machine = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task0_1.clone())
+                .map(|t| t.task_index()),
+            Some(50)
+        );
+        // now
+        // addr1: unlocked, queue: []
+        // addr2: locked by task0_1, queue: []
+
+        assert_matches!(state_machine.schedule_task(task1.clone()), None);
+        // now
+        // addr1: unlocked, queue: []
+        // addr2: locked by [task0_1, task1], queue: []
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task1_2.clone())
+                .map(|t| t.task_index()),
+            Some(103)
+        );
+        // now
+        // addr1: locked by task1_2, queue: []
+        // addr2: locked by [task0_1, task1, task1_2], queue: []
+
+        assert_matches!(
+            state_machine
+                .schedule_task(task1_3.clone())
+                .map(|t| t.task_index()),
+            None
+        );
+        // now
+        // addr1: locked by task1_2, queue: [task1_3]
+        // addr2: locked by [task0_1, task1, task1_2, task1_3], queue: []
+
+        assert_matches!(state_machine.schedule_task(task2.clone()), None);
+        // now
+        // addr1: locked by task1_2, queue: [task1_3]
+        // addr2: locked by [task0_1, task1_2], queue: [task2, task1, task1_3]
+
+        assert!(!state_machine.has_buffered_task());
+        dbg!(state_machine.buffered_task_queue_count());
+        state_machine.deschedule_task(&task0_1);
+        dbg!(state_machine.buffered_task_queue_count());
+        assert!(!state_machine.has_buffered_task());
+        // now
+        // addr1: locked by task1_2, queue: [task1_3]
+        // addr2: locked by task1_2, queue: [task2, task1, task1_3]
+        //
+        assert!(!state_machine.has_buffered_task());
+        state_machine.deschedule_task(&task1_2);
+        assert!(state_machine.has_buffered_task());
+        // now
+        // addr1: unlocked, queue: [task1_3]
+        // addr2: unlocked, queue: [task2, task1, task1_3]
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(99)
+        );
+        // now
+        // addr1: unlocked, queue: [task1_3]
+        // addr2: locked by task2, queue: [task1, task1_3]
+
+        assert!(!state_machine.has_buffered_task());
+        state_machine.deschedule_task(&task2);
+        assert!(state_machine.has_buffered_task());
+        // now
+        // addr1: unlocked, queue: [task1_3]
+        // addr2: unlocked, queue: [task1, task1_3]
+
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(101)
+        );
+        assert_matches!(
+            state_machine
+                .schedule_next_buffered_task()
+                .map(|t| t.task_index()),
+            Some(104)
+        );
+        state_machine.deschedule_task(&task1);
+        state_machine.deschedule_task(&task1_3);
     }
 
     #[test]
     #[should_panic(expected = "internal error: entered unreachable code")]
     fn test_unreachable_unlock_conditions1() {
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         let usage_queue = UsageQueue::default();
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                let _ = usage_queue.unlock(RequestedUsage::Writable);
+                let _ = usage_queue.unlock(RequestedUsage::Writable, 0, &mut state_machine.count_token);
             });
     }
 
     #[test]
-    #[should_panic(expected = "internal error: entered unreachable code")]
+    #[should_panic(expected = "assertion `left == right` failed\n  left: (3, Readonly)\n right: (3, Writable)")]
     fn test_unreachable_unlock_conditions2() {
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         let usage_queue = UsageQueue::default();
+        let sanitized = simplest_transaction();
+        let task = SchedulingStateMachine::create_task(sanitized.clone(), 3, &mut |_| {
+            UsageQueue::default()
+        });
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
-                usage_queue.current_usage = Some(Usage::Writable);
-                let _ = usage_queue.unlock(RequestedUsage::Readonly);
+                let task_index = task.index;
+                usage_queue.current_usage = Some(Usage::Writable(task));
+                let _ = usage_queue.unlock(RequestedUsage::Readonly, task_index, &mut state_machine.count_token);
             });
     }
 
@@ -1403,14 +2307,19 @@ mod tests {
     #[should_panic(expected = "internal error: entered unreachable code")]
     fn test_unreachable_unlock_conditions3() {
         let mut state_machine = unsafe {
-            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling()
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         let usage_queue = UsageQueue::default();
+        let sanitized = simplest_transaction();
+        let task = SchedulingStateMachine::create_task(sanitized.clone(), 3, &mut |_| {
+            UsageQueue::default()
+        });
         usage_queue
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
+                let task_index = task.index;
                 usage_queue.current_usage = Some(Usage::Readonly(ShortCounter::one()));
-                let _ = usage_queue.unlock(RequestedUsage::Writable);
+                let _ = usage_queue.unlock(RequestedUsage::Writable, task_index, &mut state_machine.count_token);
             });
     }
 }

@@ -46,6 +46,7 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
+use solana_ledger::blockstore::IndexMetaWorkingSetEntry;
 
 type ShredPayload = Vec<u8>;
 type DuplicateSlotSender = Sender<Slot>;
@@ -279,6 +280,7 @@ fn run_insert<F>(
     outstanding_requests: &RwLock<OutstandingShredRepairs>,
     reed_solomon_cache: &ReedSolomonCache,
     accept_repairs_only: bool,
+    index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
@@ -286,7 +288,7 @@ where
     const RECV_TIMEOUT: Duration = Duration::from_millis(200);
     let mut shred_receiver_elapsed = Measure::start("shred_receiver_elapsed");
     let mut packets = verified_receiver.recv_timeout(RECV_TIMEOUT)?;
-    packets.extend(verified_receiver.try_iter().flatten());
+    packets.extend(verified_receiver.try_iter().take(50).flatten());
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
@@ -347,6 +349,7 @@ where
         &handle_duplicate,
         reed_solomon_cache,
         metrics,
+        index_working_set,
     )?;
 
     if let Some(sender) = completed_data_sets_sender {
@@ -499,6 +502,8 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
+                let mut index_working_set = HashMap::new();
+
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_insert(
                         &thread_pool,
@@ -513,6 +518,7 @@ impl WindowService {
                         &outstanding_requests,
                         &reed_solomon_cache,
                         accept_repairs_only,
+                        &mut index_working_set,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e, &handle_error) {

@@ -11,5 +11,10 @@ edition = { workspace = true }
 
 [dependencies]
 assert_matches = { workspace = true }
+more-asserts = { workspace = true }
 solana-sdk = { workspace = true }
 static_assertions = { workspace = true }
+enum-ptr = "0.2.0-beta.0"
+dary_heap = "0.3.6"
+rclite = "0.2.4"
+bitfield-struct = "0.8.0"

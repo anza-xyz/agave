@@ -31,6 +31,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
@@ -40,7 +41,11 @@ use {
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_sdk::{
+        pubkey::Pubkey,
+        timing::AtomicInterval,
+        transaction::{SanitizedTransaction, TransactionError},
+    },
     std::{
         cmp, env,
         ops::Deref,
@@ -70,7 +75,7 @@ mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
 mod multi_iterator_scanner;
-mod packet_deserializer;
+pub mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
@@ -398,24 +403,24 @@ impl BankingStage {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
     ) -> Self {
+        use BlockProductionMethod::*;
+
         match block_production_method {
-            BlockProductionMethod::ThreadLocalMultiIterator => {
-                Self::new_thread_local_multi_iterator(
-                    cluster_info,
-                    poh_recorder,
-                    non_vote_receiver,
-                    tpu_vote_receiver,
-                    gossip_vote_receiver,
-                    num_threads,
-                    transaction_status_sender,
-                    replay_vote_sender,
-                    log_messages_bytes_limit,
-                    connection_cache,
-                    bank_forks,
-                    prioritization_fee_cache,
-                )
-            }
-            BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
+            ThreadLocalMultiIterator => Self::new_thread_local_multi_iterator(
+                cluster_info,
+                poh_recorder,
+                non_vote_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                num_threads,
+                transaction_status_sender,
+                replay_vote_sender,
+                log_messages_bytes_limit,
+                connection_cache,
+                bank_forks,
+                prioritization_fee_cache,
+            ),
+            CentralScheduler => Self::new_central_scheduler(
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -429,6 +434,14 @@ impl BankingStage {
                 bank_forks,
                 prioritization_fee_cache,
                 enable_forwarding,
+            ),
+            UnifiedScheduler => Self::new_unified_scheduler(
+                cluster_info,
+                poh_recorder,
+                non_vote_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                bank_forks,
             ),
         }
     }
@@ -657,6 +670,184 @@ impl BankingStage {
         Self { bank_thread_hdls }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_unified_scheduler(
+        cluster_info: &impl LikeClusterInfo,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        non_vote_receiver: BankingPacketReceiver,
+        tpu_vote_receiver: BankingPacketReceiver,
+        gossip_vote_receiver: BankingPacketReceiver,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> Self {
+        // todo: forwarding, proper handling of buffered packets, vote storage, vote only
+        // blocks...
+        struct MonotonicIdGenerator {
+            next_task_id: std::sync::atomic::AtomicU32,
+        }
+
+        impl MonotonicIdGenerator {
+            fn new() -> Arc<Self> {
+                Arc::new(Self {
+                    next_task_id: Default::default(),
+                })
+            }
+
+            fn bulk_assign_task_ids(&self, count: u32) -> u32 {
+                self.next_task_id.fetch_add(count, Ordering::AcqRel)
+            }
+        }
+        let id_generator = MonotonicIdGenerator::new();
+        info!("create_block_producing_scheduler: start!");
+        let s = bank_forks.read().unwrap().create_block_producing_scheduler();
+        info!("create_block_producing_scheduler: end!");
+
+        let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+
+        use solana_rayon_threadlimit::get_thread_count;
+        let bank_thread_hdls = [
+            gossip_vote_receiver,
+            tpu_vote_receiver,
+        ].into_iter().chain(std::iter::repeat(
+            non_vote_receiver
+        ))
+        .take(std::cmp::max(2, get_thread_count()))
+        .enumerate()
+        .map(|(thx, receiver)| {
+            let decision_maker = decision_maker.clone();
+            let id_generator = id_generator.clone();
+            let packet_deserializer = PacketDeserializer::new(receiver, bank_forks.clone());
+            let poh_recorder = poh_recorder.clone();
+            let bank_forks = bank_forks.clone();
+            let s = s.clone();
+
+            std::thread::Builder::new()
+                .name(format!("solScSubmit{:02}", thx))
+                .spawn(move || 'outer: loop {
+                    let decision = decision_maker.make_consume_or_forward_decision();
+                    match decision {
+                        BufferedPacketsDecision::Consume(_) |
+                        BufferedPacketsDecision::ForwardAndHold |
+                        BufferedPacketsDecision::Hold => {
+                            let bank = bank_forks.read().unwrap().working_bank();
+                            //info!("consume!");
+                            let transaction_account_lock_limit =
+                                bank.get_transaction_account_lock_limit();
+                            let recv_timeout = Duration::from_millis(10);
+
+                            let start = Instant::now();
+
+                            loop {
+                                match packet_deserializer
+                                    .packet_batch_receiver
+                                    .recv_timeout(recv_timeout)
+                                {
+                                    Ok(aaa) => {
+                                        for pp in &aaa.0 {
+                                            // over-provision
+                                            let task_id =
+                                                id_generator.bulk_assign_task_ids(pp.len().try_into().unwrap());
+                                            let task_ids =
+                                                (task_id..(task_id + TryInto::<u32>::try_into(pp.len()).unwrap())).collect::<Vec<_>>();
+
+                                            let indexes =
+                                                PacketDeserializer::generate_packet_indexes(&pp);
+                                            let ppp = PacketDeserializer::deserialize_packets2(
+                                                &pp, &indexes,
+                                            )
+                                            .filter_map(|(i, p)| {
+                                                if p.original_packet().meta().is_tracer_packet() {
+                                                    warn!("pipeline_tracer: unified_scheduler submit receiver_len: {} {:?} {:?}", packet_deserializer.packet_batch_receiver.len(), std::thread::current(), std::backtrace::Backtrace::force_capture());
+                                                }
+                                                let Some(tx) = p.build_sanitized_transaction(
+                                                    bank.vote_only_bank(),
+                                                    &*bank,
+                                                    bank.get_reserved_account_keys(),
+                                                ) else {
+                                                    return None;
+                                                };
+
+                                                if let Err(_) =
+                                                    SanitizedTransaction::validate_account_locks(
+                                                        tx.message(),
+                                                        transaction_account_lock_limit,
+                                                    )
+                                                {
+                                                    return None;
+                                                }
+
+                                                use solana_svm_transaction::svm_message::SVMMessage;
+                                                let Ok(fb) = process_compute_budget_instructions(
+                                                    SVMMessage::program_instructions_iter(tx.message()),
+                                                ) else {
+                                                    return None;
+                                                };
+
+                                                let (priority, _cost) =
+                                                SchedulerController::<std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>>::calculate_priority_and_cost(
+                                                    &tx,
+                                                    &fb.into(),
+                                                    &bank,
+                                                );
+                                                // wire cost tracker....
+                                                //let i = ((u32::MAX - TryInto::<u32>::try_into(priority).unwrap()) as u64) << 32
+                                                let i = ((u64::MAX - priority) as u128) << 64
+                                                    | task_ids[*i] as solana_runtime::installed_scheduler_pool::Index;
+
+                                                Some((tx, i))
+                                            })
+                                            .collect::<Vec<_>>();
+
+                                            /*
+                                            match bank.schedule_transaction_executions(
+                                                ppp.iter().map(|(a, b)| (a, b)),
+                                            ) {
+                                                Ok(()) => (),
+                                                Err(TransactionError::CommitFailed) => break,
+                                                _ => unreachable!(),
+                                            }
+                                            */
+                                            for (a, b) in ppp {
+                                                s.schedule_execution(&(&a, b));
+                                            }
+                                        }
+
+                                        if start.elapsed() >= recv_timeout {
+                                            break;
+                                        }
+                                    }
+                                    Err(RecvTimeoutError::Timeout) => continue 'outer,
+                                    Err(RecvTimeoutError::Disconnected) => break 'outer,
+                                }
+                            }
+                        }
+                        BufferedPacketsDecision::Forward => {
+                            //info!("forward!");
+                            while let Ok(_) = packet_deserializer.packet_batch_receiver.try_recv() {
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        /*
+                        BufferedPacketsDecision::ForwardAndHold => {
+                            info!("forward and hold!");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        BufferedPacketsDecision::Hold => {
+                            info!("hold!");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        */
+                    }
+                    if poh_recorder.read().unwrap().is_exited.load(Ordering::Relaxed) {
+                        break;
+                    }
+                })
+                .unwrap()
+        })
+        .collect();
+
+        Self { bank_thread_hdls }
+    }
+
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
         id: u32,
         packet_receiver: BankingPacketReceiver,
@@ -714,11 +905,12 @@ impl BankingStage {
 
         match decision {
             BufferedPacketsDecision::Consume(bank_start) => {
+                debug!("process_buffered_packets: Consume {metrics_action:?} {}", slot_metrics_tracker.id);
                 // Take metrics action before consume packets (potentially resetting the
                 // slot metrics tracker to the next slot) so that we don't count the
                 // packet processing metrics from the next slot towards the metrics
                 // of the previous slot
-                slot_metrics_tracker.apply_action(metrics_action);
+                slot_metrics_tracker.apply_action2(metrics_action);
                 let (_, consume_buffered_packets_us) = measure_us!(consumer
                     .consume_buffered_packets(
                         &bank_start,
@@ -730,6 +922,7 @@ impl BankingStage {
                     .increment_consume_buffered_packets_us(consume_buffered_packets_us);
             }
             BufferedPacketsDecision::Forward => {
+                debug!("process_buffered_packets: Forward {metrics_action:?} {}", slot_metrics_tracker.id);
                 let ((), forward_us) = measure_us!(forwarder.handle_forwarding(
                     unprocessed_transaction_storage,
                     false,
@@ -740,9 +933,10 @@ impl BankingStage {
                 slot_metrics_tracker.increment_forward_us(forward_us);
                 // Take metrics action after forwarding packets to include forwarded
                 // metrics into current slot
-                slot_metrics_tracker.apply_action(metrics_action);
+                slot_metrics_tracker.apply_action2(metrics_action);
             }
             BufferedPacketsDecision::ForwardAndHold => {
+                debug!("process_buffered_packets: ForwardAndHold {metrics_action:?} {}", slot_metrics_tracker.id);
                 let ((), forward_and_hold_us) = measure_us!(forwarder.handle_forwarding(
                     unprocessed_transaction_storage,
                     true,
@@ -752,9 +946,11 @@ impl BankingStage {
                 ));
                 slot_metrics_tracker.increment_forward_and_hold_us(forward_and_hold_us);
                 // Take metrics action after forwarding packets
-                slot_metrics_tracker.apply_action(metrics_action);
+                slot_metrics_tracker.apply_action2(metrics_action);
             }
-            _ => (),
+            BufferedPacketsDecision::Hold => {
+                debug!("process_buffered_packets: Hold {metrics_action:?} {}", slot_metrics_tracker.id);
+            }
         }
     }
 

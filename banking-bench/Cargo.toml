@@ -12,6 +12,7 @@ edition = { workspace = true }
 clap = { version = "3.1.8", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
+mimalloc = "0.1.42"
 rand = { workspace = true }
 rayon = { workspace = true }
 solana-client = { workspace = true }
@@ -26,6 +27,7 @@ solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 
 [features]

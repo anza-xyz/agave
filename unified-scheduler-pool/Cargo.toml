@@ -10,16 +10,23 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+cpu-time = "1.0.0"
+ahash = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derivative = { workspace = true }
+enum-ptr = "0.2.0-beta.0"
 log = { workspace = true }
 qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
+solana-cost-model = { workspace = true }
 solana-ledger = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-poh = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
+solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }

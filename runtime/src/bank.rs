@@ -3859,7 +3859,8 @@ impl Bank {
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
-            "commit_transactions() working on a bank that is already frozen or is undergoing freezing!"
+            "commit_transactions() working on a bank (slot: {}) that is already frozen or is undergoing freezing!",
+            self.slot(),
         );
 
         let ProcessedTransactionCounts {
@@ -4706,7 +4707,8 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-    ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
+        pre_commit_callback: Option<impl FnOnce() -> bool>,
+    ) -> Option<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4732,6 +4734,15 @@ impl Bank {
             },
         );
 
+        if let Some(pre_commit_callback) = pre_commit_callback {
+            if let Some(e) = processing_results.first() {
+                assert_eq!(processing_results.len(), 1);
+                if e.is_ok() && !pre_commit_callback() {
+                    return None;
+                }
+            }
+        }
+
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
@@ -4743,10 +4754,10 @@ impl Bank {
         } else {
             vec![]
         };
-        (
+        Some((
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
-        )
+        ))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
@@ -4767,7 +4778,10 @@ impl Bank {
         let txs = vec![tx.into()];
         let batch = self.prepare_entry_batch(txs)?;
 
-        let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
+        let Some((
+            mut commit_results,
+            ..,
+        )) = self.load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             false, // collect_balances
@@ -4778,7 +4792,11 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
-        );
+            None::<fn() -> bool>,
+        )
+        else {
+            panic!()
+        };
 
         commit_results.remove(0)
     }
@@ -4817,7 +4835,9 @@ impl Bank {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            None::<fn() -> bool>,
         )
+        .unwrap()
         .0
         .into_iter()
         .map(|commit_result| commit_result.map(|_| ()))
@@ -5409,6 +5429,9 @@ impl Bank {
             } else {
                 "".to_string()
             }
+        );
+        info!(
+            "bank frozen: {slot} collector_fees: {}", self.collector_fees.load(Relaxed),
         );
         hash
     }
