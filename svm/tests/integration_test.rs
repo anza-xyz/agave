@@ -28,7 +28,7 @@ use {
         nonce_info::NonceInfo,
         rollback_accounts::RollbackAccounts,
         transaction_execution_result::TransactionExecutionDetails,
-        transaction_processing_result::ProcessedTransaction,
+        transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
             TransactionProcessingEnvironment,
@@ -321,6 +321,22 @@ impl ExecutionStatus {
 
     pub fn discarded(self) -> bool {
         self == Self::Discarded
+    }
+}
+
+impl From<&TransactionProcessingResult> for ExecutionStatus {
+    fn from(processing_result: &TransactionProcessingResult) -> Self {
+        match processing_result {
+            Ok(ProcessedTransaction::Executed(executed_transaction)) => {
+                if executed_transaction.execution_details.status.is_ok() {
+                    ExecutionStatus::Succeeded
+                } else {
+                    ExecutionStatus::ExecutedFailed
+                }
+            }
+            Ok(ProcessedTransaction::FeesOnly(_)) => ExecutionStatus::ProcessedFailed,
+            Err(_) => ExecutionStatus::Discarded,
+        }
     }
 }
 
@@ -669,7 +685,11 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
     // * true/false: normal nonce account used to pay fees with rent minimum plus 1sol
     // * false/true: normal nonce account with rent minimum, fee payer doesnt exist
     // * true/true: same account for both which does not exist
-    let mk_nonce_transaction = |test_entry: &mut SvmTestEntry, program_id, fake_fee_payer: bool| {
+    // we also provide a side door to bring a fee-paying nonce account below rent-exemption
+    let mk_nonce_transaction = |test_entry: &mut SvmTestEntry,
+                                program_id,
+                                fake_fee_payer: bool,
+                                rent_paying_nonce: bool| {
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
         let nonce_pubkey = if fee_paying_nonce {
@@ -685,8 +705,11 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
             let mut fee_payer_data = AccountSharedData::default();
             fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
             test_entry.add_initial_account(fee_payer, &fee_payer_data);
+        } else if rent_paying_nonce {
+            assert!(fee_paying_nonce);
+            nonce_balance -= 1;
         } else if fee_paying_nonce {
-            nonce_balance = nonce_balance.saturating_add(LAMPORTS_PER_SOL);
+            nonce_balance += LAMPORTS_PER_SOL;
         }
 
         let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
@@ -719,10 +742,11 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
         (transaction, fee_payer, nonce_info)
     };
 
-    // successful nonce transaction, regardless of features
+    // 0: successful nonce transaction, regardless of features
     {
         let (transaction, fee_payer, mut nonce_info) =
-            mk_nonce_transaction(&mut test_entry, real_program_id, false);
+            mk_nonce_transaction(&mut test_entry, real_program_id, false, false);
+
         test_entry.push_nonce_transaction(transaction, nonce_info.clone());
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
@@ -742,10 +766,10 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
             .copy_from_slice(nonce_info.account().data());
     }
 
-    // non-executing nonce transaction (fee payer doesnt exist) regardless of features
+    // 1: non-executing nonce transaction (fee payer doesnt exist) regardless of features
     {
         let (transaction, _fee_payer, nonce_info) =
-            mk_nonce_transaction(&mut test_entry, real_program_id, true);
+            mk_nonce_transaction(&mut test_entry, real_program_id, true, false);
 
         test_entry
             .final_accounts
@@ -759,10 +783,11 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
         );
     }
 
-    // failing nonce transaction (bad system instruction) regardless of features
+    // 2: failing nonce transaction (bad system instruction) regardless of features
     {
         let (transaction, fee_payer, mut nonce_info) =
-            mk_nonce_transaction(&mut test_entry, system_program::id(), false);
+            mk_nonce_transaction(&mut test_entry, system_program::id(), false, false);
+
         test_entry.push_nonce_transaction_with_status(
             transaction,
             nonce_info.clone(),
@@ -786,11 +811,10 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
             .copy_from_slice(nonce_info.account().data());
     }
 
-    // and this (program doesnt exist) will be a non-executing transaction without the feature
-    // or a fee-only transaction with it. which is identical to failed *except* rent is not updated
+    // 3: processable non-executable nonce transaction with fee-only enabled, otherwise discarded
     {
         let (transaction, fee_payer, mut nonce_info) =
-            mk_nonce_transaction(&mut test_entry, Pubkey::new_unique(), false);
+            mk_nonce_transaction(&mut test_entry, Pubkey::new_unique(), false, false);
 
         if enable_fee_only_transactions {
             test_entry.push_nonce_transaction_with_status(
@@ -842,6 +866,45 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
                 ExecutionStatus::Discarded,
             );
         }
+    }
+
+    // 4: safety check that rent-paying nonce fee-payers are verboten (blockhash fee-payers may be below rent-exemption)
+    // if this situation is ever allowed in the future, the nonce account MUST be hidden for fee-only transactions
+    // as an aside, nonce accounts closed by WithdrawNonceAccount are safe because they are ordinary executed transactions
+    // we also dont care whether a non-fee nonce (or any account) pays rent because rent is charged on executed transactions
+    if fee_paying_nonce {
+        let (transaction, _, nonce_info) =
+            mk_nonce_transaction(&mut test_entry, real_program_id, false, true);
+
+        test_entry
+            .final_accounts
+            .get_mut(nonce_info.address())
+            .unwrap()
+            .set_rent_epoch(0);
+
+        test_entry.push_nonce_transaction_with_status(
+            transaction,
+            nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+    }
+
+    // 5: rent-paying nonce fee-payers are also not charged for fee-only transactions
+    if enable_fee_only_transactions && fee_paying_nonce {
+        let (transaction, _, nonce_info) =
+            mk_nonce_transaction(&mut test_entry, Pubkey::new_unique(), false, true);
+
+        test_entry
+            .final_accounts
+            .get_mut(nonce_info.address())
+            .unwrap()
+            .set_rent_epoch(0);
+
+        test_entry.push_nonce_transaction_with_status(
+            transaction,
+            nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
     }
 
     vec![test_entry]
@@ -1317,6 +1380,15 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     test_entries
 }
 
+// XXX TODO FIXME more bizarre nonce cases we might want to test:
+// * withdraw from nonce, then use (discard)
+// * withdraw from nonce, fund, then use (discard)
+// * withdraw from nonce, create account of nonce size, then use (discard)
+// * as above but use it as the fee-payer of a fee-only transaction (discard)
+// reading the code i believe these are all safe, validate_transaction_fee_payer should ? an error
+// * withdraw from nonce, create new nonce, then use (discard)
+// this one is safe also, because new nonces are initialized with the current durable nonce
+
 fn account_deallocate() -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
@@ -1384,9 +1456,10 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
             );
             test_entry.push_transaction(dealloc_transaction.clone());
 
-            // NOTE we cannot test here that the account has been dropped
-            // because, as-designed, the account returned from tx processing is "live" with zero lamports
-            // instead, we test to confirm the batch correctly pretends it has been dropped
+            // we cannot test that the account has been dropped by just looking at the final state
+            // because, as-designed, the account returned from tx processing is unchanged except with zero lamports
+            // the actual data isnt wiped until the commit stage, which these tests do not cover
+            // so we test to confirm the batch correctly pretends it has already been dropped
             test_entry.push_transaction_with_status(
                 set_data_transaction.clone(),
                 ExecutionStatus::ExecutedFailed,
@@ -1394,7 +1467,6 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
 
             test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
-            // XXX FIXME this is BAD and WRONG, see notes in transaction_processor.rs
             test_entry
                 .final_accounts
                 .insert(target, AccountSharedData::default())
@@ -1405,6 +1477,168 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
     }
 
     test_entries
+}
+
+fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
+    let mut test_entry = SvmTestEntry::default();
+    if enable_fee_only_transactions {
+        test_entry
+            .enabled_features
+            .push(feature_set::enable_transaction_loading_failure_fees::id());
+    }
+
+    let program_name = "hello-solana".to_string();
+    let real_program_id = program_address(&program_name);
+    test_entry
+        .initial_programs
+        .push((program_name, DEPLOYMENT_SLOT));
+
+    // 0/1: a rent-paying fee-payer goes to zero lamports on an executed transaction, the batch sees it as deallocated
+    // 2/3: the same, except if fee-only transactions are enabled, it goes to zero lamports from a a fee-only transaction
+    for do_fee_only_transaction in if enable_fee_only_transactions {
+        vec![false, true]
+    } else {
+        vec![false]
+    } {
+        let dealloc_fee_payer_keypair = Keypair::new();
+        let dealloc_fee_payer = dealloc_fee_payer_keypair.pubkey();
+
+        let mut dealloc_fee_payer_data = AccountSharedData::default();
+        dealloc_fee_payer_data.set_lamports(LAMPORTS_PER_SIGNATURE);
+        dealloc_fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
+
+        let stable_fee_payer_keypair = Keypair::new();
+        let stable_fee_payer = stable_fee_payer_keypair.pubkey();
+
+        let mut stable_fee_payer_data = AccountSharedData::default();
+        stable_fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        test_entry.add_initial_account(stable_fee_payer, &stable_fee_payer_data);
+
+        // transaction which drains a fee-payer
+        let instruction = Instruction::new_with_bytes(
+            if do_fee_only_transaction {
+                Pubkey::new_unique()
+            } else {
+                real_program_id
+            },
+            &[],
+            vec![],
+        );
+
+        let transaction = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&dealloc_fee_payer),
+            &[&dealloc_fee_payer_keypair],
+            Hash::default(),
+        );
+
+        test_entry.push_transaction_with_status(
+            transaction,
+            if do_fee_only_transaction {
+                ExecutionStatus::ProcessedFailed
+            } else {
+                ExecutionStatus::Succeeded
+            },
+        );
+
+        test_entry.decrease_expected_lamports(&dealloc_fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        // as noted in `account_deallocate()` we must touch the account to see if anything actually happened
+        let instruction = Instruction::new_with_bytes(
+            real_program_id,
+            &[],
+            vec![AccountMeta::new_readonly(dealloc_fee_payer, false)],
+        );
+        test_entry.push_transaction(Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&stable_fee_payer),
+            &[&stable_fee_payer_keypair],
+            Hash::default(),
+        ));
+
+        test_entry.decrease_expected_lamports(&stable_fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        test_entry
+            .final_accounts
+            .insert(dealloc_fee_payer, AccountSharedData::default())
+            .unwrap();
+    }
+
+    // 4: a rent-paying non-nonce fee-payer goes to zero on a fee-only nonce transaction, the batch sees it as deallocated
+    // we test elsewhere that nonce fee-payers must a rule be rent-exempt (XXX test if fees would bring it below...)
+    if enable_fee_only_transactions {
+        let dealloc_fee_payer_keypair = Keypair::new();
+        let dealloc_fee_payer = dealloc_fee_payer_keypair.pubkey();
+
+        let mut dealloc_fee_payer_data = AccountSharedData::default();
+        dealloc_fee_payer_data.set_lamports(LAMPORTS_PER_SIGNATURE);
+        dealloc_fee_payer_data.set_rent_epoch(u64::MAX);
+        test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
+
+        let stable_fee_payer_keypair = Keypair::new();
+        let stable_fee_payer = stable_fee_payer_keypair.pubkey();
+
+        let mut stable_fee_payer_data = AccountSharedData::default();
+        stable_fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+        test_entry.add_initial_account(stable_fee_payer, &stable_fee_payer_data);
+
+        let nonce_pubkey = Pubkey::new_unique();
+        let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
+        let initial_nonce_data =
+            nonce::state::Data::new(dealloc_fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
+        let initial_nonce_account = AccountSharedData::new_data(
+            LAMPORTS_PER_SOL,
+            &nonce::state::Versions::new(nonce::State::Initialized(initial_nonce_data.clone())),
+            &system_program::id(),
+        )
+        .unwrap();
+        let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
+
+        let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
+        let mut advanced_nonce_info = initial_nonce_info.clone();
+        advanced_nonce_info
+            .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
+            .unwrap();
+
+        let advance_instruction =
+            system_instruction::advance_nonce_account(&nonce_pubkey, &dealloc_fee_payer);
+        let fee_only_noop_instruction =
+            Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]);
+
+        // fee-only nonce transaction which drains a fee-payer
+        let transaction = Transaction::new_signed_with_payer(
+            &[advance_instruction, fee_only_noop_instruction],
+            Some(&dealloc_fee_payer),
+            &[&dealloc_fee_payer_keypair],
+            Hash::default(),
+        );
+        test_entry.push_transaction_with_status(transaction, ExecutionStatus::ProcessedFailed);
+
+        test_entry.decrease_expected_lamports(&dealloc_fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        // as noted in `account_deallocate()` we must touch the account to see if anything actually happened
+        let instruction = Instruction::new_with_bytes(
+            real_program_id,
+            &[],
+            vec![AccountMeta::new_readonly(dealloc_fee_payer, false)],
+        );
+        test_entry.push_transaction(Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&stable_fee_payer),
+            &[&stable_fee_payer_keypair],
+            Hash::default(),
+        ));
+
+        test_entry.decrease_expected_lamports(&stable_fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        test_entry
+            .final_accounts
+            .insert(dealloc_fee_payer, AccountSharedData::default())
+            .unwrap();
+    }
+
+    vec![test_entry]
 }
 
 #[test_case(program_medley())]
@@ -1421,6 +1655,8 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
 #[test_case(nonce_reuse(false, true))]
 #[test_case(nonce_reuse(true, true))]
 #[test_case(account_deallocate())]
+#[test_case(fee_payer_deallocate(false))]
+#[test_case(fee_payer_deallocate(true))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);
@@ -1527,6 +1763,20 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
         }
     }
 
+    // first assert all transaction states together, it makes test-driven development much less of a headache
+    let (expected_statuses, actual_statuses): (Vec<_>, Vec<_>) = batch_output
+        .processing_results
+        .iter()
+        .zip(test_entry.asserts())
+        .map(|(processing_result, test_item_assert)| {
+            (
+                ExecutionStatus::from(processing_result),
+                test_item_assert.status,
+            )
+        })
+        .unzip();
+    assert_eq!(expected_statuses, actual_statuses);
+
     // check that all the account states we care about are present and correct
     for (pubkey, expected_account_data) in test_entry.final_accounts.iter() {
         let actual_account_data = final_accounts_actual.get(pubkey);
@@ -1539,7 +1789,6 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     }
 
     // now run our transaction-by-transaction checks
-    // TODO check tx status first... its too annoying to debug test-driven development
     for (processing_result, test_item_asserts) in batch_output
         .processing_results
         .iter()

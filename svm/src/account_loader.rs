@@ -231,6 +231,22 @@ pub fn validate_fee_payer(
 // also account dealloc tests, i think i should write a custom program that does something like
 // ixn to write to account, ixn to remove lamports, ixn that succeeds or fails depending on account data
 // then... go through for comments of things to clean up.
+//
+// XXX ok i finally have a perfect (i hope) impl of implicit account dropping
+// next i want to...
+// * (unrelated) code review for sam
+// * write simd for new loader definition
+// * fix my loader code to be nicer. we are feature gating this so have a blast
+// * test program cache........... tbh maybe i can skip it as out of scope
+// * make a list of all the weird bugs and edge cases i found to make code review easier
+// * design a replacement for collect_accounts_to_store
+// ok thats seems fine for now. then next pass of cleanups
+// then... i need to make a new branch and feature-gate this, please end me
+// i guess the least horrible strategy is let account_loader_v2 import the existing one
+// and then import stuff that doesnt change, use stuff that does
+// do code changes only in first commit, then all the test changes/additions separately
+// actually it shouldnt be so bad, eg the integration_test.rs file i just copy-paste
+// remember to rebase on master first!!! i might have to drop a commit since i merged something today
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,

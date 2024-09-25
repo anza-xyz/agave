@@ -324,7 +324,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             RollbackAccounts::FeePayerOnly {
                                 ref fee_payer_account,
                             } => {
-                                accounts_map.insert(*fee_payer_address, fee_payer_account.clone());
+                                if fee_payer_account.lamports() == 0 {
+                                    accounts_map
+                                        .insert(*fee_payer_address, AccountSharedData::default());
+                                } else {
+                                    accounts_map
+                                        .insert(*fee_payer_address, fee_payer_account.clone());
+                                }
                             }
                             RollbackAccounts::SameNonceAndFeePayer { ref nonce } => {
                                 accounts_map.insert(*nonce.address(), nonce.account().clone());
@@ -334,7 +340,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                                 ref fee_payer_account,
                             } => {
                                 accounts_map.insert(*nonce.address(), nonce.account().clone());
-                                accounts_map.insert(*fee_payer_address, fee_payer_account.clone());
+                                if fee_payer_account.lamports() == 0 {
+                                    accounts_map
+                                        .insert(*fee_payer_address, AccountSharedData::default());
+                                } else {
+                                    accounts_map
+                                        .insert(*fee_payer_address, fee_payer_account.clone());
+                                }
                             }
                         }
 
@@ -382,19 +394,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &processing_results,
                     );
                     for (pubkey, account) in update_accounts {
+                        // if an account lamports have gone to zero, we must hide it from the rest of the batch
                         if account.lamports() == 0 {
-                            // XXX HANA im VERY not sure if this is correct, as i havent found the code that deallocs accounts
-                            // zero-lamport accounts come back from tx processing with their data intact
-                            // so we need to emulate the account-dropping behavior the runtime enforces later
-                            // it appears accounts-db does this with `clean_accounts()`... but might only be backing storage?
-                            // the line that accounts can only be purged if "there are no live append vecs in the ancestors"
-                            // is very mysterious to me. absolutely need guidance on this point
-                            // UPDATE: this ALSO creates a horrifying catch-22
-                            // where, if one transaction drops an account, the next one needs to see a fake dropped account
-                            // which means it *returns* the fake dropped account, which works its way back to the runtime
-                            // in other words, if you zero lamports, an otherwise-identical account is returned
-                            // but if *another* transaction accepts the account, we return AccountShardedData::default()
-                            // so either we need to double-fake the account, or we should mutate the LoadedTransaction... :/
                             accounts_map.insert(*pubkey, AccountSharedData::default());
                         } else {
                             accounts_map.insert(*pubkey, account.clone());
@@ -1102,7 +1103,7 @@ mod tests {
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
-            nonce,
+            nonce::{self, state::DurableNonce},
             rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
             rent_debits::RentDebits,
             reserved_account_keys::ReservedAccountKeys,
@@ -2278,16 +2279,16 @@ mod tests {
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-            let nonce = Some(NonceInfo::new(
-                *fee_payer_address,
-                fee_payer_account.clone(),
-            ));
+            let mut future_nonce = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
+            future_nonce
+                .try_advance_nonce(DurableNonce::from_blockhash(&Hash::new_unique()), 0)
+                .unwrap();
 
             let result = batch_processor.validate_transaction_fee_payer(
                 &mock_accounts,
                 &message,
                 CheckedTransactionDetails {
-                    nonce: nonce.clone(),
+                    nonce: Some(future_nonce.clone()),
                     lamports_per_signature,
                 },
                 &feature_set,
@@ -2307,7 +2308,7 @@ mod tests {
                 result,
                 Ok(ValidatedTransactionDetails {
                     rollback_accounts: RollbackAccounts::new(
-                        nonce,
+                        Some(future_nonce),
                         *fee_payer_address,
                         post_validation_fee_payer_account.clone(),
                         0, // fee_payer_rent_debit
