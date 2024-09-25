@@ -1352,8 +1352,10 @@ impl StoreAccountsTiming {
 struct CleaningInfo {
     slot_list: SlotList<AccountInfo>,
     ref_count: u64,
-    /// True for pubkeys which can contain zero accounts
-    can_contain_zero: bool,
+    /// Indicates if this account might have a zero lamport index entry.
+    /// If false, the account *shall* not have zero lamport index entries.
+    /// If true, the account *might* have zero lamport index entries.
+    might_contain_zero_lamport_entry: bool,
 }
 
 /// This is the return type of AccountsDb::construct_candidate_clean_keys.
