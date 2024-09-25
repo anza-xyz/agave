@@ -3314,9 +3314,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.158"
+version = "0.2.159"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8adc4bb1803a324070e64a98ae98f38934d91957a99cfb3a43dcbc01bc56439"
+checksum = "561d97a539a36e26a9a5fad1ea11a3039a67714694aaa379433e580854bc3dc5"
 
 [[package]]
 name = "libloading"
@@ -5079,7 +5079,7 @@ dependencies = [
  "rustls-webpki 0.102.8",
  "security-framework",
  "security-framework-sys",
- "webpki-roots 0.26.5",
+ "webpki-roots 0.26.6",
  "winapi 0.3.9",
 ]
 
@@ -5635,6 +5635,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-account-info"
+version = "2.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "solana-accounts-bench"
 version = "2.1.0"
 dependencies = [
@@ -5695,7 +5706,6 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "dashmap",
- "ed25519-dalek",
  "index_list",
  "indexmap 2.5.0",
  "itertools 0.12.1",
@@ -7211,6 +7221,7 @@ dependencies = [
  "serial_test",
  "sha2 0.10.8",
  "sha3",
+ "solana-account-info",
  "solana-atomic-u64",
  "solana-clock",
  "solana-decode-error",
@@ -7229,6 +7240,7 @@ dependencies = [
  "solana-sdk-macro",
  "solana-secp256k1-recover",
  "solana-serde-varint",
+ "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-short-vec",
  "static_assertions",
@@ -7667,6 +7679,7 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-perf",
+ "solana-program",
  "solana-program-runtime",
  "solana-rayon-threadlimit",
  "solana-runtime",
@@ -7837,6 +7850,19 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-short-vec",
+]
+
+[[package]]
+name = "solana-serialize-utils"
+version = "2.1.0"
+dependencies = [
+ "bincode",
+ "borsh 1.5.1",
+ "rand 0.8.5",
+ "serde",
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-sanitize",
 ]
 
 [[package]]
@@ -9981,9 +10007,9 @@ checksum = "14247bb57be4f377dfb94c72830b8ce8fc6beac03cf4bf7b9732eadd414123fc"
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.5"
+version = "0.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bd24728e5af82c6c4ec1b66ac4844bdf8156257fccda846ec58b42cd0cdbe6a"
+checksum = "841c67bff177718f1d4dfefde8d8f0e78f9b6589319ba88312f567fc5841a958"
 dependencies = [
  "rustls-pki-types",
 ]
