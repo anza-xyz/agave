@@ -33,9 +33,10 @@ pub const MAX_WALLCLOCK: u64 = 1_000_000_000_000_000;
 pub const MAX_SLOT: u64 = 1_000_000_000_000_000;
 
 pub type VoteIndex = u8;
-// TODO: Remove this in favor of vote_state::MAX_LOCKOUT_HISTORY once
-// the fleet is updated to the new ClusterInfo::push_vote code.
-pub const MAX_VOTES: VoteIndex = 32;
+/// Number of votes per validator to store.
+/// TODO: update comment after testing
+/// Only need latest vote + potential refresh of that vote.
+pub const MAX_VOTES: VoteIndex = 2;
 
 pub type EpochSlotsIndex = u8;
 pub const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
