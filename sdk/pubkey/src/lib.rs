@@ -1062,6 +1062,36 @@ macro_rules! declare_id {
     };
 }
 
+/// Same as [`declare_id`] except that it reports that this ID has been deprecated.
+#[macro_export]
+macro_rules! declare_deprecated_id {
+    ($address:expr) => {
+        /// The const program ID.
+        pub const ID: $crate::Pubkey = $crate::Pubkey::from_str_const($address);
+
+        /// Returns `true` if given pubkey is the program ID.
+        // TODO make this const once `derive_const` makes it out of nightly
+        // and we can `derive_const(PartialEq)` on `Pubkey`.
+        #[deprecated()]
+        pub fn check_id(id: &$crate::Pubkey) -> bool {
+            id == &ID
+        }
+
+        /// Returns the program ID.
+        #[deprecated()]
+        pub const fn id() -> $crate::Pubkey {
+            ID
+        }
+
+        #[cfg(test)]
+        #[test]
+        #[allow(deprecated)]
+        fn test_id() {
+            assert!(check_id(&id()));
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use {super::*, strum::IntoEnumIterator};
