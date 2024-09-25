@@ -97,7 +97,7 @@ use {
     std::{
         borrow::Cow,
         boxed::Box,
-        collections::{hash_map::Entry, BTreeSet, HashMap, HashSet},
+        collections::{BTreeSet, HashMap, HashSet},
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
@@ -3118,7 +3118,7 @@ impl AccountsDb {
                         candidates_bin.insert(
                             removed_pubkey,
                             CleaningInfo {
-                                can_contain_zero: true,
+                                might_contain_zero_lamport_entry: true,
                                 ..Default::default()
                             },
                         );
@@ -3176,20 +3176,10 @@ impl AccountsDb {
         let insert_candidate = |pubkey, is_zero_lamport| {
             let index = self.accounts_index.bin_calculator.bin_from_pubkey(&pubkey);
             let mut candidates_bin = candidates[index].write().unwrap();
-
-            match candidates_bin.entry(pubkey) {
-                Entry::Occupied(occupied) => {
-                    if is_zero {
-                        occupied.into_mut().can_contain_zero = true;
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    vacant.insert(CleaningInfo {
-                        can_contain_zero: is_zero,
-                        ..Default::default()
-                    });
-                }
-            }
+            candidates_bin
+                .entry(pubkey)
+                .or_default()
+                .might_contain_zero_lamport_entry |= is_zero_lamport;
         };
 
         let dirty_ancient_stores = AtomicUsize::default();
@@ -3208,7 +3198,7 @@ impl AccountsDb {
                         store.accounts.scan_index(|index| {
                             let pubkey = index.index_info.pubkey;
                             let is_zero_lamport = index.index_info.is_zero_lamport();
-                            insert_candidate(pubkey, is_zero);
+                            insert_candidate(pubkey, is_zero_lamport);
                         });
                     });
                     oldest_dirty_slot
@@ -3475,7 +3465,7 @@ impl AccountsDb {
                         },
                         None,
                         false,
-                        if candidate_info.can_contain_zero {
+                        if candidate_info.might_contain_zero_lamport_entry {
                             ScanFilter::All
                         } else {
                             self.scan_filter_for_shrinking
