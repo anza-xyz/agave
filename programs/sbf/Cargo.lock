@@ -6049,6 +6049,7 @@ dependencies = [
  "log",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-pubkey",
  "solana-sdk",
  "solana-svm-transaction",
  "thiserror",
