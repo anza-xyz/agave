@@ -613,6 +613,7 @@ pub use solana_pubkey::{declare_deprecated_id, declare_id};
 /// let my_id = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
 /// assert_eq!(ID, my_id);
 /// ```
+#[deprecated(since = "2.1.0", note = "Use `solana_pubkey::Pubkey::from_str_const` instead")]
 pub use solana_sdk_macro::program_pubkey as pubkey;
 
 #[macro_use]
