@@ -31,7 +31,10 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::{collections::HashMap, num::NonZeroU32},
+    std::{
+        collections::{HashMap, HashSet},
+        num::NonZeroU32,
+    },
 };
 
 // for the load instructions
@@ -355,45 +358,44 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     check_results: &Vec<TransactionCheckResult>,
     account_overrides: Option<&AccountOverrides>,
 ) -> LoadedAccountsMap {
-    // XXX FIXME collecting just to iterate is stupid, but i use the vec twice
-    // i can use program_instructions_iter to get a tuple of program_id/ixn (tho i dont think i need the ixn)
-    // oh. maybe i can add back the program cache usage...?
-    // i think my flow would look like...
-    // * create map of messages, dont collect
-    // * iter over messages
-    // * collect account keys like i do. do NOT skip programs, because they might be writable by different txns
-    // * in this same message loop use program_instructions_iter to iterate over each message program ids
-    // * make a second hashmap of program ids? yea we can only actually check them post-loading
-    // then i can have the dummy program cache branch again! IFF the key is in program keys
-    // AND is not writable by any instruction. actually this is beautiful
-    let checked_messages: Vec<_> = txs
+    let checked_messages = txs
         .iter()
         .zip(check_results)
         .filter(|(_, tx_details)| tx_details.is_ok())
-        .map(|(tx, _)| tx)
-        .collect();
+        .map(|(tx, _)| tx);
 
-    let mut account_key_map = HashMap::new();
-    for message in checked_messages.iter() {
+    let mut account_keys_to_load = HashMap::new();
+    let mut all_batch_program_ids = HashSet::new();
+    for message in checked_messages {
+        // first, get all account keys for the batch, along with whether *any* transaction marks it as writable
         for (account_index, account_key) in message.account_keys().iter().enumerate() {
             if message.is_writable(account_index) {
-                account_key_map.insert(account_key, true);
+                account_keys_to_load.insert(account_key, true);
             } else {
-                account_key_map.entry(account_key).or_insert(false);
+                account_keys_to_load.entry(account_key).or_insert(false);
             }
+        }
+
+        // next, get all program ids for the batch, for validation after loading
+        for (program_id, _) in message.program_instructions_iter() {
+            all_batch_program_ids.insert(*program_id);
         }
     }
 
-    let mut loaded_accounts_map = LoadedAccountsMap::with_capacity(account_key_map.len());
-
-    for (account_key, is_writable) in account_key_map {
+    let mut loaded_accounts_map = LoadedAccountsMap::with_capacity(account_keys_to_load.len());
+    for (account_key, is_writable) in account_keys_to_load {
         if solana_sdk::sysvar::instructions::check_id(account_key) {
             continue;
         } else if let Some(account_override) =
             account_overrides.and_then(|overrides| overrides.get(account_key))
         {
             loaded_accounts_map.insert(*account_key, account_override.clone());
-        } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
+        }
+        // XXX i can add back the ProgramCacheForTxBatch optimization here if i collect if program id is instruction account
+        // and also uhhhh... i guess i would need to seriously mess with the hashmap to carry account size for them
+        // the thing is i dont even know if its really an optimization because it has to load *anyway*. bench it ig
+        // if i did my job right we should be appreciably faster on any batch with reader-reader overlap anyway
+        else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
             loaded_accounts_map.insert(*account_key, account);
         } else {
@@ -401,41 +403,33 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         }
     }
 
-    // XXX it is possible we want to fully validate programs for messages here
-    // that depends on the question re: what if a program account is created mid-batch
-    // current plan is impl all this, see what the current behavior actually is, then decide what to do
-    // also note we have discussed redefining "valid loader" from "native or exec and owned by loader"
-    // to just a list of allowed ids (native and v1-3). in which case this all collapses to a single account_matches_owners
-    for message in checked_messages {
-        for instruction in message.instructions_iter() {
-            let program_index = instruction.program_id_index as usize;
-            let program_id = message.account_keys()[program_index];
+    // by verifying programs up front, we ensure no transaction can call a program deployed earlier in the batch
+    for program_id in all_batch_program_ids {
+        if native_loader::check_id(&program_id) {
+            continue;
+        }
 
-            if native_loader::check_id(&program_id) {
-                continue;
-            }
+        let Some(program_account) = loaded_accounts_map.get(&program_id) else {
+            continue;
+        };
 
-            let Some(program_account) = loaded_accounts_map.get(&program_id) else {
-                continue;
-            };
+        // XXX note this is divergent with existing behavior in esoteric cases
+        if !program_account.executable() {
+            continue;
+        }
 
-            // XXX FIXME im like 80% sure we have to remove this to preserve old behavior
-            // but we may want to feature gate this whole pr anyway to be safe
-            if !program_account.executable() {
-                continue;
-            }
+        // XXX TODO i would like to simd so we can just check loader ids instead of loading loaders
+        // that means we would not need to load the loaders
+        // also means we dont need to store loaders in accounts map here, theyre all in program cache anyway
+        let owner_id = program_account.owner();
+        if native_loader::check_id(owner_id) {
+            continue;
+        }
 
-            let owner_id = program_account.owner();
-            if native_loader::check_id(owner_id) {
-                continue;
-            }
-
-            if !loaded_accounts_map.contains_key(owner_id) {
-                if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
-                    if native_loader::check_id(owner_account.owner()) && owner_account.executable()
-                    {
-                        loaded_accounts_map.insert(*owner_id, owner_account);
-                    }
+        if !loaded_accounts_map.contains_key(owner_id) {
+            if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                if native_loader::check_id(owner_account.owner()) && owner_account.executable() {
+                    loaded_accounts_map.insert(*owner_id, owner_account);
                 }
             }
         }
