@@ -333,7 +333,14 @@ pub fn validate_fee_payer(
 // * fix my loader code to be nicer. we are feature gating this so have a blast
 // * test program cache........... tbh maybe i can skip it as out of scope
 // * make a list of all the weird bugs and edge cases i found to make code review easier
-// * design a replacement for collect_accounts_to_store
+// X design a replacement for collect_accounts_to_store
+// * consider how to handle the data size limits catch-22
+//   i think a rules change "cannot violate data size at start of batch OR before execution" is fine
+//   it makes the loops a bit more annoying but its fine i guess, just accumulate per-message...
+//   its annoying because i have to go through messages to get keys and then go through keys and map back to messages
+//   actually its double-annoying because i dont have a mechanism here to invalidate transaction check result
+//   i guess i could mutate it........ ok this is weird enough i should save it for andrew
+//
 // ok thats seems fine for now. then next pass of cleanups
 // then... i need to make a new branch and feature-gate this, please end me
 // i guess the least horrible strategy is let account_loader_v2 import the existing one
@@ -348,6 +355,17 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     check_results: &Vec<TransactionCheckResult>,
     account_overrides: Option<&AccountOverrides>,
 ) -> LoadedAccountsMap {
+    // XXX FIXME collecting just to iterate is stupid, but i use the vec twice
+    // i can use program_instructions_iter to get a tuple of program_id/ixn (tho i dont think i need the ixn)
+    // oh. maybe i can add back the program cache usage...?
+    // i think my flow would look like...
+    // * create map of messages, dont collect
+    // * iter over messages
+    // * collect account keys like i do. do NOT skip programs, because they might be writable by different txns
+    // * in this same message loop use program_instructions_iter to iterate over each message program ids
+    // * make a second hashmap of program ids? yea we can only actually check them post-loading
+    // then i can have the dummy program cache branch again! IFF the key is in program keys
+    // AND is not writable by any instruction. actually this is beautiful
     let checked_messages: Vec<_> = txs
         .iter()
         .zip(check_results)
@@ -388,7 +406,6 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     // current plan is impl all this, see what the current behavior actually is, then decide what to do
     // also note we have discussed redefining "valid loader" from "native or exec and owned by loader"
     // to just a list of allowed ids (native and v1-3). in which case this all collapses to a single account_matches_owners
-    // FIXME program_instructions_iter ? neat
     for message in checked_messages {
         for instruction in message.instructions_iter() {
             let program_index = instruction.program_id_index as usize;
@@ -594,7 +611,7 @@ fn load_transaction_accounts(
                         compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
-                    accounts.push((*owner_id, owner_account.clone())); // XXX new clone
+                    accounts.push((*owner_id, owner_account.clone()));
                 } else {
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
@@ -653,7 +670,7 @@ fn load_transaction_account(
     } else {
         loaded_accounts_map
             .get(account_key)
-            .cloned() // XXX new clone
+            .cloned()
             .map(|mut account| {
                 let rent_collected = if is_writable {
                     collect_rent_from_account(

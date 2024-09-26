@@ -476,7 +476,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // If the nonce has been used in this batch already, we must drop the transaction
         // This is the same as if it was used is different batches in the same slot
         // If the nonce account was closed in the batch, we behave as if the blockhash didn't validate
-        // XXX TODO FIXME uhhh how do i handle closed accounts?? do i need to drop them...
         if let Some(ref nonce_info) = nonce {
             let nonces_are_equal =
                 loaded_accounts_map
@@ -2188,7 +2187,6 @@ mod tests {
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
-    // XXX TODO FIXME i broke this :(
     #[test]
     fn test_validate_transaction_fee_payer_is_nonce() {
         let feature_set = FeatureSet::default();
