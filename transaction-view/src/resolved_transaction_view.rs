@@ -47,7 +47,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
     pub fn try_new(
         view: TransactionView<true, D>,
         resolved_addresses: Option<LoadedAddresses>,
-        reserved_account_keys: &HashSet<Pubkey>, // why does this not use ahash at least?!
+        reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
         let resolved_addresses_ref = resolved_addresses.as_ref();
 
