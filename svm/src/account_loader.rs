@@ -5,6 +5,7 @@ use {
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
+        transaction_processing_result::ProcessedTransaction,
     },
     itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
@@ -98,8 +99,88 @@ pub struct FeesOnlyTransaction {
 
 pub(crate) type LoadedAccountsMap = HashMap<Pubkey, AccountSharedData>;
 
+// XXX stripped down version of `collect_accounts_to_store()`
+// we might want to have both functions use the same account selection code but maybe it doesnt really matter
+// the thing is that code *really* wants to be collecting vectors of extra stuff
+// so the stuff we want to avoid doing is woven very tightly into it. idk maybe i lack vision tho
+// i think the main danger is that
+pub(crate) fn collect_and_update_loaded_accounts<T: SVMMessage>(
+    loaded_accounts_map: &mut LoadedAccountsMap,
+    transaction: &T,
+    processed_transaction: &ProcessedTransaction,
+) {
+    match processed_transaction {
+        ProcessedTransaction::Executed(executed_tx) => {
+            if executed_tx.execution_details.status.is_ok() {
+                update_accounts_for_successful_tx(
+                    loaded_accounts_map,
+                    transaction,
+                    &executed_tx.loaded_transaction.accounts,
+                );
+            } else {
+                update_accounts_for_failed_tx(
+                    loaded_accounts_map,
+                    transaction,
+                    &executed_tx.loaded_transaction.rollback_accounts,
+                );
+            }
+        }
+        ProcessedTransaction::FeesOnly(fees_only_tx) => {
+            update_accounts_for_failed_tx(
+                loaded_accounts_map,
+                transaction,
+                &fees_only_tx.rollback_accounts,
+            );
+        }
+    }
+}
+
+fn update_accounts_for_successful_tx<T: SVMMessage>(
+    loaded_accounts_map: &mut LoadedAccountsMap,
+    transaction: &T,
+    transaction_accounts: &[TransactionAccount],
+) {
+    for (_, (address, account)) in (0..transaction.account_keys().len())
+        .zip(transaction_accounts)
+        .filter(|(i, _)| {
+            transaction.is_writable(*i) && {
+                // Accounts that are invoked and also not passed as an instruction
+                // account to a program don't need to be stored because it's assumed
+                // to be impossible for a committable transaction to modify an
+                // invoked account if said account isn't passed to some program.
+                !transaction.is_invoked(*i) || transaction.is_instruction_account(*i)
+            }
+        })
+    {
+        update_loaded_account(loaded_accounts_map, address, account);
+    }
+}
+
+pub(crate) fn update_accounts_for_failed_tx<T: SVMMessage>(
+    loaded_accounts_map: &mut LoadedAccountsMap,
+    transaction: &T,
+    rollback_accounts: &RollbackAccounts,
+) {
+    let fee_payer_address = transaction.fee_payer();
+    match rollback_accounts {
+        RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+            update_loaded_account(loaded_accounts_map, fee_payer_address, fee_payer_account);
+        }
+        RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+            update_loaded_account(loaded_accounts_map, nonce.address(), nonce.account());
+        }
+        RollbackAccounts::SeparateNonceAndFeePayer {
+            nonce,
+            fee_payer_account,
+        } => {
+            update_loaded_account(loaded_accounts_map, nonce.address(), nonce.account());
+            update_loaded_account(loaded_accounts_map, fee_payer_address, fee_payer_account);
+        }
+    }
+}
+
 // if an account lamports goes to zero, we must hide its stale state from the rest of the batch
-pub(crate) fn update_loaded_account(
+fn update_loaded_account(
     loaded_accounts_map: &mut LoadedAccountsMap,
     pubkey: &Pubkey,
     account: &AccountSharedData,

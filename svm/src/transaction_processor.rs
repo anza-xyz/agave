@@ -3,13 +3,13 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            collect_rent_from_account, load_accounts, load_transaction, update_loaded_account,
-            validate_fee_payer, CheckedTransactionDetails, LoadedAccountsMap, LoadedTransaction,
+            collect_and_update_loaded_accounts, collect_rent_from_account, load_accounts,
+            load_transaction, update_accounts_for_failed_tx, validate_fee_payer,
+            CheckedTransactionDetails, LoadedAccountsMap, LoadedTransaction,
             LoadedTransactionAccount, TransactionCheckResult, TransactionLoadResult,
             ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
-        account_saver::collect_accounts_to_store,
         message_processor::MessageProcessor,
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
@@ -51,7 +51,7 @@ use {
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
-        transaction::{self, SanitizedTransaction, TransactionError},
+        transaction::{self, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
@@ -319,41 +319,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     if enable_transaction_loading_failure_fees {
-                        // XXX HANA when we replace `collect_accounts_to_store` we want to encapsulate this code too
-                        let fee_payer_address = tx.fee_payer();
-                        match fees_only_tx.rollback_accounts {
-                            RollbackAccounts::FeePayerOnly {
-                                ref fee_payer_account,
-                            } => {
-                                update_loaded_account(
-                                    &mut loaded_accounts_map,
-                                    fee_payer_address,
-                                    fee_payer_account,
-                                );
-                            }
-                            RollbackAccounts::SameNonceAndFeePayer { ref nonce } => {
-                                update_loaded_account(
-                                    &mut loaded_accounts_map,
-                                    nonce.address(),
-                                    nonce.account(),
-                                );
-                            }
-                            RollbackAccounts::SeparateNonceAndFeePayer {
-                                ref nonce,
-                                ref fee_payer_account,
-                            } => {
-                                update_loaded_account(
-                                    &mut loaded_accounts_map,
-                                    nonce.address(),
-                                    nonce.account(),
-                                );
-                                update_loaded_account(
-                                    &mut loaded_accounts_map,
-                                    fee_payer_address,
-                                    fee_payer_account,
-                                );
-                            }
-                        }
+                        // Update loaded accounts cache with nonce and fee-payer
+                        update_accounts_for_failed_tx(
+                            &mut loaded_accounts_map,
+                            tx,
+                            &fees_only_tx.rollback_accounts,
+                        );
 
                         Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                     } else {
@@ -377,32 +348,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
                     }
 
-                    // XXX TODO FIXME figure out the least bad way to get rid of this clone
-                    // i need to change the type signature of `collect_accounts_to_store()` again
-                    // but its already pretty ugly and i wonder if i should just give up on this
-                    // maybe instead i want to carve out the account selection logic in account_saver
-                    // and have two external intergfaces that use it in different ways
-                    // since we dont care at all about the sanitized tx
-                    // we literally just want to know what accounts may have changed
-                    // even just returning a list of indexes is fine
-                    // the problem im trying to solve here is we want to reuse the same logic as account_saver
-                    // because it would be catastrophic if we skipped and reused an account that account_saver would commit
-                    // but maybe im overthinking this and i should write my own simplified selection logic
-                    // anyway the first obvious optimization is to let the cache go stale on accounts we dont need later
-                    let processing_results = [Ok(ProcessedTransaction::Executed(Box::new(
-                        executed_tx.clone(),
-                    )))];
+                    // Update loaded accounts cache with account states which might have changed
+                    let processed_tx = ProcessedTransaction::Executed(Box::new(executed_tx));
+                    collect_and_update_loaded_accounts(&mut loaded_accounts_map, tx, &processed_tx);
 
-                    let (update_accounts, _) = collect_accounts_to_store(
-                        sanitized_txs,
-                        &None::<Vec<SanitizedTransaction>>,
-                        &processing_results,
-                    );
-                    for (pubkey, account) in update_accounts {
-                        update_loaded_account(&mut loaded_accounts_map, pubkey, account);
-                    }
-
-                    Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
+                    Ok(processed_tx)
                 }
             };
 
