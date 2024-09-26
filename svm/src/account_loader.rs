@@ -33,8 +33,6 @@ use {
     std::{collections::HashMap, num::NonZeroU32},
 };
 
-pub(crate) type AccountsMap = HashMap<Pubkey, AccountSharedData>;
-
 // for the load instructions
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
@@ -96,6 +94,21 @@ pub struct FeesOnlyTransaction {
     pub load_error: TransactionError,
     pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
+}
+
+pub(crate) type LoadedAccountsMap = HashMap<Pubkey, AccountSharedData>;
+
+// if an account lamports goes to zero, we must hide its stale state from the rest of the batch
+pub(crate) fn update_loaded_account(
+    loaded_accounts_map: &mut LoadedAccountsMap,
+    pubkey: &Pubkey,
+    account: &AccountSharedData,
+) -> Option<AccountSharedData> {
+    if account.lamports() == 0 {
+        loaded_accounts_map.insert(*pubkey, AccountSharedData::default())
+    } else {
+        loaded_accounts_map.insert(*pubkey, account.clone())
+    }
 }
 
 /// Collect rent from an account if rent is still enabled and regardless of
@@ -253,9 +266,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     txs: &[impl SVMMessage],
     check_results: &Vec<TransactionCheckResult>,
     account_overrides: Option<&AccountOverrides>,
-) -> AccountsMap {
-    let mut accounts_map = HashMap::new();
-
+) -> LoadedAccountsMap {
     let checked_messages: Vec<_> = txs
         .iter()
         .zip(check_results)
@@ -274,16 +285,18 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         }
     }
 
+    let mut loaded_accounts_map = LoadedAccountsMap::with_capacity(account_key_map.len());
+
     for (account_key, is_writable) in account_key_map {
         if solana_sdk::sysvar::instructions::check_id(account_key) {
             continue;
         } else if let Some(account_override) =
             account_overrides.and_then(|overrides| overrides.get(account_key))
         {
-            accounts_map.insert(*account_key, account_override.clone());
+            loaded_accounts_map.insert(*account_key, account_override.clone());
         } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
-            accounts_map.insert(*account_key, account);
+            loaded_accounts_map.insert(*account_key, account);
         } else {
             callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
         }
@@ -304,7 +317,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 continue;
             }
 
-            let Some(program_account) = accounts_map.get(&program_id) else {
+            let Some(program_account) = loaded_accounts_map.get(&program_id) else {
                 continue;
             };
 
@@ -319,22 +332,22 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 continue;
             }
 
-            if !accounts_map.contains_key(owner_id) {
+            if !loaded_accounts_map.contains_key(owner_id) {
                 if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                     if native_loader::check_id(owner_account.owner()) && owner_account.executable()
                     {
-                        accounts_map.insert(*owner_id, owner_account);
+                        loaded_accounts_map.insert(*owner_id, owner_account);
                     }
                 }
             }
         }
     }
 
-    accounts_map
+    loaded_accounts_map
 }
 
 pub(crate) fn load_transaction(
-    accounts_map: &AccountsMap,
+    loaded_accounts_map: &LoadedAccountsMap,
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
@@ -346,7 +359,7 @@ pub(crate) fn load_transaction(
         Err(e) => TransactionLoadResult::NotLoaded(e),
         Ok(tx_details) => {
             let load_result = load_transaction_accounts(
-                accounts_map,
+                loaded_accounts_map,
                 message,
                 tx_details.loaded_fee_payer_account,
                 &tx_details.compute_budget_limits,
@@ -387,7 +400,7 @@ struct LoadedTransactionAccounts {
 }
 
 fn load_transaction_accounts(
-    accounts_map: &AccountsMap,
+    loaded_accounts_map: &LoadedAccountsMap,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
     compute_budget_limits: &ComputeBudgetLimits,
@@ -440,7 +453,7 @@ fn load_transaction_accounts(
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
         let (loaded_account, account_found) = load_transaction_account(
-            accounts_map,
+            loaded_accounts_map,
             message,
             account_key,
             account_index,
@@ -487,7 +500,7 @@ fn load_transaction_accounts(
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                if let Some(owner_account) = accounts_map.get(owner_id) {
+                if let Some(owner_account) = loaded_accounts_map.get(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {
@@ -520,7 +533,7 @@ fn load_transaction_accounts(
 }
 
 fn load_transaction_account(
-    accounts_map: &AccountsMap,
+    loaded_accounts_map: &LoadedAccountsMap,
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
@@ -546,7 +559,7 @@ fn load_transaction_account(
         .then_some(())
         .and_then(|_| loaded_programs.find(account_key))
     {
-        if !accounts_map.contains_key(account_key) {
+        if !loaded_accounts_map.contains_key(account_key) {
             return Err(TransactionError::AccountNotFound);
         }
         // Optimization to skip loading of accounts which are only used as
@@ -557,7 +570,7 @@ fn load_transaction_account(
             rent_collected: 0,
         }
     } else {
-        accounts_map
+        loaded_accounts_map
             .get(account_key)
             .cloned() // XXX new clone
             .map(|mut account| {
@@ -1319,7 +1332,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
 
         let fee_payer_balance = 200;
         let mut fee_payer_account = AccountSharedData::default();
@@ -1382,7 +1395,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         accounts_map.insert(native_loader::id(), AccountSharedData::default());
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_lamports(200);
@@ -1445,7 +1458,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         accounts_map.insert(key1.pubkey(), account_data);
@@ -1632,7 +1645,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         accounts_map.insert(key1.pubkey(), account_data);
@@ -1676,7 +1689,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
         accounts_map.insert(key1.pubkey(), account_data);
@@ -1723,7 +1736,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(native_loader::id());
         account_data.set_executable(true);
@@ -1786,7 +1799,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
         accounts_map.insert(key1.pubkey(), account_data);
@@ -1834,7 +1847,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
@@ -1888,7 +1901,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
@@ -1967,7 +1980,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
@@ -2026,7 +2039,7 @@ mod tests {
     #[test]
     fn test_rent_state_list_len() {
         let mint_keypair = Keypair::new();
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let recipient = Pubkey::new_unique();
         let last_block_hash = Hash::new_unique();
 
@@ -2112,7 +2125,7 @@ mod tests {
         };
 
         let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut accounts_map = AccountsMap::default();
+        let mut accounts_map = LoadedAccountsMap::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());

@@ -3,9 +3,10 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            collect_rent_from_account, load_accounts, load_transaction, validate_fee_payer,
-            AccountsMap, CheckedTransactionDetails, LoadedTransaction, LoadedTransactionAccount,
-            TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
+            collect_rent_from_account, load_accounts, load_transaction, update_loaded_account,
+            validate_fee_payer, CheckedTransactionDetails, LoadedAccountsMap, LoadedTransaction,
+            LoadedTransactionAccount, TransactionCheckResult, TransactionLoadResult,
+            ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         account_saver::collect_accounts_to_store,
@@ -274,7 +275,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch
         });
 
-        let mut accounts_map = load_accounts(
+        let mut loaded_accounts_map = load_accounts(
             callbacks,
             sanitized_txs,
             &check_results,
@@ -288,7 +289,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
             let validate_result = check_result.and_then(|tx_details| {
                 self.validate_transaction_fee_payer(
-                    &accounts_map,
+                    &loaded_accounts_map,
                     tx,
                     tx_details,
                     &environment.feature_set,
@@ -303,7 +304,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
 
             let load_result = load_transaction(
-                &accounts_map,
+                &loaded_accounts_map,
                 tx,
                 validate_result,
                 &mut error_metrics,
@@ -324,29 +325,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             RollbackAccounts::FeePayerOnly {
                                 ref fee_payer_account,
                             } => {
-                                if fee_payer_account.lamports() == 0 {
-                                    accounts_map
-                                        .insert(*fee_payer_address, AccountSharedData::default());
-                                } else {
-                                    accounts_map
-                                        .insert(*fee_payer_address, fee_payer_account.clone());
-                                }
+                                update_loaded_account(
+                                    &mut loaded_accounts_map,
+                                    fee_payer_address,
+                                    fee_payer_account,
+                                );
                             }
                             RollbackAccounts::SameNonceAndFeePayer { ref nonce } => {
-                                accounts_map.insert(*nonce.address(), nonce.account().clone());
+                                update_loaded_account(
+                                    &mut loaded_accounts_map,
+                                    nonce.address(),
+                                    nonce.account(),
+                                );
                             }
                             RollbackAccounts::SeparateNonceAndFeePayer {
                                 ref nonce,
                                 ref fee_payer_account,
                             } => {
-                                accounts_map.insert(*nonce.address(), nonce.account().clone());
-                                if fee_payer_account.lamports() == 0 {
-                                    accounts_map
-                                        .insert(*fee_payer_address, AccountSharedData::default());
-                                } else {
-                                    accounts_map
-                                        .insert(*fee_payer_address, fee_payer_account.clone());
-                                }
+                                update_loaded_account(
+                                    &mut loaded_accounts_map,
+                                    nonce.address(),
+                                    nonce.account(),
+                                );
+                                update_loaded_account(
+                                    &mut loaded_accounts_map,
+                                    fee_payer_address,
+                                    fee_payer_account,
+                                );
                             }
                         }
 
@@ -394,12 +399,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &processing_results,
                     );
                     for (pubkey, account) in update_accounts {
-                        // if an account lamports have gone to zero, we must hide it from the rest of the batch
-                        if account.lamports() == 0 {
-                            accounts_map.insert(*pubkey, AccountSharedData::default());
-                        } else {
-                            accounts_map.insert(*pubkey, account.clone());
-                        }
+                        update_loaded_account(&mut loaded_accounts_map, pubkey, account);
                     }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
@@ -467,7 +467,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     // account is not found or has insufficient funds, an error is returned.
     fn validate_transaction_fee_payer(
         &self,
-        accounts_map: &AccountsMap,
+        loaded_accounts_map: &LoadedAccountsMap,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         feature_set: &FeatureSet,
@@ -483,7 +483,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         })?;
 
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = accounts_map.get(fee_payer_address).cloned();
+        let fee_payer_account = loaded_accounts_map.get(fee_payer_address).cloned();
 
         let Some(mut fee_payer_account) = fee_payer_account else {
             error_counters.account_not_found += 1;
@@ -529,7 +529,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // XXX TODO FIXME uhhh how do i handle closed accounts?? do i need to drop them...
         if let Some(ref nonce_info) = nonce {
             let nonces_are_equal =
-                accounts_map
+                loaded_accounts_map
                     .get(nonce_info.address())
                     .and_then(|nonce_account| {
                         // NOTE we cannot directly compare nonce account data because rent epochs may differ
