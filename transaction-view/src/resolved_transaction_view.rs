@@ -123,17 +123,17 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         let mut is_upgradable_loader_present = None;
         for ix in view.instructions_iter() {
             let program_id_index = usize::from(ix.program_id_index);
-            if is_writable_cache[program_id_index] {
-                if !*is_upgradable_loader_present.get_or_insert_with(|| {
+            if is_writable_cache[program_id_index]
+                && !*is_upgradable_loader_present.get_or_insert_with(|| {
                     for key in account_keys.iter() {
                         if key == &bpf_loader_upgradeable::ID {
                             return true;
                         }
                     }
                     false
-                }) {
-                    is_writable_cache[program_id_index] = false;
-                }
+                })
+            {
+                is_writable_cache[program_id_index] = false;
             }
         }
 
