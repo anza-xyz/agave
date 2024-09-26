@@ -56,7 +56,7 @@ use {
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
-    solana_timings::{/* XXX ExecuteTimingType, */ ExecuteTimings},
+    solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
@@ -244,7 +244,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut processing_results = vec![];
 
-        let (mut program_cache_for_tx_batch, _program_cache_us) = measure_us!({
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let mut program_accounts_map = Self::filter_executable_program_accounts(
                 callbacks,
                 sanitized_txs,
@@ -275,35 +275,40 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch
         });
 
-        let mut loaded_accounts_map = load_accounts(
+        let (mut loaded_accounts_map, load_accounts_us) = measure_us!(load_accounts(
             callbacks,
             sanitized_txs,
             &check_results,
             config.account_overrides,
-        );
+        ));
 
         let enable_transaction_loading_failure_fees = environment
             .feature_set
             .is_active(&enable_transaction_loading_failure_fees::id());
 
-        for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            let validate_result = check_result.and_then(|tx_details| {
-                self.validate_transaction_fee_payer(
-                    &loaded_accounts_map,
-                    tx,
-                    tx_details,
-                    &environment.feature_set,
-                    environment
-                        .fee_structure
-                        .unwrap_or(&FeeStructure::default()),
-                    environment
-                        .rent_collector
-                        .unwrap_or(&RentCollector::default()),
-                    &mut error_metrics,
-                )
-            });
+        let (mut validate_fees_us, mut load_transactions_us, mut execution_us): (u64, u64, u64) =
+            (0, 0, 0);
 
-            let load_result = load_transaction(
+        for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
+            let (validate_result, single_validate_fees_us) =
+                measure_us!(check_result.and_then(|tx_details| {
+                    self.validate_transaction_fee_payer(
+                        &loaded_accounts_map,
+                        tx,
+                        tx_details,
+                        &environment.feature_set,
+                        environment
+                            .fee_structure
+                            .unwrap_or(&FeeStructure::default()),
+                        environment
+                            .rent_collector
+                            .unwrap_or(&RentCollector::default()),
+                        &mut error_metrics,
+                    )
+                }));
+            validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
+
+            let (load_result, single_load_transaction_us) = measure_us!(load_transaction(
                 &loaded_accounts_map,
                 tx,
                 validate_result,
@@ -313,9 +318,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .rent_collector
                     .unwrap_or(&RentCollector::default()),
                 &program_cache_for_tx_batch,
-            );
+            ));
+            load_transactions_us = load_transactions_us.saturating_add(single_load_transaction_us);
 
-            let processing_result = match load_result {
+            let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     if enable_transaction_loading_failure_fees {
@@ -354,25 +360,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                     Ok(processed_tx)
                 }
-            };
+            });
+            execution_us = execution_us.saturating_add(single_execution_us);
 
             processing_results.push(processing_result);
         }
-
-        /* XXX
-        println!(
-            "HANA {} results: {:#?}",
-            processing_results.len(),
-            processing_results
-                .iter()
-                .map(|ex| format!(
-                    "executed: {}, successful: {}",
-                    ex.was_executed(),
-                    ex.was_executed_successfully()
-                ))
-                .collect::<Vec<_>>()
-        );
-        */
 
         // Skip eviction when there's no chance this particular tx batch has increased the size of
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
@@ -389,7 +381,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 );
         }
 
-        /* XXX redo timings
         debug!(
             "load: {}us execute: {}us txs_len={}",
             load_accounts_us,
@@ -398,12 +389,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         execute_timings
+            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::LoadAccountsUs, load_accounts_us);
+        execute_timings
             .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
         execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
-        execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_accounts_us);
+            .saturating_add_in_place(ExecuteTimingType::LoadTransactionsUs, load_transactions_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
-        */
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,
