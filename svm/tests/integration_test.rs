@@ -1505,7 +1505,7 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
 
         let mut dealloc_fee_payer_data = AccountSharedData::default();
         dealloc_fee_payer_data.set_lamports(LAMPORTS_PER_SIGNATURE);
-        dealloc_fee_payer_data.set_rent_epoch(u64::MAX);
+        dealloc_fee_payer_data.set_rent_epoch(u64::MAX - 1);
         test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
 
         let stable_fee_payer_keypair = Keypair::new();
@@ -1573,7 +1573,7 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
 
         let mut dealloc_fee_payer_data = AccountSharedData::default();
         dealloc_fee_payer_data.set_lamports(LAMPORTS_PER_SIGNATURE);
-        dealloc_fee_payer_data.set_rent_epoch(u64::MAX);
+        dealloc_fee_payer_data.set_rent_epoch(u64::MAX - 1);
         test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
 
         let stable_fee_payer_keypair = Keypair::new();
