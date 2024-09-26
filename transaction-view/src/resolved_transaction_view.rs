@@ -212,7 +212,7 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
     }
 
     fn is_writable(&self, index: usize) -> bool {
-        self.writable_cache[index]
+        self.writable_cache.get(index).copied().unwrap_or(false)
     }
 
     fn is_signer(&self, index: usize) -> bool {
