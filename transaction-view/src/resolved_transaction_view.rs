@@ -98,9 +98,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         let num_writable_signed_static_accounts =
             usize::from(view.num_writable_signed_static_accounts());
 
-        let mut is_upgradable_loader_present = false;
         for (index, key) in account_keys.iter().enumerate() {
-            is_upgradable_loader_present |= key == &bpf_loader_upgradeable::ID;
             let is_requested_write = {
                 // If the account is a resolved address, check if it is writable.
                 if index >= num_static_account_keys {
@@ -118,14 +116,24 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             is_writable_cache.push(is_requested_write && !reserved_account_keys.contains(key));
         }
 
-        // If the upgradable loader is not present and a key is called as a program
-        // it is not writable.
-        // If the upgradable loader is present, then there is no point to loop.
-        // Looping over the instructions is more efficient than looping over each account
-        // and checking `is_invoked` which loops over each instruction internally.
-        if !is_upgradable_loader_present {
-            for ix in view.instructions_iter() {
-                is_writable_cache[usize::from(ix.program_id_index)] = false;
+        // If a program account is locked, it cannot be writable unless the
+        // upgradable loader is present.
+        // However, checking for the upgradable loader is somewhat expensive, so
+        // we only do it if we find a writable program id.
+        let mut is_upgradable_loader_present = None;
+        for ix in view.instructions_iter() {
+            let program_id_index = usize::from(ix.program_id_index);
+            if is_writable_cache[program_id_index] {
+                if !*is_upgradable_loader_present.get_or_insert_with(|| {
+                    for key in account_keys.iter() {
+                        if key == &bpf_loader_upgradeable::ID {
+                            return true;
+                        }
+                    }
+                    false
+                }) {
+                    is_writable_cache[program_id_index] = false;
+                }
             }
         }
 
