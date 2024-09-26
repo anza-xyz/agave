@@ -143,18 +143,19 @@ fn update_accounts_for_successful_tx<T: SVMMessage>(
     transaction: &T,
     transaction_accounts: &[TransactionAccount],
 ) {
-    for (_, (address, account)) in (0..transaction.account_keys().len())
-        .zip(transaction_accounts)
-        .filter(|(i, _)| {
-            transaction.is_writable(*i) && {
-                // Accounts that are invoked and also not passed as an instruction
-                // account to a program don't need to be stored because it's assumed
-                // to be impossible for a committable transaction to modify an
-                // invoked account if said account isn't passed to some program.
-                !transaction.is_invoked(*i) || transaction.is_instruction_account(*i)
-            }
-        })
-    {
+    for (i, (address, account)) in transaction_accounts.iter().enumerate() {
+        if !transaction.is_writable(i) {
+            continue;
+        }
+
+        // Accounts that are invoked and also not passed as an instruction
+        // account to a program don't need to be stored because it's assumed
+        // to be impossible for a committable transaction to modify an
+        // invoked account if said account isn't passed to some program.
+        if transaction.is_invoked(i) && !transaction.is_instruction_account(i) {
+            continue;
+        }
+
         update_loaded_account(loaded_accounts_map, address, account);
     }
 }
@@ -362,7 +363,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         .iter()
         .zip(check_results)
         .filter(|(_, tx_details)| tx_details.is_ok())
-        .map(|(tx, _)| tx);
+        .map(|(tx, _)| tx); // XXX actually i dont even need this just pattern match
 
     let mut account_keys_to_load = HashMap::new();
     let mut all_batch_program_ids = HashSet::new();
@@ -404,6 +405,14 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     }
 
     // by verifying programs up front, we ensure no transaction can call a program deployed earlier in the batch
+    // XXX TODO FIXME wait a second thats not what this does at ALL i hate my life
+    // if tx1 deploys, then it puts the program in the accounts map. if tx2 uses it, this just skips adding its loader
+    // and then if i naively update accounts, the next tx will see it as executable and potentially run it
+    // but if i HIDE the new state from the accounts map, future transactions could write to it AGAIN
+    // i believe this means... i need to mutate check results to drop any transaction that uses a non-executable program
+    // or make it fee-only as punishment for forcing me to reason about this bizarre case
+    // hmm OR add a field to LoadedTransactionAccount like, executable_in_batch
+    // which holds whether it was originally executable, and we use THAT during transaction loading
     for program_id in all_batch_program_ids {
         if native_loader::check_id(&program_id) {
             continue;
@@ -537,7 +546,7 @@ fn load_transaction_accounts(
     };
 
     // Since the fee payer is always the first account, collect it first. Note
-    // that account overrides are already applied during fee payer validation so
+    // that account overrides are already applied during initial account loading so
     // it's fine to use the fee payer directly here rather than checking account
     // overrides again.
     collect_loaded_account(message.fee_payer(), (loaded_fee_payer_account, true))?;
@@ -557,6 +566,48 @@ fn load_transaction_accounts(
         collect_loaded_account(account_key, (loaded_account, account_found))?;
     }
 
+    // XXX TODO FIXME this block is quite a strange little creature given our changes to loading
+    // * if i do the simd where i dont load the loaders, accumulating loader size breaks. we need their sizes somehow
+    //   as best i can tell, however, we do NOT need to put them in the accounts array
+    //   it seems like tx execution just gets them from the cache invariably
+    // * we also never insert their index, so why do we create a vec of capacity two? does invoke context mutate it?
+    // * if i include a loader as an instruction account doesnt the builtins_start_index loop break?
+    //   well ok it functions but it loads and pushes the loader twice... and counts its size twice
+    // what is the purpose of this block? its to get the program_id account index
+    // and its to count the loaders (other than native loader...) toward the total transaction account size limit
+    //
+    // as much as it pains me to change it this late, i think... i can solve several problems by doing:
+    // `pub(crate) type LoadedAccountsMap = HashMap<Pubkey, LoadedTransactionAccount>;`
+    // maybe no rent field, or make it always be 0 in cache? clone and set. we wont double-charge rent because epoch updates
+    // then in `load_accounts()` we can add back the program cache thing, and in `load_transaction_account()` we *ignore* cache
+    // because accounts map would be pre-populated with the cacheable programs
+    //
+    // we MUST check the executable flag tho, do NOT preserve that bug... if i need to load anyway tho, maybe ignore cache
+    // accounts_db has special support for checking owners, so i think id add an executable check there
+    // but ok for now, forget the cache, this is an optimization and i can do it in a separate pr later
+    //
+    // but we could store cached loaders in the map, so we would *never* need to load them
+    // at the same time, we could do initial size checks message-by-message in `load_accounts()`
+    // with a declared spec change that accounts are checked pre-batch *and* pre-execution
+    // then when i *update* accounts i just need to remember to set the new length on the LoadedTransactionAccount
+    //
+    // XXX OK. jfc. what am i doing tomorrow:
+    // * add executable_in_batch to LoadedTransactionAccount
+    // * make LoadedAccountsMap hold LoadedTransactionAccount. im undecided on type vs newtype
+    // * program id loop in load_accounts() marks whether programs are originally executable
+    // * in load_transaction_accounts() aka this function, check if the program is *executable in batch*
+    // * get rid of the cache load in load_transaction_account(), its completely pointless
+    // * add the cache load back to load_accounts() if reasonable
+    //   its a bit tricky because i need to check !ixn_acct && !writable for *all* messages
+    // if i can do my loader redefinition:
+    // * dont load or add loaders in load_accounts(), just check ids
+    //   we still want to enforce data sizes tho. can i get them from the batch cache?
+    // * dont push loaders onto the vec in load_transaction_accounts(), just check sizes
+    // if i get my accounts-db executable check:
+    // * add back the cache to load_accounts() *without* loading the data
+    //   come to think of it how tf do non-executable acocunts und up in cache anyway
+    // and if i decide to do data sizes in load_accounts(), do it. i think i want to short-circuit loading for that message
+    // dont worry about marking it in any way. transaction loading should charge it fee-only at the same stopping point
     let builtins_start_index = accounts.len();
     let program_indices = message
         .instructions_iter()
@@ -651,6 +702,9 @@ fn load_transaction_account(
         .then_some(())
         .and_then(|_| loaded_programs.find(account_key))
     {
+        // XXX TODO FIXME when i add executable_in_batch i need to get and carry that value over
+        // wait actually i think cache goes away here entirely... if i do it in `load_accounts()`
+        // ok wait no, this branch goes away!! its pointless!! we already loaded the goddamn account!!!!
         if !loaded_accounts_map.contains_key(account_key) {
             return Err(TransactionError::AccountNotFound);
         }

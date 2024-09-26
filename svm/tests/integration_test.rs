@@ -1389,6 +1389,12 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
 // * withdraw from nonce, create new nonce, then use (discard)
 // this one is safe also, because new nonces are initialized with the current durable nonce
 
+// XXX TODO FIXME i decided i dont need to test program deployment intrabatch
+// by (correctly) enforcing programs are executable during initial loading, we drop anything that could take advantage of it
+// hm what happens if tx1 deploys the program and tx2 tries to write it tho. i assume the loader program would execute-fail
+// anyway what i do need to test is calling programs owned by all the loaders, with and without the loader in the ixn accounts
+// i think i can get away with empty executable accounts and the test is execute-fail rather than processed-fail or discarded
+
 fn account_deallocate() -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
