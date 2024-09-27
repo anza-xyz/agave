@@ -541,8 +541,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     fee_payer.set_lamports(fee_payer_account.lamports());
                     fee_payer.set_rent_epoch(fee_payer_account.rent_epoch());
                 }
-            }
-            Err(err) => return Err(err),
+            },
+            Err(err) => {
+                error_counters.invalid_rent_paying_account += 1;
+                return Err(err)
+            },
         };
 
         // Capture fee-subtracted fee payer account and original nonce account state
