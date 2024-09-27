@@ -403,6 +403,7 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     #[serde(deserialize_with = "default_on_eof")]
+    #[allow(dead_code)]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
 }
 
