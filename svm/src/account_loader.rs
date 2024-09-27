@@ -7,7 +7,6 @@ use {
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processing_result::ProcessedTransaction,
     },
-    itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
@@ -73,11 +72,22 @@ pub struct ValidatedTransactionDetails {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+struct LoadedTransactionAccounts {
+    pub accounts: Vec<TransactionAccount>,
+    pub program_indices: TransactionProgramIndices,
+    pub rent: TransactionRent,
+    pub rent_debits: RentDebits,
+    pub loaded_accounts_data_size: u32,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
     pub(crate) rent_collected: u64,
+    pub(crate) executable_in_batch: bool,
+    pub(crate) valid_loader: bool,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -100,13 +110,89 @@ pub struct FeesOnlyTransaction {
     pub fee_details: FeeDetails,
 }
 
-pub(crate) type LoadedAccountsMap = HashMap<Pubkey, AccountSharedData>;
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
+pub(crate) struct LoadedAccountsMap(HashMap<Pubkey, LoadedTransactionAccount>);
+
+impl LoadedAccountsMap {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(HashMap::with_capacity(capacity))
+    }
+
+    pub fn insert_account(
+        &mut self,
+        pubkey: Pubkey,
+        account: AccountSharedData,
+    ) -> Option<LoadedTransactionAccount> {
+        let loaded_account = LoadedTransactionAccount {
+            loaded_size: account.data().len(),
+            rent_collected: 0,
+            executable_in_batch: account.executable(),
+            valid_loader: account.executable()
+                && (native_loader::check_id(&pubkey) || native_loader::check_id(account.owner())),
+            account,
+        };
+
+        self.0.insert(pubkey, loaded_account)
+    }
+
+    pub fn insert_cached_program(
+        &mut self,
+        pubkey: Pubkey,
+        program: &ProgramCacheEntry,
+    ) -> Option<LoadedTransactionAccount> {
+        let loaded_account = LoadedTransactionAccount {
+            loaded_size: program.account_size,
+            rent_collected: 0,
+            executable_in_batch: true,
+            valid_loader: native_loader::check_id(&pubkey)
+                || native_loader::check_id(&program.account_owner()),
+            account: account_shared_data_from_program(program),
+        };
+
+        self.0.insert(pubkey, loaded_account)
+    }
+
+    pub fn update_account(&mut self, pubkey: &Pubkey, account: &AccountSharedData) {
+        // accounts which go to zero lamports must be dropped
+        // we dont insert default so future transactions know theyre creating a new account
+        // also we need to insert, rather than strictly update, in case the acocunt is newly created
+        if account.lamports() == 0 {
+            self.0.remove(pubkey);
+        } else {
+            // data size may change between transactions due to realloc
+            // but an account newly marked executable may never become executable in batch
+            self.0
+                .entry(*pubkey)
+                .and_modify(|loaded_account| {
+                    loaded_account.loaded_size = account.data().len();
+                    loaded_account.account = account.clone();
+                })
+                .or_insert_with(|| LoadedTransactionAccount {
+                    account: account.clone(),
+                    loaded_size: account.data().len(),
+                    rent_collected: 0,
+                    executable_in_batch: false,
+                    valid_loader: false,
+                });
+        }
+    }
+
+    pub fn get_account(&self, pubkey: &Pubkey) -> Option<&AccountSharedData> {
+        self.0
+            .get(pubkey)
+            .map(|loaded_account| &loaded_account.account)
+    }
+
+    pub fn get_loaded_account(&self, pubkey: &Pubkey) -> Option<&LoadedTransactionAccount> {
+        self.0.get(pubkey)
+    }
+}
 
 // XXX stripped down version of `collect_accounts_to_store()`
 // we might want to have both functions use the same account selection code but maybe it doesnt really matter
 // the thing is that code *really* wants to be collecting vectors of extra stuff
 // so the stuff we want to avoid doing is woven very tightly into it. idk maybe i lack vision tho
-// i think the main danger is that
 pub(crate) fn collect_and_update_loaded_accounts<T: SVMMessage>(
     loaded_accounts_map: &mut LoadedAccountsMap,
     transaction: &T,
@@ -143,6 +229,7 @@ fn update_accounts_for_successful_tx<T: SVMMessage>(
     transaction: &T,
     transaction_accounts: &[TransactionAccount],
 ) {
+    // XXX note this is different from account saver but (unless i push loaders) accurate for us
     for (i, (address, account)) in transaction_accounts.iter().enumerate() {
         if !transaction.is_writable(i) {
             continue;
@@ -156,7 +243,7 @@ fn update_accounts_for_successful_tx<T: SVMMessage>(
             continue;
         }
 
-        update_loaded_account(loaded_accounts_map, address, account);
+        loaded_accounts_map.update_account(address, account);
     }
 }
 
@@ -168,31 +255,18 @@ pub(crate) fn update_accounts_for_failed_tx<T: SVMMessage>(
     let fee_payer_address = transaction.fee_payer();
     match rollback_accounts {
         RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-            update_loaded_account(loaded_accounts_map, fee_payer_address, fee_payer_account);
+            loaded_accounts_map.update_account(fee_payer_address, fee_payer_account);
         }
         RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-            update_loaded_account(loaded_accounts_map, nonce.address(), nonce.account());
+            loaded_accounts_map.update_account(nonce.address(), nonce.account());
         }
         RollbackAccounts::SeparateNonceAndFeePayer {
             nonce,
             fee_payer_account,
         } => {
-            update_loaded_account(loaded_accounts_map, nonce.address(), nonce.account());
-            update_loaded_account(loaded_accounts_map, fee_payer_address, fee_payer_account);
+            loaded_accounts_map.update_account(nonce.address(), nonce.account());
+            loaded_accounts_map.update_account(fee_payer_address, fee_payer_account);
         }
-    }
-}
-
-// if an account lamports goes to zero, we must hide its stale state from the rest of the batch
-fn update_loaded_account(
-    loaded_accounts_map: &mut LoadedAccountsMap,
-    pubkey: &Pubkey,
-    account: &AccountSharedData,
-) -> Option<AccountSharedData> {
-    if account.lamports() == 0 {
-        loaded_accounts_map.insert(*pubkey, AccountSharedData::default())
-    } else {
-        loaded_accounts_map.insert(*pubkey, account.clone())
     }
 }
 
@@ -352,95 +426,172 @@ pub fn validate_fee_payer(
 // do code changes only in first commit, then all the test changes/additions separately
 // actually it shouldnt be so bad, eg the integration_test.rs file i just copy-paste
 // remember to rebase on master first!!! i might have to drop a commit since i merged something today
+//
+// XXX OK. jfc. what am i doing tomorrow:
+// * add executable_in_batch to LoadedTransactionAccount
+// * make LoadedAccountsMap hold LoadedTransactionAccount. im undecided on type vs newtype
+// * program id loop in load_accounts() marks whether programs are originally executable
+// * in load_transaction_accounts() aka this function, check if the program is *executable in batch*
+// * get rid of the cache load in load_transaction_account(), its completely pointless
+// * add the cache load back to load_accounts() if reasonable
+//   its a bit tricky because i need to check !ixn_acct && !writable for *all* messages
+// if i can do my loader redefinition:
+// * dont load or add non-ixn account loaders in load_accounts(), just check ids
+//   we still want to enforce data sizes tho. can i get them from the batch cache?
+// * dont push loaders onto the vec in load_transaction_accounts(), just check sizes
+//   i might be able to get away with this anyway
+// if i get my accounts-db executable check:
+// * add back the cache to load_accounts() *without* loading the data
+//   come to think of it how tf do non-executable acocunts und up in cache anyway
+// and if i decide to do data sizes in load_accounts(), do it. i think i want to short-circuit loading for that message
+// dont worry about marking it in any way. transaction loading should charge it fee-only at the same stopping point
+//
+// XXX ok i mostly rewrote loading. next i have to fix unit tests
+// then add cache back to load_accounts() and check sizes per-message... uh. can i get compute budget there......
+// also should i pull rent off the LoadedTransactionAccount object? need to store for fee payer, ig on its parent
+
+#[derive(Debug, Clone)]
+struct AccountUsagePattern {
+    is_writable: bool,
+    is_instruction_account: bool,
+}
 
 pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     txs: &[impl SVMMessage],
     check_results: &Vec<TransactionCheckResult>,
     account_overrides: Option<&AccountOverrides>,
+    program_cache: &ProgramCacheForTxBatch,
 ) -> LoadedAccountsMap {
     let checked_messages = txs
         .iter()
         .zip(check_results)
         .filter(|(_, tx_details)| tx_details.is_ok())
-        .map(|(tx, _)| tx); // XXX actually i dont even need this just pattern match
+        .map(|(tx, _)| tx)
+        .collect::<Vec<_>>();
+
+    // XXX TODO FIXME i think if i want to calculate data sizes here the trick is...
+    // to usage pattern, add a vec of usize. enumerate my checked messages
+    // push the message number onto the vec invariably
+    // then when i iterate through account keys to load
+    // i keep a running count for all message sizes
+    // maybe one HashMap<usize, Some<u32>>
+    // so up top i say, hey who needs this. if theyre all None in hashmap, skip
+    // then load account. for everyone who needs it, add the size to their running total
+    // if anyone breaches their limit, set their value to None
+    // this way we abort loading accounts only used by transactions that have execeeded the limit
+    // and we will process the transaction later as fee-only
+    // note this is an IMPLEMENTATION DETAIL, actually no change to how it works
+    // because we are slightly MORE PERMISSIVE here. actually maybe i can do it in a different pr then
+    // since it would be an optimization/safety feature rather than a gated change
+    // just make sure and reread transaction loading to be sure its robust against missing accounts/loaders
+    // i think i have to update some comments at least
 
     let mut account_keys_to_load = HashMap::new();
     let mut all_batch_program_ids = HashSet::new();
     for message in checked_messages {
-        // first, get all account keys for the batch, along with whether *any* transaction marks it as writable
+        // first, get all account keys for the batch
+        // plus whether any transaction uses it as writable or an instruction account
         for (account_index, account_key) in message.account_keys().iter().enumerate() {
-            if message.is_writable(account_index) {
-                account_keys_to_load.insert(account_key, true);
-            } else {
-                account_keys_to_load.entry(account_key).or_insert(false);
-            }
+            let is_writable = message.is_writable(account_index);
+            let is_instruction_account = message.is_instruction_account(account_index);
+
+            account_keys_to_load
+                .entry(account_key)
+                .and_modify(|usage_pattern: &mut AccountUsagePattern| {
+                    usage_pattern.is_writable = usage_pattern.is_writable || is_writable;
+                    usage_pattern.is_instruction_account =
+                        usage_pattern.is_instruction_account || is_instruction_account;
+                })
+                .or_insert_with(|| AccountUsagePattern {
+                    is_writable,
+                    is_instruction_account,
+                });
         }
 
         // next, get all program ids for the batch, for validation after loading
+        // we skip adding native loader if present because it does not need to be validated
         for (program_id, _) in message.program_instructions_iter() {
-            all_batch_program_ids.insert(*program_id);
+            if !native_loader::check_id(program_id) {
+                all_batch_program_ids.insert(*program_id);
+            }
         }
     }
 
     let mut loaded_accounts_map = LoadedAccountsMap::with_capacity(account_keys_to_load.len());
-    for (account_key, is_writable) in account_keys_to_load {
+    for (account_key, usage_pattern) in account_keys_to_load {
+        let AccountUsagePattern {
+            is_writable,
+            is_instruction_account,
+        } = usage_pattern;
+
         if solana_sdk::sysvar::instructions::check_id(account_key) {
             continue;
         } else if let Some(account_override) =
             account_overrides.and_then(|overrides| overrides.get(account_key))
         {
-            loaded_accounts_map.insert(*account_key, account_override.clone());
-        }
-        // XXX i can add back the ProgramCacheForTxBatch optimization here if i collect if program id is instruction account
-        // and also uhhhh... i guess i would need to seriously mess with the hashmap to carry account size for them
-        // the thing is i dont even know if its really an optimization because it has to load *anyway*. bench it ig
-        // if i did my job right we should be appreciably faster on any batch with reader-reader overlap anyway
-        else if let Some(account) = callbacks.get_account_shared_data(account_key) {
+            loaded_accounts_map.insert_account(*account_key, account_override.clone());
+        } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
-            loaded_accounts_map.insert(*account_key, account);
+            if let Some(ref program) =
+                (account.executable() && !is_instruction_account && !is_writable)
+                    .then_some(())
+                    .and_then(|_| program_cache.find(account_key))
+            {
+                loaded_accounts_map.insert_cached_program(*account_key, program);
+            } else {
+                loaded_accounts_map.insert_account(*account_key, account);
+            }
         } else {
             callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
         }
     }
 
     // by verifying programs up front, we ensure no transaction can call a program deployed earlier in the batch
-    // XXX TODO FIXME wait a second thats not what this does at ALL i hate my life
-    // if tx1 deploys, then it puts the program in the accounts map. if tx2 uses it, this just skips adding its loader
-    // and then if i naively update accounts, the next tx will see it as executable and potentially run it
-    // but if i HIDE the new state from the accounts map, future transactions could write to it AGAIN
-    // i believe this means... i need to mutate check results to drop any transaction that uses a non-executable program
-    // or make it fee-only as punishment for forcing me to reason about this bizarre case
-    // hmm OR add a field to LoadedTransactionAccount like, executable_in_batch
-    // which holds whether it was originally executable, and we use THAT during transaction loading
+    // we also preemptively disable execution of any program id not owned by a valid loader
+    // this way we dont need to validate this for each transaction, because a program may never be released from a loader
     for program_id in all_batch_program_ids {
-        if native_loader::check_id(&program_id) {
-            continue;
-        }
-
-        let Some(program_account) = loaded_accounts_map.get(&program_id) else {
+        // if we failed to load a program, nothing needs to be done, transaction loading will fail
+        let Some(loaded_program) = loaded_accounts_map.get_loaded_account(&program_id) else {
             continue;
         };
 
-        // XXX note this is divergent with existing behavior in esoteric cases
-        if !program_account.executable() {
+        // likewise, if the program is not executable, transaction loading will fail
+        if !loaded_program.executable_in_batch {
             continue;
         }
 
-        // XXX TODO i would like to simd so we can just check loader ids instead of loading loaders
-        // that means we would not need to load the loaders
-        // also means we dont need to store loaders in accounts map here, theyre all in program cache anyway
-        let owner_id = program_account.owner();
-        if native_loader::check_id(owner_id) {
+        // if this is a loader, nothing further needs to be done
+        if loaded_program.valid_loader {
             continue;
         }
 
-        if !loaded_accounts_map.contains_key(owner_id) {
-            if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+        // now we have an executable program that isnt a loader
+        // we verify its owner is a loader, and add that loader to the accounts map if we dont already have it
+        let owner_id = loaded_program.account.owner();
+        let owner_is_loader =
+            if let Some(loaded_owner) = loaded_accounts_map.get_loaded_account(owner_id) {
+                loaded_owner.valid_loader
+            } else if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                 if native_loader::check_id(owner_account.owner()) && owner_account.executable() {
-                    loaded_accounts_map.insert(*owner_id, owner_account);
+                    // XXX i may want to fetch from cache or blank out the data
+                    // test later tho, its just optimization
+                    loaded_accounts_map.insert_account(*owner_id, owner_account);
+
+                    true
+                } else {
+                    false
                 }
-            }
+            } else {
+                false
+            };
+
+        // by marking the program as invalid for execution, we dont need to do validation during transaction loading
+        if !owner_is_loader {
+            loaded_accounts_map
+                .0
+                .entry(program_id)
+                .and_modify(|loaded_program| loaded_program.executable_in_batch = false);
         }
     }
 
@@ -454,7 +605,6 @@ pub(crate) fn load_transaction(
     error_metrics: &mut TransactionErrorMetrics,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
 ) -> TransactionLoadResult {
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
@@ -467,7 +617,6 @@ pub(crate) fn load_transaction(
                 error_metrics,
                 feature_set,
                 rent_collector,
-                loaded_programs,
             );
 
             match load_result {
@@ -491,15 +640,6 @@ pub(crate) fn load_transaction(
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-struct LoadedTransactionAccounts {
-    pub accounts: Vec<TransactionAccount>,
-    pub program_indices: TransactionProgramIndices,
-    pub rent: TransactionRent,
-    pub rent_debits: RentDebits,
-    pub loaded_accounts_data_size: u32,
-}
-
 fn load_transaction_accounts(
     loaded_accounts_map: &LoadedAccountsMap,
     message: &impl SVMMessage,
@@ -508,27 +648,69 @@ fn load_transaction_accounts(
     error_metrics: &mut TransactionErrorMetrics,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<LoadedTransactionAccounts> {
-    let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
+    let mut required_programs = HashSet::new();
+    let mut required_loaders = HashMap::new();
+
     let mut accounts = Vec::with_capacity(account_keys.len());
-    let mut accounts_found = Vec::with_capacity(account_keys.len());
+    let mut tx_rent: TransactionRent = 0;
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
 
-    let instruction_accounts = message
+    let program_indices = message
         .instructions_iter()
-        .flat_map(|instruction| instruction.accounts)
-        .unique()
-        .collect::<Vec<&u8>>();
+        .map(|instruction| {
+            let mut account_indices = Vec::with_capacity(2);
+            let program_index = instruction.program_id_index as usize;
 
-    let mut collect_loaded_account = |key, (loaded_account, found)| -> Result<()> {
+            // This command may never return error, because the transaction is sanitized
+            let Some(program_id) = account_keys.get(program_index) else {
+                error_metrics.account_not_found += 1;
+                return Err(TransactionError::ProgramAccountNotFound);
+            };
+
+            // we do not need to validate NativeLoader, and its index is never retained
+            // otherwise we hold the program id to validate it is executable and owned by a valid loader
+            if !native_loader::check_id(program_id) {
+                required_programs.insert(program_id);
+                account_indices.insert(0, program_index as IndexOfAccount);
+            }
+
+            Ok(account_indices)
+        })
+        .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
+
+    let mut collect_loaded_account = |key, (loaded_account, found): (_, bool)| -> Result<()> {
         let LoadedTransactionAccount {
             account,
             loaded_size,
             rent_collected,
+            executable_in_batch,
+            valid_loader,
         } = loaded_account;
+
+        if required_programs.contains(key) {
+            // if this account is a program, we confirm it was found and is executable
+            // XXX we can nix found if we dont mind the error changing
+            if !found {
+                error_metrics.account_not_found += 1;
+                return Err(TransactionError::ProgramAccountNotFound);
+            } else if !executable_in_batch {
+                error_metrics.invalid_program_for_execution += 1;
+                return Err(TransactionError::InvalidProgramForExecution);
+            }
+
+            // if we found a regular program, we flag that its loader may need to be counted and added to transaction accounts
+            // but if we also see that loader earlier or later in this loop, we override to ensure we dont double-count it
+            // we never encounter NativeLoader here because we explicitly skipped adding it
+            let owner_id = account.owner();
+            if valid_loader {
+                required_loaders.insert(*key, true);
+            } else if !required_loaders.contains_key(owner_id) {
+                required_loaders.insert(*owner_id, false);
+            }
+        }
 
         accumulate_and_check_loaded_account_data_size(
             &mut accumulated_accounts_data_size,
@@ -541,14 +723,10 @@ fn load_transaction_accounts(
         rent_debits.insert(key, rent_collected, account.lamports());
 
         accounts.push((*key, account));
-        accounts_found.push(found);
         Ok(())
     };
 
-    // Since the fee payer is always the first account, collect it first. Note
-    // that account overrides are already applied during initial account loading so
-    // it's fine to use the fee payer directly here rather than checking account
-    // overrides again.
+    // Since the fee payer is always the first account, collect it first
     collect_loaded_account(message.fee_payer(), (loaded_fee_payer_account, true))?;
 
     // Attempt to load and collect remaining non-fee payer accounts
@@ -558,113 +736,45 @@ fn load_transaction_accounts(
             message,
             account_key,
             account_index,
-            &instruction_accounts[..],
             feature_set,
             rent_collector,
-            loaded_programs,
         )?;
         collect_loaded_account(account_key, (loaded_account, account_found))?;
     }
 
-    // XXX TODO FIXME this block is quite a strange little creature given our changes to loading
-    // * if i do the simd where i dont load the loaders, accumulating loader size breaks. we need their sizes somehow
-    //   as best i can tell, however, we do NOT need to put them in the accounts array
-    //   it seems like tx execution just gets them from the cache invariably
-    // * we also never insert their index, so why do we create a vec of capacity two? does invoke context mutate it?
-    // * if i include a loader as an instruction account doesnt the builtins_start_index loop break?
-    //   well ok it functions but it loads and pushes the loader twice... and counts its size twice
-    // what is the purpose of this block? its to get the program_id account index
-    // and its to count the loaders (other than native loader...) toward the total transaction account size limit
-    //
-    // as much as it pains me to change it this late, i think... i can solve several problems by doing:
-    // `pub(crate) type LoadedAccountsMap = HashMap<Pubkey, LoadedTransactionAccount>;`
-    // maybe no rent field, or make it always be 0 in cache? clone and set. we wont double-charge rent because epoch updates
-    // then in `load_accounts()` we can add back the program cache thing, and in `load_transaction_account()` we *ignore* cache
-    // because accounts map would be pre-populated with the cacheable programs
-    //
-    // we MUST check the executable flag tho, do NOT preserve that bug... if i need to load anyway tho, maybe ignore cache
-    // accounts_db has special support for checking owners, so i think id add an executable check there
-    // but ok for now, forget the cache, this is an optimization and i can do it in a separate pr later
-    //
-    // but we could store cached loaders in the map, so we would *never* need to load them
-    // at the same time, we could do initial size checks message-by-message in `load_accounts()`
-    // with a declared spec change that accounts are checked pre-batch *and* pre-execution
-    // then when i *update* accounts i just need to remember to set the new length on the LoadedTransactionAccount
-    //
-    // XXX OK. jfc. what am i doing tomorrow:
-    // * add executable_in_batch to LoadedTransactionAccount
-    // * make LoadedAccountsMap hold LoadedTransactionAccount. im undecided on type vs newtype
-    // * program id loop in load_accounts() marks whether programs are originally executable
-    // * in load_transaction_accounts() aka this function, check if the program is *executable in batch*
-    // * get rid of the cache load in load_transaction_account(), its completely pointless
-    // * add the cache load back to load_accounts() if reasonable
-    //   its a bit tricky because i need to check !ixn_acct && !writable for *all* messages
-    // if i can do my loader redefinition:
-    // * dont load or add loaders in load_accounts(), just check ids
-    //   we still want to enforce data sizes tho. can i get them from the batch cache?
-    // * dont push loaders onto the vec in load_transaction_accounts(), just check sizes
-    // if i get my accounts-db executable check:
-    // * add back the cache to load_accounts() *without* loading the data
-    //   come to think of it how tf do non-executable acocunts und up in cache anyway
-    // and if i decide to do data sizes in load_accounts(), do it. i think i want to short-circuit loading for that message
-    // dont worry about marking it in any way. transaction loading should charge it fee-only at the same stopping point
-    let builtins_start_index = accounts.len();
-    let program_indices = message
-        .instructions_iter()
-        .map(|instruction| {
-            let mut account_indices = Vec::with_capacity(2);
-            let program_index = instruction.program_id_index as usize;
-            // This command may never return error, because the transaction is sanitized
-            let (program_id, program_account) = accounts
-                .get(program_index)
-                .ok_or(TransactionError::ProgramAccountNotFound)?;
-            if native_loader::check_id(program_id) {
-                return Ok(account_indices);
-            }
+    // finally, we add the remaining loaders to the accumulated transaction data size
+    for (loader_id, already_counted) in required_loaders {
+        if already_counted {
+            continue;
+        }
 
-            let account_found = accounts_found.get(program_index).unwrap_or(&true);
-            if !account_found {
-                error_metrics.account_not_found += 1;
-                return Err(TransactionError::ProgramAccountNotFound);
-            }
+        // this should never fail, account loading fetches all necessary loaders
+        let Some(LoadedTransactionAccount {
+            loaded_size,
+            valid_loader,
+            ..
+        }) = loaded_accounts_map.get_loaded_account(&loader_id)
+        else {
+            error_metrics.invalid_program_for_execution += 1;
+            return Err(TransactionError::InvalidProgramForExecution);
+        };
 
-            if !program_account.executable() {
-                error_metrics.invalid_program_for_execution += 1;
-                return Err(TransactionError::InvalidProgramForExecution);
-            }
-            account_indices.insert(0, program_index as IndexOfAccount);
-            let owner_id = program_account.owner();
-            if native_loader::check_id(owner_id) {
-                return Ok(account_indices);
-            }
-            if !accounts
-                .get(builtins_start_index..)
-                .ok_or(TransactionError::ProgramAccountNotFound)?
-                .iter()
-                .any(|(key, _)| key == owner_id)
-            {
-                if let Some(owner_account) = loaded_accounts_map.get(owner_id) {
-                    if !native_loader::check_id(owner_account.owner())
-                        || !owner_account.executable()
-                    {
-                        error_metrics.invalid_program_for_execution += 1;
-                        return Err(TransactionError::InvalidProgramForExecution);
-                    }
-                    accumulate_and_check_loaded_account_data_size(
-                        &mut accumulated_accounts_data_size,
-                        owner_account.data().len(),
-                        compute_budget_limits.loaded_accounts_bytes,
-                        error_metrics,
-                    )?;
-                    accounts.push((*owner_id, owner_account.clone()));
-                } else {
-                    error_metrics.account_not_found += 1;
-                    return Err(TransactionError::ProgramAccountNotFound);
-                }
-            }
-            Ok(account_indices)
-        })
-        .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
+        // likewise, valid_loader should always be true
+        // otherwise the program would have been marked as invalid for execution
+        if !valid_loader {
+            error_metrics.invalid_program_for_execution += 1;
+            return Err(TransactionError::InvalidProgramForExecution);
+        }
+
+        accumulate_and_check_loaded_account_data_size(
+            &mut accumulated_accounts_data_size,
+            *loaded_size,
+            compute_budget_limits.loaded_accounts_bytes,
+            error_metrics,
+        )?;
+
+        // XXX im gonna skip adding them to the accounts vec while i determine if we even need to
+    }
 
     Ok(LoadedTransactionAccounts {
         accounts,
@@ -680,15 +790,10 @@ fn load_transaction_account(
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
-    instruction_accounts: &[&u8],
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<(LoadedTransactionAccount, bool)> {
     let mut account_found = true;
-    let is_instruction_account = u8::try_from(account_index)
-        .map(|i| instruction_accounts.contains(&&i))
-        .unwrap_or(false);
     let is_writable = message.is_writable(account_index);
     let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
@@ -697,46 +802,27 @@ fn load_transaction_account(
             loaded_size: 0,
             account: construct_instructions_account(message),
             rent_collected: 0,
-        }
-    } else if let Some(program) = (!is_instruction_account && !message.is_writable(account_index))
-        .then_some(())
-        .and_then(|_| loaded_programs.find(account_key))
-    {
-        // XXX TODO FIXME when i add executable_in_batch i need to get and carry that value over
-        // wait actually i think cache goes away here entirely... if i do it in `load_accounts()`
-        // ok wait no, this branch goes away!! its pointless!! we already loaded the goddamn account!!!!
-        if !loaded_accounts_map.contains_key(account_key) {
-            return Err(TransactionError::AccountNotFound);
-        }
-        // Optimization to skip loading of accounts which are only used as
-        // programs in top-level instructions and not passed as instruction accounts.
-        LoadedTransactionAccount {
-            loaded_size: program.account_size,
-            account: account_shared_data_from_program(&program),
-            rent_collected: 0,
+            executable_in_batch: false,
+            valid_loader: false,
         }
     } else {
         loaded_accounts_map
-            .get(account_key)
+            .get_loaded_account(account_key)
             .cloned()
-            .map(|mut account| {
-                let rent_collected = if is_writable {
+            .map(|mut loaded_account| {
+                loaded_account.rent_collected = if is_writable {
                     collect_rent_from_account(
                         feature_set,
                         rent_collector,
                         account_key,
-                        &mut account,
+                        &mut loaded_account.account,
                     )
                     .rent_amount
                 } else {
                     0
                 };
 
-                LoadedTransactionAccount {
-                    loaded_size: account.data().len(),
-                    account,
-                    rent_collected,
-                }
+                loaded_account
             })
             .unwrap_or_else(|| {
                 account_found = false;
@@ -749,6 +835,8 @@ fn load_transaction_account(
                     loaded_size: default_account.data().len(),
                     account: default_account,
                     rent_collected: 0,
+                    executable_in_batch: false,
+                    valid_loader: false,
                 }
             })
     };

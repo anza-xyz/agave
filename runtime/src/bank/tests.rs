@@ -7130,9 +7130,10 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         invocation_message.clone(),
         bank.last_blockhash(),
     );
+    // XXX TODO FIXME this might change back to ProgramAccountNotFound when i add the cache stuff back
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::ProgramAccountNotFound),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
@@ -7151,9 +7152,10 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let instruction = Instruction::new_with_bytes(buffer_address, &[], Vec::new());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
+    // XXX TODO FIXME this might change back to ProgramAccountNotFound when i add the cache stuff back
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::ProgramAccountNotFound),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();

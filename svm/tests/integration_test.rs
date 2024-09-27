@@ -1473,10 +1473,7 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
 
             test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
-            test_entry
-                .final_accounts
-                .insert(target, AccountSharedData::default())
-                .unwrap();
+            test_entry.update_expected_account_data(target, &AccountSharedData::default());
         }
 
         test_entries.push(test_entry);
@@ -1565,10 +1562,7 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
 
         test_entry.decrease_expected_lamports(&stable_fee_payer, LAMPORTS_PER_SIGNATURE);
 
-        test_entry
-            .final_accounts
-            .insert(dealloc_fee_payer, AccountSharedData::default())
-            .unwrap();
+        test_entry.update_expected_account_data(dealloc_fee_payer, &AccountSharedData::default());
     }
 
     // 4: a rent-paying non-nonce fee-payer goes to zero on a fee-only nonce transaction, the batch sees it as deallocated
@@ -1638,10 +1632,7 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
 
         test_entry.decrease_expected_lamports(&stable_fee_payer, LAMPORTS_PER_SIGNATURE);
 
-        test_entry
-            .final_accounts
-            .insert(dealloc_fee_payer, AccountSharedData::default())
-            .unwrap();
+        test_entry.update_expected_account_data(dealloc_fee_payer, &AccountSharedData::default());
     }
 
     vec![test_entry]

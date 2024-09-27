@@ -280,6 +280,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sanitized_txs,
             &check_results,
             config.account_overrides,
+            &program_cache_for_tx_batch,
         ));
 
         let enable_transaction_loading_failure_fees = environment
@@ -317,7 +318,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment
                     .rent_collector
                     .unwrap_or(&RentCollector::default()),
-                &program_cache_for_tx_batch,
             ));
             load_transactions_us = load_transactions_us.saturating_add(single_load_transaction_us);
 
@@ -426,7 +426,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         })?;
 
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = loaded_accounts_map.get(fee_payer_address).cloned();
+        let fee_payer_account = loaded_accounts_map.get_account(fee_payer_address).cloned();
 
         let Some(mut fee_payer_account) = fee_payer_account else {
             error_counters.account_not_found += 1;
@@ -470,30 +470,29 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // This is the same as if it was used is different batches in the same slot
         // If the nonce account was closed in the batch, we behave as if the blockhash didn't validate
         if let Some(ref nonce_info) = nonce {
-            let nonces_are_equal =
-                loaded_accounts_map
-                    .get(nonce_info.address())
-                    .and_then(|nonce_account| {
-                        // NOTE we cannot directly compare nonce account data because rent epochs may differ
-                        // XXX TODO FIXME this is fundamentally evil on a number of levels:
-                        // * we dont have a State impl so we have to use StateMut
-                        //   but we shouldnt add one because...
-                        // * we have to parse both nonce accounts. we could compare current to DurableNonce(last_blockhash)...
-                        //   but we would still need to parse one acccount, and i dont think i want to parse either
-                        // i believe the best way would be to add some bytemuck thing to NonceVersions
-                        // which returns Option<&Hash> or Option<&DurableNonce> (ie, None if we arent NonceState::Initialized)
-                        // but i would like feeback on this idea before i implement it
-                        let current_nonce = StateMut::<NonceVersions>::state(nonce_account).ok()?;
-                        let future_nonce =
-                            StateMut::<NonceVersions>::state(nonce_info.account()).ok()?;
-                        match (current_nonce.state(), future_nonce.state()) {
-                            (
-                                NonceState::Initialized(ref current_data),
-                                NonceState::Initialized(ref future_data),
-                            ) => Some(current_data.blockhash() == future_data.blockhash()),
-                            _ => None,
-                        }
-                    });
+            let nonces_are_equal = loaded_accounts_map
+                .get_account(nonce_info.address())
+                .and_then(|nonce_account| {
+                    // NOTE we cannot directly compare nonce account data because rent epochs may differ
+                    // XXX TODO FIXME this is fundamentally evil on a number of levels:
+                    // * we dont have a State impl so we have to use StateMut
+                    //   but we shouldnt add one because...
+                    // * we have to parse both nonce accounts. we could compare current to DurableNonce(last_blockhash)...
+                    //   but we would still need to parse one acccount, and i dont think i want to parse either
+                    // i believe the best way would be to add some bytemuck thing to NonceVersions
+                    // which returns Option<&Hash> or Option<&DurableNonce> (ie, None if we arent NonceState::Initialized)
+                    // but i would like feeback on this idea before i implement it
+                    let current_nonce = StateMut::<NonceVersions>::state(nonce_account).ok()?;
+                    let future_nonce =
+                        StateMut::<NonceVersions>::state(nonce_info.account()).ok()?;
+                    match (current_nonce.state(), future_nonce.state()) {
+                        (
+                            NonceState::Initialized(ref current_data),
+                            NonceState::Initialized(ref future_data),
+                        ) => Some(current_data.blockhash() == future_data.blockhash()),
+                        _ => None,
+                    }
+                });
 
             match nonces_are_equal {
                 Some(false) => (),
@@ -526,6 +525,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 loaded_size: fee_payer_account.data().len(),
                 account: fee_payer_account,
                 rent_collected: fee_payer_rent_debit,
+                executable_in_batch: false,
+                valid_loader: false,
             },
         })
     }
