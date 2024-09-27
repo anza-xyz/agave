@@ -6745,6 +6745,7 @@ dependencies = [
  "bytes",
  "crossbeam-channel",
  "dashmap",
+ "ed25519-dalek",
  "futures 0.3.30",
  "futures-util",
  "governor",
@@ -6769,6 +6770,7 @@ dependencies = [
  "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
+ "x25519-dalek",
  "x509-parser",
 ]
 
@@ -8654,6 +8656,18 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if 1.0.0",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "x25519-dalek"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
+dependencies = [
+ "curve25519-dalek 4.1.3",
+ "rand_core 0.6.4",
+ "serde",
+ "zeroize",
 ]
 
 [[package]]

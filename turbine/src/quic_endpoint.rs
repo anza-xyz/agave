@@ -11,12 +11,11 @@ use {
     },
     rustls::{
         pki_types::{CertificateDer, PrivateKeyDer},
-        CertificateError, KeyLogFile,
+        CertificateError,
     },
-    solana_quic_client::nonblocking::quic_client::SkipServerVerification,
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{pubkey::Pubkey, signature::Keypair},
-    solana_streamer::{quic::SkipClientVerification, tls_certificates::new_dummy_x509_certificate},
+    solana_streamer::tls_certificates::new_dummy_x509_certificate,
     std::{
         cmp::Reverse,
         collections::{hash_map::Entry, HashMap},
@@ -156,11 +155,7 @@ fn new_server_config(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> Result<ServerConfig, rustls::Error> {
-    let mut config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(SkipClientVerification::new())
-        .with_single_cert(vec![cert], key)?;
-    config.alpn_protocols = vec![ALPN_TURBINE_PROTOCOL_ID.to_vec()];
-    config.key_log = Arc::new(KeyLogFile::new());
+    let config = solana_streamer::tls::new_server_config(cert, key, ALPN_TURBINE_PROTOCOL_ID)?;
     let quic_server_config = QuicServerConfig::try_from(config)
         .map_err(|_err| rustls::Error::InvalidCertificate(CertificateError::BadSignature))?;
 
@@ -175,12 +170,7 @@ fn new_client_config(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> Result<ClientConfig, rustls::Error> {
-    let mut config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_client_auth_cert(vec![cert], key)?;
-    config.enable_early_data = true;
-    config.alpn_protocols = vec![ALPN_TURBINE_PROTOCOL_ID.to_vec()];
+    let config = solana_streamer::tls::new_client_config(cert, key, ALPN_TURBINE_PROTOCOL_ID)?;
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(config).unwrap()));
     config.transport_config(Arc::new(new_transport_config()));
     Ok(config)

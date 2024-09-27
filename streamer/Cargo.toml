@@ -13,6 +13,7 @@ edition = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
+ed25519-dalek = { workspace = true }
 dashmap = { workspace = true }
 futures  = { workspace = true }
 futures-util = { workspace = true }
@@ -38,6 +39,7 @@ solana-sdk = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]
