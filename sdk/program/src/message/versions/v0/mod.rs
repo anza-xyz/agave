@@ -22,6 +22,7 @@ use {
         },
         pubkey::Pubkey,
     },
+    ahash::RandomState,
     solana_sanitize::SanitizeError,
     solana_short_vec as short_vec,
     std::collections::HashSet,
@@ -346,7 +347,7 @@ impl Message {
     pub fn is_maybe_writable(
         &self,
         key_index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, RandomState>>,
     ) -> bool {
         self.is_writable_index(key_index)
             && !self.is_account_maybe_reserved(key_index, reserved_account_keys)
@@ -363,7 +364,7 @@ impl Message {
     fn is_account_maybe_reserved(
         &self,
         key_index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, RandomState>>,
     ) -> bool {
         let mut is_maybe_reserved = false;
         if let Some(reserved_account_keys) = reserved_account_keys {

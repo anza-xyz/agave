@@ -17,6 +17,7 @@ use {
         simple_vote_transaction_checker::is_simple_vote_transaction,
         transaction::{Result, Transaction, TransactionError, VersionedTransaction},
     },
+    ahash::RandomState,
     solana_feature_set as feature_set,
     solana_program::message::SanitizedVersionedMessage,
     solana_sanitize::Sanitize,
@@ -68,7 +69,7 @@ impl SanitizedTransaction {
         message_hash: Hash,
         is_simple_vote_tx: bool,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Result<Self> {
         let signatures = tx.signatures;
         let SanitizedVersionedMessage { message } = tx.message;
@@ -103,7 +104,7 @@ impl SanitizedTransaction {
         message_hash: impl Into<MessageHash>,
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Result<Self> {
         let sanitized_versioned_tx = SanitizedVersionedTransaction::try_from(tx)?;
         let is_simple_vote_tx = is_simple_vote_tx
@@ -124,7 +125,7 @@ impl SanitizedTransaction {
     /// Create a sanitized transaction from a legacy transaction
     pub fn try_from_legacy_transaction(
         tx: Transaction,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Result<Self> {
         tx.sanitize()?;
 

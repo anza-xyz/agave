@@ -10,6 +10,7 @@ use {
         compute_budget, config, ed25519_program, feature, loader_v4, native_loader, pubkey::Pubkey,
         secp256k1_program, stake, system_program, sysvar, vote,
     },
+    ahash::RandomState,
     lazy_static::lazy_static,
     solana_feature_set::{self as feature_set, FeatureSet},
     std::collections::{HashMap, HashSet},
@@ -41,7 +42,7 @@ impl ::solana_frozen_abi::abi_example::AbiExample for ReservedAccountKeys {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReservedAccountKeys {
     /// Set of currently active reserved account keys
-    pub active: HashSet<Pubkey>,
+    pub active: HashSet<Pubkey, RandomState>,
     /// Set of currently inactive reserved account keys that will be moved to the
     /// active set when their feature id is activated
     inactive: HashMap<Pubkey, Pubkey>,
@@ -114,7 +115,7 @@ impl ReservedAccountKeys {
 
     /// Return an empty set of reserved keys for visibility when using in
     /// tests where the dynamic reserved key set is not available
-    pub fn empty_key_set() -> HashSet<Pubkey> {
+    pub fn empty_key_set() -> HashSet<Pubkey, RandomState> {
         HashSet::default()
     }
 }

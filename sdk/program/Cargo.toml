@@ -12,6 +12,7 @@ edition = { workspace = true }
 rust-version = "1.79.0"                          # solana platform-tools rust version
 
 [dependencies]
+ahash = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true, features = ["traits-preview"] }
 borsh = { workspace = true, optional = true }

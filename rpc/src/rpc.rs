@@ -5,6 +5,7 @@ use {
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
     },
+    ahash::RandomState,
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
@@ -4209,7 +4210,7 @@ where
 fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
-    reserved_account_keys: &HashSet<Pubkey>,
+    reserved_account_keys: &HashSet<Pubkey, RandomState>,
 ) -> Result<SanitizedTransaction> {
     SanitizedTransaction::try_create(
         transaction,

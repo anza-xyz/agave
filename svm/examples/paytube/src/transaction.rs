@@ -65,7 +65,7 @@ impl From<&PayTubeTransaction> for SolanaSanitizedTransaction {
     fn from(value: &PayTubeTransaction) -> Self {
         SolanaSanitizedTransaction::try_from_legacy_transaction(
             SolanaTransaction::from(value),
-            &HashSet::new(),
+            &HashSet::default(),
         )
         .unwrap()
     }

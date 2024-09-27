@@ -5,6 +5,7 @@ use {
         message::{legacy::Message as LegacyMessage, v0::MessageAddressTableLookup, MessageHeader},
         pubkey::Pubkey,
     },
+    ahash::RandomState,
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
         ser::{SerializeTuple, Serializer},
@@ -85,7 +86,7 @@ impl VersionedMessage {
     pub fn is_maybe_writable(
         &self,
         index: usize,
-        reserved_account_keys: Option<&HashSet<Pubkey>>,
+        reserved_account_keys: Option<&HashSet<Pubkey, RandomState>>,
     ) -> bool {
         match self {
             Self::Legacy(message) => message.is_maybe_writable(index, reserved_account_keys),

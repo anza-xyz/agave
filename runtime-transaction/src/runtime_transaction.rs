@@ -14,6 +14,7 @@ use {
         compute_budget_instruction_details::*,
         transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     },
+    ahash::RandomState,
     core::ops::Deref,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_sdk::{
@@ -105,7 +106,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
     pub fn try_from(
         statically_loaded_runtime_tx: RuntimeTransaction<SanitizedVersionedTransaction>,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Result<Self> {
         let hash = *statically_loaded_runtime_tx.message_hash();
         let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_tx();

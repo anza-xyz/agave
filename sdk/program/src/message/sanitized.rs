@@ -16,6 +16,7 @@ use {
         solana_program::{system_instruction::SystemInstruction, system_program},
         sysvar::instructions::{BorrowedAccountMeta, BorrowedInstruction},
     },
+    ahash::RandomState,
     solana_sanitize::{Sanitize, SanitizeError},
     std::{borrow::Cow, collections::HashSet, convert::TryFrom},
     thiserror::Error,
@@ -31,7 +32,10 @@ pub struct LegacyMessage<'a> {
 }
 
 impl<'a> LegacyMessage<'a> {
-    pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
+    pub fn new(
+        message: legacy::Message,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
+    ) -> Self {
         let is_writable_account_cache = message
             .account_keys
             .iter()
@@ -109,7 +113,7 @@ impl SanitizedMessage {
     pub fn try_new(
         sanitized_msg: SanitizedVersionedMessage,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Result<Self, SanitizeMessageError> {
         Ok(match sanitized_msg.message {
             VersionedMessage::Legacy(message) => {
@@ -130,7 +134,7 @@ impl SanitizedMessage {
     /// Create a sanitized legacy message
     pub fn try_from_legacy_message(
         message: legacy::Message,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Result<Self, SanitizeMessageError> {
         message.sanitize()?;
         Ok(Self::Legacy(LegacyMessage::new(
