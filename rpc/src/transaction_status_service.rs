@@ -73,7 +73,7 @@ impl TransactionStatusService {
                 token_balances,
                 transaction_indexes,
             }) => {
-                let mut batch = blockstore.db_ref().batch().unwrap();
+                let mut status_and_memos_batch = blockstore.db_ref().batch().unwrap();
 
                 for (
                     transaction,
@@ -161,8 +161,15 @@ impl TransactionStatusService {
                     if enable_rpc_transaction_history {
                         if let Some(memos) = extract_and_fmt_memos(transaction.message()) {
                             blockstore
-                                .write_transaction_memos(transaction.signature(), slot, memos)
-                                .expect("Expect database write to succeed: TransactionMemos");
+                                .write_transaction_memos(
+                                    transaction.signature(),
+                                    slot,
+                                    memos,
+                                    Some(&mut status_and_memos_batch),
+                                )
+                                .expect(
+                                    "Expect database batch accumulation to succeed: TransactionMemos",
+                                );
                         }
 
                         let message = transaction.message();
@@ -179,17 +186,19 @@ impl TransactionStatusService {
                                 keys_with_writable,
                                 transaction_status_meta,
                                 transaction_index,
-                                Some(&mut batch),
+                                Some(&mut status_and_memos_batch),
                             )
-                            .expect("Expect database batching to succeed: TransactionStatus");
+                            .expect(
+                                "Expect database batch accumulation to succeed: TransactionStatus",
+                            );
                     }
                 }
 
                 if enable_rpc_transaction_history {
                     blockstore
                         .db_ref()
-                        .write(batch)
-                        .expect("Expect database batched write to succeed: TransactionStatus");
+                        .write(status_and_memos_batch)
+                        .expect("Expect database batched writes to succeed: TransactionStatus + TransactionMemos");
                 }
             }
             TransactionStatusMessage::Freeze(slot) => {

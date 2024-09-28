@@ -2911,8 +2911,7 @@ impl Blockstore {
         self.transaction_status_cf
             .put_protobuf((signature, slot), &status)?;
 
-        let default_wrb = &mut WriteBatch::default();
-        let write_batch = db_write_batch.unwrap_or(default_wrb);
+        let write_batch = db_write_batch.unwrap();
 
         for (address, writeable) in keys_with_writable {
             if batch {
@@ -2954,8 +2953,17 @@ impl Blockstore {
         signature: &Signature,
         slot: Slot,
         memos: String,
+        db_write_batch: Option<&mut WriteBatch<'_>>,
     ) -> Result<()> {
-        self.transaction_memos_cf.put((*signature, slot), &memos)
+        let batch = db_write_batch.is_some();
+
+        if batch {
+            db_write_batch
+                .unwrap()
+                .put::<cf::TransactionMemos>((*signature, slot), &memos)
+        } else {
+            self.transaction_memos_cf.put((*signature, slot), &memos)
+        }
     }
 
     /// Acquires the `lowest_cleanup_slot` lock and returns a tuple of the held lock
