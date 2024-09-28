@@ -1405,7 +1405,6 @@ impl<C: Column + ColumnName> LedgerColumn<C> {
     }
 }
 
-#[derive(Default)]
 pub struct WriteBatch<'a> {
     write_batch: RWriteBatch,
     map: HashMap<&'static str, &'a ColumnFamily>,
