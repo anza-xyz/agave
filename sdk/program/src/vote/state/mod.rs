@@ -232,15 +232,15 @@ pub struct TowerSync {
     pub root: Option<Slot>,
     /// signature of the VoteState's at the latest slot in `lockouts`
     pub yolo_hash: Hash,
-    /// the latest fully replayed slot, equal to the last
-    /// slot in `lockouts` until asynchronous execution.
+    /// the latest fully replayed slot. until asynchronous execution
+    /// is active this will be equal to the latest slot in `lockouts`
     pub replay_tip: Slot,
     /// signature of the bank's state at `replay_tip`
     pub hash: Hash,
     /// processing timestamp of last slot
     pub timestamp: Option<UnixTimestamp>,
     /// the unique identifier for the chain up to and
-    /// including this block. Does not require replaying
+    /// including this block. does not require replaying
     /// in order to compute.
     pub block_id: Hash,
 }
