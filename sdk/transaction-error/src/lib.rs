@@ -333,7 +333,7 @@ impl fmt::Display for SanitizeMessageError {
 #[cfg(not(target_os = "solana"))]
 impl From<AddressLoaderError> for SanitizeMessageError {
     fn from(source: AddressLoaderError) -> Self {
-        SanitizeMessageError::AddressLoaderError { 0: source }
+        SanitizeMessageError::AddressLoaderError(source)
     }
 }
 
