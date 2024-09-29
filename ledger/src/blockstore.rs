@@ -2911,7 +2911,8 @@ impl Blockstore {
         self.transaction_status_cf
             .put_protobuf((signature, slot), &status)?;
 
-        let write_batch = db_write_batch.unwrap();
+        let default_wrb = &mut WriteBatch::default();
+        let write_batch = db_write_batch.unwrap_or(default_wrb);
 
         for (address, writeable) in keys_with_writable {
             if batch {
