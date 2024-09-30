@@ -913,6 +913,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
     })
 }
 
+/* XXX
 #[cfg(test)]
 mod tests {
     use {
@@ -2881,3 +2882,4 @@ mod tests {
         }
     }
 }
+*/

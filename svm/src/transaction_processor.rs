@@ -1912,8 +1912,8 @@ mod tests {
             &Pubkey::default(),
             fee_payer_rent_epoch,
         );
-        let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mut mock_accounts = LoadedAccountsMap::default();
+        mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -1952,8 +1952,10 @@ mod tests {
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     loaded_size: fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
-                    rent_collected: fee_payer_rent_debit,
+                    executable_in_batch: false,
+                    valid_loader: false,
                 },
+                loaded_fee_payer_rent_collected: fee_payer_rent_debit,
             })
         );
     }
@@ -1985,8 +1987,8 @@ mod tests {
             .lamports();
         assert!(fee_payer_rent_debit > 0);
 
-        let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mut mock_accounts = LoadedAccountsMap::default();
+        mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -2025,8 +2027,10 @@ mod tests {
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     loaded_size: fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
-                    rent_collected: fee_payer_rent_debit,
-                }
+                    executable_in_batch: false,
+                    valid_loader: false,
+                },
+                loaded_fee_payer_rent_collected: fee_payer_rent_debit,
             })
         );
     }
@@ -2037,7 +2041,7 @@ mod tests {
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
 
-        let mock_accounts = HashMap::new();
+        let mock_accounts = LoadedAccountsMap::default();
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let result = batch_processor.validate_transaction_fee_payer(
@@ -2064,8 +2068,8 @@ mod tests {
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1, 0, &Pubkey::default());
-        let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mut mock_accounts = LoadedAccountsMap::default();
+        mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -2097,8 +2101,8 @@ mod tests {
         let min_balance = rent_collector.rent.minimum_balance(0);
         let starting_balance = min_balance + transaction_fee - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
-        let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mut mock_accounts = LoadedAccountsMap::default();
+        mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -2128,8 +2132,8 @@ mod tests {
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
         let fee_payer_address = message.fee_payer();
         let fee_payer_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
-        let mut mock_accounts = HashMap::new();
-        mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+        let mut mock_accounts = LoadedAccountsMap::default();
+        mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -2161,7 +2165,7 @@ mod tests {
             Some(&Pubkey::new_unique()),
         ));
 
-        let mock_accounts = HashMap::new();
+        let mock_accounts = LoadedAccountsMap::default();
         let mut error_counters = TransactionErrorMetrics::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let result = batch_processor.validate_transaction_fee_payer(
@@ -2215,8 +2219,8 @@ mod tests {
             )
             .unwrap();
 
-            let mut mock_accounts = HashMap::new();
-            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            let mut mock_accounts = LoadedAccountsMap::default();
+            mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
@@ -2261,8 +2265,10 @@ mod tests {
                     loaded_fee_payer_account: LoadedTransactionAccount {
                         loaded_size: fee_payer_account.data().len(),
                         account: post_validation_fee_payer_account,
-                        rent_collected: 0,
-                    }
+                        executable_in_batch: false,
+                        valid_loader: false,
+                    },
+                    loaded_fee_payer_rent_collected: 0,
                 })
             );
         }
@@ -2278,8 +2284,8 @@ mod tests {
             )
             .unwrap();
 
-            let mut mock_accounts = HashMap::new();
-            mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
+            let mut mock_accounts = LoadedAccountsMap::default();
+            mock_accounts.insert_account(*fee_payer_address, fee_payer_account.clone());
 
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
