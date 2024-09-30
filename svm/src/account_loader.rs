@@ -69,6 +69,7 @@ pub struct ValidatedTransactionDetails {
     pub compute_budget_limits: ComputeBudgetLimits,
     pub fee_details: FeeDetails,
     pub loaded_fee_payer_account: LoadedTransactionAccount,
+    pub loaded_fee_payer_rent_collected: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -85,7 +86,6 @@ struct LoadedTransactionAccounts {
 pub struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
-    pub(crate) rent_collected: u64,
     pub(crate) executable_in_batch: bool,
     pub(crate) valid_loader: bool,
 }
@@ -126,7 +126,6 @@ impl LoadedAccountsMap {
     ) -> Option<LoadedTransactionAccount> {
         let loaded_account = LoadedTransactionAccount {
             loaded_size: account.data().len(),
-            rent_collected: 0,
             executable_in_batch: account.executable(),
             valid_loader: account.executable()
                 && (native_loader::check_id(&pubkey) || native_loader::check_id(account.owner())),
@@ -143,7 +142,6 @@ impl LoadedAccountsMap {
     ) -> Option<LoadedTransactionAccount> {
         let loaded_account = LoadedTransactionAccount {
             loaded_size: program.account_size,
-            rent_collected: 0,
             executable_in_batch: true,
             valid_loader: native_loader::check_id(&pubkey)
                 || native_loader::check_id(&program.account_owner()),
@@ -171,7 +169,6 @@ impl LoadedAccountsMap {
                 .or_insert_with(|| LoadedTransactionAccount {
                     account: account.clone(),
                     loaded_size: account.data().len(),
-                    rent_collected: 0,
                     executable_in_batch: false,
                     valid_loader: false,
                 });
@@ -613,6 +610,7 @@ pub(crate) fn load_transaction(
                 loaded_accounts_map,
                 message,
                 tx_details.loaded_fee_payer_account,
+                tx_details.loaded_fee_payer_rent_collected,
                 &tx_details.compute_budget_limits,
                 error_metrics,
                 feature_set,
@@ -644,6 +642,7 @@ fn load_transaction_accounts(
     loaded_accounts_map: &LoadedAccountsMap,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
+    loaded_fee_payer_rent_collected: u64,
     compute_budget_limits: &ComputeBudgetLimits,
     error_metrics: &mut TransactionErrorMetrics,
     feature_set: &FeatureSet,
@@ -681,57 +680,64 @@ fn load_transaction_accounts(
         })
         .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
 
-    let mut collect_loaded_account = |key, (loaded_account, found): (_, bool)| -> Result<()> {
-        let LoadedTransactionAccount {
-            account,
-            loaded_size,
-            rent_collected,
-            executable_in_batch,
-            valid_loader,
-        } = loaded_account;
+    let mut collect_loaded_account =
+        |key, (loaded_account, found, rent_collected): (_, bool, u64)| -> Result<()> {
+            let LoadedTransactionAccount {
+                account,
+                loaded_size,
+                executable_in_batch,
+                valid_loader,
+            } = loaded_account;
 
-        if required_programs.contains(key) {
-            // if this account is a program, we confirm it was found and is executable
-            // XXX we can nix found if we dont mind the error changing
-            if !found {
-                error_metrics.account_not_found += 1;
-                return Err(TransactionError::ProgramAccountNotFound);
-            } else if !executable_in_batch {
-                error_metrics.invalid_program_for_execution += 1;
-                return Err(TransactionError::InvalidProgramForExecution);
+            if required_programs.contains(key) {
+                // if this account is a program, we confirm it was found and is executable
+                // XXX we can nix found if we dont mind the error changing
+                if !found {
+                    error_metrics.account_not_found += 1;
+                    return Err(TransactionError::ProgramAccountNotFound);
+                } else if !executable_in_batch {
+                    error_metrics.invalid_program_for_execution += 1;
+                    return Err(TransactionError::InvalidProgramForExecution);
+                }
+
+                // if we found a regular program, we flag that its loader may need to be counted and added to transaction accounts
+                // but if we also see that loader earlier or later in this loop, we override to ensure we dont double-count it
+                // we never encounter NativeLoader here because we explicitly skipped adding it
+                let owner_id = account.owner();
+                if valid_loader {
+                    required_loaders.insert(*key, true);
+                } else if !required_loaders.contains_key(owner_id) {
+                    required_loaders.insert(*owner_id, false);
+                }
             }
 
-            // if we found a regular program, we flag that its loader may need to be counted and added to transaction accounts
-            // but if we also see that loader earlier or later in this loop, we override to ensure we dont double-count it
-            // we never encounter NativeLoader here because we explicitly skipped adding it
-            let owner_id = account.owner();
-            if valid_loader {
-                required_loaders.insert(*key, true);
-            } else if !required_loaders.contains_key(owner_id) {
-                required_loaders.insert(*owner_id, false);
-            }
-        }
+            accumulate_and_check_loaded_account_data_size(
+                &mut accumulated_accounts_data_size,
+                loaded_size,
+                compute_budget_limits.loaded_accounts_bytes,
+                error_metrics,
+            )?;
 
-        accumulate_and_check_loaded_account_data_size(
-            &mut accumulated_accounts_data_size,
-            loaded_size,
-            compute_budget_limits.loaded_accounts_bytes,
-            error_metrics,
-        )?;
+            tx_rent += rent_collected;
+            rent_debits.insert(key, rent_collected, account.lamports());
 
-        tx_rent += rent_collected;
-        rent_debits.insert(key, rent_collected, account.lamports());
-
-        accounts.push((*key, account));
-        Ok(())
-    };
+            accounts.push((*key, account));
+            Ok(())
+        };
 
     // Since the fee payer is always the first account, collect it first
-    collect_loaded_account(message.fee_payer(), (loaded_fee_payer_account, true))?;
+    collect_loaded_account(
+        message.fee_payer(),
+        (
+            loaded_fee_payer_account,
+            true,
+            loaded_fee_payer_rent_collected,
+        ),
+    )?;
 
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
-        let (loaded_account, account_found) = load_transaction_account(
+        let (loaded_account, account_found, rent_collected) = load_transaction_account(
             loaded_accounts_map,
             message,
             account_key,
@@ -739,7 +745,7 @@ fn load_transaction_accounts(
             feature_set,
             rent_collector,
         )?;
-        collect_loaded_account(account_key, (loaded_account, account_found))?;
+        collect_loaded_account(account_key, (loaded_account, account_found, rent_collected))?;
     }
 
     // finally, we add the remaining loaders to the accumulated transaction data size
@@ -792,8 +798,9 @@ fn load_transaction_account(
     account_index: usize,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-) -> Result<(LoadedTransactionAccount, bool)> {
+) -> Result<(LoadedTransactionAccount, bool, u64)> {
     let mut account_found = true;
+    let mut rent_collected = 0;
     let is_writable = message.is_writable(account_index);
     let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
@@ -801,7 +808,6 @@ fn load_transaction_account(
         LoadedTransactionAccount {
             loaded_size: 0,
             account: construct_instructions_account(message),
-            rent_collected: 0,
             executable_in_batch: false,
             valid_loader: false,
         }
@@ -810,7 +816,7 @@ fn load_transaction_account(
             .get_loaded_account(account_key)
             .cloned()
             .map(|mut loaded_account| {
-                loaded_account.rent_collected = if is_writable {
+                rent_collected = if is_writable {
                     collect_rent_from_account(
                         feature_set,
                         rent_collector,
@@ -834,14 +840,13 @@ fn load_transaction_account(
                 LoadedTransactionAccount {
                     loaded_size: default_account.data().len(),
                     account: default_account,
-                    rent_collected: 0,
                     executable_in_batch: false,
                     valid_loader: false,
                 }
             })
     };
 
-    Ok((loaded_account, account_found))
+    Ok((loaded_account, account_found, rent_collected))
 }
 
 fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {

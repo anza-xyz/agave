@@ -524,10 +524,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             loaded_fee_payer_account: LoadedTransactionAccount {
                 loaded_size: fee_payer_account.data().len(),
                 account: fee_payer_account,
-                rent_collected: fee_payer_rent_debit,
                 executable_in_batch: false,
                 valid_loader: false,
             },
+            loaded_fee_payer_rent_collected: fee_payer_rent_debit,
         })
     }
 
