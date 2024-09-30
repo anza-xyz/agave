@@ -47,10 +47,10 @@ use {
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
-        nonce::state::{State as NonceState, Versions as NonceVersions},
+        nonce::state::{DurableNonce, State as NonceState, Versions as NonceVersions},
         pubkey::Pubkey,
         rent_collector::RentCollector,
-        saturating_add_assign,
+        saturating_add_assign, system_program,
         transaction::{self, TransactionError},
         transaction_context::{ExecutionRecord, TransactionContext},
     },
@@ -290,6 +290,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let (mut validate_fees_us, mut load_transactions_us, mut execution_us): (u64, u64, u64) =
             (0, 0, 0);
 
+        let durable_nonce = DurableNonce::from_blockhash(&environment.blockhash);
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
             let (validate_result, single_validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
@@ -297,6 +298,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &loaded_accounts_map,
                         tx,
                         tx_details,
+                        &durable_nonce,
                         &environment.feature_set,
                         environment
                             .fee_structure
@@ -413,6 +415,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         loaded_accounts_map: &LoadedAccountsMap,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
+        durable_nonce: &DurableNonce,
         feature_set: &FeatureSet,
         fee_structure: &FeeStructure,
         rent_collector: &dyn SVMRentCollector,
@@ -443,7 +446,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         .rent_amount;
 
         let CheckedTransactionDetails {
-            nonce,
+            nonce: advanced_nonce,
             lamports_per_signature,
         } = checked_details;
 
@@ -468,31 +471,24 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         // If the nonce has been used in this batch already, we must drop the transaction
         // This is the same as if it was used is different batches in the same slot
-        // If the nonce account was closed in the batch, we behave as if the blockhash didn't validate
-        if let Some(ref nonce_info) = nonce {
+        // If the nonce account was closed in the batch, we error as if the blockhash didn't validate
+        // We must vaidate the account in case it was reopened, either as a normal system account, or a fake nonce account
+        // XXX this logic is *exceedingly* tricky, but i havent thought of a better way
+        if let Some(ref advanced_nonce_info) = advanced_nonce {
             let nonces_are_equal = loaded_accounts_map
-                .get_account(nonce_info.address())
-                .and_then(|nonce_account| {
-                    // NOTE we cannot directly compare nonce account data because rent epochs may differ
-                    // XXX TODO FIXME this is fundamentally evil on a number of levels:
-                    // * we dont have a State impl so we have to use StateMut
-                    //   but we shouldnt add one because...
-                    // * we have to parse both nonce accounts. we could compare current to DurableNonce(last_blockhash)...
-                    //   but we would still need to parse one acccount, and i dont think i want to parse either
-                    // i believe the best way would be to add some bytemuck thing to NonceVersions
-                    // which returns Option<&Hash> or Option<&DurableNonce> (ie, None if we arent NonceState::Initialized)
-                    // but i would like feeback on this idea before i implement it
-                    let current_nonce = StateMut::<NonceVersions>::state(nonce_account).ok()?;
-                    let future_nonce =
-                        StateMut::<NonceVersions>::state(nonce_info.account()).ok()?;
-                    match (current_nonce.state(), future_nonce.state()) {
-                        (
-                            NonceState::Initialized(ref current_data),
-                            NonceState::Initialized(ref future_data),
-                        ) => Some(current_data.blockhash() == future_data.blockhash()),
+                .get_account(advanced_nonce_info.address())
+                .and_then(|current_nonce_account| {
+                    system_program::check_id(current_nonce_account.owner()).then_some(())?;
+                    StateMut::<NonceVersions>::state(current_nonce_account).ok()
+                })
+                .and_then(
+                    |current_nonce_versions| match current_nonce_versions.state() {
+                        NonceState::Initialized(ref current_nonce_data) => {
+                            Some(&current_nonce_data.durable_nonce == durable_nonce)
+                        }
                         _ => None,
-                    }
-                });
+                    },
+                );
 
             match nonces_are_equal {
                 Some(false) => (),
@@ -510,7 +506,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Capture fee-subtracted fee payer account and next nonce account state
         // to commit if transaction execution fails.
         let rollback_accounts = RollbackAccounts::new(
-            nonce,
+            advanced_nonce,
             *fee_payer_address,
             fee_payer_account.clone(),
             fee_payer_rent_debit,
@@ -1924,6 +1920,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -1999,6 +1996,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -2051,6 +2049,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2080,6 +2079,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2113,6 +2113,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -2144,6 +2145,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2175,6 +2177,7 @@ mod tests {
                 nonce: None,
                 lamports_per_signature,
             },
+            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2225,10 +2228,9 @@ mod tests {
             let mut error_counters = TransactionErrorMetrics::default();
             let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
+            let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
             let mut future_nonce = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
-            future_nonce
-                .try_advance_nonce(DurableNonce::from_blockhash(&Hash::new_unique()), 0)
-                .unwrap();
+            future_nonce.try_advance_nonce(durable_nonce, 0).unwrap();
 
             let result = batch_processor.validate_transaction_fee_payer(
                 &mock_accounts,
@@ -2237,6 +2239,7 @@ mod tests {
                     nonce: Some(future_nonce.clone()),
                     lamports_per_signature,
                 },
+                &durable_nonce,
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
@@ -2296,6 +2299,7 @@ mod tests {
                     nonce: None,
                     lamports_per_signature,
                 },
+                &DurableNonce::default(),
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,

@@ -1169,13 +1169,15 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     let program_id = program_address(program_name);
 
     let fee_payer_keypair = Keypair::new();
+    let non_fee_nonce_keypair = Keypair::new();
     let fee_payer = fee_payer_keypair.pubkey();
     let nonce_pubkey = if fee_paying_nonce {
         fee_payer
     } else {
-        Pubkey::new_unique()
+        non_fee_nonce_keypair.pubkey()
     };
 
+    let nonce_size = nonce::State::size();
     let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
     let initial_nonce_data =
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
@@ -1194,6 +1196,13 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         .unwrap();
 
     let advance_instruction = system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer);
+    let withdraw_instruction = system_instruction::withdraw_nonce_account(
+        &nonce_pubkey,
+        &fee_payer,
+        &fee_payer,
+        LAMPORTS_PER_SOL,
+    );
+
     let successful_noop_instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
     let failing_noop_instruction = Instruction::new_with_bytes(system_program::id(), &[], vec![]);
     let fee_only_noop_instruction = Instruction::new_with_bytes(Pubkey::new_unique(), &[], vec![]);
@@ -1377,17 +1386,218 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         }
     }
 
+    // batch 5:
+    // * a successful blockhash transaction that closes the nonce
+    // * a nonce transaction that uses the nonce; this transaction must be dropped
+    // * a successful blockhash noop transaction that touches the nonce, convenience to see state update
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[withdraw_instruction.clone()],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+        test_entry.push_transaction(Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bytes(
+                program_id,
+                &[],
+                vec![AccountMeta::new_readonly(nonce_pubkey, false)],
+            )],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        ));
+
+        test_entry
+            .increase_expected_lamports(&fee_payer, LAMPORTS_PER_SOL - LAMPORTS_PER_SIGNATURE);
+
+        test_entry.update_expected_account_data(nonce_pubkey, &AccountSharedData::default());
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 6:
+    // * a successful blockhash transaction that closes the nonce
+    // * a successful blockhash transaction that funds the closed account
+    // * a nonce transaction that uses the account; this transaction must be dropped
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[withdraw_instruction.clone()],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        let middle_transaction = system_transaction::transfer(
+            &fee_payer_keypair,
+            &nonce_pubkey,
+            LAMPORTS_PER_SOL,
+            Hash::default(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_transaction(middle_transaction);
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+
+        let mut new_nonce_state = AccountSharedData::default();
+        new_nonce_state.set_lamports(LAMPORTS_PER_SOL);
+
+        test_entry.update_expected_account_data(nonce_pubkey, &new_nonce_state);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 7:
+    // * a successful blockhash transaction that closes the nonce
+    // * a successful blockhash transaction that reopens the account with proper nonce size
+    // * a nonce transaction that uses the account; this transaction must be dropped
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[withdraw_instruction.clone()],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        let middle_transaction = system_transaction::create_account(
+            &fee_payer_keypair,
+            &non_fee_nonce_keypair,
+            Hash::default(),
+            LAMPORTS_PER_SOL,
+            nonce_size as u64,
+            &system_program::id(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_transaction(middle_transaction);
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+        let new_nonce_state = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; nonce_size],
+            system_program::id(),
+            false,
+            u64::MAX,
+        );
+
+        test_entry.update_expected_account_data(nonce_pubkey, &new_nonce_state);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 8:
+    // * a successful blockhash transaction that closes the nonce
+    // * a successful blockhash transaction that reopens the nonce
+    // * a nonce transaction that uses the nonce; this transaction must be dropped
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[withdraw_instruction.clone()],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        let create_instructions = system_instruction::create_nonce_account(
+            &fee_payer,
+            &nonce_pubkey,
+            &fee_payer,
+            LAMPORTS_PER_SOL,
+        );
+
+        let middle_transaction = Transaction::new_signed_with_payer(
+            &create_instructions,
+            Some(&fee_payer),
+            &[&fee_payer_keypair, &non_fee_nonce_keypair],
+            Hash::default(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_transaction(middle_transaction);
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 9:
+    // * a successful blockhash noop transaction
+    // * a nonce transaction that uses a spoofed nonce account; this transaction must be dropped
+    // check_age would never let such a transaction through validation
+    // this simulates the case where someone closes a nonce account, then reuses the address in the same batch
+    // but as a non-system account that parses as an initialized nonce account
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+        test_entry.initial_accounts.remove(&nonce_pubkey);
+        test_entry.final_accounts.remove(&nonce_pubkey);
+
+        let mut fake_nonce_account = initial_nonce_account.clone();
+        fake_nonce_account.set_rent_epoch(u64::MAX);
+        fake_nonce_account.set_owner(Pubkey::new_unique());
+        test_entry.add_initial_account(nonce_pubkey, &fake_nonce_account);
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[successful_noop_instruction.clone()],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        test_entries.push(test_entry);
+    }
+
+    for test_entry in &mut test_entries {
+        test_entry
+            .initial_programs
+            .push((program_name.to_string(), DEPLOYMENT_SLOT));
+
+        if enable_fee_only_transactions {
+            test_entry
+                .enabled_features
+                .push(feature_set::enable_transaction_loading_failure_fees::id());
+        }
+    }
+
     test_entries
 }
-
-// XXX TODO FIXME more bizarre nonce cases we might want to test:
-// * withdraw from nonce, then use (discard)
-// * withdraw from nonce, fund, then use (discard)
-// * withdraw from nonce, create account of nonce size, then use (discard)
-// * as above but use it as the fee-payer of a fee-only transaction (discard)
-// reading the code i believe these are all safe, validate_transaction_fee_payer should ? an error
-// * withdraw from nonce, create new nonce, then use (discard)
-// this one is safe also, because new nonces are initialized with the current durable nonce
 
 // XXX TODO FIXME i decided i dont need to test program deployment intrabatch
 // by (correctly) enforcing programs are executable during initial loading, we drop anything that could take advantage of it
