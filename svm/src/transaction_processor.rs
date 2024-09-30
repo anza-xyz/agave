@@ -473,7 +473,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // This is the same as if it was used is different batches in the same slot
         // If the nonce account was closed in the batch, we error as if the blockhash didn't validate
         // We must vaidate the account in case it was reopened, either as a normal system account, or a fake nonce account
-        // XXX this logic is *exceedingly* tricky, but i havent thought of a better way
         if let Some(ref advanced_nonce_info) = advanced_nonce {
             let nonces_are_equal = loaded_accounts_map
                 .get_account(advanced_nonce_info.address())

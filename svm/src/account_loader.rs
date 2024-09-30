@@ -186,10 +186,7 @@ impl LoadedAccountsMap {
     }
 }
 
-// XXX stripped down version of `collect_accounts_to_store()`
-// we might want to have both functions use the same account selection code but maybe it doesnt really matter
-// the thing is that code *really* wants to be collecting vectors of extra stuff
-// so the stuff we want to avoid doing is woven very tightly into it. idk maybe i lack vision tho
+// stripped-down version of `collect_accounts_to_store()` from account_saver.rs
 pub(crate) fn collect_and_update_loaded_accounts<T: SVMMessage>(
     loaded_accounts_map: &mut LoadedAccountsMap,
     transaction: &T,
@@ -226,7 +223,9 @@ fn update_accounts_for_successful_tx<T: SVMMessage>(
     transaction: &T,
     transaction_accounts: &[TransactionAccount],
 ) {
-    // XXX note this is different from account saver but (unless i push loaders) accurate for us
+    // NOTE this selection criterion is different from account saver but accurate for us
+    // namely, we do not append to the transaction accounts vec
+    // so transaction_accounts.len() == transaction.account_keys().len()
     for (i, (address, account)) in transaction_accounts.iter().enumerate() {
         if !transaction.is_writable(i) {
             continue;
@@ -353,104 +352,6 @@ pub fn validate_fee_payer(
     )
 }
 
-// XXX HANA ok what changed
-// load_accounts and others take a SVMMessage trait object now
-// load_accounts passes through the validation results instead of unwrapping it
-// the point of this is starry added a new TransactionLoadResult which describes outcome explicitly
-// not executed, pay fees only, or execute
-// load_transaction_accounts starts by "collecting" the fee payer without loading
-// then runs each account_key through load_transaction_account (new fn) which does what the first stage used to
-// yea reading through it its functionally identical. note i can remove the override tho
-// and then yup second stage is 100% unchanged. this is not a hard merge, just too complicated to read with inline diffs
-//
-// XXX TODO OK i have to fix the integration test pr and then rebase this on that
-// which is going to break again because theres a new feature gate for changing fees for load failure for simd82...
-// then... add account change carryover and write tests! basic fee/nonce/normal account, plus the program cache gauntlet
-// starry mentioned `collect_accounts_to_store()` as a place that shows how to handle saving all accounts
-//
-// XXX ok!! brooks has also changed transaction processing but his is very simple
-// he is adding a mechanism to beacon back a hash of initial account states out to the bank
-// i commented out for now, he has one more pr to add
-// this one will be very satisfying, i can move it all into `load_accounts()` and cut the number of calls substantially
-// so next i wanna... yea, write the update function and then some more tests
-//
-// the other thing to remember is the program cache tests. do i need to change the framework for that at all?
-// hm. i believe i need a mechanism to forward the cache to the next state... ugh
-//
-// XXX ok new day new me. i started writing the update function this week but wanted to reuse the saver fns
-// but they mutated the rollback accounts. so i started another pr to roll nonces earlier
-// i am pretty sure that is almost through code review now! so i can use the saver fn now
-// i think i can just use the collect accounts function directly actually? lol so simple
-//
-// XXX ok we are finally back on this branch after finishing #2741
-// unfortunately account saver was moved out of svm so we have to move it back in
-// i also fixed the new inspect account bank feature to work with my new load_accounts function
-// i... think my accounts_map update flow works?? so the next things i want to do are...
-// * write basic tests reusing accounts. the write test covering all the stupid fee payer cases
-//   ie unfunded -> funded, funded -> unfunded, etc. and the nonce cases
-// * figure out the type signature nonsense re: collect accounts so its not so stupid
-// * make validate_transaction_fee_payer take the hashmap rather than callback
-// * oh god i have to write tests for the program cache i forgot all about thta
-//   probably remove the executed check. if this can go in without a feature gate that would be wonderful
-//   honestly if we do feature gate i have no idea how to structure it
-//   copy-paste the entire account_loader file including all tests? so we can simply delete the old one later?
-// ok just do this assuming no feature gate then ask andrew. it will be easier than weaving everything back together on spec
-//
-// XXX OK latest update. program cache tests next?
-// also account dealloc tests, i think i should write a custom program that does something like
-// ixn to write to account, ixn to remove lamports, ixn that succeeds or fails depending on account data
-// then... go through for comments of things to clean up.
-//
-// XXX ok i finally have a perfect (i hope) impl of implicit account dropping
-// next i want to...
-// * (unrelated) code review for sam
-// * write simd for new loader definition
-// * fix my loader code to be nicer. we are feature gating this so have a blast
-// * test program cache........... tbh maybe i can skip it as out of scope
-// * make a list of all the weird bugs and edge cases i found to make code review easier
-// X design a replacement for collect_accounts_to_store
-// * consider how to handle the data size limits catch-22
-//   i think a rules change "cannot violate data size at start of batch OR before execution" is fine
-//   it makes the loops a bit more annoying but its fine i guess, just accumulate per-message...
-//   its annoying because i have to go through messages to get keys and then go through keys and map back to messages
-//   actually its double-annoying because i dont have a mechanism here to invalidate transaction check result
-//   i guess i could mutate it........ ok this is weird enough i should save it for andrew
-//
-// ok thats seems fine for now. then next pass of cleanups
-// then... i need to make a new branch and feature-gate this, please end me
-// i guess the least horrible strategy is let account_loader_v2 import the existing one
-// and then import stuff that doesnt change, use stuff that does
-// do code changes only in first commit, then all the test changes/additions separately
-// actually it shouldnt be so bad, eg the integration_test.rs file i just copy-paste
-// remember to rebase on master first!!! i might have to drop a commit since i merged something today
-//
-// XXX OK. jfc. what am i doing tomorrow:
-// * add executable_in_batch to LoadedTransactionAccount
-// * make LoadedAccountsMap hold LoadedTransactionAccount. im undecided on type vs newtype
-// * program id loop in load_accounts() marks whether programs are originally executable
-// * in load_transaction_accounts() aka this function, check if the program is *executable in batch*
-// * get rid of the cache load in load_transaction_account(), its completely pointless
-// * add the cache load back to load_accounts() if reasonable
-//   its a bit tricky because i need to check !ixn_acct && !writable for *all* messages
-// if i can do my loader redefinition:
-// * dont load or add non-ixn account loaders in load_accounts(), just check ids
-//   we still want to enforce data sizes tho. can i get them from the batch cache?
-// * dont push loaders onto the vec in load_transaction_accounts(), just check sizes
-//   i might be able to get away with this anyway
-// if i get my accounts-db executable check:
-// * add back the cache to load_accounts() *without* loading the data
-//   come to think of it how tf do non-executable acocunts und up in cache anyway
-// and if i decide to do data sizes in load_accounts(), do it. i think i want to short-circuit loading for that message
-// dont worry about marking it in any way. transaction loading should charge it fee-only at the same stopping point
-//
-// XXX ok i mostly rewrote loading. next i have to fix unit tests
-// then add cache back to load_accounts() and check sizes per-message... uh. can i get compute budget there......
-// also should i pull rent off the LoadedTransactionAccount object? need to store for fee payer, ig on its parent
-//
-// XXX MUST note to andrew that tests changed, most importantly:
-// * some ProgramAccountNotFound errors become InvalidProgramForExecution because of loader pre-validation
-// * loaders are no longer appended to the accounts list. actually i should improve these tests...
-
 #[derive(Debug, Clone)]
 struct AccountUsagePattern {
     is_writable: bool,
@@ -470,23 +371,6 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
         .filter(|(_, tx_details)| tx_details.is_ok())
         .map(|(tx, _)| tx)
         .collect::<Vec<_>>();
-
-    // XXX TODO FIXME i think if i want to calculate data sizes here the trick is...
-    // to usage pattern, add a vec of usize. enumerate my checked messages
-    // push the message number onto the vec invariably
-    // then when i iterate through account keys to load
-    // i keep a running count for all message sizes
-    // maybe one HashMap<usize, Some<u32>>
-    // so up top i say, hey who needs this. if theyre all None in hashmap, skip
-    // then load account. for everyone who needs it, add the size to their running total
-    // if anyone breaches their limit, set their value to None
-    // this way we abort loading accounts only used by transactions that have execeeded the limit
-    // and we will process the transaction later as fee-only
-    // note this is an IMPLEMENTATION DETAIL, actually no change to how it works
-    // because we are slightly MORE PERMISSIVE here. actually maybe i can do it in a different pr then
-    // since it would be an optimization/safety feature rather than a gated change
-    // just make sure and reread transaction loading to be sure its robust against missing accounts/loaders
-    // i think i have to update some comments at least
 
     let mut account_keys_to_load = HashMap::new();
     let mut all_batch_program_ids = HashSet::new();
@@ -534,6 +418,9 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
             loaded_accounts_map.insert_account(*account_key, account_override.clone());
         } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
+
+            // if the program is cached, we can release the loaded account from memory
+            // TODO in the near future we should be able to not load it in the first place
             if let Some(ref program) =
                 (account.executable() && !is_instruction_account && !is_writable)
                     .then_some(())
@@ -575,10 +462,10 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 loaded_owner.valid_loader
             } else if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                 if native_loader::check_id(owner_account.owner()) && owner_account.executable() {
-                    // XXX i may want to fetch from cache or blank out the data
-                    // test later tho, its just optimization
+                    // in theory it should be safe to use the cached loader
+                    // but this is safer because we cannot explicitly verify it isnt an instruction account
+                    // TODO in the near future we should also be able to skip this load
                     loaded_accounts_map.insert_account(*owner_id, owner_account);
-
                     true
                 } else {
                     false
@@ -695,7 +582,6 @@ fn load_transaction_accounts(
 
             if required_programs.contains(key) {
                 // if this account is a program, we confirm it was found and is executable
-                // XXX we can nix found if we dont mind the error changing
                 if !found {
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);

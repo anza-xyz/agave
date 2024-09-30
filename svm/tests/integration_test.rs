@@ -707,6 +707,7 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
             test_entry.add_initial_account(fee_payer, &fee_payer_data);
         } else if rent_paying_nonce {
             assert!(fee_paying_nonce);
+            nonce_balance += LAMPORTS_PER_SIGNATURE;
             nonce_balance -= 1;
         } else if fee_paying_nonce {
             nonce_balance += LAMPORTS_PER_SOL;
@@ -1227,7 +1228,6 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
     }
 
-    // TODO this could be a utility function
     common_test_entry
         .final_accounts
         .get_mut(&nonce_pubkey)
@@ -1599,12 +1599,6 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     test_entries
 }
 
-// XXX TODO FIXME i decided i dont need to test program deployment intrabatch
-// by (correctly) enforcing programs are executable during initial loading, we drop anything that could take advantage of it
-// hm what happens if tx1 deploys the program and tx2 tries to write it tho. i assume the loader program would execute-fail
-// anyway what i do need to test is calling programs owned by all the loaders, with and without the loader in the ixn accounts
-// i think i can get away with empty executable accounts and the test is execute-fail rather than processed-fail or discarded
-
 fn account_deallocate() -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
@@ -1776,7 +1770,7 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
     }
 
     // 4: a rent-paying non-nonce fee-payer goes to zero on a fee-only nonce transaction, the batch sees it as deallocated
-    // we test elsewhere that nonce fee-payers must a rule be rent-exempt (XXX test if fees would bring it below...)
+    // we test in `simple_nonce()` that nonce fee-payers cannot as a rule be brought below rent-exemption
     if enable_fee_only_transactions {
         let dealloc_fee_payer_keypair = Keypair::new();
         let dealloc_fee_payer = dealloc_fee_payer_keypair.pubkey();
