@@ -1463,6 +1463,11 @@ pub struct AccountsDb {
     /// Flag to indicate if the experimental accounts lattice hash is enabled.
     /// (For R&D only; a feature-gate also exists to turn this on and make it a part of consensus.)
     pub is_experimental_accumulator_hash_enabled: AtomicBool,
+
+    /// These are the ancient storages that could be valuable to shrink.
+    /// sorted by largest dead bytes to smallest
+    /// Members are Slot and capacity. If capacity is smaller, then that means the storage was already shrunk.
+    pub(crate) best_ancient_slots_to_shrink: RwLock<Vec<(Slot, u64)>>,
 }
 
 /// results from 'split_storages_ancient'
@@ -1745,6 +1750,7 @@ impl AccountsDb {
         let default_accounts_db_config = AccountsDbConfig::default();
 
         AccountsDb {
+            best_ancient_slots_to_shrink: RwLock::default(),
             create_ancient_storage: CreateAncientStorage::default(),
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
@@ -4352,8 +4358,12 @@ impl AccountsDb {
 
         let shrink_candidates_slots =
             std::mem::take(&mut *self.shrink_candidate_slots.lock().unwrap());
+        self.shrink_stats
+            .initial_candidates_count
+            .store(shrink_candidates_slots.len() as u64, Ordering::Relaxed);
+
         let candidates_count = shrink_candidates_slots.len();
-        let ((shrink_slots, shrink_slots_next_batch), select_time_us) = measure_us!({
+        let ((mut shrink_slots, shrink_slots_next_batch), select_time_us) = measure_us!({
             if let AccountShrinkThreshold::TotalSpace { shrink_ratio } = self.shrink_ratio {
                 let (shrink_slots, shrink_slots_next_batch) =
                     self.select_candidates_by_total_usage(&shrink_candidates_slots, shrink_ratio);
@@ -4374,6 +4384,35 @@ impl AccountsDb {
             }
         });
 
+        let mut ancient_slots_added = 0;
+        // If there are too few slots to shrink, add an ancient slot
+        // for shrinking.
+        if shrink_slots.len() < 10 {
+            let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
+            if let Some((slot, capacity)) = ancients.first_mut() {
+                if let Some(store) = self.storage.get_slot_storage_entry(*slot) {
+                    if !shrink_slots.contains(slot)
+                        && *capacity == store.capacity()
+                        && Self::is_candidate_for_shrink(self, &store)
+                    {
+                        *capacity = 0;
+                        ancient_slots_added += 1;
+                        self.shrink_stats
+                            .ancient_bytes_added_to_shrink
+                            .fetch_add(store.alive_bytes() as u64, Ordering::Relaxed);
+                        shrink_slots.insert(*slot, store);
+                    }
+                }
+            }
+            log::debug!(
+                "ancient_slots_added: {ancient_slots_added}, {}, avail: {}",
+                shrink_slots.len(),
+                ancients.len()
+            );
+        }
+        self.shrink_stats
+            .ancient_slots_added_to_shrink
+            .fetch_add(ancient_slots_added, Ordering::Relaxed);
         if shrink_slots.is_empty()
             && shrink_slots_next_batch
                 .as_ref()
