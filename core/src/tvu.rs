@@ -92,6 +92,7 @@ pub struct TvuConfig {
     pub wait_for_vote_to_start_leader: bool,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub shred_sigverify_threads: NonZeroUsize,
 }
 
 impl Default for TvuConfig {
@@ -104,6 +105,7 @@ impl Default for TvuConfig {
             wait_for_vote_to_start_leader: false,
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
         }
     }
 }
@@ -198,6 +200,7 @@ impl Tvu {
             fetch_receiver,
             retransmit_sender.clone(),
             verified_sender,
+            tvu_config.shred_sigverify_threads,
         );
 
         let retransmit_stage = RetransmitStage::new(

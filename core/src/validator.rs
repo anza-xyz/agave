@@ -77,7 +77,7 @@ use {
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
     },
-    solana_rayon_threadlimit::get_max_thread_count,
+    solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -281,6 +281,7 @@ pub struct ValidatorConfig {
     pub ip_echo_server_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
 }
 
@@ -353,6 +354,7 @@ impl Default for ValidatorConfig {
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
         }
     }
@@ -367,6 +369,8 @@ impl ValidatorConfig {
             enable_block_production_forwarding: true, // enable forwarding by default for tests
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(get_max_thread_count())
+                .expect("thread count is non-zero"),
+            tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             ..Self::default()
         }
@@ -1362,6 +1366,7 @@ impl Validator {
                 wait_for_vote_to_start_leader,
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
+                shred_sigverify_threads: config.tvu_shred_sigverify_threads,
             },
             &max_slots,
             block_metadata_notifier,
