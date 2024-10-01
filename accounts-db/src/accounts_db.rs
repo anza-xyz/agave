@@ -141,6 +141,11 @@ const MAX_ITEMS_PER_CHUNK: Slot = 2_500;
 // This allows us to split up accounts index accesses across multiple threads.
 const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
 
+/// The number of shrink candidate slots that is small enough so that
+/// additional storages from ancient slots can be added to the
+/// candidates for shrinking.
+const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAncientStorage {
     /// ancient storages are created by appending
@@ -1750,7 +1755,6 @@ impl AccountsDb {
         let default_accounts_db_config = AccountsDbConfig::default();
 
         AccountsDb {
-            best_ancient_slots_to_shrink: RwLock::default(),
             create_ancient_storage: CreateAncientStorage::default(),
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
@@ -1817,6 +1821,7 @@ impl AccountsDb {
             is_experimental_accumulator_hash_enabled: default_accounts_db_config
                 .enable_experimental_accumulator_hash
                 .into(),
+            best_ancient_slots_to_shrink: RwLock::default(),
         }
     }
 
@@ -4387,7 +4392,7 @@ impl AccountsDb {
         let mut ancient_slots_added = 0;
         // If there are too few slots to shrink, add an ancient slot
         // for shrinking.
-        if shrink_slots.len() < 10 {
+        if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
             let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
             if let Some((slot, capacity)) = ancients.first_mut() {
                 if let Some(store) = self.storage.get_slot_storage_entry(*slot) {
@@ -4397,15 +4402,11 @@ impl AccountsDb {
                     {
                         *capacity = 0;
                         ancient_slots_added += 1;
+                        let ancient_bytes_added_to_shrink = store.alive_bytes() as u64;
+                        shrink_slots.insert(*slot, store);
                         self.shrink_stats
                             .ancient_bytes_added_to_shrink
-                            .fetch_add(store.alive_bytes() as u64, Ordering::Relaxed);
-                        shrink_slots.insert(*slot, store);
-                        log::debug!(
-                            "ancient_slots_added: {ancient_slots_added}, {}, avail: {}",
-                            shrink_slots.len(),
-                            ancients.len()
-                        );
+                            .fetch_add(ancient_bytes_added_to_shrink, Ordering::Relaxed);
                         self.shrink_stats
                             .ancient_slots_added_to_shrink
                             .fetch_add(ancient_slots_added, Ordering::Relaxed);
