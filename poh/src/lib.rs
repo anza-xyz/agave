@@ -3,6 +3,8 @@ pub mod leader_bank_notifier;
 pub mod poh_recorder;
 pub mod poh_service;
 
+pub mod mpsc_ringbuffer;
+
 #[macro_use]
 extern crate solana_metrics;
 
