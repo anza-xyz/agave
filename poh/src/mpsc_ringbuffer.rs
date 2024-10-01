@@ -617,6 +617,11 @@ impl<T> ArrayQueue<T> {
         }
     }
 
+    /// TODO: Implement
+    pub fn pop_without_advancing_tail(&self) -> Option <T> {
+        None
+    }
+
     /// Returns the capacity of the queue.
     ///
     /// # Examples
