@@ -1462,7 +1462,7 @@ pub struct AccountsDb {
     /// Set of stores which are recently rooted or had accounts removed
     /// such that potentially a 0-lamport account update could be present which
     /// means we can remove the account from the index entirely.
-    dirty_stores: DashMap<Slot, Arc<AccountStorageEntry>>,
+    pub(crate) dirty_stores: DashMap<Slot, Arc<AccountStorageEntry>>,
 
     /// Zero-lamport accounts that are *not* purged during clean because they need to stay alive
     /// for incremental snapshot support.
@@ -1504,6 +1504,11 @@ pub struct AccountsDb {
 
     /// The latest full snapshot slot dictates how to handle zero lamport accounts
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
+
+    /// These are the ancient storages that could be valuable to shrink.
+    /// sorted by largest dead bytes to smallest
+    /// Members are Slot and capacity. If capacity is smaller, then that means the storage was already shrunk.
+    pub(crate) best_ancient_slots_to_shrink: RwLock<Vec<(Slot, u64)>>,
 }
 
 #[derive(Debug, Default)]
@@ -1975,6 +1980,7 @@ pub(crate) struct ShrinkAncientStats {
     pub(crate) slots_eligible_to_shrink: AtomicU64,
     pub(crate) total_dead_bytes: AtomicU64,
     pub(crate) total_alive_bytes: AtomicU64,
+    pub(crate) ideal_storage_size: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -2021,9 +2027,12 @@ pub struct ShrinkStats {
     index_scan_returned_none: AtomicU64,
     index_scan_returned_some: AtomicU64,
     accounts_loaded: AtomicU64,
+    initial_candidates_count: AtomicU64,
     purged_zero_lamports: AtomicU64,
     accounts_not_found_in_index: AtomicU64,
     num_ancient_slots_shrunk: AtomicU64,
+    ancient_slots_added_to_shrink: AtomicU64,
+    ancient_bytes_added_to_shrink: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -2031,6 +2040,18 @@ impl ShrinkStats {
         if self.last_report.should_update(1000) {
             datapoint_info!(
                 "shrink_stats",
+                (
+                    "ancient_slots_added_to_shrink",
+                    self.ancient_slots_added_to_shrink
+                        .swap(0, Ordering::Relaxed) as i64,
+                    i64
+                ),
+                (
+                    "ancient_bytes_added_to_shrink",
+                    self.ancient_bytes_added_to_shrink
+                        .swap(0, Ordering::Relaxed) as i64,
+                    i64
+                ),
                 (
                     "num_slots_shrunk",
                     self.num_slots_shrunk.swap(0, Ordering::Relaxed) as i64,
@@ -2145,6 +2166,11 @@ impl ShrinkStats {
                 (
                     "accounts_not_found_in_index",
                     self.accounts_not_found_in_index.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "initial_candidates_count",
+                    self.initial_candidates_count.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -2304,6 +2330,11 @@ impl ShrinkAncientStats {
             (
                 "slots_eligible_to_shrink",
                 self.slots_eligible_to_shrink.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "ideal_storage_size",
+                self.ideal_storage_size.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -2474,6 +2505,7 @@ impl AccountsDb {
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
 
         AccountsDb {
+            best_ancient_slots_to_shrink: RwLock::default(),
             create_ancient_storage: CreateAncientStorage::default(),
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
@@ -5051,7 +5083,11 @@ impl AccountsDb {
         let shrink_candidates_slots =
             std::mem::take(&mut *self.shrink_candidate_slots.lock().unwrap());
 
-        let (shrink_slots, shrink_slots_next_batch) = {
+        self.shrink_stats
+            .initial_candidates_count
+            .store(shrink_candidates_slots.len() as u64, Ordering::Relaxed);
+
+        let (mut shrink_slots, shrink_slots_next_batch) = {
             if let AccountShrinkThreshold::TotalSpace { shrink_ratio } = self.shrink_ratio {
                 let (shrink_slots, shrink_slots_next_batch) =
                     self.select_candidates_by_total_usage(&shrink_candidates_slots, shrink_ratio);
@@ -5072,6 +5108,35 @@ impl AccountsDb {
             }
         };
 
+        let mut ancient_slots_added = 0;
+        // If there are too few slots to shrink, add an ancient slot
+        // for shrinking.
+        if shrink_slots.len() < 10 {
+            let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
+            if let Some((slot, capacity)) = ancients.first_mut() {
+                if let Some(store) = self.storage.get_slot_storage_entry(*slot) {
+                    if !shrink_slots.contains(slot)
+                        && *capacity == store.capacity()
+                        && Self::is_candidate_for_shrink(self, &store)
+                    {
+                        *capacity = 0;
+                        ancient_slots_added += 1;
+                        self.shrink_stats
+                            .ancient_bytes_added_to_shrink
+                            .fetch_add(store.alive_bytes() as u64, Ordering::Relaxed);
+                        shrink_slots.insert(*slot, store);
+                    }
+                }
+            }
+            log::debug!(
+                "ancient_slots_added: {ancient_slots_added}, {}, avail: {}",
+                shrink_slots.len(),
+                ancients.len()
+            );
+        }
+        self.shrink_stats
+            .ancient_slots_added_to_shrink
+            .fetch_add(ancient_slots_added, Ordering::Relaxed);
         if shrink_slots.is_empty()
             && shrink_slots_next_batch
                 .as_ref()
@@ -5081,7 +5146,7 @@ impl AccountsDb {
             return 0;
         }
 
-        let _guard = (!shrink_slots.is_empty())
+        let mut _guard = (!shrink_slots.is_empty())
             .then_some(|| self.active_stats.activate(ActiveStatItem::Shrink));
 
         let mut measure_shrink_all_candidates = Measure::start("shrink_all_candidate_slots-ms");
@@ -5117,7 +5182,7 @@ impl AccountsDb {
             }
         }
         inc_new_counter_info!("shrink_pended_stores-count", pended_counts);
-
+        _ = std::mem::take(&mut _guard);
         num_candidates
     }
 
@@ -8041,7 +8106,7 @@ impl AccountsDb {
         true
     }
 
-    fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
+    pub(crate) fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
         // appended ancient append vecs should not be shrunk by the normal shrink codepath.
         // It is not possible to identify ancient append vecs when we pack, so no check for ancient when we are not appending.
         let total_bytes = if self.create_ancient_storage == CreateAncientStorage::Append
@@ -8841,6 +8906,16 @@ impl AccountsDb {
         let mut amount_to_top_off_rent = 0;
         let mut stored_size_alive = 0;
 
+        use std::str::FromStr;
+        let pks = [
+            "3akqNJtCaHpdLqCkfBLUGCuUVwiYoSn5fDKftS7ExhRf",
+            "36EypUXbF1iESNypfcUa2vrJYTLTR4fAn3ctU5tt9d8i",
+        ];
+        let pks = pks
+            .iter()
+            .map(|k| Pubkey::from_str(k).unwrap())
+            .collect::<Vec<_>>();
+
         let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
             let mut items_local = Vec::default();
             storage.accounts.scan_index(|info| {
@@ -8852,6 +8927,9 @@ impl AccountsDb {
             });
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
+                if pks.contains(&info.pubkey) {
+                    log::error!("{}, {slot}", info.pubkey);
+                }
                 if let Some(amount_to_top_off_rent_this_account) = Self::stats_for_rent_payers(
                     &info.pubkey,
                     info.lamports,
