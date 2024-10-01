@@ -20,12 +20,16 @@ use {
     solana_sdk::{
         feature_set::FeatureSet,
         hash::Hash,
-        message::{AddressLoader, TransactionSignatureDetails},
+        message::{AccountKeys, AddressLoader, TransactionSignatureDetails},
         pubkey::Pubkey,
+        signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
         transaction::{Result, SanitizedTransaction, SanitizedVersionedTransaction},
     },
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::SVMMessage, svm_transaction::SVMTransaction,
+    },
     std::collections::HashSet,
 };
 
@@ -37,19 +41,7 @@ pub struct RuntimeTransaction<T> {
     meta: TransactionMeta,
 }
 
-// These traits gate access to static and dynamic metadata
-// so that only transactions with supporting message types
-// can access them.
-trait StaticMetaAccess {}
-trait DynamicMetaAccess: StaticMetaAccess {}
-
-// Implement the gate traits for the message types that should
-// have access to the static and dynamic metadata.
-impl StaticMetaAccess for SanitizedVersionedTransaction {}
-impl StaticMetaAccess for SanitizedTransaction {}
-impl DynamicMetaAccess for SanitizedTransaction {}
-
-impl<T: StaticMetaAccess> StaticMeta for RuntimeTransaction<T> {
+impl<T> StaticMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
     }
@@ -66,7 +58,7 @@ impl<T: StaticMetaAccess> StaticMeta for RuntimeTransaction<T> {
     }
 }
 
-impl<T: DynamicMetaAccess> DynamicMeta for RuntimeTransaction<T> {}
+impl<T: SVMMessage> DynamicMeta for RuntimeTransaction<T> {}
 
 impl<T> Deref for RuntimeTransaction<T> {
     type Target = T;
@@ -150,6 +142,71 @@ impl RuntimeTransaction<SanitizedTransaction> {
 
     fn load_dynamic_metadata(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+    // override to access from the cached meta instead of re-calculating
+    fn num_total_signatures(&self) -> u64 {
+        self.meta.signature_details.total_signatures()
+    }
+
+    fn num_write_locks(&self) -> u64 {
+        self.transaction.num_write_locks()
+    }
+
+    fn recent_blockhash(&self) -> &Hash {
+        self.transaction.recent_blockhash()
+    }
+
+    fn num_instructions(&self) -> usize {
+        self.transaction.num_instructions()
+    }
+
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+        self.transaction.instructions_iter()
+    }
+
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+        self.transaction.program_instructions_iter()
+    }
+
+    fn account_keys(&self) -> AccountKeys {
+        self.transaction.account_keys()
+    }
+
+    fn fee_payer(&self) -> &Pubkey {
+        self.transaction.fee_payer()
+    }
+
+    fn is_writable(&self, index: usize) -> bool {
+        self.transaction.is_writable(index)
+    }
+
+    fn is_signer(&self, index: usize) -> bool {
+        self.transaction.is_signer(index)
+    }
+
+    fn is_invoked(&self, key_index: usize) -> bool {
+        self.transaction.is_invoked(key_index)
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        self.transaction.num_lookup_tables()
+    }
+
+    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
+        self.transaction.message_address_table_lookups()
+    }
+}
+
+impl<T: SVMTransaction> SVMTransaction for RuntimeTransaction<T> {
+    fn signature(&self) -> &Signature {
+        self.transaction.signature()
+    }
+
+    fn signatures(&self) -> &[Signature] {
+        self.transaction.signatures()
     }
 }
 
