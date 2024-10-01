@@ -587,16 +587,16 @@ mod tests {
         solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
         solana_sdk::{
             account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-            bpf_loader_upgradeable,
+            bpf_loader, bpf_loader_upgradeable,
             epoch_schedule::EpochSchedule,
             hash::Hash,
-            instruction::CompiledInstruction,
+            instruction::{AccountMeta, CompiledInstruction, Instruction},
             message::{
                 v0::{LoadedAddresses, LoadedMessage},
                 LegacyMessage, Message, MessageHeader, SanitizedMessage,
             },
             native_loader,
-            native_token::sol_to_lamports,
+            native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
             nonce,
             pubkey::Pubkey,
             rent::Rent,
@@ -1389,6 +1389,148 @@ mod tests {
         );
 
         assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_account_executable_bypass() {
+        let mut mock_bank = TestCallbacks::default();
+        let account_keypair = Keypair::new();
+        let program_keypair = Keypair::new();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank
+            .accounts_map
+            .insert(account_keypair.pubkey(), account_data.clone());
+
+        let mut program_data = AccountSharedData::default();
+        program_data.set_lamports(200);
+        program_data.set_owner(bpf_loader::id());
+        mock_bank
+            .accounts_map
+            .insert(program_keypair.pubkey(), program_data);
+
+        let mut loader_data = AccountSharedData::default();
+        loader_data.set_lamports(200);
+        loader_data.set_executable(true);
+        loader_data.set_owner(native_loader::id());
+        mock_bank
+            .accounts_map
+            .insert(bpf_loader::id(), loader_data.clone());
+        mock_bank
+            .accounts_map
+            .insert(native_loader::id(), loader_data);
+
+        let mut error_metrics = TransactionErrorMetrics::default();
+        let mut loaded_programs = ProgramCacheForTxBatch::default();
+
+        let transaction =
+            SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
+                &[Instruction::new_with_bytes(
+                    program_keypair.pubkey(),
+                    &[],
+                    vec![],
+                )],
+                Some(&account_keypair.pubkey()),
+                &[&account_keypair],
+                Hash::default(),
+            ));
+
+        let result = load_transaction_accounts(
+            &mock_bank,
+            transaction.message(),
+            LoadedTransactionAccount {
+                account: account_data.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            &ComputeBudgetLimits::default(),
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        // without cache, program is invalid
+        assert_eq!(
+            result.err(),
+            Some(TransactionError::InvalidProgramForExecution)
+        );
+
+        loaded_programs.replenish(
+            program_keypair.pubkey(),
+            Arc::new(ProgramCacheEntry::default()),
+        );
+
+        let mut cached_program = AccountSharedData::default();
+        cached_program.set_owner(native_loader::id());
+        cached_program.set_executable(true);
+
+        let result = load_transaction_accounts(
+            &mock_bank,
+            transaction.message(),
+            LoadedTransactionAccount {
+                account: account_data.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            &ComputeBudgetLimits::default(),
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        // with cache, executable flag is bypassed
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransactionAccounts {
+                accounts: vec![
+                    (account_keypair.pubkey(), account_data.clone()),
+                    (program_keypair.pubkey(), cached_program.clone()),
+                ],
+                program_indices: vec![vec![1]],
+                rent: 0,
+                rent_debits: RentDebits::default(),
+                loaded_accounts_data_size: 0,
+            }
+        );
+
+        for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
+            let transaction = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &[Instruction::new_with_bytes(
+                        program_keypair.pubkey(),
+                        &[],
+                        vec![account_meta(program_keypair.pubkey(), false)],
+                    )],
+                    Some(&account_keypair.pubkey()),
+                    &[&account_keypair],
+                    Hash::default(),
+                ),
+            );
+
+            let result = load_transaction_accounts(
+                &mock_bank,
+                transaction.message(),
+                LoadedTransactionAccount {
+                    account: account_data.clone(),
+                    ..LoadedTransactionAccount::default()
+                },
+                &ComputeBudgetLimits::default(),
+                &mut error_metrics,
+                None,
+                &FeatureSet::default(),
+                &RentCollector::default(),
+                &loaded_programs,
+            );
+
+            // including program as instruction account bypasses executable bypass
+            assert_eq!(
+                result.err(),
+                Some(TransactionError::InvalidProgramForExecution)
+            );
+        }
     }
 
     #[test]
@@ -2226,5 +2368,241 @@ mod tests {
         expected_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         assert_eq!(actual_inspected_accounts, expected_inspected_accounts,);
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_data_sizes() {
+        let mut mock_bank = TestCallbacks::default();
+
+        let native_loader_size = 0x1;
+        let native_loader = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; native_loader_size as usize],
+            native_loader::id(),
+            true,
+            u64::MAX,
+        );
+        mock_bank
+            .accounts_map
+            .insert(native_loader::id(), native_loader);
+
+        let bpf_loader_size = 0x1 << 1;
+        let bpf_loader = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; bpf_loader_size as usize],
+            native_loader::id(),
+            true,
+            u64::MAX,
+        );
+        mock_bank.accounts_map.insert(bpf_loader::id(), bpf_loader);
+
+        let upgradeable_loader_size = 0x1 << 2;
+        let upgradeable_loader = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; upgradeable_loader_size as usize],
+            native_loader::id(),
+            true,
+            u64::MAX,
+        );
+        mock_bank
+            .accounts_map
+            .insert(bpf_loader_upgradeable::id(), upgradeable_loader);
+
+        let program1_keypair = Keypair::new();
+        let program1 = program1_keypair.pubkey();
+        let program1_size = 0x1 << 3;
+        let program1_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; program1_size as usize],
+            bpf_loader::id(),
+            true,
+            u64::MAX,
+        );
+        mock_bank.accounts_map.insert(program1, program1_account);
+
+        let program2_keypair = Keypair::new();
+        let program2 = program2_keypair.pubkey();
+        let program2_size = 0x1 << 4;
+        let program2_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; program2_size as usize],
+            bpf_loader_upgradeable::id(),
+            true,
+            u64::MAX,
+        );
+        mock_bank.accounts_map.insert(program2, program2_account);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let fee_payer_size = 0x1 << 5;
+        let fee_payer_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; fee_payer_size as usize],
+            system_program::id(),
+            false,
+            u64::MAX,
+        );
+        mock_bank
+            .accounts_map
+            .insert(fee_payer, fee_payer_account.clone());
+
+        let account1_keypair = Keypair::new();
+        let account1 = account1_keypair.pubkey();
+        let account1_size = 0x1 << 6;
+        let account1_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; account1_size as usize],
+            program1_keypair.pubkey(),
+            false,
+            u64::MAX,
+        );
+        mock_bank.accounts_map.insert(account1, account1_account);
+
+        let account2_keypair = Keypair::new();
+        let account2 = account2_keypair.pubkey();
+        let account2_size = 0x1 << 7;
+        let account2_account = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; account2_size as usize],
+            program2_keypair.pubkey(),
+            false,
+            u64::MAX,
+        );
+        mock_bank.accounts_map.insert(account2, account2_account);
+
+        for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
+            let test_data_size = |instructions, expected_size| {
+                let transaction = SanitizedTransaction::from_transaction_for_tests(
+                    Transaction::new_signed_with_payer(
+                        instructions,
+                        Some(&fee_payer),
+                        &[&fee_payer_keypair],
+                        Hash::default(),
+                    ),
+                );
+
+                let loaded_transaction_accounts = load_transaction_accounts(
+                    &mock_bank,
+                    &transaction,
+                    LoadedTransactionAccount {
+                        account: fee_payer_account.clone(),
+                        loaded_size: fee_payer_size as usize,
+                        rent_collected: 0,
+                    },
+                    &ComputeBudgetLimits::default(),
+                    &mut TransactionErrorMetrics::default(),
+                    None,
+                    &FeatureSet::default(),
+                    &RentCollector::default(),
+                    &ProgramCacheForTxBatch::default(),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    loaded_transaction_accounts.loaded_accounts_data_size,
+                    expected_size
+                );
+            };
+
+            // one program plus loader
+            let ixns = vec![Instruction::new_with_bytes(program1, &[], vec![])];
+            test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
+
+            // two programs, two loaders, two accounts
+            let ixns = vec![
+                Instruction::new_with_bytes(program1, &[], vec![account_meta(account1, false)]),
+                Instruction::new_with_bytes(program2, &[], vec![account_meta(account2, false)]),
+            ];
+            test_data_size(
+                &ixns,
+                account1_size
+                    + account2_size
+                    + program1_size
+                    + program2_size
+                    + bpf_loader_size
+                    + upgradeable_loader_size
+                    + fee_payer_size,
+            );
+
+            // ordinary owners not counted
+            let ixns = vec![Instruction::new_with_bytes(
+                program1,
+                &[],
+                vec![account_meta(account2, false)],
+            )];
+            test_data_size(
+                &ixns,
+                account2_size + program1_size + bpf_loader_size + fee_payer_size,
+            );
+
+            // program and loader counted once
+            let ixns = vec![
+                Instruction::new_with_bytes(program1, &[], vec![]),
+                Instruction::new_with_bytes(program1, &[], vec![]),
+            ];
+            test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
+
+            // native loader not counted if loader
+            let ixns = vec![Instruction::new_with_bytes(bpf_loader::id(), &[], vec![])];
+            test_data_size(&ixns, bpf_loader_size + fee_payer_size);
+
+            // native loader counted if instruction
+            let ixns = vec![Instruction::new_with_bytes(
+                bpf_loader::id(),
+                &[],
+                vec![account_meta(native_loader::id(), false)],
+            )];
+            test_data_size(&ixns, bpf_loader_size + native_loader_size + fee_payer_size);
+
+            // loader counted twice if included in instruction
+            let ixns = vec![Instruction::new_with_bytes(
+                program1,
+                &[],
+                vec![account_meta(bpf_loader::id(), false)],
+            )];
+            test_data_size(&ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
+
+            // cover that case with multiple loaders to be sure
+            let ixns = vec![
+                Instruction::new_with_bytes(
+                    program1,
+                    &[],
+                    vec![
+                        account_meta(bpf_loader::id(), false),
+                        account_meta(bpf_loader_upgradeable::id(), false),
+                    ],
+                ),
+                Instruction::new_with_bytes(program2, &[], vec![account_meta(account1, false)]),
+                Instruction::new_with_bytes(
+                    bpf_loader_upgradeable::id(),
+                    &[],
+                    vec![account_meta(account1, false)],
+                ),
+            ];
+            test_data_size(
+                &ixns,
+                account1_size
+                    + program1_size
+                    + program2_size
+                    + bpf_loader_size * 2
+                    + upgradeable_loader_size * 2
+                    + fee_payer_size,
+            );
+
+            // loader counted twice even if included first
+            let ixns = vec![
+                Instruction::new_with_bytes(bpf_loader::id(), &[], vec![]),
+                Instruction::new_with_bytes(program1, &[], vec![]),
+            ];
+            test_data_size(&ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
+
+            // fee-payer counted once
+            let ixns = vec![Instruction::new_with_bytes(
+                program1,
+                &[],
+                vec![account_meta(fee_payer, false)],
+            )];
+            test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
+        }
     }
 }
