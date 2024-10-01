@@ -6,13 +6,15 @@
 ///
 /// Use `measure_us!()` when you want to measure an expression in microseconds.
 ///
+/// Use `measdur!()` when you want to measure an expression and get the Duration.
+///
 /// [`Measure`]: crate::measure::Measure
 ///
 /// # Examples
 ///
 /// ```
 /// // Measure functions
-/// # use solana_measure::{measure_time, measure_us};
+/// # use solana_measure::{measure_time, measure_us, measdur};
 /// # fn foo() {}
 /// # fn bar(x: i32) {}
 /// # fn add(x: i32, y: i32) -> i32 {x + y}
@@ -20,12 +22,13 @@
 /// let (result, measure) = measure_time!(bar(42), "bar takes one parameter");
 /// let (result, measure) = measure_time!(add(1, 2), "add takes two parameters and returns a value");
 /// let (result, measure_us) = measure_us!(add(1, 2));
+/// let (result, duration) = measdur!(add(1, 2));
 /// # assert_eq!(result, 1 + 2);
 /// ```
 ///
 /// ```
 /// // Measure methods
-/// # use solana_measure::{measure_time, measure_us};
+/// # use solana_measure::{measure_time, measure_us, measdur};
 /// # struct Foo {
 /// #     f: i32,
 /// # }
@@ -37,6 +40,7 @@
 /// let foo = Foo { f: 42 };
 /// let (result, measure) = measure_time!(foo.frobnicate(2), "measure methods");
 /// let (result, measure_us) = measure_us!(foo.frobnicate(2));
+/// let (result, duration) = measdur!(foo.frobnicate(2));
 /// # assert_eq!(result, 42 * 2);
 /// ```
 ///
@@ -82,10 +86,31 @@ macro_rules! measure_time {
 
 #[macro_export]
 macro_rules! measure_us {
-    ($val:expr) => {{
+    ($expr:expr) => {{
+        let (result, duration) = $crate::measdur!($expr);
+        (result, duration.as_micros() as u64)
+    }};
+}
+
+/// Measures how long it takes to execute an expression, and returns a Duration
+///
+/// # Examples
+///
+/// ```
+/// # use solana_measure::measdur;
+/// # fn meow(x: i32, y: i32) -> i32 {x + y}
+/// let (result, duration) = measdur!(meow(1, 2) + 3);
+/// # assert_eq!(result, 1 + 2 + 3);
+/// ```
+//
+// The macro name, `measdur`, is "measure" + "duration".
+// When said aloud, the pronunciation is close to "measure".
+#[macro_export]
+macro_rules! measdur {
+    ($expr:expr) => {{
         let start = std::time::Instant::now();
-        let result = $val;
-        (result, start.elapsed().as_micros() as u64)
+        let result = $expr;
+        (result, start.elapsed())
     }};
 }
 
@@ -182,6 +207,31 @@ mod tests {
         // Ensure that the macro can be called with blocks
         {
             let (result, _measure) = measure_us!({ 1 + 2 });
+            assert_eq!(result, 3);
+        }
+    }
+
+    #[test]
+    fn test_measdur_macro() {
+        // Ensure that the macro can be called with functions
+        {
+            let (result, _duration) = measdur!(my_multiply(3, 4));
+            assert_eq!(result, 3 * 4);
+
+            let (result, _duration) = measdur!(square(5));
+            assert_eq!(result, 5 * 5)
+        }
+
+        // Ensure that the macro can be called with methods
+        {
+            let some_struct = SomeStruct { x: 42 };
+            let (result, _duration) = measdur!(some_struct.add_to(4));
+            assert_eq!(result, 42 + 4);
+        }
+
+        // Ensure that the macro can be called with blocks
+        {
+            let (result, _duration) = measdur!({ 1 + 2 });
             assert_eq!(result, 3);
         }
     }
