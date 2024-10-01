@@ -227,30 +227,3 @@ pub fn new_quic_connection_cache(
     let connection_manager = QuicConnectionManager::new_with_connection_config(config);
     ConnectionCache::new(name, connection_manager, connection_pool_size)
 }
-
-#[cfg(test)]
-mod tests {
-    use {super::*, std::collections::HashMap};
-
-    #[test]
-    fn test_connection_cache_max_parallel_chunks() {
-        solana_logger::setup();
-
-        let mut connection_config = QuicConfig::new().unwrap();
-
-        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-        let pubkey = Pubkey::new_unique();
-        connection_config.set_staked_nodes(&staked_nodes, &pubkey);
-        let overrides = HashMap::<Pubkey, u64>::default();
-        let mut stakes = HashMap::from([(Pubkey::new_unique(), 10_000)]);
-        *staked_nodes.write().unwrap() =
-            StakedNodes::new(Arc::new(stakes.clone()), overrides.clone());
-
-        stakes.insert(pubkey, 1);
-        *staked_nodes.write().unwrap() =
-            StakedNodes::new(Arc::new(stakes.clone()), overrides.clone());
-
-        stakes.insert(pubkey, 1_000);
-        *staked_nodes.write().unwrap() = StakedNodes::new(Arc::new(stakes.clone()), overrides);
-    }
-}
