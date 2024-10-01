@@ -4401,18 +4401,18 @@ impl AccountsDb {
                             .ancient_bytes_added_to_shrink
                             .fetch_add(store.alive_bytes() as u64, Ordering::Relaxed);
                         shrink_slots.insert(*slot, store);
+                        log::debug!(
+                            "ancient_slots_added: {ancient_slots_added}, {}, avail: {}",
+                            shrink_slots.len(),
+                            ancients.len()
+                        );
+                        self.shrink_stats
+                            .ancient_slots_added_to_shrink
+                            .fetch_add(ancient_slots_added, Ordering::Relaxed);
                     }
                 }
             }
-            log::debug!(
-                "ancient_slots_added: {ancient_slots_added}, {}, avail: {}",
-                shrink_slots.len(),
-                ancients.len()
-            );
         }
-        self.shrink_stats
-            .ancient_slots_added_to_shrink
-            .fetch_add(ancient_slots_added, Ordering::Relaxed);
         if shrink_slots.is_empty()
             && shrink_slots_next_batch
                 .as_ref()
