@@ -3967,7 +3967,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                         AncestorIterator::new_inclusive(latest_vote_slot, &leader_blockstore)
                             .nth(MAX_LOCKOUT_HISTORY);
                     vote.root = root;
-                    vote.hash = vote_hash;
+                    vote.replay_hash = vote_hash;
                     let vote_tx = vote_transaction::new_tower_sync_transaction(
                         vote,
                         leader_vote_tx.message.recent_blockhash,

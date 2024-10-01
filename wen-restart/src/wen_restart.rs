@@ -2120,7 +2120,7 @@ mod tests {
         assert!(remove_file(&test_state.wen_restart_proto_path).is_ok());
         // Test the case where the file is not found.
         let mut vote = TowerSync::from(vec![(test_state.last_voted_fork_slots[0], 1)]);
-        vote.hash = last_vote_bankhash;
+        vote.replay_hash = last_vote_bankhash;
         let last_vote = VoteTransaction::from(vote);
         assert_eq!(
             initialize(

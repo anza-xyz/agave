@@ -176,7 +176,9 @@ pub fn parse_vote(
             let tower_sync = json!({
                 "lockouts": tower_sync.lockouts,
                 "root": tower_sync.root,
-                "hash": tower_sync.hash.to_string(),
+                "vote_only_hash": tower_sync.vote_only_hash.to_string(),
+                "replay_slot": tower_sync.replay_slot,
+                "replay_hash": tower_sync.replay_hash.to_string(),
                 "timestamp": tower_sync.timestamp,
                 "blockId": tower_sync.block_id.to_string(),
             });
@@ -194,7 +196,9 @@ pub fn parse_vote(
             let tower_sync = json!({
                 "lockouts": tower_sync.lockouts,
                 "root": tower_sync.root,
-                "hash": tower_sync.hash.to_string(),
+                "vote_only_hash": tower_sync.vote_only_hash.to_string(),
+                "replay_slot": tower_sync.replay_slot,
+                "replay_hash": tower_sync.replay_hash.to_string(),
                 "timestamp": tower_sync.timestamp,
                 "blockId": tower_sync.block_id.to_string(),
             });
@@ -925,7 +929,9 @@ mod test {
                     "towerSync": {
                         "lockouts": tower_sync.lockouts,
                         "root": None::<u64>,
-                        "hash": Hash::default().to_string(),
+                        "vote_only_hash": Hash::default().to_string(),
+                        "replay_slot": None::<u64>,
+                        "replay_hash": Hash::default().to_string(),
                         "timestamp": None::<u64>,
                         "blockId": Hash::default().to_string(),
                     },
@@ -970,7 +976,9 @@ mod test {
                     "towerSync": {
                         "lockouts": tower_sync.lockouts,
                         "root": None::<u64>,
-                        "hash": Hash::default().to_string(),
+                        "vote_only_hash": Hash::default().to_string(),
+                        "replay_slot": None::<u64>,
+                        "replay_hash": Hash::default().to_string(),
                         "timestamp": None::<u64>,
                         "blockId": Hash::default().to_string(),
                     },

@@ -38,7 +38,7 @@ impl VoteTransaction {
         match self {
             VoteTransaction::Vote(vote) => vote.hash,
             VoteTransaction::VoteStateUpdate(vote_state_update) => vote_state_update.hash,
-            VoteTransaction::TowerSync(tower_sync) => tower_sync.hash,
+            VoteTransaction::TowerSync(tower_sync) => tower_sync.replay_hash,
         }
     }
 

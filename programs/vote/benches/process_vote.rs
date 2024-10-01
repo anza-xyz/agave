@@ -192,7 +192,9 @@ fn bench_process_tower_sync(bencher: &mut Bencher) {
         ((num_initial_votes.saturating_add(1)..=last_vote_slot).zip((1u32..=31).rev())).collect();
     let mut tower_sync = TowerSync::from(slots_and_lockouts);
     tower_sync.root = Some(num_initial_votes);
-    tower_sync.hash = last_vote_hash;
+    tower_sync.vote_only_hash = Hash::default();
+    tower_sync.replay_slot = Some(last_vote_slot);
+    tower_sync.replay_hash = last_vote_hash;
     tower_sync.block_id = Hash::new_unique();
     let instruction_data = bincode::serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
 

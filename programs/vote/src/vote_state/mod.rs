@@ -30,7 +30,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "5zYYafKxFiaQj4s1PUhK7bW2rKAXBBcnpHVxR8kfpZhQ")
+    frozen_abi(digest = "2ur9qpyZBfJBTLncyqwh9pyQR4U8Xgd2iyMJPPKoSC2f")
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum VoteTransaction {
@@ -90,7 +90,7 @@ impl VoteTransaction {
             VoteTransaction::Vote(vote) => vote.hash,
             VoteTransaction::VoteStateUpdate(vote_state_update) => vote_state_update.hash,
             VoteTransaction::CompactVoteStateUpdate(vote_state_update) => vote_state_update.hash,
-            VoteTransaction::TowerSync(tower_sync) => tower_sync.hash,
+            VoteTransaction::TowerSync(tower_sync) => tower_sync.replay_hash,
         }
     }
 
@@ -1176,7 +1176,7 @@ fn do_process_tower_sync(
         vote_state,
         &mut tower_sync.lockouts,
         &mut tower_sync.root,
-        tower_sync.hash,
+        tower_sync.replay_hash,
         slot_hashes,
     )?;
     process_new_vote_state(
@@ -3178,7 +3178,7 @@ mod tests {
                 &empty_vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &empty_slot_hashes
             ),
             Err(VoteError::EmptySlots),
@@ -3191,7 +3191,7 @@ mod tests {
                 &empty_vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &empty_slot_hashes
             ),
             Err(VoteError::SlotsMismatch),
@@ -3212,7 +3212,7 @@ mod tests {
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::VoteTooOld),
@@ -3229,7 +3229,7 @@ mod tests {
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::VoteTooOld),
@@ -3279,13 +3279,13 @@ mod tests {
         // Root slot in the `TowerSync` should be updated to match the root slot in the
         // current vote state
         let mut tower_sync = TowerSync::from(proposed_slots_and_lockouts);
-        tower_sync.hash = proposed_hash;
+        tower_sync.replay_hash = proposed_hash;
         tower_sync.root = Some(proposed_root);
         check_and_filter_proposed_vote_state(
             &vote_state,
             &mut tower_sync.lockouts,
             &mut tower_sync.root,
-            tower_sync.hash,
+            tower_sync.replay_hash,
             &slot_hashes,
         )
         .unwrap();
@@ -3451,13 +3451,13 @@ mod tests {
             .unwrap()
             .1;
         let mut tower_sync = TowerSync::from(vec![(2, 2), (1, 3), (vote_slot, 1)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::SlotsNotOrdered),
@@ -3465,13 +3465,13 @@ mod tests {
 
         // Test with a `TowerSync` where there are multiples of the same slot
         let mut tower_sync = TowerSync::from(vec![(2, 2), (2, 2), (vote_slot, 1)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::SlotsNotOrdered),
@@ -3501,12 +3501,12 @@ mod tests {
             (missing_older_than_history_slot, 2),
             (vote_slot, 3),
         ]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
             &vote_state,
             &mut tower_sync.lockouts,
             &mut tower_sync.root,
-            tower_sync.hash,
+            tower_sync.replay_hash,
             &slot_hashes,
         )
         .unwrap();
@@ -3554,12 +3554,12 @@ mod tests {
         let existing_older_than_history_slot = 4;
         let mut tower_sync =
             TowerSync::from(vec![(existing_older_than_history_slot, 3), (vote_slot, 2)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
             &vote_state,
             &mut tower_sync.lockouts,
             &mut tower_sync.root,
-            tower_sync.hash,
+            tower_sync.replay_hash,
             &slot_hashes,
         )
         .unwrap();
@@ -3621,12 +3621,12 @@ mod tests {
             (12, 2),
             (vote_slot, 1),
         ]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
             &vote_state,
             &mut tower_sync.lockouts,
             &mut tower_sync.root,
-            tower_sync.hash,
+            tower_sync.replay_hash,
             &slot_hashes,
         )
         .unwrap();
@@ -3675,13 +3675,13 @@ mod tests {
             .unwrap()
             .1;
         let mut tower_sync = TowerSync::from(vec![(missing_vote_slot, 2), (vote_slot, 3)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::SlotsMismatch),
@@ -3696,13 +3696,13 @@ mod tests {
             (missing_vote_slot, 2),
             (vote_slot, 1),
         ]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::SlotsMismatch),
@@ -3731,14 +3731,14 @@ mod tests {
             .unwrap()
             .1;
         let mut tower_sync = TowerSync::from(vec![(vote_slot, 1)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         tower_sync.root = Some(new_root);
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::RootOnDifferentFork),
@@ -3758,13 +3758,13 @@ mod tests {
         let missing_vote_slot = slot_hashes.first().unwrap().0 + 1;
         let vote_slot_hash = Hash::new_unique();
         let mut tower_sync = TowerSync::from(vec![(8, 2), (missing_vote_slot, 3)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes
             ),
             Err(VoteError::SlotsMismatch),
@@ -3788,12 +3788,12 @@ mod tests {
             .unwrap()
             .1;
         let mut tower_sync = TowerSync::from(vec![(2, 4), (4, 3), (6, 2), (vote_slot, 1)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
             &vote_state,
             &mut tower_sync.lockouts,
             &mut tower_sync.root,
-            tower_sync.hash,
+            tower_sync.replay_hash,
             &slot_hashes,
         )
         .unwrap();
@@ -3841,12 +3841,12 @@ mod tests {
             .unwrap()
             .1;
         let mut tower_sync = TowerSync::from(vec![(4, 2), (vote_slot, 1)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         check_and_filter_proposed_vote_state(
             &vote_state,
             &mut tower_sync.lockouts,
             &mut tower_sync.root,
-            tower_sync.hash,
+            tower_sync.replay_hash,
             &slot_hashes,
         )
         .unwrap();
@@ -3892,13 +3892,13 @@ mod tests {
         let vote_slot = vote_state.votes.back().unwrap().slot() + 2;
         let vote_slot_hash = Hash::new_unique();
         let mut tower_sync = TowerSync::from(vec![(2, 4), (4, 3), (6, 2), (vote_slot, 1)]);
-        tower_sync.hash = vote_slot_hash;
+        tower_sync.replay_hash = vote_slot_hash;
         assert_eq!(
             check_and_filter_proposed_vote_state(
                 &vote_state,
                 &mut tower_sync.lockouts,
                 &mut tower_sync.root,
-                tower_sync.hash,
+                tower_sync.replay_hash,
                 &slot_hashes,
             ),
             Err(VoteError::SlotHashMismatch),
