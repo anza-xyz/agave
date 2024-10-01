@@ -420,7 +420,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
 
             // if the program is cached, we can release the loaded account from memory
-            // TODO in the near future we should be able to not load it in the first place
+            // in the near future we should be able to not load it in the first place
             if let Some(ref program) =
                 (account.executable() && !is_instruction_account && !is_writable)
                     .then_some(())
@@ -464,7 +464,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 if native_loader::check_id(owner_account.owner()) && owner_account.executable() {
                     // in theory it should be safe to use the cached loader
                     // but this is safer because we cannot explicitly verify it isnt an instruction account
-                    // TODO in the near future we should also be able to skip this load
+                    // in the near future we should also be able to skip this load
                     loaded_accounts_map.insert_account(*owner_id, owner_account);
                     true
                 } else {
@@ -493,6 +493,7 @@ pub(crate) fn load_transaction(
     error_metrics: &mut TransactionErrorMetrics,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
+    program_cache: &ProgramCacheForTxBatch,
 ) -> TransactionLoadResult {
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
@@ -506,6 +507,7 @@ pub(crate) fn load_transaction(
                 error_metrics,
                 feature_set,
                 rent_collector,
+                program_cache,
             );
 
             match load_result {
@@ -538,10 +540,10 @@ fn load_transaction_accounts(
     error_metrics: &mut TransactionErrorMetrics,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
+    program_cache: &ProgramCacheForTxBatch,
 ) -> Result<LoadedTransactionAccounts> {
     let account_keys = message.account_keys();
-    let mut required_programs = HashSet::new();
-    let mut required_loaders = HashMap::new();
+    let mut required_programs = HashMap::new();
 
     let mut accounts = Vec::with_capacity(account_keys.len());
     let mut tx_rent: TransactionRent = 0;
@@ -562,9 +564,44 @@ fn load_transaction_accounts(
 
             // we do not need to validate NativeLoader, and its index is never retained
             // otherwise we hold the program id to validate it is executable and owned by a valid loader
+            // we also retain the index, because we may need to override executable_in_batch if the program was cached
+            // when this is patched, we do not need to distinguish cached from loaded programs
             if !native_loader::check_id(program_id) {
-                required_programs.insert(program_id);
+                required_programs.insert(program_id, program_index);
                 account_indices.insert(0, program_index as IndexOfAccount);
+            }
+
+            // to preserve existing behavior, we must count data size of owners, except NativeLoader, once per instruction
+            // we re-validate here the program is owned by a loader due to interactions with the program cache
+            // which may cause us to execute programs that are not executable_in_batch
+            // when this is patched, we can fully rely on loader validation in `load_accounts()`
+            if !native_loader::check_id(program_id) {
+                let Some(loaded_program) = loaded_accounts_map.get_loaded_account(program_id)
+                else {
+                    error_metrics.account_not_found += 1;
+                    return Err(TransactionError::ProgramAccountNotFound);
+                };
+
+                let owner_id = loaded_program.account.owner();
+                if !native_loader::check_id(owner_id) {
+                    let Some(loaded_owner) = loaded_accounts_map.get_loaded_account(owner_id)
+                    else {
+                        error_metrics.invalid_program_for_execution += 1;
+                        return Err(TransactionError::InvalidProgramForExecution);
+                    };
+
+                    if !loaded_owner.valid_loader {
+                        error_metrics.invalid_program_for_execution += 1;
+                        return Err(TransactionError::InvalidProgramForExecution);
+                    }
+
+                    accumulate_and_check_loaded_account_data_size(
+                        &mut accumulated_accounts_data_size,
+                        loaded_owner.loaded_size,
+                        compute_budget_limits.loaded_accounts_bytes,
+                        error_metrics,
+                    )?;
+                }
             }
 
             Ok(account_indices)
@@ -577,27 +614,30 @@ fn load_transaction_accounts(
                 account,
                 loaded_size,
                 executable_in_batch,
-                valid_loader,
+                valid_loader: _,
             } = loaded_account;
 
-            if required_programs.contains(key) {
+            if let Some(program_index) = required_programs.get(key) {
                 // if this account is a program, we confirm it was found and is executable
                 if !found {
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
-                } else if !executable_in_batch {
-                    error_metrics.invalid_program_for_execution += 1;
-                    return Err(TransactionError::InvalidProgramForExecution);
                 }
 
-                // if we found a regular program, we flag its loader may need to be counted and added to transaction accounts
-                // but if we also see that loader earlier or later in this loop, we override to ensure we dont double-count it
-                // we never encounter NativeLoader here because we explicitly skipped adding it
-                let owner_id = account.owner();
-                if valid_loader {
-                    required_loaders.insert(*key, true);
-                } else if !required_loaders.contains_key(owner_id) {
-                    required_loaders.insert(*owner_id, false);
+                if !executable_in_batch {
+                    // in the old loader, executable was not checked for cached, read-only, non-instruction programs
+                    // we preserve this behavior here, pending a feature gate to remove it
+                    // we would need to check cache here, even if we didnt allow non-executable programs in `load_accounts()`
+                    // because that call depends on batch-wide account usage
+                    // when this is changed, transaction loading no longer needs the cache
+                    let is_writable = message.is_writable(*program_index);
+                    let is_instruction_account = message.is_instruction_account(*program_index);
+                    let found_in_cache = program_cache.find(key).is_some();
+
+                    if !found_in_cache || is_writable || is_instruction_account {
+                        error_metrics.invalid_program_for_execution += 1;
+                        return Err(TransactionError::InvalidProgramForExecution);
+                    }
                 }
             }
 
@@ -636,41 +676,6 @@ fn load_transaction_accounts(
             rent_collector,
         )?;
         collect_loaded_account(account_key, (loaded_account, account_found, rent_collected))?;
-    }
-
-    // finally, we add the remaining loaders to the accumulated transaction data size
-    for (loader_id, already_counted) in required_loaders {
-        if already_counted {
-            continue;
-        }
-
-        // this should never fail, account loading fetches all necessary loaders
-        let Some(LoadedTransactionAccount {
-            loaded_size,
-            valid_loader,
-            ..
-        }) = loaded_accounts_map.get_loaded_account(&loader_id)
-        else {
-            error_metrics.invalid_program_for_execution += 1;
-            return Err(TransactionError::InvalidProgramForExecution);
-        };
-
-        // likewise, valid_loader should always be true
-        // otherwise the program would have been marked as invalid for execution
-        if !valid_loader {
-            error_metrics.invalid_program_for_execution += 1;
-            return Err(TransactionError::InvalidProgramForExecution);
-        }
-
-        accumulate_and_check_loaded_account_data_size(
-            &mut accumulated_accounts_data_size,
-            *loaded_size,
-            compute_budget_limits.loaded_accounts_bytes,
-            error_metrics,
-        )?;
-
-        // NOTE in the old account loader, we would push loader programs onto the accounts list here
-        // this is not necessary, as loaders are fetched from cache
     }
 
     Ok(LoadedTransactionAccounts {
@@ -915,6 +920,7 @@ mod tests {
             error_metrics,
             feature_set,
             rent_collector,
+            &ProgramCacheForTxBatch::default(),
         )
     }
 
@@ -1201,6 +1207,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::all_enabled(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         )
     }
 
@@ -1490,6 +1497,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         let expected_rent_debits = {
@@ -1549,6 +1557,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(
@@ -1626,6 +1635,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &loaded_programs,
         );
 
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -1811,6 +1821,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
@@ -1854,6 +1865,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(
@@ -1907,6 +1919,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(
@@ -1971,6 +1984,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(
@@ -2024,6 +2038,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(
@@ -2080,6 +2095,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
@@ -2103,6 +2119,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(
@@ -2182,6 +2199,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
@@ -2205,6 +2223,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         let mut account_data = AccountSharedData::default();
@@ -2265,6 +2284,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         let TransactionLoadResult::Loaded(loaded_transaction) = load_result else {
@@ -2351,6 +2371,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
@@ -2375,6 +2396,7 @@ mod tests {
             &mut error_metrics,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
         );
 
         let mut account_data = AccountSharedData::default();
@@ -2447,12 +2469,13 @@ mod tests {
             &mut TransactionErrorMetrics::default(),
             &feature_set,
             &rent_collector,
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert!(matches!(
             load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                load_error: TransactionError::InvalidProgramForExecution,
+                load_error: TransactionError::ProgramAccountNotFound,
                 ..
             }),
         ));
@@ -2466,6 +2489,7 @@ mod tests {
             &mut TransactionErrorMetrics::default(),
             &feature_set,
             &rent_collector,
+            &ProgramCacheForTxBatch::default(),
         );
 
         assert!(matches!(

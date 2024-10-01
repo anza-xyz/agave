@@ -320,6 +320,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment
                     .rent_collector
                     .unwrap_or(&RentCollector::default()),
+                &program_cache_for_tx_batch,
             ));
             load_transactions_us = load_transactions_us.saturating_add(single_load_transaction_us);
 
