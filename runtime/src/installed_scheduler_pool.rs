@@ -167,7 +167,8 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution<'a>(
         &'a self,
-        transaction_with_index: &'a (&'a SanitizedTransaction, usize),
+        transaction: SanitizedTransaction,
+        index: usize,
     ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
@@ -445,9 +446,9 @@ impl BankWithScheduler {
     /// Calling this will panic if the installed scheduler is Unavailable (the bank is
     /// wait_for_termination()-ed or the unified scheduler is disabled in the first place).
     // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
-    pub fn schedule_transaction_executions<'a>(
+    pub fn schedule_transaction_executions(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a usize)>,
+        transactions_with_indexes: impl ExactSizeIterator<Item = (SanitizedTransaction, usize)>,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
@@ -455,8 +456,8 @@ impl BankWithScheduler {
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
-            for (sanitized_transaction, &index) in transactions_with_indexes {
-                scheduler.schedule_execution(&(sanitized_transaction, index))?;
+            for (sanitized_transaction, index) in transactions_with_indexes {
+                scheduler.schedule_execution(sanitized_transaction, index)?;
             }
             Ok(())
         });
@@ -856,12 +857,12 @@ mod tests {
                     mocked
                         .expect_schedule_execution()
                         .times(1)
-                        .returning(|(_, _)| Ok(()));
+                        .returning(|_, _| Ok(()));
                 } else {
                     mocked
                         .expect_schedule_execution()
                         .times(1)
-                        .returning(|(_, _)| Err(SchedulerAborted));
+                        .returning(|_, _| Err(SchedulerAborted));
                     mocked
                         .expect_recover_error_after_abort()
                         .times(1)
@@ -871,7 +872,7 @@ mod tests {
         );
 
         let bank = BankWithScheduler::new(bank, Some(mocked_scheduler));
-        let result = bank.schedule_transaction_executions([(&tx0, &0)].into_iter());
+        let result = bank.schedule_transaction_executions([(tx0, 0)].into_iter());
         if should_succeed {
             assert_matches!(result, Ok(()));
         } else {
