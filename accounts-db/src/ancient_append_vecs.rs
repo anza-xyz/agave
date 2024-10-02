@@ -182,12 +182,12 @@ impl AncientSlotInfos {
         self.best_slots_to_shrink = Vec::with_capacity(self.shrink_indexes.len());
         for info_index in &self.shrink_indexes {
             let info = &mut self.all_infos[*info_index];
-            self.best_slots_to_shrink.push((info.slot, info.capacity));
             if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
                 // we exceeded the amount to shrink due to alive ratio, so don't shrink this one just due to 'should_shrink'
                 // It MAY be shrunk based on total capacity still.
                 // Mark it as false for 'should_shrink' so it gets evaluated solely based on # of files.
                 info.should_shrink = false;
+                self.best_slots_to_shrink.push((info.slot, info.capacity));
             } else {
                 bytes_to_shrink_due_to_ratio += info.alive_bytes;
             }
