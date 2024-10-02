@@ -368,7 +368,7 @@ fn execute_batches_internal(
 fn process_batches(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    locked_entries: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_execution_timing: &mut BatchExecutionTiming,
@@ -419,13 +419,13 @@ fn process_batches(
 
 fn schedule_batches_for_execution(
     bank: &BankWithScheduler,
-    locked_entries: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    locked_entries: impl Iterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
 ) -> Result<()> {
     for LockedTransactionsWithIndexes {
         lock_results,
         transactions,
         starting_index,
-    } in locked_entries.drain(..)
+    } in locked_entries
     {
         // unlock before sending to scheduler.
         bank.unlock_accounts(transactions.iter().zip(lock_results.iter()));
@@ -464,21 +464,20 @@ fn rebatch_transactions<'a>(
 fn rebatch_and_execute_batches(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
-    locked_entries: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
-    if locked_entries.is_empty() {
+    if locked_entries.len() == 0 {
         return Ok(());
     }
 
     // Flatten the locked entries.
     let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) =
         locked_entries
-            .drain(..)
             .flat_map(|locked_entry| {
                 locked_entry
                     .lock_results
@@ -630,14 +629,13 @@ fn process_entries(
                     process_batches(
                         bank,
                         replay_tx_thread_pool,
-                        &mut batches,
+                        batches.drain(..),
                         transaction_status_sender,
                         replay_vote_sender,
                         batch_timing,
                         log_messages_bytes_limit,
                         prioritization_fee_cache,
                     )?;
-                    batches.clear();
                     for hash in &tick_hashes {
                         bank.register_tick(hash);
                     }
@@ -654,7 +652,7 @@ fn process_entries(
                         process_batches(
                             bank,
                             replay_tx_thread_pool,
-                            batches,
+                            batches.drain(..),
                             transaction_status_sender,
                             replay_vote_sender,
                             batch_timing,
@@ -669,7 +667,7 @@ fn process_entries(
     process_batches(
         bank,
         replay_tx_thread_pool,
-        &mut batches,
+        batches.drain(..),
         transaction_status_sender,
         replay_vote_sender,
         batch_timing,
@@ -4965,7 +4963,7 @@ pub mod tests {
         let result = process_batches(
             &bank,
             &replay_tx_thread_pool,
-            &mut vec![locked_entry],
+            [locked_entry].into_iter(),
             None,
             None,
             &mut batch_execution_timing,
