@@ -544,6 +544,7 @@ fn load_transaction_accounts(
 ) -> Result<LoadedTransactionAccounts> {
     let account_keys = message.account_keys();
     let mut required_programs = HashMap::new();
+    let mut accumulated_loaders = HashSet::new();
 
     let mut accounts = Vec::with_capacity(account_keys.len());
     let mut tx_rent: TransactionRent = 0;
@@ -558,7 +559,6 @@ fn load_transaction_accounts(
 
             // This command may never return error, because the transaction is sanitized
             let Some(program_id) = account_keys.get(program_index) else {
-                println!("HANA not found initial");
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
             };
@@ -570,13 +570,12 @@ fn load_transaction_accounts(
             if !native_loader::check_id(program_id) {
                 required_programs.insert(program_id, program_index);
                 account_indices.insert(0, program_index as IndexOfAccount);
-            }
 
-            // to preserve existing behavior, we must count data size of owners, except NativeLoader, once per instruction
-            // we re-validate here the program is owned by a loader due to interactions with the program cache
-            // which may cause us to execute programs that are not executable_in_batch
-            // when this is patched, we can fully rely on loader validation in `load_accounts()`
-            if !native_loader::check_id(program_id) {
+                // to preserve existing behavior, we must count loader size, except NativeLoader, once per transaction
+                // this is in addition to counting it if used as an instruction account, pending removal by feature gate
+                // we re-validate here the program is owned by a loader due to interactions with the program cache
+                // which may cause us to execute programs that are not executable_in_batch
+                // when this is patched, we can fully rely on loader validation in `load_accounts()`
                 let Some(loaded_program) = loaded_accounts_map.get_loaded_account(program_id)
                 else {
                     error_metrics.account_not_found += 1;
@@ -584,16 +583,14 @@ fn load_transaction_accounts(
                 };
 
                 let owner_id = loaded_program.account.owner();
-                if !native_loader::check_id(owner_id) {
+                if !native_loader::check_id(owner_id) && !accumulated_loaders.contains(owner_id) {
                     let Some(loaded_owner) = loaded_accounts_map.get_loaded_account(owner_id)
                     else {
-                        println!("HANA not found");
                         error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
                     };
 
                     if !loaded_owner.valid_loader {
-                        println!("HANA bad loader");
                         error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
                     }
@@ -604,6 +601,8 @@ fn load_transaction_accounts(
                         compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
+
+                    accumulated_loaders.insert(owner_id);
                 }
             }
 
@@ -614,8 +613,8 @@ fn load_transaction_accounts(
     let mut collect_loaded_account =
         |key, (loaded_account, found, rent_collected): (_, bool, u64)| -> Result<()> {
             let LoadedTransactionAccount {
-                account,
-                loaded_size,
+                mut account,
+                mut loaded_size,
                 executable_in_batch,
                 valid_loader: _,
             } = loaded_account;
@@ -629,20 +628,22 @@ fn load_transaction_accounts(
 
                 if !executable_in_batch {
                     // in the old loader, executable was not checked for cached, read-only, non-instruction programs
-                    // we preserve this behavior here, pending a feature gate to remove it
-                    // we would need to check cache here, even if we didnt allow non-executable programs in `load_accounts()`
-                    // because that call depends on batch-wide account usage
-                    // when this is changed, transaction loading no longer needs the cache
+                    // we preserve this behavior here and must *substitute* the cached program
+                    // pending a feature gate to remove this behavior
+                    // we need to check cache here, even if we allow non-executable programs in `load_accounts()`
+                    // because cache usage there depends on *batch-wide* account usage pattern
+                    // when we fix the executable check, transaction loading no longer needs the cache
                     let is_writable = message.is_writable(*program_index);
                     let is_instruction_account = message.is_instruction_account(*program_index);
-                    let found_in_cache = program_cache.find(key).is_some();
 
-                    println!(
-                        "HANA writ {} ixn {} fou {}",
-                        found_in_cache, is_writable, is_instruction_account
-                    );
-
-                    if !found_in_cache || is_writable || is_instruction_account {
+                    if let Some(ref program) =
+                        (!is_instruction_account && !is_writable)
+                            .then_some(())
+                            .and_then(|_| program_cache.find(key))
+                    {
+                        account = account_shared_data_from_program(program);
+                        loaded_size = program.account_size;
+                    } else {
                         error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
                     }
