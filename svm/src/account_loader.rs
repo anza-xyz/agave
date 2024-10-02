@@ -558,6 +558,7 @@ fn load_transaction_accounts(
 
             // This command may never return error, because the transaction is sanitized
             let Some(program_id) = account_keys.get(program_index) else {
+                println!("HANA not found initial");
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
             };
@@ -586,11 +587,13 @@ fn load_transaction_accounts(
                 if !native_loader::check_id(owner_id) {
                     let Some(loaded_owner) = loaded_accounts_map.get_loaded_account(owner_id)
                     else {
+                        println!("HANA not found");
                         error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
                     };
 
                     if !loaded_owner.valid_loader {
+                        println!("HANA bad loader");
                         error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
                     }
@@ -633,6 +636,11 @@ fn load_transaction_accounts(
                     let is_writable = message.is_writable(*program_index);
                     let is_instruction_account = message.is_instruction_account(*program_index);
                     let found_in_cache = program_cache.find(key).is_some();
+
+                    println!(
+                        "HANA writ {} ixn {} fou {}",
+                        found_in_cache, is_writable, is_instruction_account
+                    );
 
                     if !found_in_cache || is_writable || is_instruction_account {
                         error_metrics.invalid_program_for_execution += 1;
@@ -1643,33 +1651,25 @@ mod tests {
 
     #[test]
     fn test_load_transaction_accounts_program_account_executable_bypass() {
-        let mut mock_bank = TestCallbacks::default();
+        let mut loaded_accounts_map = LoadedAccountsMap::default();
         let account_keypair = Keypair::new();
         let program_keypair = Keypair::new();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
-        mock_bank
-            .accounts_map
-            .insert(account_keypair.pubkey(), account_data.clone());
+        loaded_accounts_map.insert_account(account_keypair.pubkey(), account_data.clone());
 
         let mut program_data = AccountSharedData::default();
         program_data.set_lamports(200);
         program_data.set_owner(bpf_loader::id());
-        mock_bank
-            .accounts_map
-            .insert(program_keypair.pubkey(), program_data);
+        loaded_accounts_map.insert_account(program_keypair.pubkey(), program_data);
 
         let mut loader_data = AccountSharedData::default();
         loader_data.set_lamports(200);
         loader_data.set_executable(true);
         loader_data.set_owner(native_loader::id());
-        mock_bank
-            .accounts_map
-            .insert(bpf_loader::id(), loader_data.clone());
-        mock_bank
-            .accounts_map
-            .insert(native_loader::id(), loader_data);
+        loaded_accounts_map.insert_account(bpf_loader::id(), loader_data.clone());
+        loaded_accounts_map.insert_account(native_loader::id(), loader_data);
 
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut loaded_programs = ProgramCacheForTxBatch::default();
@@ -1687,15 +1687,15 @@ mod tests {
             ));
 
         let result = load_transaction_accounts(
-            &mock_bank,
+            &loaded_accounts_map,
             transaction.message(),
             LoadedTransactionAccount {
                 account: account_data.clone(),
                 ..LoadedTransactionAccount::default()
             },
+            0,
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1717,15 +1717,15 @@ mod tests {
         cached_program.set_executable(true);
 
         let result = load_transaction_accounts(
-            &mock_bank,
+            &loaded_accounts_map,
             transaction.message(),
             LoadedTransactionAccount {
                 account: account_data.clone(),
                 ..LoadedTransactionAccount::default()
             },
+            0,
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            None,
             &FeatureSet::default(),
             &RentCollector::default(),
             &loaded_programs,
@@ -1761,15 +1761,15 @@ mod tests {
             );
 
             let result = load_transaction_accounts(
-                &mock_bank,
+                &loaded_accounts_map,
                 transaction.message(),
                 LoadedTransactionAccount {
                     account: account_data.clone(),
                     ..LoadedTransactionAccount::default()
                 },
+                0,
                 &ComputeBudgetLimits::default(),
                 &mut error_metrics,
-                None,
                 &FeatureSet::default(),
                 &RentCollector::default(),
                 &loaded_programs,
@@ -2654,7 +2654,7 @@ mod tests {
 
     #[test]
     fn test_load_transaction_accounts_data_sizes() {
-        let mut mock_bank = TestCallbacks::default();
+        let mut loaded_accounts_map = LoadedAccountsMap::default();
 
         let native_loader_size = 0x1;
         let native_loader = AccountSharedData::create(
@@ -2664,9 +2664,7 @@ mod tests {
             true,
             u64::MAX,
         );
-        mock_bank
-            .accounts_map
-            .insert(native_loader::id(), native_loader);
+        loaded_accounts_map.insert_account(native_loader::id(), native_loader);
 
         let bpf_loader_size = 0x1 << 1;
         let bpf_loader = AccountSharedData::create(
@@ -2676,7 +2674,7 @@ mod tests {
             true,
             u64::MAX,
         );
-        mock_bank.accounts_map.insert(bpf_loader::id(), bpf_loader);
+        loaded_accounts_map.insert_account(bpf_loader::id(), bpf_loader);
 
         let upgradeable_loader_size = 0x1 << 2;
         let upgradeable_loader = AccountSharedData::create(
@@ -2686,9 +2684,7 @@ mod tests {
             true,
             u64::MAX,
         );
-        mock_bank
-            .accounts_map
-            .insert(bpf_loader_upgradeable::id(), upgradeable_loader);
+        loaded_accounts_map.insert_account(bpf_loader_upgradeable::id(), upgradeable_loader);
 
         let program1_keypair = Keypair::new();
         let program1 = program1_keypair.pubkey();
@@ -2700,7 +2696,7 @@ mod tests {
             true,
             u64::MAX,
         );
-        mock_bank.accounts_map.insert(program1, program1_account);
+        loaded_accounts_map.insert_account(program1, program1_account);
 
         let program2_keypair = Keypair::new();
         let program2 = program2_keypair.pubkey();
@@ -2712,7 +2708,7 @@ mod tests {
             true,
             u64::MAX,
         );
-        mock_bank.accounts_map.insert(program2, program2_account);
+        loaded_accounts_map.insert_account(program2, program2_account);
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
@@ -2724,9 +2720,7 @@ mod tests {
             false,
             u64::MAX,
         );
-        mock_bank
-            .accounts_map
-            .insert(fee_payer, fee_payer_account.clone());
+        loaded_accounts_map.insert_account(fee_payer, fee_payer_account.clone());
 
         let account1_keypair = Keypair::new();
         let account1 = account1_keypair.pubkey();
@@ -2738,7 +2732,7 @@ mod tests {
             false,
             u64::MAX,
         );
-        mock_bank.accounts_map.insert(account1, account1_account);
+        loaded_accounts_map.insert_account(account1, account1_account);
 
         let account2_keypair = Keypair::new();
         let account2 = account2_keypair.pubkey();
@@ -2750,7 +2744,7 @@ mod tests {
             false,
             u64::MAX,
         );
-        mock_bank.accounts_map.insert(account2, account2_account);
+        loaded_accounts_map.insert_account(account2, account2_account);
 
         for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
             let test_data_size = |instructions, expected_size| {
@@ -2764,16 +2758,16 @@ mod tests {
                 );
 
                 let loaded_transaction_accounts = load_transaction_accounts(
-                    &mock_bank,
+                    &loaded_accounts_map,
                     &transaction,
                     LoadedTransactionAccount {
                         account: fee_payer_account.clone(),
                         loaded_size: fee_payer_size as usize,
-                        rent_collected: 0,
+                        ..LoadedTransactionAccount::default()
                     },
+                    0,
                     &ComputeBudgetLimits::default(),
                     &mut TransactionErrorMetrics::default(),
-                    None,
                     &FeatureSet::default(),
                     &RentCollector::default(),
                     &ProgramCacheForTxBatch::default(),
