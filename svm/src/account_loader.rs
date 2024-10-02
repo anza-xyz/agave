@@ -416,20 +416,21 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
             account_overrides.and_then(|overrides| overrides.get(account_key))
         {
             loaded_accounts_map.insert_account(*account_key, account_override.clone());
+        } else if let Some(ref program) = (!is_instruction_account && !is_writable)
+            .then_some(())
+            .and_then(|_| program_cache.find(account_key))
+            .filter(|program| !program.is_tombstone())
+        {
+            // XXX i might be able to skip this inspect, asking brooks
+            // XXX also i might need to check effective slot and not just tombstone... asking pankaj
+            if let Some(account) = callbacks.get_account_shared_data(account_key) {
+                callbacks.inspect_account(account_key, AccountState::Alive(&account), false);
+            }
+
+            loaded_accounts_map.insert_cached_program(*account_key, program);
         } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
-
-            // if the program is cached, we can release the loaded account from memory
-            // in the near future we should be able to not load it in the first place
-            if let Some(ref program) =
-                (account.executable() && !is_instruction_account && !is_writable)
-                    .then_some(())
-                    .and_then(|_| program_cache.find(account_key))
-            {
-                loaded_accounts_map.insert_cached_program(*account_key, program);
-            } else {
-                loaded_accounts_map.insert_account(*account_key, account);
-            }
+            loaded_accounts_map.insert_account(*account_key, account);
         } else {
             callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
         }
@@ -636,10 +637,9 @@ fn load_transaction_accounts(
                     let is_writable = message.is_writable(*program_index);
                     let is_instruction_account = message.is_instruction_account(*program_index);
 
-                    if let Some(ref program) =
-                        (!is_instruction_account && !is_writable)
-                            .then_some(())
-                            .and_then(|_| program_cache.find(key))
+                    if let Some(ref program) = (!is_instruction_account && !is_writable)
+                        .then_some(())
+                        .and_then(|_| program_cache.find(key))
                     {
                         account = account_shared_data_from_program(program);
                         loaded_size = program.account_size;
