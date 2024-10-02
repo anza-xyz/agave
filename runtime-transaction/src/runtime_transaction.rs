@@ -24,7 +24,9 @@ use {
         pubkey::Pubkey,
         signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
-        transaction::{Result, SanitizedTransaction, SanitizedVersionedTransaction},
+        transaction::{
+            Result, SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction,
+        },
     },
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
@@ -116,6 +118,31 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
 }
 
 impl RuntimeTransaction<SanitizedTransaction> {
+    /// Create a new `RuntimeTransaction<SanitizedTransaction>` from an
+    /// unsanitized `VersionedTransaction`.
+    pub fn try_create(
+        tx: VersionedTransaction,
+        message_hash: Option<Hash>,
+        is_simple_vote_tx: Option<bool>,
+        address_loader: impl AddressLoader,
+        reserved_account_keys: &HashSet<Pubkey>,
+    ) -> Result<Self> {
+        let statically_loaded_runtime_tx =
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+                SanitizedVersionedTransaction::try_from(tx)?,
+                message_hash,
+                is_simple_vote_tx,
+            )?;
+        Self::try_from(
+            statically_loaded_runtime_tx,
+            address_loader,
+            reserved_account_keys,
+        )
+    }
+
+    /// Create a new `RuntimeTransaction<SanitizedTransaction>` from a
+    /// `RuntimeTransaction<SanitizedVersionedTransaction>` that already has
+    /// static metadata loaded.
     pub fn try_from(
         statically_loaded_runtime_tx: RuntimeTransaction<SanitizedVersionedTransaction>,
         address_loader: impl AddressLoader,
