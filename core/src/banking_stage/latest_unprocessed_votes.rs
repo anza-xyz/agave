@@ -362,16 +362,19 @@ impl LatestUnprocessedVotes {
         if bank.epoch() <= self.current_epoch.load(Ordering::Relaxed) {
             return;
         }
-        let mut epoch_stakes = self.cached_epoch_stakes.write().unwrap();
-        *epoch_stakes = bank.current_epoch_stakes().clone();
-        self.current_epoch.store(bank.epoch(), Ordering::Relaxed);
-        self.deprecate_legacy_vote_ixs.store(
-            bank.feature_set
-                .is_active(&feature_set::deprecate_legacy_vote_ixs::id()),
-            Ordering::Relaxed,
-        );
+        {
+            let mut epoch_stakes = self.cached_epoch_stakes.write().unwrap();
+            *epoch_stakes = bank.current_epoch_stakes().clone();
+            self.current_epoch.store(bank.epoch(), Ordering::Relaxed);
+            self.deprecate_legacy_vote_ixs.store(
+                bank.feature_set
+                    .is_active(&feature_set::deprecate_legacy_vote_ixs::id()),
+                Ordering::Relaxed,
+            );
+        }
 
         // Evict any now unstaked pubkeys
+        let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
         let mut latest_votes_per_pubkey = self.latest_votes_per_pubkey.write().unwrap();
         let mut unstaked_votes = 0;
         latest_votes_per_pubkey.retain(|vote_pubkey, vote| {
