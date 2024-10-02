@@ -376,6 +376,10 @@ fn process_batches(
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> Result<()> {
     if bank.has_installed_scheduler() {
+        debug!(
+            "process_batches()/schedule_batches_for_execution({} batches)",
+            locked_entries.len()
+        );
         // Scheduling usually succeeds (immediately returns `Ok(())`) here without being blocked on
         // the actual transaction executions.
         //
