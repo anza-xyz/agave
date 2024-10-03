@@ -684,7 +684,7 @@ fn process_entries(
                         process_batches(
                             bank,
                             replay_tx_thread_pool,
-                            batches.drain(..),
+                            batches,
                             transaction_status_sender,
                             replay_vote_sender,
                             batch_timing,
@@ -724,7 +724,7 @@ fn queue_batches_with_lock_retry(
     transactions: Vec<SanitizedTransaction>,
     batches: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
     mut process_batches: impl FnMut(
-        &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+        std::vec::Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
     ) -> Result<()>,
 ) -> Result<()> {
     // try to lock the accounts
@@ -749,7 +749,7 @@ fn queue_batches_with_lock_retry(
 
     // Use the callback to process batches, and clear them.
     // Clearing the batches will `Drop` the batches which will unlock the accounts.
-    process_batches(batches)?;
+    process_batches(batches.drain(..))?;
 
     // Retry the lock
     let lock_results = bank.try_lock_accounts(&transactions);
