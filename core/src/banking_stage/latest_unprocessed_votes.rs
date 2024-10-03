@@ -345,8 +345,8 @@ impl LatestUnprocessedVotes {
     fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> {
         // Efraimidis and Spirakis algo for weighted random sample without replacement
         let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
-        let latest_votes_per_pubkey = self.latest_vote_per_vote_pubkey.read().unwrap();
-        let mut pubkey_with_weight: Vec<(f64, Pubkey)> = latest_votes_per_pubkey
+        let latest_vote_per_vote_pubkey = self.latest_vote_per_vote_pubkey.read().unwrap();
+        let mut pubkey_with_weight: Vec<(f64, Pubkey)> = latest_vote_per_vote_pubkey
             .keys()
             .filter_map(|&pubkey| {
                 let stake = epoch_stakes.vote_account_stake(&pubkey);
@@ -380,9 +380,9 @@ impl LatestUnprocessedVotes {
 
         // Evict any now unstaked pubkeys
         let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
-        let mut latest_votes_per_pubkey = self.latest_vote_per_vote_pubkey.write().unwrap();
+        let mut latest_vote_per_vote_pubkey = self.latest_vote_per_vote_pubkey.write().unwrap();
         let mut unstaked_votes = 0;
-        latest_votes_per_pubkey.retain(|vote_pubkey, vote| {
+        latest_vote_per_vote_pubkey.retain(|vote_pubkey, vote| {
             let is_present = !vote.read().unwrap().is_vote_taken();
             let should_evict = epoch_stakes.vote_account_stake(vote_pubkey) == 0;
             if is_present && should_evict {
@@ -943,19 +943,21 @@ mod tests {
                         .update_latest_vote(vote, false /* should replenish */);
                     if i % 214 == 0 {
                         // Simulate draining and processing packets
-                        let latest_votes_per_pubkey = latest_unprocessed_votes_tpu
+                        let latest_vote_per_vote_pubkey = latest_unprocessed_votes_tpu
                             .latest_vote_per_vote_pubkey
                             .read()
                             .unwrap();
-                        latest_votes_per_pubkey.iter().for_each(|(_pubkey, lock)| {
-                            let mut latest_vote = lock.write().unwrap();
-                            if !latest_vote.is_vote_taken() {
-                                latest_vote.take_vote();
-                                latest_unprocessed_votes_tpu
-                                    .num_unprocessed_votes
-                                    .fetch_sub(1, Ordering::Relaxed);
-                            }
-                        });
+                        latest_vote_per_vote_pubkey
+                            .iter()
+                            .for_each(|(_pubkey, lock)| {
+                                let mut latest_vote = lock.write().unwrap();
+                                if !latest_vote.is_vote_taken() {
+                                    latest_vote.take_vote();
+                                    latest_unprocessed_votes_tpu
+                                        .num_unprocessed_votes
+                                        .fetch_sub(1, Ordering::Relaxed);
+                                }
+                            });
                     }
                 }
             })
