@@ -54,7 +54,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
             .unwrap(),
             Some(index) => {
                 let shred = blockstore
-                    .get_data_shred(bank.slot(), u64::from(index))
+                    .get_data_shred(bank.slot(), index)
                     .unwrap()
                     .unwrap();
                 shred::layout::get_merkle_root(&shred).unwrap()
