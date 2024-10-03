@@ -4870,32 +4870,18 @@ pub mod tests {
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let txs = create_test_transactions(&mint_keypair, &genesis_config.hash());
-        let batch = bank.prepare_sanitized_batch(&txs);
-        assert!(batch.needs_unlock());
+        let lock_results = bank.try_lock_accounts(&txs);
+        assert!(lock_results.iter().all(Result::is_ok));
+
         let transaction_indexes = vec![42, 43, 44];
 
-        let batch2 = rebatch_transactions(
-            batch.lock_results(),
-            &bank,
-            batch.sanitized_transactions(),
-            0,
-            0,
-            &transaction_indexes,
-        );
-        assert!(batch.needs_unlock());
-        assert!(!batch2.batch.needs_unlock());
-        assert_eq!(batch2.transaction_indexes, vec![42]);
+        let batch = rebatch_transactions(&lock_results, &bank, &txs, 0, 0, &transaction_indexes);
+        assert!(batch.batch.needs_unlock());
+        assert_eq!(batch.transaction_indexes, vec![42]);
 
-        let batch3 = rebatch_transactions(
-            batch.lock_results(),
-            &bank,
-            batch.sanitized_transactions(),
-            1,
-            2,
-            &transaction_indexes,
-        );
-        assert!(!batch3.batch.needs_unlock());
-        assert_eq!(batch3.transaction_indexes, vec![43, 44]);
+        let batch2 = rebatch_transactions(&lock_results, &bank, &txs, 1, 2, &transaction_indexes);
+        assert!(batch2.batch.needs_unlock());
+        assert_eq!(batch2.transaction_indexes, vec![43, 44]);
     }
 
     fn do_test_schedule_batches_for_execution(should_succeed: bool) {
