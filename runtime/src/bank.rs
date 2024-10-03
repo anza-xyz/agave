@@ -58,6 +58,8 @@ use {
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
+    accounts_lt_hash::InitialStateOfAccount,
+    ahash::AHashMap,
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -75,7 +77,8 @@ use {
             CalcAccountsHashDataSource, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
-            AccountHash, AccountsHash, CalcAccountsHashConfig, HashStats, IncrementalAccountsHash,
+            AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
+            IncrementalAccountsHash,
         },
         accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
         accounts_partition::{self, Partition, PartitionIndex},
@@ -96,7 +99,8 @@ use {
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
         FeatureSet,
     },
-    solana_measure::{measure::Measure, measure_time, measure_us},
+    solana_lattice_hash::lt_hash::LtHash,
+    solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
@@ -160,7 +164,7 @@ use {
         transaction_execution_result::{
             TransactionExecutionDetails, TransactionLoadedAccountsStats,
         },
-        transaction_processing_callback::TransactionProcessingCallback,
+        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResult,
             TransactionProcessingResultExtensions,
@@ -215,6 +219,7 @@ struct VerifyAccountsHashConfig {
     store_hash_raw_data_for_debug: bool,
 }
 
+mod accounts_lt_hash;
 mod address_lookup_table;
 pub mod bank_hash_details;
 mod builtin_programs;
@@ -571,6 +576,8 @@ impl PartialEq for Bank {
             compute_budget: _,
             transaction_account_lock_limit: _,
             fee_structure: _,
+            accounts_lt_hash: _,
+            cache_for_accounts_lt_hash: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -901,6 +908,17 @@ pub struct Bank {
     /// This _field_ was needed to be DCOU-ed to avoid 2 locks per bank freezing...
     #[cfg(feature = "dev-context-only-utils")]
     hash_overrides: Arc<Mutex<HashOverrides>>,
+
+    /// The lattice hash of all accounts
+    ///
+    /// The value is only meaningful after freezing.
+    accounts_lt_hash: Mutex<AccountsLtHash>,
+
+    /// A cache of *the initial state* of accounts modified in this slot
+    ///
+    /// The accounts lt hash needs both the initial and final state of each
+    /// account that was modified in this slot.  Cache the initial state here.
+    cache_for_accounts_lt_hash: RwLock<AHashMap<Pubkey, InitialStateOfAccount>>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1021,6 +1039,8 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
+            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
+            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
         };
 
         bank.transaction_processor =
@@ -1028,6 +1048,17 @@ impl Bank {
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
+
+        let accounts_lt_hash = {
+            let mut accounts_lt_hash = AccountsLtHash(LtHash::identity());
+            let accounts = bank.get_all_accounts(false).unwrap();
+            for account in accounts {
+                let account_lt_hash = AccountsDb::lt_hash_account(&account.1, &account.0);
+                accounts_lt_hash.0.mix_in(&account_lt_hash.0);
+            }
+            accounts_lt_hash
+        };
+        *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
 
         bank
     }
@@ -1282,6 +1313,8 @@ impl Bank {
             fee_structure: parent.fee_structure.clone(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
+            accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
+            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1660,6 +1693,8 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
+            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD2; LtHash::NUM_ELEMENTS]))),
+            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
         };
 
         bank.transaction_processor =
@@ -1679,6 +1714,17 @@ impl Bank {
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
         bank.rebuild_skipped_rewrites();
+
+        let calculate_accounts_lt_hash_duration = bank.is_accounts_lt_hash_enabled().then(|| {
+            let (_, duration) = meas_dur!({
+                *bank.accounts_lt_hash.get_mut().unwrap() = bank
+                    .rc
+                    .accounts
+                    .accounts_db
+                    .calculate_accounts_lt_hash_at_startup(&bank.ancestors, bank.slot());
+            });
+            duration
+        });
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -1723,6 +1769,11 @@ impl Bank {
                 "stakes_accounts_load_duration_us",
                 stakes_accounts_load_duration.as_micros(),
                 i64
+            ),
+            (
+                "calculate_accounts_lt_hash_us",
+                calculate_accounts_lt_hash_duration.as_ref().map(Duration::as_micros),
+                Option<i64>
             ),
         );
         bank
@@ -5365,6 +5416,10 @@ impl Bank {
             hash = hashv(&[hash.as_ref(), epoch_accounts_hash.as_ref().as_ref()]);
         };
 
+        let accounts_lt_hash_checksum = self
+            .is_accounts_lt_hash_enabled()
+            .then(|| self.update_accounts_lt_hash());
+
         let buf = self
             .hard_forks
             .read()
@@ -5405,8 +5460,9 @@ impl Bank {
             .accounts_db
             .get_bank_hash_stats(slot)
             .expect("No bank hash stats were found for this bank, that should not be possible");
+
         info!(
-            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}{}",
             accounts_delta_hash.0,
             self.signature_count(),
             self.last_blockhash(),
@@ -5415,7 +5471,12 @@ impl Bank {
                 format!(", epoch_accounts_hash: {:?}", epoch_accounts_hash.as_ref())
             } else {
                 "".to_string()
-            }
+            },
+            if let Some(accounts_lt_hash_checksum) = accounts_lt_hash_checksum {
+                format!(", accounts_lt_hash checksum: {accounts_lt_hash_checksum}")
+            } else {
+                String::new()
+            },
         );
         hash
     }
@@ -6701,6 +6762,12 @@ impl TransactionProcessingCallback for Bank {
             self.inherit_specially_retained_account_fields(&existing_genuine_program),
         );
         self.store_account_and_update_capitalization(program_id, &account);
+    }
+
+    fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
+        if self.is_accounts_lt_hash_enabled() {
+            self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
+        }
     }
 }
 
