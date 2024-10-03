@@ -718,7 +718,7 @@ fn process_entries(
 /// and the batches are processed.
 /// The locking process is retried, and if it fails again the block is marked
 /// as dead.
-/// If the lock retry succeeds, them the batch is pushed into `batches`.
+/// If the lock retry succeeds, then the batch is pushed into `batches`.
 fn queue_batches_with_lock_retry(
     bank: &Bank,
     starting_index: usize,
