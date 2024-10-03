@@ -754,7 +754,7 @@ fn queue_batches_with_lock_retry(
     // Retry the lock
     let lock_results = bank.try_lock_accounts(&transactions);
     match first_err(&lock_results) {
-        Ok(_) => {
+        Ok(()) => {
             batches.push(LockedTransactionsWithIndexes {
                 lock_results,
                 transactions,
