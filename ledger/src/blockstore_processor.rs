@@ -425,6 +425,10 @@ fn schedule_batches_for_execution(
     bank: &BankWithScheduler,
     locked_entries: impl Iterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
 ) -> Result<()> {
+    // Track the first error encountered in the loop below, if any.
+    // This error will be propagated to the replay stage, or Ok(()).
+    let mut first_err = Ok(());
+
     for LockedTransactionsWithIndexes {
         lock_results,
         transactions,
@@ -433,15 +437,19 @@ fn schedule_batches_for_execution(
     {
         // unlock before sending to scheduler.
         bank.unlock_accounts(transactions.iter().zip(lock_results.iter()));
-        // give ownership to scheduler
-        bank.schedule_transaction_executions(
-            transactions
-                .into_iter()
-                .enumerate()
-                .map(|(index, tx)| (tx, index + starting_index)),
-        )?;
+        // give ownership to scheduler. capture the first error, but continue the loop
+        // to unlock.
+        // scheduling is skipped if we have already detected an error in this loop
+        first_err = first_err.and_then(|()| {
+            bank.schedule_transaction_executions(
+                transactions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, tx)| (tx, index + starting_index)),
+            )
+        });
     }
-    Ok(())
+    first_err
 }
 
 fn rebatch_transactions<'a>(
