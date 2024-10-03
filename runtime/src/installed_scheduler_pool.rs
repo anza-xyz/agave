@@ -445,7 +445,6 @@ impl BankWithScheduler {
     ///
     /// Calling this will panic if the installed scheduler is Unavailable (the bank is
     /// wait_for_termination()-ed or the unified scheduler is disabled in the first place).
-    // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
     pub fn schedule_transaction_executions(
         &self,
         transactions_with_indexes: impl ExactSizeIterator<Item = (SanitizedTransaction, usize)>,
