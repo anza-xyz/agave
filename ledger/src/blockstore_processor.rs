@@ -482,13 +482,19 @@ fn rebatch_and_execute_batches(
     // Flatten the locked entries.
     let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) =
         locked_entries
-            .flat_map(|locked_entry| {
-                locked_entry
-                    .lock_results
-                    .into_iter()
-                    .zip(locked_entry.transactions)
-                    .zip(locked_entry.starting_index..)
-            })
+            .flat_map(
+                |LockedTransactionsWithIndexes {
+                     lock_results,
+                     transactions,
+                     starting_index,
+                 }| {
+                    let num_transactions = transactions.len();
+                    lock_results
+                        .into_iter()
+                        .zip_eq(transactions)
+                        .zip_eq(starting_index..starting_index + num_transactions)
+                },
+            )
             .unzip();
 
     let mut minimal_tx_cost = u64::MAX;
