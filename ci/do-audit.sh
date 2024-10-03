@@ -39,10 +39,9 @@ cargo_audit_ignores=(
   # See `[patch.crates-io.curve25519-dalek]` in Cargo.toml for more information
   --ignore RUSTSEC-2024-0344
 
-<<<<<<< HEAD
   # openssl
   --ignore RUSTSEC-2024-0357
-=======
+
   # Crate:     tonic
   # Version:   0.9.2
   # Title:     Remotely exploitable Denial of Service in Tonic
@@ -51,7 +50,6 @@ cargo_audit_ignores=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
->>>>>>> 9b5525d127 (ci: ignore the tonic audit as a temporary stopgap (#3052))
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
