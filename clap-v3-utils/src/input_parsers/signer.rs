@@ -23,6 +23,7 @@ const SIGNER_SOURCE_FILEPATH: &str = "file";
 const SIGNER_SOURCE_USB: &str = "usb";
 const SIGNER_SOURCE_STDIN: &str = "stdin";
 const SIGNER_SOURCE_PUBKEY: &str = "pubkey";
+const SIGNER_SOURCE_BS58_KEYPAIR: &str = "bs58_keypair";
 
 #[derive(Debug, Error)]
 pub enum SignerSourceError {
@@ -45,6 +46,7 @@ pub enum SignerSourceKind {
     Usb(RemoteWalletLocator),
     Stdin,
     Pubkey(Pubkey),
+    Bs58Keypair(String),
 }
 
 impl AsRef<str> for SignerSourceKind {
@@ -55,6 +57,7 @@ impl AsRef<str> for SignerSourceKind {
             Self::Usb(_) => SIGNER_SOURCE_USB,
             Self::Stdin => SIGNER_SOURCE_STDIN,
             Self::Pubkey(_) => SIGNER_SOURCE_PUBKEY,
+            Self::Bs58Keypair(_) => SIGNER_SOURCE_BS58_KEYPAIR,
         }
     }
 }
@@ -217,6 +220,17 @@ impl SignerSource {
                 source.to_string()
             }
         };
+
+        // If the user supplies a base-58 encoded keypair accept it as a valid SignerSource
+        if bs58::decode(&source)
+            .into_vec()
+            .ok()
+            .and_then(|bytes| Keypair::from_bytes(&bytes).ok())
+            .is_some()
+        {
+            return Ok(SignerSource::new(SignerSourceKind::Bs58Keypair(source)));
+        }
+
         match uriparse::URIReference::try_from(source.as_str()) {
             Err(_) => Err(SignerSourceError::UnrecognizedSource),
             Ok(uri) => {
@@ -274,6 +288,7 @@ pub struct SignerSourceParserBuilder {
     allow_usb: bool,
     allow_stdin: bool,
     allow_pubkey: bool,
+    allow_bs58_keypair: bool,
     allow_legacy: bool,
 }
 
@@ -285,6 +300,7 @@ impl SignerSourceParserBuilder {
         self.allow_stdin = true;
         self.allow_pubkey = true;
         self.allow_legacy = true;
+        self.allow_bs58_keypair = true;
         self
     }
 
@@ -331,6 +347,9 @@ impl SignerSourceParserBuilder {
                     SignerSourceKind::Usb(_) if self.allow_usb => Ok(signer_source),
                     SignerSourceKind::Stdin if self.allow_stdin => Ok(signer_source),
                     SignerSourceKind::Pubkey(_) if self.allow_pubkey => Ok(signer_source),
+                    SignerSourceKind::Bs58Keypair(_) if self.allow_bs58_keypair => {
+                        Ok(signer_source)
+                    }
                     _ => Err(SignerSourceError::UnsupportedSource),
                 }
             },
