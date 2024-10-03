@@ -134,11 +134,7 @@ impl Debug for TimeoutListener {
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
 // suppress false clippy complaints arising from mockall-derive:
 //   warning: `#[must_use]` has no effect when applied to a struct field
-//   warning: the following explicit lifetimes could be elided: 'a
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    allow(unused_attributes, clippy::needless_lifetimes)
-)]
+#[cfg_attr(feature = "dev-context-only-utils", allow(unused_attributes))]
 pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     fn id(&self) -> SchedulerId;
     fn context(&self) -> &SchedulingContext;
@@ -165,11 +161,8 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// optimize the fast code-path of normal transaction scheduling to be multi-threaded at the
     /// cost of far slower error code-path while giving implementors increased flexibility by
     /// having &mut.
-    fn schedule_execution<'a>(
-        &'a self,
-        transaction: SanitizedTransaction,
-        index: usize,
-    ) -> ScheduleResult;
+    fn schedule_execution(&self, transaction: SanitizedTransaction, index: usize)
+        -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
     ///
