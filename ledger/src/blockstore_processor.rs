@@ -391,11 +391,11 @@ fn process_batches(
         // propagated eventually via the blocking fn called
         // BankWithScheduler::wait_for_completed_scheduler().
         //
-        // To recite, the returned error is completely unrelated to the argument's `batches` at the
-        // hand. While being awkward, the _async_ unified scheduler is abusing this existing error
-        // propagation code path to the replay stage for compatibility and ease of integration,
-        // exploiting the fact that the replay stage doesn't care _which transaction the returned
-        // error is originating from_.
+        // To recite, the returned error is completely unrelated to the argument's `locked_entries`
+        // at the hand. While being awkward, the _async_ unified scheduler is abusing this existing
+        // error propagation code path to the replay stage for compatibility and ease of
+        // integration, exploiting the fact that the replay stage doesn't care _which transaction
+        // the returned error is originating from_.
         //
         // In the future, more proper error propagation mechanism will be introduced once after we
         // fully transition to the unified scheduler for the block verification. That one would be
