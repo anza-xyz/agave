@@ -13,7 +13,7 @@ pub fn verify_precompiles(message: &impl SVMMessage, feature_set: &FeatureSet) -
     let precompiles = get_precompiles();
     for (program_id, instruction) in message.program_instructions_iter() {
         for precompile in precompiles {
-            if program_id == &precompile.program_id {
+            if precompile.check_id(program_id, |id| feature_set.is_active(id)) {
                 let all_instruction_data: &Vec<&[u8]> = all_instruction_data
                     .get_or_insert_with(|| message.instructions_iter().map(|ix| ix.data).collect());
                 precompile
