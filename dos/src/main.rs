@@ -811,6 +811,9 @@ fn main() {
                 run_dos(&nodes, 0, Some(Arc::new(udp_client)), cmd_params);
             }
         };
+    } else {
+        // we don't use RpcClient in this case but we must past some template parameter
+        run_dos::<RpcClient>(&nodes, 0, None, cmd_params);
     }
 }
 
