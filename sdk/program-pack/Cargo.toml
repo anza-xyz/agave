@@ -1,6 +1,6 @@
 [package]
 name = "solana-program-pack"
-description = "Solana The Pack serialization trait."
+description = "Solana Pack serialization trait."
 documentation = "https://docs.rs/solana-program-pack"
 version = { workspace = true }
 authors = { workspace = true }
