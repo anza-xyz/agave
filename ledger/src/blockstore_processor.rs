@@ -669,10 +669,9 @@ fn process_entries(
                         log_messages_bytes_limit,
                         prioritization_fee_cache,
                     )?;
-                    for hash in &tick_hashes {
-                        bank.register_tick(hash);
+                    for hash in tick_hashes.drain(..) {
+                        bank.register_tick(&hash);
                     }
-                    tick_hashes.clear();
                 }
             }
             EntryType::Transactions(transactions) => {
