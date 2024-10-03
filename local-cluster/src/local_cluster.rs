@@ -188,6 +188,7 @@ impl LocalCluster {
     }
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+        info!("zzzzz creating new cluster...");
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
         let connection_cache = if config.tpu_use_quic {
@@ -325,6 +326,8 @@ impl LocalCluster {
         Self::sync_ledger_path_across_nested_config_fields(&mut leader_config, &leader_ledger_path);
         let leader_keypair = Arc::new(leader_keypair.insecure_clone());
         let leader_vote_keypair = Arc::new(leader_vote_keypair.insecure_clone());
+
+        info!("zzzzzzz creating validator...");
 
         let leader_server = Validator::new(
             leader_node,
