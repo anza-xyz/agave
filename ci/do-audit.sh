@@ -42,13 +42,10 @@ cargo_audit_ignores=(
   # openssl
   --ignore RUSTSEC-2024-0357
 
-  # Crate:     tonic
-  # Version:   0.9.2
-  # Title:     Remotely exploitable Denial of Service in Tonic
-  # Date:      2024-10-01
-  # ID:        RUSTSEC-2024-0376
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
-  # Solution:  Upgrade to >=0.12.3
+  # tonic
+  # When using tonic::transport::Server there is a remote DoS attack that can cause
+  # the server to exit cleanly on accepting a tcp/tls stream.
+  # Ignoring because we do not use this functionality.
   --ignore RUSTSEC-2024-0376
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
