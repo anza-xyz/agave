@@ -4971,7 +4971,7 @@ pub mod tests {
         let bank = BankWithScheduler::new(bank, Some(Box::new(mocked_scheduler)));
 
         let locked_entry = LockedTransactionsWithIndexes {
-            lock_results: vec![Ok(()); txs.len()],
+            lock_results: bank.try_lock_accounts(&txs),
             transactions: txs,
             starting_index: 0,
         };
