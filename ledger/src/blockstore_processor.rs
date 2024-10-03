@@ -479,7 +479,9 @@ fn rebatch_and_execute_batches(
         return Ok(());
     }
 
-    // Flatten the locked entries.
+    // Flatten the locked entries. Store the original entry lengths to avoid rebatching logic
+    // for small entries.
+    let mut original_entry_lengths = Vec::with_capacity(locked_entries.len());
     let ((lock_results, sanitized_txs), transaction_indexes): ((Vec<_>, Vec<_>), Vec<_>) =
         locked_entries
             .flat_map(
@@ -489,6 +491,7 @@ fn rebatch_and_execute_batches(
                      starting_index,
                  }| {
                     let num_transactions = transactions.len();
+                    original_entry_lengths.push(num_transactions);
                     lock_results
                         .into_iter()
                         .zip_eq(transactions)
@@ -513,7 +516,7 @@ fn rebatch_and_execute_batches(
     let target_batch_count = get_thread_count() as u64;
 
     let mut tx_batches: Vec<TransactionBatchWithIndexes<SanitizedTransaction>> = vec![];
-    let rebatched_txs = {
+    let rebatched_txs = if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
         let target_batch_cost = total_cost / target_batch_count;
         let mut batch_cost: u64 = 0;
         let mut slice_start = 0;
@@ -534,6 +537,26 @@ fn rebatch_and_execute_batches(
                 batch_cost = 0;
             }
         });
+        &tx_batches[..]
+    } else {
+        let mut starting_index = 0;
+        for num_transactions in original_entry_lengths {
+            let end_index = starting_index + num_transactions - 1;
+            // this is more of a "re-construction" of the original batches than
+            // a rebatching. But the logic is the same, with the transfer of
+            // unlocking responsibility to the batch.
+            let tx_batch = rebatch_transactions(
+                &lock_results,
+                bank,
+                &sanitized_txs,
+                starting_index,
+                end_index,
+                &transaction_indexes,
+            );
+            starting_index = end_index + 1;
+            tx_batches.push(tx_batch);
+        }
+
         &tx_batches[..]
     };
 
