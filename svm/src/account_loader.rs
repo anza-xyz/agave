@@ -421,12 +421,6 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
             .and_then(|_| program_cache.find(account_key))
             .filter(|program| !program.is_tombstone())
         {
-            // XXX i might be able to skip this inspect, asking brooks
-            // XXX also i might need to check effective slot and not just tombstone... asking pankaj
-            if let Some(account) = callbacks.get_account_shared_data(account_key) {
-                callbacks.inspect_account(account_key, AccountState::Alive(&account), false);
-            }
-
             loaded_accounts_map.insert_cached_program(*account_key, program);
         } else if let Some(account) = callbacks.get_account_shared_data(account_key) {
             callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
@@ -445,18 +439,15 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
             continue;
         };
 
-        // likewise, if the program is not executable, transaction loading will fail
-        if !loaded_program.executable_in_batch {
-            continue;
-        }
-
         // if this is a loader, nothing further needs to be done
         if loaded_program.valid_loader {
             continue;
         }
 
-        // now we have an executable program that isnt a loader
-        // we verify its owner is a loader, and add that loader to the accounts map if we dont already have it
+        // NOTE pending a feature gate, we should `continue` if the program is not executable in batch
+        // however, for our non-executable escape hatch in transaction loading, we must get loaders for invalid programs
+
+        // verify the program owner is a loader and add that loader to the accounts map if we dont already have it
         let owner_id = loaded_program.account.owner();
         let owner_is_loader =
             if let Some(loaded_owner) = loaded_accounts_map.get_loaded_account(owner_id) {
@@ -572,7 +563,7 @@ fn load_transaction_accounts(
                 required_programs.insert(program_id, program_index);
                 account_indices.insert(0, program_index as IndexOfAccount);
 
-                // to preserve existing behavior, we must count loader size, except NativeLoader, once per transaction
+                // NOTE to preserve existing behavior, we must count loader size, except NativeLoader, once per transaction
                 // this is in addition to counting it if used as an instruction account, pending removal by feature gate
                 // we re-validate here the program is owned by a loader due to interactions with the program cache
                 // which may cause us to execute programs that are not executable_in_batch
@@ -628,7 +619,7 @@ fn load_transaction_accounts(
                 }
 
                 if !executable_in_batch {
-                    // in the old loader, executable was not checked for cached, read-only, non-instruction programs
+                    // NOTE in the old loader, executable was not checked for cached, read-only, non-instruction programs
                     // we preserve this behavior here and must *substitute* the cached program
                     // pending a feature gate to remove this behavior
                     // we need to check cache here, even if we allow non-executable programs in `load_accounts()`
