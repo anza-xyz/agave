@@ -158,7 +158,7 @@ pub(crate) struct VoteBatchInsertionMetrics {
 
 #[derive(Debug)]
 pub struct LatestUnprocessedVotes {
-    latest_votes_per_pubkey: RwLock<HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>>,
+    latest_vote_per_vote_pubkey: RwLock<HashMap<Pubkey, Arc<RwLock<LatestValidatorVotePacket>>>>,
     num_unprocessed_votes: AtomicUsize,
     // These are only ever written to by the tpu vote thread
     cached_epoch_stakes: RwLock<EpochStakes>,
@@ -172,7 +172,7 @@ impl LatestUnprocessedVotes {
             .feature_set
             .is_active(&feature_set::deprecate_legacy_vote_ixs::id());
         Self {
-            latest_votes_per_pubkey: RwLock::new(HashMap::default()),
+            latest_vote_per_vote_pubkey: RwLock::new(HashMap::default()),
             num_unprocessed_votes: AtomicUsize::new(0),
             cached_epoch_stakes: RwLock::new(bank.current_epoch_stakes().clone()),
             current_epoch: AtomicU64::new(bank.epoch()),
@@ -191,7 +191,7 @@ impl LatestUnprocessedVotes {
         let epoch_stakes = EpochStakes::new_for_tests(vote_accounts, 0);
 
         Self {
-            latest_votes_per_pubkey: RwLock::new(HashMap::default()),
+            latest_vote_per_vote_pubkey: RwLock::new(HashMap::default()),
             num_unprocessed_votes: AtomicUsize::new(0),
             cached_epoch_stakes: RwLock::new(epoch_stakes),
             current_epoch: AtomicU64::new(0),
@@ -242,7 +242,7 @@ impl LatestUnprocessedVotes {
     }
 
     fn get_entry(&self, pubkey: Pubkey) -> Option<Arc<RwLock<LatestValidatorVotePacket>>> {
-        self.latest_votes_per_pubkey
+        self.latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .get(&pubkey)
@@ -257,7 +257,7 @@ impl LatestUnprocessedVotes {
         vote: LatestValidatorVotePacket,
         should_replenish_taken_votes: bool,
     ) -> Option<LatestValidatorVotePacket> {
-        let pubkey = vote.vote_pubkey();
+        let vote_pubkey = vote.vote_pubkey();
         let slot = vote.slot();
         let timestamp = vote.timestamp();
 
@@ -302,11 +302,16 @@ impl LatestUnprocessedVotes {
             Some(vote)
         };
 
-        if let Some(latest_vote) = self.get_entry(pubkey) {
+        if let Some(latest_vote) = self.get_entry(vote_pubkey) {
             with_latest_vote(&latest_vote, vote)
         } else {
             // Grab write-lock to insert new vote.
-            match self.latest_votes_per_pubkey.write().unwrap().entry(pubkey) {
+            match self
+                .latest_vote_per_vote_pubkey
+                .write()
+                .unwrap()
+                .entry(vote_pubkey)
+            {
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     with_latest_vote(entry.get(), vote)
                 }
@@ -321,7 +326,7 @@ impl LatestUnprocessedVotes {
 
     #[cfg(test)]
     pub fn get_latest_vote_slot(&self, pubkey: Pubkey) -> Option<Slot> {
-        self.latest_votes_per_pubkey
+        self.latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .get(&pubkey)
@@ -330,7 +335,7 @@ impl LatestUnprocessedVotes {
 
     #[cfg(test)]
     fn get_latest_timestamp(&self, pubkey: Pubkey) -> Option<UnixTimestamp> {
-        self.latest_votes_per_pubkey
+        self.latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .get(&pubkey)
@@ -340,7 +345,7 @@ impl LatestUnprocessedVotes {
     fn weighted_random_order_by_stake(&self) -> impl Iterator<Item = Pubkey> {
         // Efraimidis and Spirakis algo for weighted random sample without replacement
         let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
-        let latest_votes_per_pubkey = self.latest_votes_per_pubkey.read().unwrap();
+        let latest_votes_per_pubkey = self.latest_vote_per_vote_pubkey.read().unwrap();
         let mut pubkey_with_weight: Vec<(f64, Pubkey)> = latest_votes_per_pubkey
             .keys()
             .filter_map(|&pubkey| {
@@ -375,7 +380,7 @@ impl LatestUnprocessedVotes {
 
         // Evict any now unstaked pubkeys
         let epoch_stakes = self.cached_epoch_stakes.read().unwrap();
-        let mut latest_votes_per_pubkey = self.latest_votes_per_pubkey.write().unwrap();
+        let mut latest_votes_per_pubkey = self.latest_vote_per_vote_pubkey.write().unwrap();
         let mut unstaked_votes = 0;
         latest_votes_per_pubkey.retain(|vote_pubkey, vote| {
             let is_present = !vote.read().unwrap().is_vote_taken();
@@ -493,7 +498,7 @@ impl LatestUnprocessedVotes {
     /// Sometimes we forward and hold the packets, sometimes we forward and clear.
     /// This also clears all gossip votes since by definition they have been forwarded
     pub fn clear_forwarded_packets(&self) {
-        self.latest_votes_per_pubkey
+        self.latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .values()
@@ -820,7 +825,7 @@ mod tests {
 
         // Drain all latest votes
         for packet in latest_unprocessed_votes
-            .latest_votes_per_pubkey
+            .latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .values()
@@ -939,7 +944,7 @@ mod tests {
                     if i % 214 == 0 {
                         // Simulate draining and processing packets
                         let latest_votes_per_pubkey = latest_unprocessed_votes_tpu
-                            .latest_votes_per_pubkey
+                            .latest_vote_per_vote_pubkey
                             .read()
                             .unwrap();
                         latest_votes_per_pubkey.iter().for_each(|(_pubkey, lock)| {
