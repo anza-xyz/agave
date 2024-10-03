@@ -42,6 +42,7 @@ use {
             partitioned_epoch_rewards::{EpochRewardStatus, StakeRewards, VoteRewardsAccounts},
         },
         bank_forks::BankForks,
+        bank_hash_cache::BankHashCache,
         epoch_stakes::{split_epoch_stakes, EpochStakes, NodeVoteAccounts, VersionedEpochStakes},
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollectorWithMetrics,
@@ -579,6 +580,7 @@ impl PartialEq for Bank {
             fee_structure: _,
             accounts_lt_hash: _,
             cache_for_accounts_lt_hash: _,
+            bank_hash_cache: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -920,6 +922,9 @@ pub struct Bank {
     /// The accounts lt hash needs both the initial and final state of each
     /// account that was modified in this slot.  Cache the initial state here.
     cache_for_accounts_lt_hash: RwLock<AHashMap<Pubkey, InitialStateOfAccount>>,
+
+    /// Lightweight cache of bank hashes
+    bank_hash_cache: Arc<RwLock<BankHashCache>>,
 }
 
 struct VoteWithStakeDelegations {
@@ -1042,6 +1047,7 @@ impl Bank {
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            bank_hash_cache: Arc::<RwLock<BankHashCache>>::default(),
         };
 
         bank.transaction_processor =
@@ -1316,6 +1322,7 @@ impl Bank {
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            bank_hash_cache: parent.bank_hash_cache.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1696,6 +1703,7 @@ impl Bank {
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD2; LtHash::NUM_ELEMENTS]))),
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            bank_hash_cache: Arc::<RwLock<BankHashCache>>::default(),
         };
 
         bank.transaction_processor =
@@ -2904,6 +2912,10 @@ impl Bank {
             self.freeze_started.store(true, Relaxed);
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
+            self.bank_hash_cache
+                .write()
+                .unwrap()
+                .freeze(self.slot, *hash);
         }
     }
 
@@ -6701,6 +6713,10 @@ impl Bank {
 
     pub fn set_check_program_modification_slot(&mut self, check: bool) {
         self.check_program_modification_slot = check;
+    }
+
+    pub(crate) fn set_bank_hash_cache(&mut self, bank_hash_cache: Arc<RwLock<BankHashCache>>) {
+        self.bank_hash_cache = bank_hash_cache;
     }
 
     pub fn fee_structure(&self) -> &FeeStructure {

@@ -4,6 +4,7 @@ use {
     crate::{
         accounts_background_service::{AbsRequestSender, SnapshotRequest, SnapshotRequestKind},
         bank::{epoch_accounts_hash_utils, Bank, SquashTiming},
+        bank_hash_cache::BankHashCache,
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
@@ -78,6 +79,9 @@ pub struct BankForks {
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
+
+    /// Lightweight cache for just the latest bank hash
+    bank_hash_cache: Arc<RwLock<BankHashCache>>,
 }
 
 impl Index<u64> for BankForks {
@@ -88,7 +92,9 @@ impl Index<u64> for BankForks {
 }
 
 impl BankForks {
-    pub fn new_rw_arc(root_bank: Bank) -> Arc<RwLock<Self>> {
+    pub fn new_rw_arc(mut root_bank: Bank) -> Arc<RwLock<Self>> {
+        let bank_hash_cache = Arc::new(RwLock::new(BankHashCache::default()));
+        root_bank.set_bank_hash_cache(bank_hash_cache.clone());
         let root_bank = Arc::new(root_bank);
         let root_slot = root_bank.slot();
 
@@ -100,16 +106,14 @@ impl BankForks {
 
         let parents = root_bank.parents();
         for parent in parents {
-            if banks
-                .insert(
-                    parent.slot(),
-                    BankWithScheduler::new_without_scheduler(parent.clone()),
-                )
-                .is_some()
-            {
-                // All ancestors have already been inserted by another fork
-                break;
-            }
+            banks.insert(
+                parent.slot(),
+                BankWithScheduler::new_without_scheduler(parent.clone()),
+            );
+            bank_hash_cache
+                .write()
+                .unwrap()
+                .freeze(parent.slot(), parent.hash());
         }
 
         let mut descendants = HashMap::<_, HashSet<_>>::new();
@@ -128,6 +132,7 @@ impl BankForks {
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
             scheduler_pool: None,
+            bank_hash_cache,
         }));
 
         root_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
@@ -207,6 +212,10 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
+    pub fn bank_hash_cache(&self) -> Arc<RwLock<BankHashCache>> {
+        self.bank_hash_cache.clone()
+    }
+
     pub fn root_bank(&self) -> Arc<Bank> {
         self[self.root()].clone()
     }
@@ -223,6 +232,7 @@ impl BankForks {
         if self.root.load(Ordering::Relaxed) < self.highest_slot_at_startup {
             bank.set_check_program_modification_slot(true);
         }
+        bank.set_bank_hash_cache(self.bank_hash_cache());
 
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
@@ -445,6 +455,10 @@ impl BankForks {
         let dropped_banks_len = removed_banks.len();
 
         let mut drop_parent_banks_time = Measure::start("set_root::drop_banks");
+        self.bank_hash_cache
+            .write()
+            .unwrap()
+            .prune(removed_banks.iter().map(|bank| bank.slot()));
         drop(parents);
         drop_parent_banks_time.stop();
 

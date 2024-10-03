@@ -9276,4 +9276,49 @@ pub(crate) mod tests {
             &mut PurgeRepairSlotCounter::default(),
         );
     }
+
+    #[test]
+    fn test_bank_hash_cache_root() {
+        /*
+            Build fork structure:
+
+                 slot 0
+                   |
+                 slot 1
+                 /    \
+            slot 2    |
+               |    slot 3
+            slot 4    |
+                    slot 5
+                      |
+                    slot 6
+        */
+        let (vote_simulator, _blockstore) = setup_default_forks(1, None);
+        let VoteSimulator { bank_forks, .. } = vote_simulator;
+        let bank_hash_cache = bank_forks.read().unwrap().bank_hash_cache();
+
+        for slot in 0..=6 {
+            assert_eq!(
+                bank_hash_cache.read().unwrap().bank_hash(slot).unwrap(),
+                bank_forks.read().unwrap().bank_hash(slot).unwrap(),
+                "bank hash mismatch {slot}"
+            );
+        }
+
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(3, &AbsRequestSender::default(), None)
+            .unwrap();
+        for slot in [0, 1, 2, 4] {
+            assert!(bank_forks.read().unwrap().get(slot).is_none());
+            assert!(bank_hash_cache.read().unwrap().bank_hash(slot).is_none());
+        }
+        for slot in [3, 5, 6] {
+            assert_eq!(
+                bank_hash_cache.read().unwrap().bank_hash(slot).unwrap(),
+                bank_forks.read().unwrap().bank_hash(slot).unwrap()
+            );
+        }
+    }
 }
