@@ -74,24 +74,43 @@ pub struct DisabledSigVerifier {}
 
 #[derive(Default)]
 struct SigVerifierStats {
-    recv_batches_us_hist: histogram::Histogram, // time to call recv_batch
-    verify_batches_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
-    discard_packets_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
-    dedup_packets_pp_us_hist: histogram::Histogram, // per-packet time to call verify_batch
-    batches_hist: histogram::Histogram,         // number of packet batches per verify call
-    packets_hist: histogram::Histogram,         // number of packets per verify call
+    /// The time (us) spent calling recv_batch() to get PacketBatches into the stage
+    recv_batches_us_hist: histogram::Histogram,
+    /// The per packet mean (per loop) time (us) spent performing signature verification
+    verify_batches_pp_us_hist: histogram::Histogram,
+    /// The per packet mean (per loop) time (us) spent discarding packets after deduplication
+    discard_packets_pp_us_hist: histogram::Histogram,
+    /// The per packet mean (per loop) time (us) spent deduplicating packets
+    dedup_packets_pp_us_hist: histogram::Histogram,
+    /// The number of batches (per loop)
+    batches_hist: histogram::Histogram,
+    /// The number of packets (per loop)
+    packets_hist: histogram::Histogram,
+    /// The number of Deduper saturations
     num_deduper_saturations: usize,
+    /// The total number of PacketBatches received
     total_batches: usize,
+    /// The total number of packets received
     total_packets: usize,
+    /// The total number of packets discarded from random discard and deduplication
     total_dedup: usize,
+    /// The total number of excess packets discarded from post-deduplication discard
     total_excess_fail: usize,
+    /// The total number of non-discarded packets that will be passed to the next stage
     total_valid_packets: usize,
+    /// The total number of PacketBatches that have been removed through shrinking
     total_shrinks: usize,
+    /// The total number of packets randomly discarded before deduplication
     total_discard_random: usize,
+    /// The total time (us) spent deduplicating packets
     total_dedup_time_us: usize,
+    /// The total time (us) spent discarding excess packets after deduplication
     total_discard_time_us: usize,
+    /// The total time (us) spent randomly discarding excess packets before deduplication
     total_discard_random_time_us: usize,
+    /// The total time (us) spent performing signature verification
     total_verify_time_us: usize,
+    /// The total time (us) spent shrinking PacketBatches
     total_shrink_time_us: usize,
 }
 
