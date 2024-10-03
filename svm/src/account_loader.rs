@@ -454,9 +454,8 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 loaded_owner.valid_loader
             } else if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                 if native_loader::check_id(owner_account.owner()) && owner_account.executable() {
-                    // in theory it should be safe to use the cached loader
-                    // but this is safer because we cannot explicitly verify it isnt an instruction account
-                    // in the near future we should also be able to skip this load
+                    // NOTE pending a feature gate, we will not need to hold onto extra loaders here
+                    // because we wont count them during transaction loading against data size unless theyre used directly
                     loaded_accounts_map.insert_account(*owner_id, owner_account);
                     true
                 } else {
