@@ -542,9 +542,9 @@ fn rebatch_and_execute_batches(
         });
         &tx_batches[..]
     } else {
-        let mut starting_index = 0;
+        let mut slice_start = 0;
         for num_transactions in original_entry_lengths {
-            let end_index = starting_index + num_transactions;
+            let next_index = slice_start + num_transactions;
             // this is more of a "re-construction" of the original batches than
             // a rebatching. But the logic is the same, with the transfer of
             // unlocking responsibility to the batch.
@@ -552,10 +552,10 @@ fn rebatch_and_execute_batches(
                 &lock_results,
                 bank,
                 &sanitized_txs,
-                starting_index..end_index,
+                slice_start..next_index,
                 &transaction_indexes,
             );
-            starting_index = end_index;
+            slice_start = next_index;
             tx_batches.push(tx_batch);
         }
 
