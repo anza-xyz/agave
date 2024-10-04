@@ -316,6 +316,7 @@ impl Blockstore {
     pub fn db_ref(&self) -> &Arc<Database> {
         &self.db
     }
+
     pub fn ledger_path(&self) -> &PathBuf {
         &self.ledger_path
     }

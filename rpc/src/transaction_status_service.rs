@@ -506,7 +506,7 @@ pub(crate) mod tests {
             transactions: vec![transaction1, transaction2],
             commit_results: vec![commit_result.clone(), commit_result],
             balances: balances.clone(),
-            token_balances: token_balances,
+            token_balances,
             transaction_indexes: vec![transaction_index1, transaction_index2],
         };
 
