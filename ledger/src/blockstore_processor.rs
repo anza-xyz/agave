@@ -70,6 +70,7 @@ use {
             Arc, Mutex, RwLock,
         },
         time::{Duration, Instant},
+        vec::Drain,
     },
     thiserror::Error,
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
@@ -440,13 +441,9 @@ fn schedule_batches_for_execution(
         // give ownership to scheduler. capture the first error, but continue the loop
         // to unlock.
         // scheduling is skipped if we have already detected an error in this loop
+        let indexes = starting_index..starting_index + transactions.len();
         first_err = first_err.and_then(|()| {
-            bank.schedule_transaction_executions(
-                transactions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, tx)| (tx, index + starting_index)),
-            )
+            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes))
         });
     }
     first_err
@@ -732,7 +729,7 @@ fn queue_batches_with_lock_retry(
     transactions: Vec<SanitizedTransaction>,
     batches: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
     mut process_batches: impl FnMut(
-        std::vec::Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+        Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
     ) -> Result<()>,
 ) -> Result<()> {
     // try to lock the accounts
