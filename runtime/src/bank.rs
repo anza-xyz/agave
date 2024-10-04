@@ -59,6 +59,7 @@ use {
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         verify_precompiles::verify_precompiles,
     },
+    ahash::RandomState,
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -6280,7 +6281,7 @@ impl Bank {
 
     /// Get a set of all actively reserved account keys that are not allowed to
     /// be write-locked during transaction processing.
-    pub fn get_reserved_account_keys(&self) -> &HashSet<Pubkey> {
+    pub fn get_reserved_account_keys(&self) -> &HashSet<Pubkey, RandomState> {
         &self.reserved_account_keys.active
     }
 

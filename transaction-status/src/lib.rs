@@ -766,7 +766,7 @@ impl Encodable for v0::Message {
             let account_keys = AccountKeys::new(&self.account_keys, None);
             let loaded_addresses = LoadedAddresses::default();
             let loaded_message =
-                LoadedMessage::new_borrowed(self, &loaded_addresses, &HashSet::new());
+                LoadedMessage::new_borrowed(self, &loaded_addresses, &HashSet::default());
             UiMessage::Parsed(UiParsedMessage {
                 account_keys: parse_v0_message_accounts(&loaded_message),
                 recent_blockhash: self.recent_blockhash.to_string(),

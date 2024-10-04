@@ -6836,6 +6836,7 @@ dependencies = [
 name = "solana-ledger"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "assert_matches",
  "bincode",
  "bitflags 2.6.0",
@@ -7188,6 +7189,7 @@ dependencies = [
 name = "solana-program"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "anyhow",
  "arbitrary",
  "array-bytes",
@@ -7471,6 +7473,7 @@ dependencies = [
 name = "solana-rpc"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -7632,6 +7635,7 @@ name = "solana-runtime"
 version = "2.1.0"
 dependencies = [
  "agave-transaction-view",
+ "ahash 0.8.10",
  "aquamarine",
  "arrayref",
  "assert_matches",
@@ -7730,6 +7734,7 @@ name = "solana-runtime-transaction"
 version = "2.1.0"
 dependencies = [
  "agave-transaction-view",
+ "ahash 0.8.10",
  "bincode",
  "criterion",
  "log",
@@ -7751,6 +7756,7 @@ version = "2.1.0"
 name = "solana-sdk"
 version = "2.1.0"
 dependencies = [
+ "ahash 0.8.10",
  "anyhow",
  "assert_matches",
  "bincode",

@@ -1,4 +1,5 @@
 use {
+    ahash::RandomState,
     bincode::deserialize,
     lazy_static::lazy_static,
     solana_sdk::{
@@ -11,7 +12,8 @@ use {
 };
 
 lazy_static! {
-    static ref RESERVED_IDS_SET: HashSet<Pubkey> = ReservedAccountKeys::new_all_activated().active;
+    static ref RESERVED_IDS_SET: HashSet<Pubkey, RandomState> =
+        ReservedAccountKeys::new_all_activated().active;
 }
 
 pub struct ScannedLookupTableExtensions {

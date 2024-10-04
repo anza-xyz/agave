@@ -1,5 +1,6 @@
 use {
     super::packet_filter::PacketFilterFailure,
+    ahash::RandomState,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_perf::packet::Packet,
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
@@ -115,7 +116,7 @@ impl ImmutableDeserializedPacket {
         &self,
         votes_only: bool,
         address_loader: impl AddressLoader,
-        reserved_account_keys: &HashSet<Pubkey>,
+        reserved_account_keys: &HashSet<Pubkey, RandomState>,
     ) -> Option<SanitizedTransaction> {
         if votes_only && !self.is_simple_vote() {
             return None;
