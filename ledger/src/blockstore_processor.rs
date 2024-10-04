@@ -62,7 +62,7 @@ use {
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::{HashMap, HashSet},
-        ops::Index,
+        ops::{Index, Range},
         path::PathBuf,
         result,
         sync::{
@@ -453,17 +453,16 @@ fn rebatch_transactions<'a>(
     lock_results: &'a [Result<()>],
     bank: &'a Arc<Bank>,
     sanitized_txs: &'a [SanitizedTransaction],
-    start: usize,
-    end: usize,
+    range: Range<usize>,
     transaction_indexes: &'a [usize],
 ) -> TransactionBatchWithIndexes<'a, 'a, SanitizedTransaction> {
-    let txs = &sanitized_txs[start..=end];
-    let results = &lock_results[start..=end];
+    let txs = &sanitized_txs[range.clone()];
+    let results = &lock_results[range.clone()];
     let mut tx_batch =
         TransactionBatch::new(results.to_vec(), bank, OwnedOrBorrowed::Borrowed(txs));
     tx_batch.set_needs_unlock(true); // unlock on drop for easier clean up
 
-    let transaction_indexes = transaction_indexes[start..=end].to_vec();
+    let transaction_indexes = transaction_indexes[range].to_vec();
     TransactionBatchWithIndexes {
         batch: tx_batch,
         transaction_indexes,
@@ -533,8 +532,7 @@ fn rebatch_and_execute_batches(
                     &lock_results,
                     bank,
                     &sanitized_txs,
-                    slice_start,
-                    index,
+                    slice_start..next_index,
                     &transaction_indexes,
                 );
                 slice_start = next_index;
@@ -546,7 +544,7 @@ fn rebatch_and_execute_batches(
     } else {
         let mut starting_index = 0;
         for num_transactions in original_entry_lengths {
-            let end_index = starting_index + num_transactions - 1;
+            let end_index = starting_index + num_transactions;
             // this is more of a "re-construction" of the original batches than
             // a rebatching. But the logic is the same, with the transfer of
             // unlocking responsibility to the batch.
@@ -554,11 +552,10 @@ fn rebatch_and_execute_batches(
                 &lock_results,
                 bank,
                 &sanitized_txs,
-                starting_index,
-                end_index,
+                starting_index..end_index,
                 &transaction_indexes,
             );
-            starting_index = end_index + 1;
+            starting_index = end_index;
             tx_batches.push(tx_batch);
         }
 
@@ -4911,11 +4908,11 @@ pub mod tests {
 
         let transaction_indexes = vec![42, 43, 44];
 
-        let batch = rebatch_transactions(&lock_results, &bank, &txs, 0, 0, &transaction_indexes);
+        let batch = rebatch_transactions(&lock_results, &bank, &txs, 0..1, &transaction_indexes);
         assert!(batch.batch.needs_unlock());
         assert_eq!(batch.transaction_indexes, vec![42]);
 
-        let batch2 = rebatch_transactions(&lock_results, &bank, &txs, 1, 2, &transaction_indexes);
+        let batch2 = rebatch_transactions(&lock_results, &bank, &txs, 1..3, &transaction_indexes);
         assert!(batch2.batch.needs_unlock());
         assert_eq!(batch2.transaction_indexes, vec![43, 44]);
     }
