@@ -1631,22 +1631,17 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
         );
         test_entry.add_initial_account(target, &target_data);
 
-        let account_metas = vec![
-            AccountMeta::new(target, false),
-            AccountMeta::new(solana_sdk::incinerator::id(), false),
-        ];
-
         let set_data_transaction = Transaction::new_signed_with_payer(
             &[Instruction::new_with_bytes(
                 program_id,
-                &[0],
-                account_metas.clone(),
+                &[1],
+                vec![AccountMeta::new(target, false)],
             )],
             Some(&fee_payer),
             &[&fee_payer_keypair],
             Hash::default(),
         );
-        test_entry.push_transaction(set_data_transaction.clone());
+        test_entry.push_transaction(set_data_transaction);
 
         target_data.data_as_mut_slice()[0] = 100;
 
@@ -1657,23 +1652,33 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
             let dealloc_transaction = Transaction::new_signed_with_payer(
                 &[Instruction::new_with_bytes(
                     program_id,
-                    &[1],
-                    account_metas.clone(),
+                    &[2],
+                    vec![
+                        AccountMeta::new(target, false),
+                        AccountMeta::new(solana_sdk::incinerator::id(), false),
+                    ],
                 )],
                 Some(&fee_payer),
                 &[&fee_payer_keypair],
                 Hash::default(),
             );
-            test_entry.push_transaction(dealloc_transaction.clone());
+            test_entry.push_transaction(dealloc_transaction);
 
-            // we cannot test that the account has been dropped by just looking at the final state
-            // because, as-designed, the account returned from tx processing is unchanged except with zero lamports
-            // the actual data isnt wiped until the commit stage, which these tests do not cover
-            // so we test to confirm the batch correctly pretends it has already been dropped
-            test_entry.push_transaction_with_status(
-                set_data_transaction.clone(),
-                ExecutionStatus::ExecutedFailed,
+            let check_transaction = Transaction::new_signed_with_payer(
+                &[Instruction::new_with_bytes(
+                    program_id,
+                    &[0],
+                    vec![AccountMeta::new(target, false)],
+                )],
+                Some(&fee_payer),
+                &[&fee_payer_keypair],
+                Hash::default(),
             );
+            test_entry.push_transaction(check_transaction);
+            test_entry.transaction_batch[2]
+                .asserts
+                .logs
+                .push("Program log: account size 0".to_string());
 
             test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
@@ -2226,5 +2231,5 @@ fn svm_inspect_account() {
         num_actual_inspected_accounts,
     );
 
-    assert!(actual_inspected_accounts.contains_key(&transfer_program));
+    assert!(!actual_inspected_accounts.contains_key(&transfer_program));
 }
