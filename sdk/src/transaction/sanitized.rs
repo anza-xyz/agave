@@ -271,10 +271,10 @@ impl SanitizedTransaction {
                 self.message().instructions(),
                 feature_set,
             )
-            .map_err(|_| {
+            .map_err(|err| {
                 TransactionError::InstructionError(
                     index as u8,
-                    InstructionError::InvalidInstructionData,
+                    InstructionError::Custom(err as u32),
                 )
             })?;
         }
