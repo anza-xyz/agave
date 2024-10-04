@@ -471,7 +471,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         )?;
 
         // If the nonce has been used in this batch already, we must drop the transaction
-        // This is the same as if it was used is different batches in the same slot
+        // This is the same as if it was used in different batches in the same slot
         // If the nonce account was closed in the batch, we error as if the blockhash didn't validate
         // We must vaidate the account in case it was reopened, either as a normal system account, or a fake nonce account
         if let Some(ref advanced_nonce_info) = advanced_nonce {
