@@ -71,7 +71,7 @@ use {
         },
         convert::TryInto,
         fmt::Write,
-        fs,
+        fs::{self, File},
         io::{Error as IoError, ErrorKind},
         ops::Bound,
         path::{Path, PathBuf},
@@ -81,6 +81,7 @@ use {
             Arc, Mutex, RwLock,
         },
     },
+    tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
     trees::{Tree, TreeWalk},
@@ -4835,32 +4836,12 @@ pub fn create_new_ledger(
     drop(blockstore);
 
     let archive_path = ledger_path.join(DEFAULT_GENESIS_ARCHIVE);
-    let args = vec![
-        "jcfhS",
-        archive_path.to_str().unwrap(),
-        "-C",
-        ledger_path.to_str().unwrap(),
-        DEFAULT_GENESIS_FILE,
-        blockstore_dir,
-    ];
-    let output = std::process::Command::new("tar")
-        .env("COPYFILE_DISABLE", "1")
-        .args(args)
-        .output()
-        .unwrap();
-    if !output.status.success() {
-        use std::str::from_utf8;
-        error!("tar stdout: {}", from_utf8(&output.stdout).unwrap_or("?"));
-        error!("tar stderr: {}", from_utf8(&output.stderr).unwrap_or("?"));
-
-        return Err(BlockstoreError::Io(IoError::new(
-            ErrorKind::Other,
-            format!(
-                "Error trying to generate snapshot archive: {}",
-                output.status
-            ),
-        )));
-    }
+    let archive_file = File::create(&archive_path)?;
+    let encoder = bzip2::write::BzEncoder::new(archive_file, bzip2::Compression::best());
+    let mut archive = tar::Builder::new(encoder);
+    archive.append_path_with_name(ledger_path.join(DEFAULT_GENESIS_FILE), DEFAULT_GENESIS_FILE)?;
+    archive.append_dir_all(blockstore_dir, ledger_path.join(blockstore_dir))?;
+    archive.into_inner()?;
 
     // ensure the genesis archive can be unpacked and it is under
     // max_genesis_archive_unpacked_size, immediately after creating it above.
