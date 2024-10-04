@@ -704,7 +704,7 @@ fn process_entries(
     process_batches(
         bank,
         replay_tx_thread_pool,
-        batches.drain(..),
+        batches.into_iter(),
         transaction_status_sender,
         replay_vote_sender,
         batch_timing,
