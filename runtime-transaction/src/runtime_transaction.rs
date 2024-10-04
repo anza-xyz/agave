@@ -47,8 +47,8 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
     }
-    fn is_simple_vote_tx(&self) -> bool {
-        self.meta.is_simple_vote_tx
+    fn is_simple_vote_transaction(&self) -> bool {
+        self.meta.is_simple_vote_transaction
     }
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
@@ -109,7 +109,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             transaction: sanitized_versioned_tx,
             meta: TransactionMeta {
                 message_hash,
-                is_simple_vote_tx,
+                is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 compute_budget_instruction_details,
             },
@@ -149,7 +149,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
         let hash = *statically_loaded_runtime_tx.message_hash();
-        let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_tx();
+        let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_transaction();
         let sanitized_transaction = SanitizedTransaction::try_new(
             statically_loaded_runtime_tx.transaction,
             hash,
@@ -169,6 +169,21 @@ impl RuntimeTransaction<SanitizedTransaction> {
 
     fn load_dynamic_metadata(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl RuntimeTransaction<SanitizedTransaction> {
+    pub fn from_transaction_for_tests(transaction: solana_sdk::transaction::Transaction) -> Self {
+        let versioned_transaction = VersionedTransaction::from(transaction);
+        Self::try_create(
+            versioned_transaction,
+            None,
+            None,
+            solana_sdk::message::SimpleAddressLoader::Disabled,
+            &HashSet::new(),
+        )
+        .expect("failed to create RuntimeTransaction from Transaction")
     }
 }
 
@@ -332,7 +347,7 @@ mod tests {
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(svt, None, is_simple_vote)
                 .unwrap()
                 .meta
-                .is_simple_vote_tx
+                .is_simple_vote_transaction
         }
 
         assert!(!get_is_simple_vote(
@@ -369,7 +384,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(hash, *statically_loaded_transaction.message_hash());
-        assert!(!statically_loaded_transaction.is_simple_vote_tx());
+        assert!(!statically_loaded_transaction.is_simple_vote_transaction());
 
         let dynamically_loaded_transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
             statically_loaded_transaction,
@@ -380,7 +395,7 @@ mod tests {
             dynamically_loaded_transaction.expect("created from statically loaded tx");
 
         assert_eq!(hash, *dynamically_loaded_transaction.message_hash());
-        assert!(!dynamically_loaded_transaction.is_simple_vote_tx());
+        assert!(!dynamically_loaded_transaction.is_simple_vote_transaction());
     }
 
     #[test]
@@ -404,7 +419,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(&hash, runtime_transaction_static.message_hash());
-        assert!(!runtime_transaction_static.is_simple_vote_tx());
+        assert!(!runtime_transaction_static.is_simple_vote_transaction());
 
         let signature_details = &runtime_transaction_static.meta.signature_details;
         assert_eq!(1, signature_details.num_transaction_signatures());

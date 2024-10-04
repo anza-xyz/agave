@@ -843,6 +843,7 @@ mod tests {
             poh_service::PohService,
         },
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             hash::Hash,
             poh_config::PohConfig,
@@ -869,9 +870,11 @@ mod tests {
         (node, cluster_info)
     }
 
-    pub(crate) fn sanitize_transactions(txs: Vec<Transaction>) -> Vec<SanitizedTransaction> {
+    pub(crate) fn sanitize_transactions(
+        txs: Vec<Transaction>,
+    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
         txs.into_iter()
-            .map(SanitizedTransaction::from_transaction_for_tests)
+            .map(RuntimeTransaction::from_transaction_for_tests)
             .collect()
     }
 
