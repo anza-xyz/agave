@@ -42,10 +42,8 @@ jobs:
           version: "v0.8.1"
 
       - shell: bash
-        run: .github/scripts/cargo-clippy-before-script.sh ${{ runner.os }}
-
-      - shell: bash
         run: |
+          source .github/scripts/install-all-deps.sh ${{ runner.os }}
           source ci/rust-version.sh nightly
           rustup component add clippy --toolchain "$rust_nightly"
           scripts/cargo-clippy-nightly.sh
