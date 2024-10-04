@@ -2902,33 +2902,43 @@ impl Blockstore {
         keys_with_writable: impl Iterator<Item = (&'a Pubkey, bool)>,
         status: TransactionStatusMeta,
         transaction_index: usize,
-        db_write_batch: Option<&mut WriteBatch<'_>>,
     ) -> Result<()> {
-        let batch = db_write_batch.is_some();
         let status = status.into();
         let transaction_index = u32::try_from(transaction_index)
             .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
         self.transaction_status_cf
             .put_protobuf((signature, slot), &status)?;
 
-        let write_batch = if batch {
-            db_write_batch.unwrap()
-        } else {
-            &mut WriteBatch::default()
-        };
+        for (address, writeable) in keys_with_writable {
+            self.address_signatures_cf.put(
+                (*address, slot, transaction_index, signature),
+                &AddressSignatureMeta { writeable },
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn add_transaction_status_to_batch<'a>(
+        &self,
+        slot: Slot,
+        signature: Signature,
+        keys_with_writable: impl Iterator<Item = (&'a Pubkey, bool)>,
+        status: TransactionStatusMeta,
+        transaction_index: usize,
+        db_write_batch: &mut WriteBatch<'_>,
+    ) -> Result<()> {
+        let status = status.into();
+        let transaction_index = u32::try_from(transaction_index)
+            .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+        self.transaction_status_cf
+            .put_protobuf((signature, slot), &status)?;
 
         for (address, writeable) in keys_with_writable {
-            if batch {
-                write_batch.put::<cf::AddressSignatures>(
-                    (*address, slot, transaction_index, signature),
-                    &AddressSignatureMeta { writeable },
-                )?;
-            } else {
-                self.address_signatures_cf.put(
-                    (*address, slot, transaction_index, signature),
-                    &AddressSignatureMeta { writeable },
-                )?;
-            }
+            db_write_batch.put::<cf::AddressSignatures>(
+                (*address, slot, transaction_index, signature),
+                &AddressSignatureMeta { writeable },
+            )?;
         }
 
         Ok(())
@@ -2957,17 +2967,18 @@ impl Blockstore {
         signature: &Signature,
         slot: Slot,
         memos: String,
-        db_write_batch: Option<&mut WriteBatch<'_>>,
     ) -> Result<()> {
-        let batch = db_write_batch.is_some();
+        self.transaction_memos_cf.put((*signature, slot), &memos)
+    }
 
-        if batch {
-            db_write_batch
-                .unwrap()
-                .put::<cf::TransactionMemos>((*signature, slot), &memos)
-        } else {
-            self.transaction_memos_cf.put((*signature, slot), &memos)
-        }
+    pub fn add_transaction_memos_to_batch(
+        &self,
+        signature: &Signature,
+        slot: Slot,
+        memos: String,
+        db_write_batch: &mut WriteBatch<'_>,
+    ) -> Result<()> {
+        db_write_batch.put::<cf::TransactionMemos>((*signature, slot), &memos)
     }
 
     /// Acquires the `lowest_cleanup_slot` lock and returns a tuple of the held lock
@@ -8723,7 +8734,6 @@ pub mod tests {
                     ..TransactionStatusMeta::default()
                 },
                 0,
-                None,
             )
             .unwrap();
 
@@ -9108,7 +9118,6 @@ pub mod tests {
                 vec![(&address0, true)].into_iter(),
                 TransactionStatusMeta::default(),
                 0,
-                None,
             )
             .unwrap();
         blockstore
@@ -9118,7 +9127,6 @@ pub mod tests {
                 vec![(&address1, true)].into_iter(),
                 TransactionStatusMeta::default(),
                 0,
-                None,
             )
             .unwrap();
 
@@ -9487,7 +9495,6 @@ pub mod tests {
                     vec![(&address0, true), (&address1, false)].into_iter(),
                     TransactionStatusMeta::default(),
                     x as usize,
-                    None,
                 )
                 .unwrap();
         }
@@ -9501,7 +9508,6 @@ pub mod tests {
                     vec![(&address0, true), (&address1, false)].into_iter(),
                     TransactionStatusMeta::default(),
                     x as usize,
-                    None,
                 )
                 .unwrap();
         }
@@ -9514,7 +9520,6 @@ pub mod tests {
                     vec![(&address0, true), (&address1, false)].into_iter(),
                     TransactionStatusMeta::default(),
                     x as usize,
-                    None,
                 )
                 .unwrap();
         }
@@ -9528,7 +9533,6 @@ pub mod tests {
                     vec![(&address0, true), (&address1, false)].into_iter(),
                     TransactionStatusMeta::default(),
                     x as usize,
-                    None,
                 )
                 .unwrap();
         }
@@ -9616,7 +9620,6 @@ pub mod tests {
                                 .map(|key| (key, true)),
                             TransactionStatusMeta::default(),
                             counter,
-                            None,
                         )
                         .unwrap();
                     counter += 1;
@@ -9648,7 +9651,6 @@ pub mod tests {
                                 .map(|key| (key, true)),
                             TransactionStatusMeta::default(),
                             counter,
-                            None,
                         )
                         .unwrap();
                     counter += 1;
