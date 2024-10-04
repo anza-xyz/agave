@@ -23,6 +23,15 @@ impl Measure {
         self.duration = self.start.elapsed().as_nanos() as u64;
     }
 
+    pub fn ensure_stop(&mut self) -> bool {
+        if self.duration == 0 {
+            self.stop();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn as_ns(&self) -> u64 {
         self.duration
     }
