@@ -4,12 +4,14 @@
 use {
     crate::mock_bank::{
         create_executable_environment, deploy_program, deploy_program_with_upgrade_authority,
-        program_address, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
-        EXECUTION_SLOT, WALLCLOCK_TIME,
+        program_address, program_data_size, register_builtins, MockBankCallback, MockForkGraph,
+        EXECUTION_EPOCH, EXECUTION_SLOT, WALLCLOCK_TIME,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         clock::Slot,
+        compute_budget::ComputeBudgetInstruction,
+        entrypoint::MAX_PERMITTED_DATA_INCREASE,
         feature_set::{self, FeatureSet},
         hash::Hash,
         instruction::{AccountMeta, Instruction},
@@ -1237,6 +1239,8 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
 
     common_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
+    let common_test_entry = common_test_entry;
+
     // batch 0: one transaction that advances the nonce twice
     {
         let mut test_entry = common_test_entry.clone();
@@ -1599,6 +1603,62 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     test_entries
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteProgramInstruction {
+    Print,
+    Set,
+    Dealloc,
+    Realloc(usize),
+}
+impl WriteProgramInstruction {
+    fn create_transaction(
+        self,
+        program_id: Pubkey,
+        fee_payer: &Keypair,
+        target: Pubkey,
+        clamp_data_size: Option<u32>,
+    ) -> Transaction {
+        let instruction_data = match self {
+            Self::Print => vec![0],
+            Self::Set => vec![1],
+            Self::Dealloc => vec![2],
+            Self::Realloc(new_size) => {
+                let mut vec = vec![3];
+                vec.extend_from_slice(&new_size.to_le_bytes());
+                vec
+            }
+        };
+
+        let account_metas = if self == Self::Dealloc {
+            vec![
+                AccountMeta::new(target, false),
+                AccountMeta::new(solana_sdk::incinerator::id(), false),
+            ]
+        } else {
+            vec![AccountMeta::new(target, false)]
+        };
+
+        let mut instructions = vec![];
+
+        if let Some(size) = clamp_data_size {
+            instructions.push(ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(size));
+        }
+
+        instructions.push(Instruction::new_with_bytes(
+            program_id,
+            &instruction_data,
+            account_metas,
+        ));
+
+        Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&fee_payer.pubkey()),
+            &[fee_payer],
+            Hash::default(),
+        )
+    }
+}
+
 fn account_deallocate() -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
@@ -1631,15 +1691,11 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
         );
         test_entry.add_initial_account(target, &target_data);
 
-        let set_data_transaction = Transaction::new_signed_with_payer(
-            &[Instruction::new_with_bytes(
-                program_id,
-                &[1],
-                vec![AccountMeta::new(target, false)],
-            )],
-            Some(&fee_payer),
-            &[&fee_payer_keypair],
-            Hash::default(),
+        let set_data_transaction = WriteProgramInstruction::Set.create_transaction(
+            program_id,
+            &fee_payer_keypair,
+            target,
+            None,
         );
         test_entry.push_transaction(set_data_transaction);
 
@@ -1649,32 +1705,21 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
         test_entry.update_expected_account_data(target, &target_data);
 
         if remove_lamports {
-            let dealloc_transaction = Transaction::new_signed_with_payer(
-                &[Instruction::new_with_bytes(
-                    program_id,
-                    &[2],
-                    vec![
-                        AccountMeta::new(target, false),
-                        AccountMeta::new(solana_sdk::incinerator::id(), false),
-                    ],
-                )],
-                Some(&fee_payer),
-                &[&fee_payer_keypair],
-                Hash::default(),
+            let dealloc_transaction = WriteProgramInstruction::Dealloc.create_transaction(
+                program_id,
+                &fee_payer_keypair,
+                target,
+                None,
             );
             test_entry.push_transaction(dealloc_transaction);
 
-            let check_transaction = Transaction::new_signed_with_payer(
-                &[Instruction::new_with_bytes(
-                    program_id,
-                    &[0],
-                    vec![AccountMeta::new(target, false)],
-                )],
-                Some(&fee_payer),
-                &[&fee_payer_keypair],
-                Hash::default(),
+            let print_transaction = WriteProgramInstruction::Print.create_transaction(
+                program_id,
+                &fee_payer_keypair,
+                target,
+                None,
             );
-            test_entry.push_transaction(check_transaction);
+            test_entry.push_transaction(print_transaction);
             test_entry.transaction_batch[2]
                 .asserts
                 .logs
@@ -1847,6 +1892,112 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
     vec![test_entry]
 }
 
+fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+
+    let program_name = "write-to-account".to_string();
+    let program_id = program_address(&program_name);
+    let program_size = program_data_size(&program_name);
+
+    let mut common_test_entry = SvmTestEntry::default();
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+    common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    let mk_target = |size| {
+        AccountSharedData::create(
+            LAMPORTS_PER_SOL * 10,
+            vec![0; size],
+            program_id,
+            false,
+            u64::MAX,
+        )
+    };
+
+    let target = Pubkey::new_unique();
+    let target_start_size = 100;
+    common_test_entry.add_initial_account(target, &mk_target(target_start_size));
+
+    let print_transaction = WriteProgramInstruction::Print.create_transaction(
+        program_id,
+        &fee_payer_keypair,
+        target,
+        Some(
+            (program_size + MAX_PERMITTED_DATA_INCREASE)
+                .try_into()
+                .unwrap(),
+        ),
+    );
+
+    common_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+    let common_test_entry = common_test_entry;
+
+    // batch 0/1:
+    // * successful realloc up/down
+    // * change reflected in same batch
+    for new_target_size in [target_start_size + 1, target_start_size - 1] {
+        let mut test_entry = common_test_entry.clone();
+
+        let realloc_transaction = WriteProgramInstruction::Realloc(new_target_size)
+            .create_transaction(program_id, &fee_payer_keypair, target, None);
+        test_entry.push_transaction(realloc_transaction);
+
+        test_entry.push_transaction(print_transaction.clone());
+        test_entry.transaction_batch[1]
+            .asserts
+            .logs
+            .push(format!("Program log: account size {}", new_target_size));
+
+        test_entry.update_expected_account_data(target, &mk_target(new_target_size));
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 2:
+    // * successful large realloc up
+    // * transaction is aborted based on the new transaction data size post-realloc
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let new_target_size = target_start_size + MAX_PERMITTED_DATA_INCREASE;
+        let expected_print_status = if enable_fee_only_transactions {
+            ExecutionStatus::ProcessedFailed
+        } else {
+            test_entry.increase_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+            ExecutionStatus::Discarded
+        };
+
+        let realloc_transaction = WriteProgramInstruction::Realloc(new_target_size)
+            .create_transaction(program_id, &fee_payer_keypair, target, None);
+        test_entry.push_transaction(realloc_transaction);
+
+        test_entry.push_transaction_with_status(print_transaction.clone(), expected_print_status);
+
+        test_entry.update_expected_account_data(target, &mk_target(new_target_size));
+
+        test_entries.push(test_entry);
+    }
+
+    for test_entry in &mut test_entries {
+        test_entry
+            .initial_programs
+            .push((program_name.to_string(), DEPLOYMENT_SLOT));
+
+        if enable_fee_only_transactions {
+            test_entry
+                .enabled_features
+                .push(feature_set::enable_transaction_loading_failure_fees::id());
+        }
+    }
+
+    test_entries
+}
+
 #[test_case(program_medley())]
 #[test_case(simple_transfer(false))]
 #[test_case(simple_transfer(true))]
@@ -1863,6 +2014,8 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
 #[test_case(account_deallocate())]
 #[test_case(fee_payer_deallocate(false))]
 #[test_case(fee_payer_deallocate(true))]
+#[test_case(account_reallocate(false))]
+#[test_case(account_reallocate(true))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         execute_test_entry(test_entry);
@@ -1934,7 +2087,7 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
     );
 
     // build a hashmap of final account states incrementally, starting with all initial states, updating to all final states
-    // NOTE with SIMD-83 an account may appear multiple times in the same batch
+    // we do it this way because an account may change multiple times in the same batch but may not exist on all transactions
     let mut final_accounts_actual = test_entry.initial_accounts.clone();
 
     for (index, processed_transaction) in batch_output.processing_results.iter().enumerate() {
