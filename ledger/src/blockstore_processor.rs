@@ -38,6 +38,7 @@ use {
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         vote_sender_types::ReplayVoteSender,
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
         genesis_config::GenesisConfig,
@@ -60,7 +61,7 @@ use {
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::{HashMap, HashSet},
-        ops::{Index, Range},
+        ops::{Deref, Index, Range},
         path::PathBuf,
         result,
         sync::{
@@ -85,7 +86,7 @@ pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
 // us from nicely unwinding these with manual unlocking.
 pub struct LockedTransactionsWithIndexes<Tx: SVMMessage> {
     lock_results: Vec<Result<()>>,
-    transactions: Vec<Tx>,
+    transactions: Vec<RuntimeTransaction<Tx>>,
     starting_index: usize,
 }
 
@@ -201,7 +202,11 @@ pub fn execute_batch(
     let first_err = get_first_error(batch, &commit_results);
 
     if let Some(transaction_status_sender) = transaction_status_sender {
-        let transactions = batch.sanitized_transactions().to_vec();
+        let transactions: Vec<SanitizedTransaction> = batch
+            .sanitized_transactions()
+            .iter()
+            .map(|tx| tx.deref().clone())
+            .collect();
         let post_token_balances = if record_token_balances {
             collect_token_balances(bank, batch, &mut mint_decimals)
         } else {
@@ -232,7 +237,7 @@ pub fn execute_batch(
 fn check_block_cost_limits(
     bank: &Bank,
     commit_results: &[TransactionCommitResult],
-    sanitized_transactions: &[SanitizedTransaction],
+    sanitized_transactions: &[RuntimeTransaction<SanitizedTransaction>],
 ) -> Result<()> {
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
@@ -447,13 +452,13 @@ fn schedule_batches_for_execution(
     first_err
 }
 
-fn rebatch_transactions<'a>(
+fn rebatch_transactions<'a, Tx: SVMMessage>(
     lock_results: &'a [Result<()>],
     bank: &'a Arc<Bank>,
-    sanitized_txs: &'a [SanitizedTransaction],
+    sanitized_txs: &'a [RuntimeTransaction<Tx>],
     range: Range<usize>,
     transaction_indexes: &'a [usize],
-) -> TransactionBatchWithIndexes<'a, 'a, SanitizedTransaction> {
+) -> TransactionBatchWithIndexes<'a, 'a, Tx> {
     let txs = &sanitized_txs[range.clone()];
     let results = &lock_results[range.clone()];
     let mut tx_batch =
@@ -592,7 +597,7 @@ pub fn process_entries_for_tests(
     let replay_tx_thread_pool = create_thread_pool(1);
     let verify_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction| -> Result<SanitizedTransaction> {
+        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
             bank.verify_transaction(versioned_tx, TransactionVerificationMode::FullVerification)
         }
     };
@@ -721,7 +726,7 @@ fn process_entries(
 fn queue_batches_with_lock_retry(
     bank: &Bank,
     starting_index: usize,
-    transactions: Vec<SanitizedTransaction>,
+    transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
     batches: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
     mut process_batches: impl FnMut(
         Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
@@ -1648,7 +1653,7 @@ fn confirm_slot_entries(
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction,
               verification_mode: TransactionVerificationMode|
-              -> Result<SanitizedTransaction> {
+              -> Result<RuntimeTransaction<SanitizedTransaction>> {
             bank.verify_transaction(versioned_tx, verification_mode)
         }
     };
@@ -2348,7 +2353,7 @@ pub mod tests {
             vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
             vote_transaction,
         },
-        std::{collections::BTreeSet, sync::RwLock},
+        std::{array, collections::BTreeSet, sync::RwLock},
         trees::tr,
     };
 
@@ -4744,7 +4749,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<SanitizedTransaction> {
+    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
         let pubkey = solana_sdk::pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_sdk::pubkey::new_rand();
@@ -4752,19 +4757,19 @@ pub mod tests {
         let pubkey3 = solana_sdk::pubkey::new_rand();
 
         vec![
-            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 mint_keypair,
                 &pubkey,
                 1,
                 *genesis_hash,
             )),
-            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &keypair2,
                 &pubkey2,
                 1,
                 *genesis_hash,
             )),
-            SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &keypair3,
                 &pubkey3,
                 1,
@@ -5138,13 +5143,15 @@ pub mod tests {
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Bank::new_for_tests(&genesis_config);
 
-        let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &Pubkey::new_unique(),
-            1,
-            genesis_config.hash(),
-        ));
-        let mut tx_cost = CostModel::calculate_cost(&tx, &bank.feature_set);
+        let txs: [_; 2] = array::from_fn(|_| {
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &Pubkey::new_unique(),
+                1,
+                genesis_config.hash(),
+            ))
+        });
+        let mut tx_cost = CostModel::calculate_cost(&txs[0], &bank.feature_set);
         let actual_execution_cu = 1;
         let actual_loaded_accounts_data_size = 64 * 1024;
         let TransactionCost::Transaction(ref mut usage_cost_details) = tx_cost else {
@@ -5162,7 +5169,6 @@ pub mod tests {
         bank.write_cost_tracker()
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
-        let txs = vec![tx.clone(), tx];
         let commit_results = vec![
             Ok(CommittedTransaction {
                 status: Ok(()),

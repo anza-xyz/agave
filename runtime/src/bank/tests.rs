@@ -9912,17 +9912,17 @@ fn test_verify_and_hash_transaction_sig_len() {
     // Too few signatures: Sanitization failure
     {
         let tx = make_transaction(TestCase::RemoveSignature);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
     // Too many signatures: Sanitization failure
     {
         let tx = make_transaction(TestCase::AddSignature);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
 }
@@ -9957,9 +9957,9 @@ fn test_verify_transactions_packet_data_size() {
     {
         let tx = make_transaction(25);
         assert!(bincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
     // Assert that verify fails as soon as serialized
@@ -12852,7 +12852,7 @@ fn test_failed_simulation_compute_units() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
 }
@@ -12875,7 +12875,7 @@ fn test_failed_simulation_load_error() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
         simulation,

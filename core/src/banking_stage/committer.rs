@@ -22,7 +22,7 @@ use {
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
     },
-    std::{collections::HashMap, sync::Arc},
+    std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,7 +134,13 @@ impl Committer {
         starting_transaction_index: Option<usize>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
-            let txs = batch.sanitized_transactions().to_vec();
+            // Clone `SanitizedTransaction` out of `RuntimeTransaction`, this is
+            // done to send over the status sender.
+            let txs = batch
+                .sanitized_transactions()
+                .iter()
+                .map(|tx| tx.deref().clone())
+                .collect_vec();
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);

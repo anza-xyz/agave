@@ -724,6 +724,7 @@ mod tests {
             tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
         },
         crossbeam_channel::unbounded,
+        itertools::Itertools,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
@@ -733,9 +734,10 @@ mod tests {
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             address_lookup_table::AddressLookupTableAccount,
-            clock::{Slot, MAX_PROCESSING_AGE},
+            clock::Slot,
             genesis_config::GenesisConfig,
             message::{
                 v0::{self, LoadedAddresses},
@@ -746,9 +748,7 @@ mod tests {
             signature::Keypair,
             signer::Signer,
             system_instruction, system_transaction,
-            transaction::{
-                MessageHash, SanitizedTransaction, TransactionError, VersionedTransaction,
-            },
+            transaction::VersionedTransaction,
         },
         solana_svm_transaction::svm_message::SVMMessage,
         std::{
@@ -1101,7 +1101,7 @@ mod tests {
                 readonly: vec![],
             };
             let loader = SimpleAddressLoader::Enabled(loaded_addresses);
-            SanitizedTransaction::try_create(
+            RuntimeTransaction::try_create(
                 VersionedTransaction::try_new(
                     VersionedMessage::V0(
                         v0::Message::try_compile(
@@ -1118,7 +1118,7 @@ mod tests {
                     &[&payer],
                 )
                 .unwrap(),
-                MessageHash::Compute,
+                None,
                 None,
                 loader,
                 &HashSet::default(),
@@ -1134,7 +1134,8 @@ mod tests {
         txs.push(simple_v0_transfer());
         txs.push(simple_v0_transfer());
         txs.push(simple_v0_transfer());
-        let sanitized_txs = txs.clone();
+
+        let signatures = txs.iter().map(|tx| *tx.signature()).collect::<Vec<_>>();
 
         // Fund the keypairs.
         for tx in &txs {
@@ -1193,30 +1194,11 @@ mod tests {
         // all but one succeed. 6 for initial funding
         assert_eq!(bank.transaction_count(), 6 + 5);
 
-        let already_processed_results = bank
-            .check_transactions(
-                &sanitized_txs,
-                &vec![Ok(()); sanitized_txs.len()],
-                MAX_PROCESSING_AGE,
-                &mut TransactionErrorMetrics::default(),
-            )
-            .into_iter()
-            .map(|r| match r {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            already_processed_results,
-            vec![
-                Err(TransactionError::AlreadyProcessed),
-                Err(TransactionError::AlreadyProcessed),
-                Err(TransactionError::AlreadyProcessed),
-                Ok(()), // <--- this transaction was not processed
-                Err(TransactionError::AlreadyProcessed),
-                Err(TransactionError::AlreadyProcessed)
-            ]
-        );
+        let is_processed = signatures
+            .iter()
+            .map(|signature| bank.get_signature_status(signature).is_some())
+            .collect_vec();
+        assert_eq!(is_processed, [true, true, true, false, true, true]);
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
