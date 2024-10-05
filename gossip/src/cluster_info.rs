@@ -2397,9 +2397,6 @@ impl ClusterInfo {
                     .collect()
             })
         };
-        if prune_messages.is_empty() {
-            return;
-        }
         let mut packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
             recycler,
             "handle_batch_push_messages",
@@ -2429,7 +2426,9 @@ impl ClusterInfo {
         self.stats
             .packets_sent_push_messages_count
             .add_relaxed((packet_batch.len() - num_prune_packets) as u64);
-        let _ = response_sender.send(packet_batch);
+        if !packet_batch.is_empty() {
+            let _ = response_sender.send(packet_batch);
+        }
     }
 
     fn require_stake_for_gossip(&self, stakes: &HashMap<Pubkey, u64>) -> bool {
@@ -2875,11 +2874,19 @@ pub struct Sockets {
     pub tpu_forwards: Vec<UdpSocket>,
     pub tpu_vote: Vec<UdpSocket>,
     pub broadcast: Vec<UdpSocket>,
+    // Socket sending out local repair requests,
+    // and receiving repair responses from the cluster.
     pub repair: UdpSocket,
+    pub repair_quic: UdpSocket,
     pub retransmit_sockets: Vec<UdpSocket>,
+    // Socket receiving remote repair requests from the cluster,
+    // and sending back repair responses.
     pub serve_repair: UdpSocket,
     pub serve_repair_quic: UdpSocket,
+    // Socket sending out local RepairProtocol::AncestorHashes,
+    // and receiving AncestorHashesResponse from the cluster.
     pub ancestor_hashes_requests: UdpSocket,
+    pub ancestor_hashes_requests_quic: UdpSocket,
     pub tpu_quic: Vec<UdpSocket>,
     pub tpu_forwards_quic: Vec<UdpSocket>,
 }
@@ -2952,6 +2959,7 @@ impl Node {
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints, quic_config).unwrap();
         let tpu_vote = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
+        let repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let rpc_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
         let rpc_pubsub_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
@@ -2961,6 +2969,7 @@ impl Node {
         let serve_repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let serve_repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let ancestor_hashes_requests = UdpSocket::bind(&unspecified_bind_addr).unwrap();
+        let ancestor_hashes_requests_quic = UdpSocket::bind(&unspecified_bind_addr).unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -3009,10 +3018,12 @@ impl Node {
                 tpu_vote: vec![tpu_vote],
                 broadcast,
                 repair,
+                repair_quic,
                 retransmit_sockets: vec![retransmit_socket],
                 serve_repair,
                 serve_repair_quic,
                 ancestor_hashes_requests,
+                ancestor_hashes_requests_quic,
                 tpu_quic,
                 tpu_forwards_quic,
             },
@@ -3085,10 +3096,12 @@ impl Node {
         let (tpu_vote_port, tpu_vote) = Self::bind(bind_ip_addr, port_range);
         let (_, retransmit_socket) = Self::bind(bind_ip_addr, port_range);
         let (_, repair) = Self::bind(bind_ip_addr, port_range);
+        let (_, repair_quic) = Self::bind(bind_ip_addr, port_range);
         let (serve_repair_port, serve_repair) = Self::bind(bind_ip_addr, port_range);
         let (serve_repair_quic_port, serve_repair_quic) = Self::bind(bind_ip_addr, port_range);
         let (_, broadcast) = Self::bind(bind_ip_addr, port_range);
         let (_, ancestor_hashes_requests) = Self::bind(bind_ip_addr, port_range);
+        let (_, ancestor_hashes_requests_quic) = Self::bind(bind_ip_addr, port_range);
 
         let rpc_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
         let rpc_pubsub_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
@@ -3135,10 +3148,12 @@ impl Node {
                 tpu_vote: vec![tpu_vote],
                 broadcast: vec![broadcast],
                 repair,
+                repair_quic,
                 retransmit_sockets: vec![retransmit_socket],
                 serve_repair,
                 serve_repair_quic,
                 ancestor_hashes_requests,
+                ancestor_hashes_requests_quic,
                 tpu_quic,
                 tpu_forwards_quic,
             },
@@ -3200,6 +3215,7 @@ impl Node {
             multi_bind_in_range(bind_ip_addr, port_range, 8).expect("retransmit multi_bind");
 
         let (_, repair) = Self::bind(bind_ip_addr, port_range);
+        let (_, repair_quic) = Self::bind(bind_ip_addr, port_range);
         let (serve_repair_port, serve_repair) = Self::bind(bind_ip_addr, port_range);
         let (serve_repair_quic_port, serve_repair_quic) = Self::bind(bind_ip_addr, port_range);
 
@@ -3207,6 +3223,7 @@ impl Node {
             multi_bind_in_range(bind_ip_addr, port_range, 4).expect("broadcast multi_bind");
 
         let (_, ancestor_hashes_requests) = Self::bind(bind_ip_addr, port_range);
+        let (_, ancestor_hashes_requests_quic) = Self::bind(bind_ip_addr, port_range);
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -3240,11 +3257,13 @@ impl Node {
                 tpu_vote: tpu_vote_sockets,
                 broadcast,
                 repair,
+                repair_quic,
                 retransmit_sockets,
                 serve_repair,
                 serve_repair_quic,
                 ip_echo: Some(ip_echo),
                 ancestor_hashes_requests,
+                ancestor_hashes_requests_quic,
                 tpu_quic,
                 tpu_forwards_quic,
             },

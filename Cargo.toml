@@ -119,6 +119,7 @@ members = [
     "sdk/program-error",
     "sdk/program-memory",
     "sdk/program-option",
+    "sdk/program-pack",
     "sdk/pubkey",
     "sdk/serde-varint",
     "sdk/serialize-utils",
@@ -163,7 +164,10 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/tests/example-programs"]
+exclude = [
+    "programs/sbf",
+    "svm/tests/example-programs",
+]
 
 resolver = "2"
 
@@ -201,7 +205,7 @@ assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
 async-lock = "3.4.0"
-async-trait = "0.1.82"
+async-trait = "0.1.83"
 atty = "0.2.11"
 backoff = "0.4.0"
 base64 = "0.22.1"
@@ -272,7 +276,7 @@ hyper = "0.14.30"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
 index_list = "0.2.13"
-indexmap = "2.5.0"
+indexmap = "2.6.0"
 indicatif = "0.17.8"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
@@ -297,7 +301,7 @@ libsecp256k1 = { version = "0.6.0", default-features = false, features = [
 light-poseidon = "0.2.0"
 log = "0.4.22"
 lru = "0.7.7"
-lz4 = "1.27.0"
+lz4 = "1.28.0"
 memmap2 = "0.5.10"
 memoffset = "0.9"
 merlin = "3"
@@ -334,7 +338,7 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.10.6"
+regex = "1.11.0"
 reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
@@ -428,6 +432,7 @@ solana-program = { path = "sdk/program", version = "=2.1.0", default-features = 
 solana-program-error = { path = "sdk/program-error", version = "=2.1.0" }
 solana-program-memory = { path = "sdk/program-memory", version = "=2.1.0" }
 solana-program-option = { path = "sdk/program-option", version = "=2.1.0" }
+solana-program-pack = { path = "sdk/program-pack", version = "=2.1.0" }
 solana-program-runtime = { path = "program-runtime", version = "=2.1.0" }
 solana-program-test = { path = "program-test", version = "=2.1.0" }
 solana-pubkey = { path = "sdk/pubkey", version = "=2.1.0", default-features = false }
@@ -501,9 +506,9 @@ syn = "2.0"
 sys-info = "0.9.1"
 sysctl = "0.4.6"
 systemstat = "0.2.3"
-tar = "0.4.41"
+tar = "0.4.42"
 tarpc = "0.29.0"
-tempfile = "3.12.0"
+tempfile = "3.13.0"
 test-case = "3.3.1"
 thiserror = "1.0.64"
 tiny-bip39 = "0.8.2"
