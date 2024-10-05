@@ -507,7 +507,7 @@ mod tests {
         use {
             super::*,
             solana_accounts_db::{
-                account_storage::meta::StoredMetaWriteVersion, accounts_db::BankHashStats,
+                account_storage::meta::StoredMetaWriteVersion, accounts_db::stats::BankHashStats,
             },
             solana_frozen_abi::abi_example::AbiExample,
             solana_sdk::clock::Slot,
@@ -535,7 +535,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "8hwm4YsQXJWGZdp762SkJnDok29LXKwFtmW9oQ2KSzrN")
+            frozen_abi(digest = "BzZMy3Mia1DHMaQGwSyPPChUWSw8MpHsZEwGWGDyMJFS")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
