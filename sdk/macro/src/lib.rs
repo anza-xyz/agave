@@ -190,6 +190,7 @@ pub fn pubkey(input: TokenStream) -> TokenStream {
     TokenStream::from(quote! {#id})
 }
 
+#[deprecated(since = "2.1.0", note = "Use `solana_pubkey::pubkey!` instead")]
 #[proc_macro]
 pub fn program_pubkey(input: TokenStream) -> TokenStream {
     let id = parse_macro_input!(input as ProgramSdkPubkey);

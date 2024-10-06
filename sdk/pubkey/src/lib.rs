@@ -1092,6 +1092,28 @@ macro_rules! declare_deprecated_id {
     };
 }
 
+/// Convenience macro to define a static public key.
+///
+/// Input: a single literal base58 string representation of a Pubkey.
+///
+/// # Example
+///
+/// ```
+/// use std::str::FromStr;
+/// use solana_pubkey::{pubkey, Pubkey};
+///
+/// static ID: Pubkey = pubkey!("My11111111111111111111111111111111111111111");
+///
+/// let my_id = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
+/// assert_eq!(ID, my_id);
+/// ```
+#[macro_export]
+macro_rules! pubkey {
+    ($input:literal) => {
+        $crate::Pubkey::from_str_const($input)
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use {super::*, strum::IntoEnumIterator};
@@ -1361,5 +1383,15 @@ mod tests {
                 ParsePubkeyError::from_i64(variant_i64)
             );
         }
+    }
+
+    #[test]
+    fn test_pubkey_macro() {
+        const PK: Pubkey = Pubkey::from_str_const("9h1HyLCW5dZnBVap8C5egQ9Z6pHyjsh5MNy83iPqqRuq");
+        assert_eq!(pubkey!("9h1HyLCW5dZnBVap8C5egQ9Z6pHyjsh5MNy83iPqqRuq"), PK);
+        assert_eq!(
+            Pubkey::from_str("9h1HyLCW5dZnBVap8C5egQ9Z6pHyjsh5MNy83iPqqRuq").unwrap(),
+            PK
+        );
     }
 }

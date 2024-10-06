@@ -597,27 +597,7 @@ pub mod sdk_ids {
 
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
 pub use solana_decode_error as decode_error;
-pub use solana_pubkey::{declare_deprecated_id, declare_id};
-/// Convenience macro to define a static public key.
-///
-/// Input: a single literal base58 string representation of a Pubkey.
-///
-/// # Example
-///
-/// ```
-/// use std::str::FromStr;
-/// use solana_program::{pubkey, pubkey::Pubkey};
-///
-/// static ID: Pubkey = pubkey!("My11111111111111111111111111111111111111111");
-///
-/// let my_id = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
-/// assert_eq!(ID, my_id);
-/// ```
-#[deprecated(
-    since = "2.1.0",
-    note = "Use `solana_pubkey::Pubkey::from_str_const` instead"
-)]
-pub use solana_sdk_macro::program_pubkey as pubkey;
+pub use solana_pubkey::{declare_deprecated_id, declare_id, pubkey};
 
 #[macro_use]
 extern crate serde_derive;
