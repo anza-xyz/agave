@@ -1464,10 +1464,6 @@ mod tests {
             Arc::new(ProgramCacheEntry::default()),
         );
 
-        let mut cached_program = AccountSharedData::default();
-        cached_program.set_owner(native_loader::id());
-        cached_program.set_executable(true);
-
         let result = load_transaction_accounts(
             &mock_bank,
             transaction.message(),
@@ -1484,12 +1480,16 @@ mod tests {
         );
 
         // with cache, executable flag is bypassed
+        let mut cached_program = AccountSharedData::default();
+        cached_program.set_owner(native_loader::id());
+        cached_program.set_executable(true);
+
         assert_eq!(
             result.unwrap(),
             LoadedTransactionAccounts {
                 accounts: vec![
                     (account_keypair.pubkey(), account_data.clone()),
-                    (program_keypair.pubkey(), cached_program.clone()),
+                    (program_keypair.pubkey(), cached_program),
                 ],
                 program_indices: vec![vec![1]],
                 rent: 0,
@@ -2377,7 +2377,7 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
 
         let mut next_size = 1;
-        let mut mk_account = |pubkey, owner, executable| {
+        let mut make_account = |pubkey, owner, executable| {
             let size = next_size;
             let account = AccountSharedData::create(
                 LAMPORTS_PER_SOL,
@@ -2396,35 +2396,32 @@ mod tests {
             (size as u32, account)
         };
 
-        let (native_loader_size, _) = mk_account(native_loader::id(), native_loader::id(), true);
-        let (bpf_loader_size, _) = mk_account(bpf_loader::id(), native_loader::id(), true);
+        let (native_loader_size, _) = make_account(native_loader::id(), native_loader::id(), true);
+        let (bpf_loader_size, _) = make_account(bpf_loader::id(), native_loader::id(), true);
         let (upgradeable_loader_size, _) =
-            mk_account(bpf_loader_upgradeable::id(), native_loader::id(), true);
+            make_account(bpf_loader_upgradeable::id(), native_loader::id(), true);
 
         let program1_keypair = Keypair::new();
         let program1 = program1_keypair.pubkey();
-        let (program1_size, _) = mk_account(program1, bpf_loader::id(), true);
+        let (program1_size, _) = make_account(program1, bpf_loader::id(), true);
 
-        let program2_keypair = Keypair::new();
-        let program2 = program2_keypair.pubkey();
-        let (program2_size, _) = mk_account(program2, bpf_loader_upgradeable::id(), true);
+        let program2 = Pubkey::new_unique();
+        let (program2_size, _) = make_account(program2, bpf_loader_upgradeable::id(), true);
 
-        let programdata2_keypair = Keypair::new();
-        let programdata2 = programdata2_keypair.pubkey();
-        let (programdata2_size, _) = mk_account(programdata2, bpf_loader_upgradeable::id(), false);
+        let programdata2 = Pubkey::new_unique();
+        let (programdata2_size, _) =
+            make_account(programdata2, bpf_loader_upgradeable::id(), false);
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
         let (fee_payer_size, fee_payer_account) =
-            mk_account(fee_payer, system_program::id(), false);
+            make_account(fee_payer, system_program::id(), false);
 
-        let account1_keypair = Keypair::new();
-        let account1 = account1_keypair.pubkey();
-        let (account1_size, _) = mk_account(account1, program1, false);
+        let account1 = Pubkey::new_unique();
+        let (account1_size, _) = make_account(account1, program1, false);
 
-        let account2_keypair = Keypair::new();
-        let account2 = account2_keypair.pubkey();
-        let (account2_size, _) = mk_account(account2, program2, false);
+        let account2 = Pubkey::new_unique();
+        let (account2_size, _) = make_account(account2, program2, false);
 
         let test_data_size_with_cache = |instructions: Vec<_>, cache, expected_size| {
             let transaction = SanitizedTransaction::from_transaction_for_tests(
@@ -2577,13 +2574,6 @@ mod tests {
                 ..ProgramCacheEntry::default()
             };
             program_cache.replenish(program2, Arc::new(program2_entry));
-
-            let programdata2_entry = ProgramCacheEntry {
-                account_size: programdata2_size as usize,
-                account_owner: ProgramCacheEntryOwner::LoaderV3,
-                ..ProgramCacheEntry::default()
-            };
-            program_cache.replenish(programdata2, Arc::new(programdata2_entry));
 
             // normal function call uses the combined cache size
             let ixns = vec![Instruction::new_with_bytes(program2, &[], vec![])];
