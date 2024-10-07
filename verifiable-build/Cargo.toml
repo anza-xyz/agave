@@ -1,0 +1,38 @@
+[package]
+name = "solana-verify"
+version = "0.2.12"
+edition = "2021"
+description = "A CLI tool for building verifiable Solana programs"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = "2.33.1" # version of v1.18 does not support derive
+anyhow = "1.0.79"
+tokio = { version = "1.29.1", features = ["full"] }
+solana-client = "=1.18.23"
+solana-cli-config = "=1.18.23"
+solana-clap-utils = "=1.18.23"
+solana-sdk = "=1.18.23"
+sha256 = "1.1.1" # missing in workspace
+hex = "0.4.3"
+serde_json = "1.0.111"
+cargo_toml = "0.15.3" # missing in workspace
+pathdiff = "0.2.0" # missing in workspace
+signal-hook = "0.3.17"
+reqwest = "0.11.23"
+cargo-lock = "9.0.0" # missing in workspace
+lazy_static = "1.4.0"
+indicatif = "0.17.7"
+crossbeam-channel = "0.5.11"
+serde = { version = "1.0.195", features = ["derive"] }
+borsh = {version = "1.2.1", features = ["derive"] }
+
+[dependencies.uuid]
+version = "1.2.2"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
