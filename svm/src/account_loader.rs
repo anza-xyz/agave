@@ -223,9 +223,7 @@ fn update_accounts_for_successful_tx<T: SVMMessage>(
     transaction: &T,
     transaction_accounts: &[TransactionAccount],
 ) {
-    // NOTE this selection criterion is different from account saver but accurate for us
-    // namely, we do not append to the transaction accounts vec
-    // so transaction_accounts.len() == transaction.account_keys().len()
+    // TODO update account saver to be like this after i rebase on master
     for (i, (address, account)) in transaction_accounts.iter().enumerate() {
         if !transaction.is_writable(i) {
             continue;
