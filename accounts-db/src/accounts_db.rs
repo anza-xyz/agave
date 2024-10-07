@@ -4393,7 +4393,7 @@ impl AccountsDb {
         // for shrinking.
         if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
             let ancients = self.best_ancient_slots_to_shrink.read().unwrap();
-            if let Some((slot, capacity)) = ancients.first() {
+            for (slot, capacity) in ancients.iter() {
                 if let Some(store) = self.storage.get_slot_storage_entry(*slot) {
                     if !shrink_slots.contains(slot)
                         && *capacity == store.capacity()
@@ -4407,6 +4407,7 @@ impl AccountsDb {
                         self.shrink_stats
                             .ancient_slots_added_to_shrink
                             .fetch_add(1, Ordering::Relaxed);
+                        break;
                     }
                 }
             }
