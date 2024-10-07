@@ -441,17 +441,8 @@ impl Consumer {
         //  or account lookup tables may have been closed.
         let pre_results = txs.iter().zip(max_ages).map(|(tx, max_age)| {
             if bank.slot() > max_age.epoch_invalidation_slot {
-                // Epoch has rolled over. Need to fully re-verify the transaction.
-                // Pre-compiles are verified here.
-                // Attempt re-sanitization after epoch-cross.
-                // Re-sanitized transaction should be equal to the original transaction,
-                // but whether it will pass sanitization needs to be checked.
-                let resanitized_tx =
-                    bank.fully_verify_transaction(tx.to_versioned_transaction())?;
-                if resanitized_tx != *tx {
-                    // Sanitization before/after epoch give different transaction data - do not execute.
-                    return Err(TransactionError::ResanitizationNeeded);
-                }
+                // Epoch has rolled over. Need to re-verify the transaction.
+                bank.reverify_transaction(tx)?;
             } else {
                 if bank.slot() > max_age.alt_invalidation_slot {
                     // The address table lookup **may** have expired, but the
