@@ -2374,104 +2374,58 @@ mod tests {
     fn test_load_transaction_accounts_data_sizes() {
         let mut mock_bank = TestCallbacks::default();
 
-        let native_loader_size = 0x1;
-        let native_loader = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; native_loader_size as usize],
-            native_loader::id(),
-            true,
-            u64::MAX,
-        );
-        mock_bank
-            .accounts_map
-            .insert(native_loader::id(), native_loader);
+        let mut next_size = 1;
+        let mut mk_account = |pubkey, owner, executable| {
+            let size = next_size;
+            let account = AccountSharedData::create(
+                LAMPORTS_PER_SOL,
+                vec![0; size],
+                owner,
+                executable,
+                u64::MAX,
+            );
 
-        let bpf_loader_size = 0x1 << 1;
-        let bpf_loader = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; bpf_loader_size as usize],
-            native_loader::id(),
-            true,
-            u64::MAX,
-        );
-        mock_bank.accounts_map.insert(bpf_loader::id(), bpf_loader);
+            mock_bank.accounts_map.insert(pubkey, account.clone());
 
-        let upgradeable_loader_size = 0x1 << 2;
-        let upgradeable_loader = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; upgradeable_loader_size as usize],
-            native_loader::id(),
-            true,
-            u64::MAX,
-        );
-        mock_bank
-            .accounts_map
-            .insert(bpf_loader_upgradeable::id(), upgradeable_loader);
+            // accounts are counted at most twice
+            // by multiplying account size by 4, we ensure all totals are unique
+            next_size *= 4;
+
+            (size as u32, account)
+        };
+
+        let (native_loader_size, _) = mk_account(native_loader::id(), native_loader::id(), true);
+        let (bpf_loader_size, _) = mk_account(bpf_loader::id(), native_loader::id(), true);
+        let (upgradeable_loader_size, _) =
+            mk_account(bpf_loader_upgradeable::id(), native_loader::id(), true);
 
         let program1_keypair = Keypair::new();
         let program1 = program1_keypair.pubkey();
-        let program1_size = 0x1 << 3;
-        let program1_account = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; program1_size as usize],
-            bpf_loader::id(),
-            true,
-            u64::MAX,
-        );
-        mock_bank.accounts_map.insert(program1, program1_account);
+        let (program1_size, _) = mk_account(program1, bpf_loader::id(), true);
 
         let program2_keypair = Keypair::new();
         let program2 = program2_keypair.pubkey();
-        let program2_size = 0x1 << 4;
-        let program2_account = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; program2_size as usize],
-            bpf_loader_upgradeable::id(),
-            true,
-            u64::MAX,
-        );
-        mock_bank.accounts_map.insert(program2, program2_account);
+        let (program2_size, _) = mk_account(program2, bpf_loader_upgradeable::id(), true);
+
+        let programdata2_keypair = Keypair::new();
+        let programdata2 = programdata2_keypair.pubkey();
+        let (programdata2_size, _) = mk_account(programdata2, bpf_loader_upgradeable::id(), false);
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
-        let fee_payer_size = 0x1 << 5;
-        let fee_payer_account = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; fee_payer_size as usize],
-            system_program::id(),
-            false,
-            u64::MAX,
-        );
-        mock_bank
-            .accounts_map
-            .insert(fee_payer, fee_payer_account.clone());
+        let (fee_payer_size, fee_payer_account) =
+            mk_account(fee_payer, system_program::id(), false);
 
         let account1_keypair = Keypair::new();
         let account1 = account1_keypair.pubkey();
-        let account1_size = 0x1 << 6;
-        let account1_account = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; account1_size as usize],
-            program1_keypair.pubkey(),
-            false,
-            u64::MAX,
-        );
-        mock_bank.accounts_map.insert(account1, account1_account);
+        let (account1_size, _) = mk_account(account1, program1, false);
 
         let account2_keypair = Keypair::new();
         let account2 = account2_keypair.pubkey();
-        let account2_size = 0x1 << 7;
-        let account2_account = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            vec![0; account2_size as usize],
-            program2_keypair.pubkey(),
-            false,
-            u64::MAX,
-        );
-        mock_bank.accounts_map.insert(account2, account2_account);
+        let (account2_size, _) = mk_account(account2, program2, false);
 
         for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
-            let test_data_size = |instructions, expected_size| {
+            let test_data_size_with_cache = |instructions, cache, expected_size| {
                 let transaction = SanitizedTransaction::from_transaction_for_tests(
                     Transaction::new_signed_with_payer(
                         instructions,
@@ -2494,7 +2448,7 @@ mod tests {
                     None,
                     &FeatureSet::default(),
                     &RentCollector::default(),
-                    &ProgramCacheForTxBatch::default(),
+                    &cache,
                 )
                 .unwrap();
 
@@ -2502,6 +2456,14 @@ mod tests {
                     loaded_transaction_accounts.loaded_accounts_data_size,
                     expected_size
                 );
+            };
+
+            let test_data_size = |instructions, expected_size| {
+                test_data_size_with_cache(
+                    instructions,
+                    ProgramCacheForTxBatch::default(),
+                    expected_size,
+                )
             };
 
             // one program plus loader
@@ -2605,4 +2567,13 @@ mod tests {
             test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
         }
     }
+
+    // XXX ok what do i actually need to test here
+    // * tx uses a program that it finds in the cache: total size
+    // * tx uses the program and includes it as an instruction account: program id size
+    // * tx uses the program and includes the program data as an instruction account: total plus data size
+    // * tx uses the program and includes both as instruction accounts: total size
+    // and we need to test these in a *batch* with load_accounts for the new loader
+    // to make sure we get the cache size overrides no matter what
+    // and may consider including program data size despite instruction account. idk
 }
