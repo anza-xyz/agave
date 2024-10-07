@@ -440,16 +440,8 @@ impl Consumer {
         //  or account lookup tables may have been closed.
         let pre_results = txs.iter().zip(max_slot_ages).map(|(tx, max_slot_age)| {
             if *max_slot_age < bank.slot() {
-                // Pre-compiles are verified here.
-                // Attempt re-sanitization after epoch-cross.
-                // Re-sanitized transaction should be equal to the original transaction,
-                // but whether it will pass sanitization needs to be checked.
-                let resanitized_tx =
-                    bank.fully_verify_transaction(tx.to_versioned_transaction())?;
-                if resanitized_tx != *tx {
-                    // Sanitization before/after epoch give different transaction data - do not execute.
-                    return Err(TransactionError::ResanitizationNeeded);
-                }
+                // Re-verify all state that depends on features or state.
+                bank.reverify_transaction(tx)?;
             } else {
                 // Verify pre-compiles.
                 if !move_precompile_verification_to_svm {
