@@ -1372,6 +1372,8 @@ pub struct AccountsDb {
 
     pub thread_pool_clean: ThreadPool,
 
+    pub thread_pool_hash: ThreadPool,
+
     bank_hash_stats: Mutex<HashMap<Slot, BankHashStats>>,
     accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
     accounts_hashes: Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>>,
@@ -1657,11 +1659,24 @@ pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
 
+pub fn one_eighth_thread_count() -> usize {
+    std::cmp::max(2, num_cpus::get() / 8)
+}
+
 pub fn make_min_priority_thread_pool() -> ThreadPool {
     // Use lower thread count to reduce priority.
     let num_threads = quarter_thread_count();
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solAccountsLo{i:02}"))
+        .num_threads(num_threads)
+        .build()
+        .unwrap()
+}
+
+pub fn make_hash_thread_pool() -> ThreadPool {
+    let num_threads = one_eighth_thread_count();
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("solAccountsHash{i:02}"))
         .num_threads(num_threads)
         .build()
         .unwrap()
@@ -1778,6 +1793,7 @@ impl AccountsDb {
                 .build()
                 .unwrap(),
             thread_pool_clean: make_min_priority_thread_pool(),
+            thread_pool_hash: make_hash_thread_pool(),
             bank_hash_stats: Mutex::new(bank_hash_stats),
             accounts_delta_hashes: Mutex::new(HashMap::new()),
             accounts_hashes: Mutex::new(HashMap::new()),
@@ -7034,7 +7050,7 @@ impl AccountsDb {
         };
 
         let result = if use_bg_thread_pool {
-            self.thread_pool_clean.install(scan_and_hash)
+            self.thread_pool_hash.install(scan_and_hash)
         } else {
             scan_and_hash()
         };
