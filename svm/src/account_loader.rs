@@ -584,7 +584,9 @@ mod tests {
         nonce::state::Versions as NonceVersions,
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
         solana_feature_set::FeatureSet,
-        solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+        solana_program_runtime::loaded_programs::{
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheForTxBatch,
+        },
         solana_sdk::{
             account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader, bpf_loader_upgradeable,
@@ -2424,40 +2426,40 @@ mod tests {
         let account2 = account2_keypair.pubkey();
         let (account2_size, _) = mk_account(account2, program2, false);
 
+        let test_data_size_with_cache = |instructions: Vec<_>, cache, expected_size| {
+            let transaction = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &instructions,
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair],
+                    Hash::default(),
+                ),
+            );
+
+            let loaded_transaction_accounts = load_transaction_accounts(
+                &mock_bank,
+                &transaction,
+                LoadedTransactionAccount {
+                    account: fee_payer_account.clone(),
+                    loaded_size: fee_payer_size as usize,
+                    rent_collected: 0,
+                },
+                &ComputeBudgetLimits::default(),
+                &mut TransactionErrorMetrics::default(),
+                None,
+                &FeatureSet::default(),
+                &RentCollector::default(),
+                &cache,
+            )
+            .unwrap();
+
+            assert_eq!(
+                loaded_transaction_accounts.loaded_accounts_data_size,
+                expected_size
+            );
+        };
+
         for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
-            let test_data_size_with_cache = |instructions, cache, expected_size| {
-                let transaction = SanitizedTransaction::from_transaction_for_tests(
-                    Transaction::new_signed_with_payer(
-                        instructions,
-                        Some(&fee_payer),
-                        &[&fee_payer_keypair],
-                        Hash::default(),
-                    ),
-                );
-
-                let loaded_transaction_accounts = load_transaction_accounts(
-                    &mock_bank,
-                    &transaction,
-                    LoadedTransactionAccount {
-                        account: fee_payer_account.clone(),
-                        loaded_size: fee_payer_size as usize,
-                        rent_collected: 0,
-                    },
-                    &ComputeBudgetLimits::default(),
-                    &mut TransactionErrorMetrics::default(),
-                    None,
-                    &FeatureSet::default(),
-                    &RentCollector::default(),
-                    &cache,
-                )
-                .unwrap();
-
-                assert_eq!(
-                    loaded_transaction_accounts.loaded_accounts_data_size,
-                    expected_size
-                );
-            };
-
             let test_data_size = |instructions, expected_size| {
                 test_data_size_with_cache(
                     instructions,
@@ -2468,7 +2470,7 @@ mod tests {
 
             // one program plus loader
             let ixns = vec![Instruction::new_with_bytes(program1, &[], vec![])];
-            test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
+            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
 
             // two programs, two loaders, two accounts
             let ixns = vec![
@@ -2476,7 +2478,7 @@ mod tests {
                 Instruction::new_with_bytes(program2, &[], vec![account_meta(account2, false)]),
             ];
             test_data_size(
-                &ixns,
+                ixns,
                 account1_size
                     + account2_size
                     + program1_size
@@ -2493,7 +2495,7 @@ mod tests {
                 vec![account_meta(account2, false)],
             )];
             test_data_size(
-                &ixns,
+                ixns,
                 account2_size + program1_size + bpf_loader_size + fee_payer_size,
             );
 
@@ -2502,11 +2504,11 @@ mod tests {
                 Instruction::new_with_bytes(program1, &[], vec![]),
                 Instruction::new_with_bytes(program1, &[], vec![]),
             ];
-            test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
+            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
 
             // native loader not counted if loader
             let ixns = vec![Instruction::new_with_bytes(bpf_loader::id(), &[], vec![])];
-            test_data_size(&ixns, bpf_loader_size + fee_payer_size);
+            test_data_size(ixns, bpf_loader_size + fee_payer_size);
 
             // native loader counted if instruction
             let ixns = vec![Instruction::new_with_bytes(
@@ -2514,7 +2516,7 @@ mod tests {
                 &[],
                 vec![account_meta(native_loader::id(), false)],
             )];
-            test_data_size(&ixns, bpf_loader_size + native_loader_size + fee_payer_size);
+            test_data_size(ixns, bpf_loader_size + native_loader_size + fee_payer_size);
 
             // loader counted twice if included in instruction
             let ixns = vec![Instruction::new_with_bytes(
@@ -2522,7 +2524,7 @@ mod tests {
                 &[],
                 vec![account_meta(bpf_loader::id(), false)],
             )];
-            test_data_size(&ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
+            test_data_size(ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
 
             // cover that case with multiple loaders to be sure
             let ixns = vec![
@@ -2542,7 +2544,7 @@ mod tests {
                 ),
             ];
             test_data_size(
-                &ixns,
+                ixns,
                 account1_size
                     + program1_size
                     + program2_size
@@ -2556,7 +2558,7 @@ mod tests {
                 Instruction::new_with_bytes(bpf_loader::id(), &[], vec![]),
                 Instruction::new_with_bytes(program1, &[], vec![]),
             ];
-            test_data_size(&ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
+            test_data_size(ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
 
             // fee-payer counted once
             let ixns = vec![Instruction::new_with_bytes(
@@ -2564,16 +2566,76 @@ mod tests {
                 &[],
                 vec![account_meta(fee_payer, false)],
             )];
-            test_data_size(&ixns, program1_size + bpf_loader_size + fee_payer_size);
+            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
+
+            // edge cases involving program cache
+            let mut program_cache = ProgramCacheForTxBatch::default();
+
+            let program2_entry = ProgramCacheEntry {
+                account_size: (program2_size + programdata2_size) as usize,
+                account_owner: ProgramCacheEntryOwner::LoaderV3,
+                ..ProgramCacheEntry::default()
+            };
+            program_cache.replenish(program2, Arc::new(program2_entry));
+
+            let programdata2_entry = ProgramCacheEntry {
+                account_size: programdata2_size as usize,
+                account_owner: ProgramCacheEntryOwner::LoaderV3,
+                ..ProgramCacheEntry::default()
+            };
+            program_cache.replenish(programdata2, Arc::new(programdata2_entry));
+
+            // normal function call uses the combined cache size
+            let ixns = vec![Instruction::new_with_bytes(program2, &[], vec![])];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // program as instruction account bypasses the cache
+            let ixns = vec![Instruction::new_with_bytes(
+                program2,
+                &[],
+                vec![account_meta(program2, false)],
+            )];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // programdata as instruction account double-counts it
+            let ixns = vec![Instruction::new_with_bytes(
+                program2,
+                &[],
+                vec![account_meta(programdata2, false)],
+            )];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + programdata2_size * 2 + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // both as instruction accounts, for completeness
+            let ixns = vec![Instruction::new_with_bytes(
+                program2,
+                &[],
+                vec![
+                    account_meta(program2, false),
+                    account_meta(programdata2, false),
+                ],
+            )];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // NOTE for the new loader we *must* also test arbitrary permutations of the cache transactions
+            // to ensure that the batched loading is overridden on a tx-per-tx basis
+            // also we will need to create a fake vm and use ProgramCacheEntryType::Loaded
+            // since the old loader does not check tombstones, but the new one does
         }
     }
-
-    // XXX ok what do i actually need to test here
-    // * tx uses a program that it finds in the cache: total size
-    // * tx uses the program and includes it as an instruction account: program id size
-    // * tx uses the program and includes the program data as an instruction account: total plus data size
-    // * tx uses the program and includes both as instruction accounts: total size
-    // and we need to test these in a *batch* with load_accounts for the new loader
-    // to make sure we get the cache size overrides no matter what
-    // and may consider including program data size despite instruction account. idk
 }
