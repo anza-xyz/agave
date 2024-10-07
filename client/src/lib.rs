@@ -53,5 +53,5 @@ pub mod rpc_response {
 }
 /// A transport for RPC calls.
 pub mod rpc_sender {
-    pub use solana_rpc_client::rpc_sender::*;
+    pub use solana_rpc_sender::*;
 }

@@ -24,6 +24,7 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-rpc-client-api = { workspace = true }
+solana-rpc-sender = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }
