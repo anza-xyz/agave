@@ -17,15 +17,15 @@ use {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BankHashStats {
-    pub(crate) num_updated_accounts: u64,
-    pub(crate) num_removed_accounts: u64,
-    pub(crate) num_lamports_stored: u64,
-    pub(crate) total_data_len: u64,
-    pub(crate) num_executable_accounts: u64,
+    pub num_updated_accounts: u64,
+    pub num_removed_accounts: u64,
+    pub num_lamports_stored: u64,
+    pub total_data_len: u64,
+    pub num_executable_accounts: u64,
 }
 
 impl BankHashStats {
-    pub(crate) fn update<T: ReadableAccount + ZeroLamport>(&mut self, account: &T) {
+    pub fn update<T: ReadableAccount + ZeroLamport>(&mut self, account: &T) {
         if account.is_zero_lamport() {
             self.num_removed_accounts += 1;
         } else {
@@ -40,7 +40,7 @@ impl BankHashStats {
         self.num_lamports_stored = self.num_lamports_stored.wrapping_add(account.lamports());
     }
 
-    pub(crate) fn accumulate(&mut self, other: &BankHashStats) {
+    pub fn accumulate(&mut self, other: &BankHashStats) {
         self.num_updated_accounts += other.num_updated_accounts;
         self.num_removed_accounts += other.num_removed_accounts;
         self.total_data_len = self.total_data_len.wrapping_add(other.total_data_len);
@@ -53,50 +53,50 @@ impl BankHashStats {
 
 #[derive(Debug, Default)]
 pub struct AccountsStats {
-    pub(crate) delta_hash_scan_time_total_us: AtomicU64,
-    pub(crate) delta_hash_accumulate_time_total_us: AtomicU64,
-    pub(crate) delta_hash_num: AtomicU64,
-    pub(crate) skipped_rewrites_num: AtomicUsize,
+    pub delta_hash_scan_time_total_us: AtomicU64,
+    pub delta_hash_accumulate_time_total_us: AtomicU64,
+    pub delta_hash_num: AtomicU64,
+    pub skipped_rewrites_num: AtomicUsize,
 
-    pub(crate) last_store_report: AtomicInterval,
-    pub(crate) store_hash_accounts: AtomicU64,
-    pub(crate) calc_stored_meta: AtomicU64,
-    pub(crate) store_accounts: AtomicU64,
-    pub(crate) store_update_index: AtomicU64,
-    pub(crate) store_handle_reclaims: AtomicU64,
-    pub(crate) store_append_accounts: AtomicU64,
+    pub last_store_report: AtomicInterval,
+    pub store_hash_accounts: AtomicU64,
+    pub calc_stored_meta: AtomicU64,
+    pub store_accounts: AtomicU64,
+    pub store_update_index: AtomicU64,
+    pub store_handle_reclaims: AtomicU64,
+    pub store_append_accounts: AtomicU64,
     pub stakes_cache_check_and_store_us: AtomicU64,
-    pub(crate) store_num_accounts: AtomicU64,
-    pub(crate) store_total_data: AtomicU64,
-    pub(crate) create_store_count: AtomicU64,
-    pub(crate) store_get_slot_store: AtomicU64,
-    pub(crate) store_find_existing: AtomicU64,
-    pub(crate) dropped_stores: AtomicU64,
-    pub(crate) store_uncleaned_update: AtomicU64,
-    pub(crate) handle_dead_keys_us: AtomicU64,
-    pub(crate) purge_exact_us: AtomicU64,
-    pub(crate) purge_exact_count: AtomicU64,
+    pub store_num_accounts: AtomicU64,
+    pub store_total_data: AtomicU64,
+    pub create_store_count: AtomicU64,
+    pub store_get_slot_store: AtomicU64,
+    pub store_find_existing: AtomicU64,
+    pub dropped_stores: AtomicU64,
+    pub store_uncleaned_update: AtomicU64,
+    pub handle_dead_keys_us: AtomicU64,
+    pub purge_exact_us: AtomicU64,
+    pub purge_exact_count: AtomicU64,
 }
 
 #[derive(Debug, Default)]
 pub struct PurgeStats {
-    pub(crate) last_report: AtomicInterval,
-    pub(crate) safety_checks_elapsed: AtomicU64,
-    pub(crate) remove_cache_elapsed: AtomicU64,
-    pub(crate) remove_storage_entries_elapsed: AtomicU64,
-    pub(crate) drop_storage_entries_elapsed: AtomicU64,
-    pub(crate) num_cached_slots_removed: AtomicUsize,
-    pub(crate) num_stored_slots_removed: AtomicUsize,
-    pub(crate) total_removed_storage_entries: AtomicUsize,
-    pub(crate) total_removed_cached_bytes: AtomicU64,
-    pub(crate) total_removed_stored_bytes: AtomicU64,
-    pub(crate) scan_storages_elapsed: AtomicU64,
-    pub(crate) purge_accounts_index_elapsed: AtomicU64,
-    pub(crate) handle_reclaims_elapsed: AtomicU64,
+    pub last_report: AtomicInterval,
+    pub safety_checks_elapsed: AtomicU64,
+    pub remove_cache_elapsed: AtomicU64,
+    pub remove_storage_entries_elapsed: AtomicU64,
+    pub drop_storage_entries_elapsed: AtomicU64,
+    pub num_cached_slots_removed: AtomicUsize,
+    pub num_stored_slots_removed: AtomicUsize,
+    pub total_removed_storage_entries: AtomicUsize,
+    pub total_removed_cached_bytes: AtomicU64,
+    pub total_removed_stored_bytes: AtomicU64,
+    pub scan_storages_elapsed: AtomicU64,
+    pub purge_accounts_index_elapsed: AtomicU64,
+    pub handle_reclaims_elapsed: AtomicU64,
 }
 
 impl PurgeStats {
-    pub(crate) fn report(&self, metric_name: &'static str, report_interval_ms: Option<u64>) {
+    pub fn report(&self, metric_name: &'static str, report_interval_ms: Option<u64>) {
         let should_report = report_interval_ms
             .map(|report_interval_ms| self.last_report.should_update(report_interval_ms))
             .unwrap_or(true);
@@ -173,13 +173,13 @@ impl PurgeStats {
 
 #[derive(Default, Debug)]
 pub struct StoreAccountsTiming {
-    pub(crate) store_accounts_elapsed: u64,
-    pub(crate) update_index_elapsed: u64,
-    pub(crate) handle_reclaims_elapsed: u64,
+    pub store_accounts_elapsed: u64,
+    pub update_index_elapsed: u64,
+    pub handle_reclaims_elapsed: u64,
 }
 
 impl StoreAccountsTiming {
-    pub(crate) fn accumulate(&mut self, other: &Self) {
+    pub fn accumulate(&mut self, other: &Self) {
         self.store_accounts_elapsed += other.store_accounts_elapsed;
         self.update_index_elapsed += other.update_index_elapsed;
         self.handle_reclaims_elapsed += other.handle_reclaims_elapsed;
@@ -187,16 +187,16 @@ impl StoreAccountsTiming {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct FlushStats {
-    pub(crate) num_flushed: Saturating<usize>,
-    pub(crate) num_purged: Saturating<usize>,
-    pub(crate) total_size: Saturating<u64>,
-    pub(crate) store_accounts_timing: StoreAccountsTiming,
-    pub(crate) store_accounts_total_us: Saturating<u64>,
+pub struct FlushStats {
+    pub num_flushed: Saturating<usize>,
+    pub num_purged: Saturating<usize>,
+    pub total_size: Saturating<u64>,
+    pub store_accounts_timing: StoreAccountsTiming,
+    pub store_accounts_total_us: Saturating<u64>,
 }
 
 impl FlushStats {
-    pub(crate) fn accumulate(&mut self, other: &Self) {
+    pub fn accumulate(&mut self, other: &Self) {
         self.num_flushed += other.num_flushed;
         self.num_purged += other.num_purged;
         self.total_size += other.total_size;
@@ -207,18 +207,18 @@ impl FlushStats {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct LatestAccountsIndexRootsStats {
-    pub(crate) roots_len: AtomicUsize,
-    pub(crate) uncleaned_roots_len: AtomicUsize,
-    pub(crate) roots_range: AtomicU64,
-    pub(crate) rooted_cleaned_count: AtomicUsize,
-    pub(crate) unrooted_cleaned_count: AtomicUsize,
-    pub(crate) clean_unref_from_storage_us: AtomicU64,
-    pub(crate) clean_dead_slot_us: AtomicU64,
+pub struct LatestAccountsIndexRootsStats {
+    pub roots_len: AtomicUsize,
+    pub uncleaned_roots_len: AtomicUsize,
+    pub roots_range: AtomicU64,
+    pub rooted_cleaned_count: AtomicUsize,
+    pub unrooted_cleaned_count: AtomicUsize,
+    pub clean_unref_from_storage_us: AtomicU64,
+    pub clean_dead_slot_us: AtomicU64,
 }
 
 impl LatestAccountsIndexRootsStats {
-    pub(crate) fn update(&self, accounts_index_roots_stats: &AccountsIndexRootsStats) {
+    pub fn update(&self, accounts_index_roots_stats: &AccountsIndexRootsStats) {
         if let Some(value) = accounts_index_roots_stats.roots_len {
             self.roots_len.store(value, Ordering::Relaxed);
         }
@@ -246,7 +246,7 @@ impl LatestAccountsIndexRootsStats {
         );
     }
 
-    pub(crate) fn report(&self) {
+    pub fn report(&self) {
         datapoint_info!(
             "accounts_index_roots_len",
             (
@@ -306,60 +306,60 @@ impl LatestAccountsIndexRootsStats {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct CleanAccountsStats {
-    pub(crate) purge_stats: PurgeStats,
-    pub(crate) latest_accounts_index_roots_stats: LatestAccountsIndexRootsStats,
+pub struct CleanAccountsStats {
+    pub purge_stats: PurgeStats,
+    pub latest_accounts_index_roots_stats: LatestAccountsIndexRootsStats,
 
     // stats held here and reported by clean_accounts
-    pub(crate) clean_old_root_us: AtomicU64,
-    pub(crate) clean_old_root_reclaim_us: AtomicU64,
-    pub(crate) reset_uncleaned_roots_us: AtomicU64,
-    pub(crate) remove_dead_accounts_remove_us: AtomicU64,
-    pub(crate) remove_dead_accounts_shrink_us: AtomicU64,
-    pub(crate) clean_stored_dead_slots_us: AtomicU64,
-    pub(crate) uncleaned_roots_slot_list_1: AtomicU64,
-    pub(crate) get_account_sizes_us: AtomicU64,
-    pub(crate) slots_cleaned: AtomicU64,
+    pub clean_old_root_us: AtomicU64,
+    pub clean_old_root_reclaim_us: AtomicU64,
+    pub reset_uncleaned_roots_us: AtomicU64,
+    pub remove_dead_accounts_remove_us: AtomicU64,
+    pub remove_dead_accounts_shrink_us: AtomicU64,
+    pub clean_stored_dead_slots_us: AtomicU64,
+    pub uncleaned_roots_slot_list_1: AtomicU64,
+    pub get_account_sizes_us: AtomicU64,
+    pub slots_cleaned: AtomicU64,
 }
 
 impl CleanAccountsStats {
-    pub(crate) fn report(&self) {
+    pub fn report(&self) {
         self.purge_stats.report("clean_purge_slots_stats", None);
         self.latest_accounts_index_roots_stats.report();
     }
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ShrinkAncientStats {
-    pub(crate) shrink_stats: ShrinkStats,
-    pub(crate) ancient_append_vecs_shrunk: AtomicU64,
-    pub(crate) total_us: AtomicU64,
-    pub(crate) random_shrink: AtomicU64,
-    pub(crate) slots_considered: AtomicU64,
-    pub(crate) ancient_scanned: AtomicU64,
-    pub(crate) bytes_ancient_created: AtomicU64,
-    pub(crate) bytes_from_must_shrink: AtomicU64,
-    pub(crate) bytes_from_smallest_storages: AtomicU64,
-    pub(crate) bytes_from_newest_storages: AtomicU64,
-    pub(crate) many_ref_slots_skipped: AtomicU64,
-    pub(crate) slots_cannot_move_count: AtomicU64,
-    pub(crate) many_refs_old_alive: AtomicU64,
-    pub(crate) slots_eligible_to_shrink: AtomicU64,
-    pub(crate) total_dead_bytes: AtomicU64,
-    pub(crate) total_alive_bytes: AtomicU64,
+pub struct ShrinkAncientStats {
+    pub shrink_stats: ShrinkStats,
+    pub ancient_append_vecs_shrunk: AtomicU64,
+    pub total_us: AtomicU64,
+    pub random_shrink: AtomicU64,
+    pub slots_considered: AtomicU64,
+    pub ancient_scanned: AtomicU64,
+    pub bytes_ancient_created: AtomicU64,
+    pub bytes_from_must_shrink: AtomicU64,
+    pub bytes_from_smallest_storages: AtomicU64,
+    pub bytes_from_newest_storages: AtomicU64,
+    pub many_ref_slots_skipped: AtomicU64,
+    pub slots_cannot_move_count: AtomicU64,
+    pub many_refs_old_alive: AtomicU64,
+    pub slots_eligible_to_shrink: AtomicU64,
+    pub total_dead_bytes: AtomicU64,
+    pub total_alive_bytes: AtomicU64,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ShrinkStatsSub {
-    pub(crate) store_accounts_timing: StoreAccountsTiming,
-    pub(crate) rewrite_elapsed_us: Saturating<u64>,
-    pub(crate) create_and_insert_store_elapsed_us: Saturating<u64>,
-    pub(crate) unpackable_slots_count: Saturating<usize>,
-    pub(crate) newest_alive_packed_count: Saturating<usize>,
+pub struct ShrinkStatsSub {
+    pub store_accounts_timing: StoreAccountsTiming,
+    pub rewrite_elapsed_us: Saturating<u64>,
+    pub create_and_insert_store_elapsed_us: Saturating<u64>,
+    pub unpackable_slots_count: Saturating<usize>,
+    pub newest_alive_packed_count: Saturating<usize>,
 }
 
 impl ShrinkStatsSub {
-    pub(crate) fn accumulate(&mut self, other: &Self) {
+    pub fn accumulate(&mut self, other: &Self) {
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
         self.rewrite_elapsed_us += other.rewrite_elapsed_us;
@@ -370,39 +370,39 @@ impl ShrinkStatsSub {
 }
 #[derive(Debug, Default)]
 pub struct ShrinkStats {
-    pub(crate) last_report: AtomicInterval,
-    pub(crate) num_slots_shrunk: AtomicUsize,
-    pub(crate) storage_read_elapsed: AtomicU64,
-    pub(crate) num_duplicated_accounts: AtomicU64,
-    pub(crate) index_read_elapsed: AtomicU64,
-    pub(crate) create_and_insert_store_elapsed: AtomicU64,
-    pub(crate) store_accounts_elapsed: AtomicU64,
-    pub(crate) update_index_elapsed: AtomicU64,
-    pub(crate) handle_reclaims_elapsed: AtomicU64,
-    pub(crate) remove_old_stores_shrink_us: AtomicU64,
-    pub(crate) rewrite_elapsed: AtomicU64,
-    pub(crate) unpackable_slots_count: AtomicU64,
-    pub(crate) newest_alive_packed_count: AtomicU64,
-    pub(crate) drop_storage_entries_elapsed: AtomicU64,
-    pub(crate) accounts_removed: AtomicUsize,
-    pub(crate) bytes_removed: AtomicU64,
-    pub(crate) bytes_written: AtomicU64,
-    pub(crate) skipped_shrink: AtomicU64,
-    pub(crate) dead_accounts: AtomicU64,
-    pub(crate) alive_accounts: AtomicU64,
-    pub(crate) index_scan_returned_none: AtomicU64,
-    pub(crate) index_scan_returned_some: AtomicU64,
-    pub(crate) accounts_loaded: AtomicU64,
-    pub(crate) initial_candidates_count: AtomicU64,
-    pub(crate) purged_zero_lamports: AtomicU64,
-    pub(crate) accounts_not_found_in_index: AtomicU64,
-    pub(crate) num_ancient_slots_shrunk: AtomicU64,
-    pub(crate) ancient_slots_added_to_shrink: AtomicU64,
-    pub(crate) ancient_bytes_added_to_shrink: AtomicU64,
+    pub last_report: AtomicInterval,
+    pub num_slots_shrunk: AtomicUsize,
+    pub storage_read_elapsed: AtomicU64,
+    pub num_duplicated_accounts: AtomicU64,
+    pub index_read_elapsed: AtomicU64,
+    pub create_and_insert_store_elapsed: AtomicU64,
+    pub store_accounts_elapsed: AtomicU64,
+    pub update_index_elapsed: AtomicU64,
+    pub handle_reclaims_elapsed: AtomicU64,
+    pub remove_old_stores_shrink_us: AtomicU64,
+    pub rewrite_elapsed: AtomicU64,
+    pub unpackable_slots_count: AtomicU64,
+    pub newest_alive_packed_count: AtomicU64,
+    pub drop_storage_entries_elapsed: AtomicU64,
+    pub accounts_removed: AtomicUsize,
+    pub bytes_removed: AtomicU64,
+    pub bytes_written: AtomicU64,
+    pub skipped_shrink: AtomicU64,
+    pub dead_accounts: AtomicU64,
+    pub alive_accounts: AtomicU64,
+    pub index_scan_returned_none: AtomicU64,
+    pub index_scan_returned_some: AtomicU64,
+    pub accounts_loaded: AtomicU64,
+    pub initial_candidates_count: AtomicU64,
+    pub purged_zero_lamports: AtomicU64,
+    pub accounts_not_found_in_index: AtomicU64,
+    pub num_ancient_slots_shrunk: AtomicU64,
+    pub ancient_slots_added_to_shrink: AtomicU64,
+    pub ancient_bytes_added_to_shrink: AtomicU64,
 }
 
 impl ShrinkStats {
-    pub(crate) fn report(&self) {
+    pub fn report(&self) {
         if self.last_report.should_update(1000) {
             datapoint_info!(
                 "shrink_stats",
@@ -545,7 +545,7 @@ impl ShrinkStats {
 }
 
 impl ShrinkAncientStats {
-    pub(crate) fn report(&self) {
+    pub fn report(&self) {
         datapoint_info!(
             "shrink_ancient_stats",
             (
