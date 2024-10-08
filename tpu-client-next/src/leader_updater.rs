@@ -25,7 +25,7 @@ use {
 /// to identify next leaders to send transactions to.
 #[async_trait]
 pub trait LeaderUpdater: Send {
-    fn get_leaders(&self) -> Vec<SocketAddr>;
+    fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr>;
     async fn stop_and_join(&mut self);
 }
 
@@ -90,7 +90,7 @@ struct LeaderUpdaterService {
 
 #[async_trait]
 impl LeaderUpdater for LeaderUpdaterService {
-    fn get_leaders(&self) -> Vec<SocketAddr> {
+    fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr> {
         self.leader_tpu_service
             .leader_tpu_sockets(self.lookahead_slots)
     }
@@ -109,7 +109,7 @@ struct PinnedLeaderUpdater {
 
 #[async_trait]
 impl LeaderUpdater for PinnedLeaderUpdater {
-    fn get_leaders(&self) -> Vec<SocketAddr> {
+    fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr> {
         self.address.clone()
     }
 

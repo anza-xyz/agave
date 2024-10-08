@@ -68,7 +68,7 @@ impl ConnectionWorkersScheduler {
                 break;
                 }
             };
-            let updated_leaders = leader_updater.get_leaders();
+            let updated_leaders = leader_updater.next_num_lookahead_slots_leaders();
             let new_leader = &updated_leaders[0];
             let future_leaders = &updated_leaders[1..];
             if !workers.contains(new_leader) {
