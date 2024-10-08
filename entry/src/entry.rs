@@ -524,7 +524,8 @@ fn start_verify_transactions_gpu(
         });
     }
 
-    let mut packet_batches = entry_txs
+    let packet_batches = thread_pool.install(|| {
+    entry_txs
         .par_iter()
         .chunks(PACKETS_PER_BATCH)
         .map(|slice| {
@@ -559,7 +560,8 @@ fn start_verify_transactions_gpu(
                 Err(TransactionError::SanitizeFailure)
             }
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()});
+    let mut packet_batches = packet_batches?;
 
     let tx_offset_recycler = verify_recyclers.tx_offset_recycler;
     let out_recycler = verify_recyclers.out_recycler;
