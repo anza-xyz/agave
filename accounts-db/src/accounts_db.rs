@@ -8495,7 +8495,6 @@ impl AccountsDb {
                     .iter()
                     .map(|map_bin| map_bin.len_for_stats())
                     .fold((0, usize::MAX, usize::MIN), |acc, len| {
-                        println!("{:?} {}", &acc, len);
                         (
                             acc.0 + len,
                             std::cmp::min(acc.1, len),
