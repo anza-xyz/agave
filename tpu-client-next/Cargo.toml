@@ -27,8 +27,8 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
-solana-cli-config = { workspace = true }
 futures = { workspace = true }
+solana-cli-config = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

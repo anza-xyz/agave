@@ -158,6 +158,7 @@ impl ConnectionWorker {
             let result = send_data_over_stream(&connection, &data).await;
 
             if let Err(error) = result {
+                trace!("Failed to send transaction over stream with error: {error}.");
                 record_error(error, &mut self.send_txs_stats);
                 self.connection = ConnectionState::Retry(0);
             } else {
