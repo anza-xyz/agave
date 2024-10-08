@@ -526,8 +526,7 @@ fn start_verify_transactions_gpu(
 
     let packet_batches = thread_pool.install(|| {
         transactions
-            .par_iter()
-            .chunks(PACKETS_PER_BATCH)
+            .par_chunks(PACKETS_PER_BATCH)
             .map(|transaction_chunk| {
                 let num_transactions = transaction_chunk.len();
                 let mut packet_batch = PacketBatch::new_with_recycler(
@@ -544,7 +543,7 @@ fn start_verify_transactions_gpu(
                     packet_batch.set_len(num_transactions);
                 }
                 let transaction_iter = transaction_chunk
-                    .into_iter()
+                    .iter()
                     .map(|tx| tx.to_versioned_transaction());
 
                 let res = packet_batch
