@@ -682,6 +682,7 @@ struct GenerateIndexTimings {
     pub total_including_duplicates: u64,
     pub accounts_data_len_dedup_time_us: u64,
     pub total_duplicate_slot_keys: u64,
+    pub accounts_duplicates_num: u64,
     pub populate_duplicate_keys_us: u64,
     pub total_slots: u64,
     pub slots_to_clean: u64,
@@ -737,6 +738,11 @@ impl GenerateIndexTimings {
             (
                 "total_duplicate_slot_keys",
                 self.total_duplicate_slot_keys as i64,
+                i64
+            ),
+            (
+                "accounts_duplicates_num",
+                self.accounts_duplicates_num as i64,
                 i64
             ),
             (
@@ -8489,7 +8495,6 @@ impl AccountsDb {
                     .iter()
                     .map(|map_bin| map_bin.len_for_stats())
                     .fold((0, usize::MAX, usize::MIN), |acc, len| {
-                        println!("{:?} {}", &acc, len);
                         (
                             acc.0 + len,
                             std::cmp::min(acc.1, len),
@@ -8520,6 +8525,7 @@ impl AccountsDb {
                 #[derive(Debug, Default)]
                 struct DuplicatePubkeysVisitedInfo {
                     accounts_data_len_from_duplicates: u64,
+                    accounts_duplicates_num: u64,
                     uncleaned_roots: IntSet<Slot>,
                 }
                 impl DuplicatePubkeysVisitedInfo {
@@ -8535,6 +8541,7 @@ impl AccountsDb {
                     fn merge(&mut self, other: Self) {
                         self.accounts_data_len_from_duplicates +=
                             other.accounts_data_len_from_duplicates;
+                        self.accounts_duplicates_num += other.accounts_duplicates_num;
                         self.uncleaned_roots.extend(other.uncleaned_roots);
                     }
                 }
@@ -8544,6 +8551,7 @@ impl AccountsDb {
                     Measure::start("handle accounts data len duplicates");
                 let DuplicatePubkeysVisitedInfo {
                     accounts_data_len_from_duplicates,
+                    accounts_duplicates_num,
                     uncleaned_roots,
                 } = unique_pubkeys_by_bin
                     .par_iter()
@@ -8553,14 +8561,18 @@ impl AccountsDb {
                             let intermediate = pubkeys_by_bin
                                 .par_chunks(4096)
                                 .fold(DuplicatePubkeysVisitedInfo::default, |accum, pubkeys| {
-                                    let (accounts_data_len_from_duplicates, uncleaned_roots) = self
-                                        .visit_duplicate_pubkeys_during_startup(
-                                            pubkeys,
-                                            &rent_collector,
-                                            &timings,
-                                        );
+                                    let (
+                                        accounts_data_len_from_duplicates,
+                                        accounts_duplicates_num,
+                                        uncleaned_roots,
+                                    ) = self.visit_duplicate_pubkeys_during_startup(
+                                        pubkeys,
+                                        &rent_collector,
+                                        &timings,
+                                    );
                                     let intermediate = DuplicatePubkeysVisitedInfo {
                                         accounts_data_len_from_duplicates,
+                                        accounts_duplicates_num,
                                         uncleaned_roots,
                                     };
                                     DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
@@ -8579,6 +8591,7 @@ impl AccountsDb {
                 accounts_data_len_dedup_timer.stop();
                 timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
                 timings.slots_to_clean = uncleaned_roots.len() as u64;
+                timings.accounts_duplicates_num = accounts_duplicates_num;
 
                 self.accounts_index
                     .add_uncleaned_roots(uncleaned_roots.into_iter());
@@ -8646,8 +8659,9 @@ impl AccountsDb {
         pubkeys: &[Pubkey],
         rent_collector: &RentCollector,
         timings: &GenerateIndexTimings,
-    ) -> (u64, IntSet<Slot>) {
+    ) -> (u64, u64, IntSet<Slot>) {
         let mut accounts_data_len_from_duplicates = 0;
+        let mut accounts_duplicates_num = 0_u64;
         let mut uncleaned_slots = IntSet::default();
         let mut removed_rent_paying = 0;
         let mut removed_top_off = 0;
@@ -8677,6 +8691,7 @@ impl AccountsDb {
                             accessor.check_and_get_loaded_account(|loaded_account| {
                                 let data_len = loaded_account.data_len();
                                 accounts_data_len_from_duplicates += data_len;
+                                accounts_duplicates_num += 1;
                                 if let Some(lamports_to_top_off) = Self::stats_for_rent_payers(
                                     pubkey,
                                     loaded_account.lamports(),
@@ -8704,7 +8719,11 @@ impl AccountsDb {
         timings
             .amount_to_top_off_rent
             .fetch_sub(removed_top_off, Ordering::Relaxed);
-        (accounts_data_len_from_duplicates as u64, uncleaned_slots)
+        (
+            accounts_data_len_from_duplicates as u64,
+            accounts_duplicates_num,
+            uncleaned_slots,
+        )
     }
 
     fn set_storage_count_and_alive_bytes(
