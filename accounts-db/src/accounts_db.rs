@@ -8443,22 +8443,13 @@ impl AccountsDb {
             index_time.stop();
 
             info!("rent_collector: {:?}", rent_collector);
-            let (total_items, min_bin_size, max_bin_size) = self
-                .accounts_index
-                .account_maps
-                .iter()
-                .map(|map_bin| map_bin.len_for_stats())
-                .fold((0, usize::MAX, usize::MIN), |acc, len| {
-                    (
-                        acc.0 + len,
-                        std::cmp::min(acc.1, len),
-                        std::cmp::max(acc.2, len),
-                    )
-                });
 
             let mut index_flush_us = 0;
             let total_duplicate_slot_keys = AtomicU64::default();
             let mut populate_duplicate_keys_us = 0;
+            let mut total_items = 0;
+            let mut min_bin_size = 0;
+            let mut max_bin_size = 0;
             // outer vec is accounts index bin (determined by pubkey value)
             // inner vec is the pubkeys within that bin that are present in > 1 slot
             let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
@@ -8491,6 +8482,20 @@ impl AccountsDb {
                         });
                 })
                 .1;
+
+                (total_items, min_bin_size, max_bin_size) = self
+                    .accounts_index
+                    .account_maps
+                    .iter()
+                    .map(|map_bin| map_bin.len_for_stats())
+                    .fold((0, usize::MAX, usize::MIN), |acc, len| {
+                        println!("{:?} {}", &acc, len);
+                        (
+                            acc.0 + len,
+                            std::cmp::min(acc.1, len),
+                            std::cmp::max(acc.2, len),
+                        )
+                    });
             }
             let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
 
