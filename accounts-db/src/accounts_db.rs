@@ -682,6 +682,7 @@ struct GenerateIndexTimings {
     pub total_including_duplicates: u64,
     pub accounts_data_len_dedup_time_us: u64,
     pub total_duplicate_slot_keys: u64,
+    pub total_num_unique_duplicate_keys: u64,
     pub accounts_duplicates_num: u64,
     pub populate_duplicate_keys_us: u64,
     pub total_slots: u64,
@@ -706,8 +707,8 @@ impl GenerateIndexTimings {
             ("total_us", self.index_time, i64),
             ("scan_stores_us", self.scan_time, i64),
             ("insertion_time_us", self.insertion_time_us, i64),
-            ("min_bin_size", self.min_bin_size_in_mem as i64, i64),
-            ("max_bin_size", self.max_bin_size_in_mem as i64, i64),
+            ("min_bin_size_in_mem", self.min_bin_size_in_mem as i64, i64),
+            ("max_bin_size_in_mem", self.max_bin_size_in_mem as i64, i64),
             (
                 "storage_size_storages_us",
                 self.storage_size_storages_us as i64,
@@ -729,7 +730,7 @@ impl GenerateIndexTimings {
                 self.total_including_duplicates as i64,
                 i64
             ),
-            ("total_items", self.total_items_in_mem as i64, i64),
+            ("total_items_in_mem", self.total_items_in_mem as i64, i64),
             (
                 "accounts_data_len_dedup_time_us",
                 self.accounts_data_len_dedup_time_us as i64,
@@ -738,6 +739,11 @@ impl GenerateIndexTimings {
             (
                 "total_duplicate_slot_keys",
                 self.total_duplicate_slot_keys as i64,
+                i64
+            ),
+            (
+                "total_num_unique_duplicate_keys",
+                self.total_num_unique_duplicate_keys as i64,
                 i64
             ),
             (
@@ -8456,6 +8462,8 @@ impl AccountsDb {
             let mut total_items_in_mem = 0;
             let mut min_bin_size_in_mem = 0;
             let mut max_bin_size_in_mem = 0;
+            let total_num_unique_duplicate_keys = AtomicU64::default();
+
             // outer vec is accounts index bin (determined by pubkey value)
             // inner vec is the pubkeys within that bin that are present in > 1 slot
             let unique_pubkeys_by_bin = Mutex::new(Vec::<Vec<Pubkey>>::default());
@@ -8480,6 +8488,10 @@ impl AccountsDb {
                             }
                             let unique_pubkeys_by_bin_inner =
                                 unique_keys.into_iter().collect::<Vec<_>>();
+                            total_num_unique_duplicate_keys.fetch_add(
+                                unique_pubkeys_by_bin_inner.len() as u64,
+                                Ordering::Relaxed,
+                            );
                             // does not matter that this is not ordered by slot
                             unique_pubkeys_by_bin
                                 .lock()
@@ -8515,6 +8527,8 @@ impl AccountsDb {
                 rent_paying,
                 amount_to_top_off_rent,
                 total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
+                total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
+                    .load(Ordering::Relaxed),
                 populate_duplicate_keys_us,
                 total_including_duplicates: total_including_duplicates.load(Ordering::Relaxed),
                 total_slots: slots.len() as u64,
