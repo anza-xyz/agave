@@ -313,6 +313,100 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
 /// `assert_eq(std::mem::align_of::<u128>(), 8)` is true for BPF but not for some host machines
 pub const BPF_ALIGN_OF_U128: usize = 8;
 
+#[repr(C)]
+pub struct ABIv2InstructionContext {
+    magic: u32,
+    version: u32,
+    instruction_data_vm_address: u64,
+    length_of_instruction_data: u32,
+    number_of_unique_instruction_accounts: u16,
+    number_of_instruction_accounts: u16,
+    program_key: Pubkey,
+}
+
+#[repr(C)]
+pub struct ABIv2InstructionAccount {
+    key: Pubkey,
+    owner: Pubkey,
+    flags: u64,
+    lamports: u64,
+    payload_vm_address: u64,
+    length_of_payload: u64,
+}
+
+/// Eagerly deserialize the input arguments in ABI v2
+///
+/// # Safety
+/// This method is safe when called once, on a buffer serialized by the program runtime.
+pub unsafe fn deserialize_abi_v2_eagerly<'a>(
+    input: *mut u8,
+) -> (&'a Pubkey, Vec<AccountInfo<'a>>, &'a [u8]) {
+    let header = &*(input as *const ABIv2InstructionContext);
+    let unique_instruction_accounts = from_raw_parts_mut(
+        input.add(std::mem::size_of::<ABIv2InstructionContext>()) as *mut ABIv2InstructionAccount,
+        header.number_of_unique_instruction_accounts as usize,
+    );
+    let instruction_account_indirection = from_raw_parts_mut(
+        (unique_instruction_accounts.as_ptr() as *mut u8).add(
+            std::mem::size_of::<ABIv2InstructionAccount>()
+                .unchecked_mul(header.number_of_unique_instruction_accounts as usize),
+        ) as *mut u16,
+        header.number_of_instruction_accounts as usize,
+    );
+
+    let mut number_of_unique_instruction_accounts = 0;
+    let mut accounts = Vec::with_capacity(header.number_of_instruction_accounts as usize);
+    for index in 0..header.number_of_instruction_accounts {
+        let deduplicated_index = *instruction_account_indirection
+            .get(index as usize)
+            .unwrap_unchecked() as usize;
+        let aliased_index = instruction_account_indirection
+            .get_mut(deduplicated_index)
+            .unwrap_unchecked();
+        if deduplicated_index == number_of_unique_instruction_accounts {
+            let instruction_account = unique_instruction_accounts
+                .get_mut(deduplicated_index)
+                .unwrap_unchecked();
+            accounts.push(unsafe {
+                AccountInfo {
+                    key: &*(&instruction_account.key as *const Pubkey),
+                    is_signer: (instruction_account.flags & (1 << 8)) != 0,
+                    is_writable: (instruction_account.flags & (1 << 16)) != 0,
+                    lamports: Rc::new(RefCell::new(
+                        &mut *(&mut instruction_account.lamports as *mut u64),
+                    )),
+                    data: Rc::new(RefCell::new(from_raw_parts_mut(
+                        instruction_account.payload_vm_address as *mut u8,
+                        instruction_account.length_of_payload as usize,
+                    ))),
+                    owner: &*(&instruction_account.owner as *const Pubkey),
+                    executable: false,
+                    rent_epoch: 0,
+                }
+            });
+            *aliased_index = index;
+            number_of_unique_instruction_accounts =
+                number_of_unique_instruction_accounts.unchecked_add(1);
+        } else {
+            accounts.push(
+                accounts
+                    .get(*aliased_index as usize)
+                    .unwrap_unchecked()
+                    .clone(),
+            );
+        }
+    }
+
+    (
+        &header.program_key,
+        accounts,
+        from_raw_parts(
+            header.instruction_data_vm_address as *mut u8,
+            header.length_of_instruction_data as usize,
+        ),
+    )
+}
+
 #[allow(clippy::arithmetic_side_effects)]
 #[inline(always)] // this reduces CU usage
 unsafe fn deserialize_instruction_data<'a>(input: *mut u8, mut offset: usize) -> (&'a [u8], usize) {
