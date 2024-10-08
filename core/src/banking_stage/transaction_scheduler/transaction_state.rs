@@ -1,12 +1,13 @@
 use {
     crate::banking_stage::immutable_deserialized_packet::ImmutableDeserializedPacket,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{clock::Slot, transaction::SanitizedTransaction},
     std::sync::Arc,
 };
 
 /// Simple wrapper type to tie a sanitized transaction to max age slot.
 pub(crate) struct SanitizedTransactionTTL {
-    pub(crate) transaction: SanitizedTransaction,
+    pub(crate) transaction: RuntimeTransaction<SanitizedTransaction>,
     pub(crate) max_age_slot: Slot,
 }
 
@@ -229,7 +230,7 @@ mod tests {
             ImmutableDeserializedPacket::new(Packet::from_data(None, tx.clone()).unwrap()).unwrap(),
         );
         let transaction_ttl = SanitizedTransactionTTL {
-            transaction: SanitizedTransaction::from_transaction_for_tests(tx),
+            transaction: RuntimeTransaction::from_transaction_for_tests(tx),
             max_age_slot: Slot::MAX,
         };
         const TEST_TRANSACTION_COST: u64 = 5000;
@@ -267,16 +268,9 @@ mod tests {
     #[should_panic(expected = "already unprocessed")]
     fn test_transition_to_unprocessed_panic() {
         let mut transaction_state = create_transaction_state(0);
+        let mut other_state = create_transaction_state(1);
 
-        // Manually clone `SanitizedTransactionTTL`
-        let SanitizedTransactionTTL {
-            transaction,
-            max_age_slot,
-        } = transaction_state.transaction_ttl();
-        let transaction_ttl = SanitizedTransactionTTL {
-            transaction: transaction.clone(),
-            max_age_slot: *max_age_slot,
-        };
+        let transaction_ttl = other_state.transition_to_pending();
         transaction_state.transition_to_unprocessed(transaction_ttl); // invalid transition
     }
 

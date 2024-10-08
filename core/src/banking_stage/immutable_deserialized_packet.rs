@@ -2,7 +2,10 @@ use {
     super::packet_filter::PacketFilterFailure,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_perf::packet::Packet,
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_runtime_transaction::{
+        instructions_processor::process_compute_budget_instructions,
+        runtime_transaction::RuntimeTransaction,
+    },
     solana_sanitize::SanitizeError,
     solana_sdk::{
         hash::Hash,
@@ -39,7 +42,7 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ImmutableDeserializedPacket {
     original_packet: Packet,
     transaction: SanitizedVersionedTransaction,
@@ -116,19 +119,34 @@ impl ImmutableDeserializedPacket {
         votes_only: bool,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Option<SanitizedTransaction> {
+    ) -> Option<RuntimeTransaction<SanitizedTransaction>> {
         if votes_only && !self.is_simple_vote() {
             return None;
         }
-        let tx = SanitizedTransaction::try_new(
-            self.transaction().clone(),
-            *self.message_hash(),
-            self.is_simple_vote(),
-            address_loader,
-            reserved_account_keys,
+
+        let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+            self.transaction.clone(),
+            Some(self.message_hash),
+            Some(self.is_simple_vote),
         )
+        .and_then(|tx| {
+            RuntimeTransaction::<SanitizedTransaction>::try_from(
+                tx,
+                address_loader,
+                reserved_account_keys,
+            )
+        })
         .ok()?;
+
         Some(tx)
+    }
+}
+
+// Eq and PartialEq MUST be consistent with PartialOrd and Ord
+impl Eq for ImmutableDeserializedPacket {}
+impl PartialEq for ImmutableDeserializedPacket {
+    fn eq(&self, other: &Self) -> bool {
+        self.compute_unit_price() == other.compute_unit_price()
     }
 }
 

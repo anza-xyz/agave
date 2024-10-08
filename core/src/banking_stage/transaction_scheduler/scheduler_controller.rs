@@ -27,7 +27,10 @@ use {
     solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_runtime_transaction::{
+        instructions_processor::process_compute_budget_instructions,
+        runtime_transaction::RuntimeTransaction,
+    },
     solana_sdk::{
         self,
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
@@ -221,7 +224,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
     }
 
     fn pre_graph_filter(
-        transactions: &[&SanitizedTransaction],
+        transactions: &[&RuntimeTransaction<SanitizedTransaction>],
         results: &mut [bool],
         bank: &Bank,
         max_age: usize,
