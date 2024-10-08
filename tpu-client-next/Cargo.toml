@@ -23,10 +23,12 @@ solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
 solana-cli-config = { workspace = true }
+futures = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

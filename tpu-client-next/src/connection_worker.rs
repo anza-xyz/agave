@@ -18,6 +18,7 @@ use {
         sync::mpsc,
         time::{sleep, Duration},
     },
+    tokio_util::sync::CancellationToken,
 };
 
 /// Maximum number of reconnection attempts in case the connection errors out.
@@ -46,7 +47,7 @@ enum ConnectionState {
 impl Drop for ConnectionState {
     fn drop(&mut self) {
         if let Self::Active(connection) = self {
-            info!(
+            debug!(
                 "Close connection with {:?}, stats: {:?}. All pending streams will be dropped.",
                 connection.remote_address(),
                 connection.stats()
@@ -65,6 +66,7 @@ impl Drop for ConnectionState {
 pub(crate) struct ConnectionWorker {
     endpoint: Endpoint,
     peer: SocketAddr,
+    cancel: CancellationToken,
     transactions_receiver: mpsc::Receiver<TransactionBatch>,
     connection: ConnectionState,
     send_txs_stats: SendTransactionStats,
@@ -74,15 +76,20 @@ impl ConnectionWorker {
     pub fn new(
         endpoint: Endpoint,
         peer: SocketAddr,
-        command_receiver: mpsc::Receiver<TransactionBatch>,
-    ) -> Self {
-        Self {
+        transactions_receiver: mpsc::Receiver<TransactionBatch>,
+    ) -> (Self, CancellationToken) {
+        let cancel = CancellationToken::new();
+
+        let this = Self {
             endpoint,
             peer,
-            transactions_receiver: command_receiver,
+            cancel: cancel.clone(),
+            transactions_receiver,
             connection: ConnectionState::NotSetup,
             send_txs_stats: SendTransactionStats::default(),
-        }
+        };
+
+        (this, cancel)
     }
 
     /// Starts the main loop of the [`ConnectionWorker`]. This method manages the
@@ -90,35 +97,42 @@ impl ConnectionWorker {
     /// indefinitely until the connection is closed or an unrecoverable error
     /// occurs.
     pub async fn run(&mut self) {
-        loop {
-            match &self.connection {
-                ConnectionState::Closing => {
-                    break;
-                }
-                ConnectionState::NotSetup => {
-                    self.create_connection(0).await;
-                }
-                ConnectionState::Active(connection) => {
-                    let Some(transactions) = self.transactions_receiver.recv().await else {
-                        info!("Transactions sender has been dropped.");
-                        self.connection = ConnectionState::Closing;
-                        continue;
-                    };
-                    self.send_transactions(connection.clone(), transactions)
-                        .await;
-                }
-                ConnectionState::Retry(num_reconnects) => {
-                    if *num_reconnects > MAX_RECONNECT_ATTEMPTS {
-                        error!(
-                            "Didn't manage to establish connection: reach max reconnect attempts."
-                        );
-                        self.connection = ConnectionState::Closing;
-                        continue;
+        let cancel = self.cancel.clone();
+
+        let main_loop = async move {
+            loop {
+                match &self.connection {
+                    ConnectionState::Closing => {
+                        break;
                     }
-                    sleep(RETRY_SLEEP_INTERVAL).await;
-                    self.reconnect(*num_reconnects).await;
+                    ConnectionState::NotSetup => {
+                        self.create_connection(0).await;
+                    }
+                    ConnectionState::Active(connection) => {
+                        let Some(transactions) = self.transactions_receiver.recv().await else {
+                            debug!("Transactions sender has been dropped.");
+                            self.connection = ConnectionState::Closing;
+                            continue;
+                        };
+                        self.send_transactions(connection.clone(), transactions)
+                            .await;
+                    }
+                    ConnectionState::Retry(num_reconnects) => {
+                        if *num_reconnects > MAX_RECONNECT_ATTEMPTS {
+                            error!("Failed to establish connection: reach max reconnect attempts.");
+                            self.connection = ConnectionState::Closing;
+                            continue;
+                        }
+                        sleep(RETRY_SLEEP_INTERVAL).await;
+                        self.reconnect(*num_reconnects).await;
+                    }
                 }
             }
+        };
+
+        tokio::select! {
+            () = main_loop => (),
+            () = cancel.cancelled() => (),
         }
     }
 
@@ -136,7 +150,7 @@ impl ConnectionWorker {
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
         let now = timestamp();
         if now.saturating_sub(transactions.get_timestamp()) > MAX_PROCESSING_AGE_MS {
-            info!("Drop outdated transaction batch.");
+            debug!("Drop outdated transaction batch.");
             return;
         }
         let mut measure_send = Measure::start("send transaction batch");
@@ -152,7 +166,7 @@ impl ConnectionWorker {
             }
         }
         measure_send.stop();
-        info!(
+        debug!(
             "Time to send transactions batch: {} us",
             measure_send.as_us()
         );
@@ -169,7 +183,7 @@ impl ConnectionWorker {
                 let mut measure_connection = Measure::start("establish connection");
                 let res = connecting.await;
                 measure_connection.stop();
-                info!(
+                debug!(
                     "Establishing connection with {} took: {} us",
                     self.peer,
                     measure_connection.as_us()
@@ -189,16 +203,12 @@ impl ConnectionWorker {
                 record_error(connecting_error.clone().into(), &mut self.send_txs_stats);
                 match connecting_error {
                     ConnectError::EndpointStopping => {
-                        info!("Endpoint stopping, exit connection worker.");
+                        debug!("Endpoint stopping, exit connection worker.");
                         self.connection = ConnectionState::Closing;
                     }
                     ConnectError::InvalidRemoteAddress(_) => {
                         warn!("Invalid remote address.");
                         self.connection = ConnectionState::Closing;
-                    }
-                    ConnectError::TooManyConnections => {
-                        warn!("Too many connections have been opened. Wait.");
-                        self.connection = ConnectionState::Retry(num_reconnects.saturating_add(1));
                     }
                     e => {
                         error!("Unexpected error has happen while trying to create connection {e}");
@@ -211,7 +221,7 @@ impl ConnectionWorker {
 
     /// Attempts to reconnect to the peer after a connection failure.
     async fn reconnect(&mut self, num_reconnects: usize) {
-        info!("Trying to reconnect. Reopen connection, 0rtt is not implemented yet.");
+        debug!("Trying to reconnect. Reopen connection, 0rtt is not implemented yet.");
         // We can reconnect using 0rtt, but not a priority for now. Check if we
         // need to call config.enable_0rtt() on the client side and where
         // session tickets are stored.
