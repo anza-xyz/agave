@@ -253,7 +253,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        !direct_mapping, // copy_account_data,
+        !direct_mapping, // copy_account_data
+        false,           // is_abi_v2
     )
     .unwrap();
 
@@ -288,6 +289,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .get_current_instruction_context()
             .unwrap(),
         !direct_mapping, // copy_account_data
+        false,           // is_abi_v2
     )
     .unwrap();
 

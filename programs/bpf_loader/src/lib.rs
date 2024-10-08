@@ -1588,6 +1588,7 @@ fn execute<'a, 'b: 'a>(
         invoke_context.transaction_context,
         instruction_context,
         !direct_mapping,
+        false,
     )?;
     serialize_time.stop();
 
@@ -1734,6 +1735,7 @@ fn execute<'a, 'b: 'a>(
                 .transaction_context
                 .get_current_instruction_context()?,
             copy_account_data,
+            false,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
         )

@@ -189,6 +189,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    is_abi_v2: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -252,6 +253,7 @@ pub fn deserialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    is_abi_v2: bool,
     buffer: &[u8],
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
@@ -729,6 +731,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
+                    false,
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -883,6 +886,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
             )
             .unwrap();
 
@@ -942,6 +946,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
                 serialized.as_slice(),
                 &accounts_metadata,
             )
@@ -974,6 +979,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
@@ -1012,6 +1018,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
                 serialized.as_slice(),
                 &account_lengths,
             )
