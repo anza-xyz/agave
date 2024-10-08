@@ -8395,10 +8395,11 @@ version = "2.1.0"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
+ "futures 0.3.31",
  "log",
  "lru",
  "quinn",
- "rustls",
+ "rustls 0.23.14",
  "solana-cli-config",
  "solana-connection-cache",
  "solana-logger",
@@ -8409,6 +8410,7 @@ dependencies = [
  "solana-tpu-client",
  "thiserror",
  "tokio",
+ "tokio-util 0.7.12",
 ]
 
 [[package]]
