@@ -543,12 +543,10 @@ fn start_verify_transactions_gpu(
                 unsafe {
                     packet_batch.set_len(vec_size);
                 }
-                let entry_tx_iter = slice
-                    .into_par_iter()
-                    .map(|tx| tx.to_versioned_transaction());
+                let entry_tx_iter = slice.into_iter().map(|tx| tx.to_versioned_transaction());
 
                 let res = packet_batch
-                    .par_iter_mut()
+                    .iter_mut()
                     .zip(entry_tx_iter)
                     .all(|(packet, tx)| {
                         *packet.meta_mut() = Meta::default();
