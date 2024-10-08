@@ -1,5 +1,6 @@
 use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
+    futures::future::BoxFuture,
     solana_cli_config::ConfigInput,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_sdk::{
@@ -22,22 +23,30 @@ use {
     std::{
         collections::HashMap,
         net::{IpAddr, Ipv6Addr, SocketAddr},
+        num::Saturating,
         str::FromStr,
         sync::{atomic::Ordering, Arc},
         time::Duration,
     },
     tokio::{
-        sync::mpsc::{channel, Receiver, Sender},
+        sync::{
+            mpsc::{channel, Receiver},
+            oneshot,
+        },
         task::JoinHandle,
         time::{sleep, Instant},
     },
+    tokio_util::sync::CancellationToken,
 };
 
 async fn setup_connection_worker_scheduler(
     tpu_address: SocketAddr,
     transaction_receiver: Receiver<TransactionBatch>,
     validator_identity: Option<Keypair>,
-) -> JoinHandle<Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>> {
+) -> (
+    JoinHandle<Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>>,
+    CancellationToken,
+) {
     let json_rpc_url = "http://127.0.0.1:8899";
     let (_, websocket_url) = ConfigInput::compute_websocket_url_setting("", "", json_rpc_url, "");
 
@@ -47,21 +56,22 @@ async fn setup_connection_worker_scheduler(
     ));
 
     // Setup sending txs
-    let leader_updater =
-        create_leader_updater(rpc_client, websocket_url, 1, Some(tpu_address)).await;
-    assert!(leader_updater.is_ok());
+    let leader_updater = create_leader_updater(rpc_client, websocket_url, 1, Some(tpu_address))
+        .await
+        .expect("Leader updates was successfully created");
 
     let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
-    tokio::spawn(async move {
-        ConnectionWorkersScheduler::run(
-            bind,
-            validator_identity,
-            leader_updater.unwrap(),
-            transaction_receiver,
-            1,
-        )
-        .await
-    })
+    let cancel = CancellationToken::new();
+    let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
+        bind,
+        validator_identity,
+        leader_updater,
+        cancel.clone(),
+        transaction_receiver,
+        1,
+    ));
+
+    (scheduler, cancel)
 }
 
 async fn join_scheduler(
@@ -79,36 +89,78 @@ async fn join_scheduler(
         .clone()
 }
 
-// The unstaked connection rate is 100tps.
-const SEND_EACH: Duration = Duration::from_millis(10);
 // Specify the pessimistic time to finish generation and result checks.
-const TEST_MAX_TIME: Duration = Duration::from_millis(2000);
+const TEST_MAX_TIME: Duration = Duration::from_millis(2500);
 
-async fn spawn_generator(
-    transaction_sender: Sender<TransactionBatch>,
-    tx_size: usize,
-    num_txs: usize,
-    send_each_interval: Duration,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        for i in 0..num_txs {
-            let wire_txs_batch = vec![vec![i as u8; tx_size]; 1];
-            let res = transaction_sender
-                .send(TransactionBatch::new(wire_txs_batch))
-                .await;
-            assert_eq!(res, Ok(()));
-            // to avoid throttling sleep the duration of the throttling period
-            sleep(send_each_interval).await;
+// TODO(klykov): consider renaming to SpawnTxGenerator
+struct SpawnTxSender {
+    tx_receiver: Receiver<TransactionBatch>,
+    tx_sender_shutdown: BoxFuture<'static, ()>,
+    tx_sender_done: oneshot::Receiver<()>,
+}
+
+/// Generates `num_tx_batches` batches of transactions, each holding a single transaction of
+/// `tx_size` bytes.
+///
+/// It will not close the returned `tx_receiver` until `tx_sender_shutdown` is invoked.  Otherwise,
+/// there is a race condition, that exists between the last transaction being scheduled for delivery
+/// and the server connection being closed.
+fn spawn_tx_sender(tx_size: usize, num_tx_batches: usize, time_per_tx: Duration) -> SpawnTxSender {
+    let num_tx_batches: u32 = num_tx_batches
+        .try_into()
+        .expect("`num_tx_batches` fits into u32 for all the tests");
+    let (tx_sender, tx_receiver) = channel(1);
+    let cancel = CancellationToken::new();
+    let (done_sender, tx_sender_done) = oneshot::channel();
+
+    let sender = tokio::spawn({
+        let start = Instant::now();
+
+        let tx_sender = tx_sender.clone();
+
+        let main_loop = async move {
+            for i in 0..num_tx_batches {
+                let txs = vec![vec![i as u8; tx_size]; 1];
+                tx_sender
+                    .send(TransactionBatch::new(txs))
+                    .await
+                    .expect("Receiver should not close their side");
+
+                // Pretend the client runs at the specified TPS.
+                let sleep_time = time_per_tx
+                    .saturating_mul(i)
+                    .saturating_sub(start.elapsed());
+                if !sleep_time.is_zero() {
+                    sleep(sleep_time).await;
+                }
+            }
+
+            // It is OK if the receiver has disconnected.
+            let _ = done_sender.send(());
+        };
+
+        let cancel = cancel.clone();
+        async move {
+            tokio::select! {
+                () = main_loop => (),
+                () = cancel.cancelled() => (),
+            }
         }
-        // We need to wait until all the packets have landed. Since we send here
-        // a few bytes, all the packets will end up in receive window. Hence,
-        // sending will be fast but it doesn't mean that they have been
-        // delivered. If we drop sender too early, the connection will be closed
-        // and all the pending packets will be lost. Since we already slept for
-        // send_each_interval * num_txs, sleep the rest.
-        sleep(TEST_MAX_TIME.saturating_sub(send_each_interval.saturating_mul(num_txs as u32)))
-            .await;
-    })
+    });
+
+    let tx_sender_shutdown = Box::pin(async move {
+        cancel.cancel();
+        // This makes sure that the sender exists up until the shutdown is invoked.
+        drop(tx_sender);
+
+        sender.await.unwrap();
+    });
+
+    SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        tx_sender_done,
+    }
 }
 
 #[tokio::test]
@@ -120,41 +172,56 @@ async fn test_basic_transactions_sending() {
         server_address,
         stats: _stats,
     } = setup_quic_server(None, TestServerConfig::default());
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 100;
-    let generator_handle =
-        spawn_generator(transaction_sender, tx_size, expected_num_txs, SEND_EACH).await;
+    // Pretend that we are running at ~100 TPS.
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(10));
+
+    let (scheduler_handle, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
     let mut received_data = Vec::with_capacity(expected_num_txs);
     let now = Instant::now();
     let mut actual_num_packets = 0;
-    while actual_num_packets < expected_num_txs && now.elapsed() < TEST_MAX_TIME {
-        if let Ok(packets) = receiver.try_recv() {
-            actual_num_packets += packets.len();
-            for p in packets.iter() {
-                let packet_id = p.data(0).expect("Data should not be lost by server.");
-                received_data.push(*packet_id);
-                assert_eq!(p.meta().size, tx_size);
-            }
-        } else {
+    while actual_num_packets < expected_num_txs {
+        {
+            let elapsed = now.elapsed();
+            assert!(
+                elapsed < TEST_MAX_TIME,
+                "Failed to send {} transaction in {:?}.  Only sent {}",
+                expected_num_txs,
+                elapsed,
+                actual_num_packets,
+            );
+        }
+
+        let Ok(packets) = receiver.try_recv() else {
             sleep(Duration::from_millis(10)).await;
+            continue;
+        };
+
+        actual_num_packets += packets.len();
+        for p in packets.iter() {
+            let packet_id = p.data(0).expect("Data should not be lost by server.");
+            received_data.push(*packet_id);
+            assert_eq!(p.meta().size, 1);
         }
     }
-    // check that we received what we have sent.
-    assert_eq!(actual_num_packets, expected_num_txs);
+
     received_data.sort_unstable();
     for i in 1..received_data.len() {
         assert_eq!(received_data[i - 1] + 1, received_data[i]);
     }
 
     // Stop sending
-    generator_handle.await.unwrap();
+    tx_sender_shutdown.await;
     let localhost_stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
         localhost_stats,
@@ -169,15 +236,17 @@ async fn test_basic_transactions_sending() {
     server_handle.await.unwrap();
 }
 
-async fn count_server_received_packets(
+async fn count_received_packets_for(
     receiver: CrossbeamReceiver<PacketBatch>,
     expected_tx_size: usize,
+    receive_duration: Duration,
 ) -> usize {
     let now = Instant::now();
-    let mut num_packets_received: usize = 0;
-    while now.elapsed() < TEST_MAX_TIME {
+    let mut num_packets_received = Saturating(0usize);
+
+    while now.elapsed() < receive_duration {
         if let Ok(packets) = receiver.try_recv() {
-            num_packets_received = num_packets_received.saturating_add(packets.len());
+            num_packets_received += packets.len();
             for p in packets.iter() {
                 assert_eq!(p.meta().size, expected_tx_size);
             }
@@ -185,17 +254,11 @@ async fn count_server_received_packets(
             sleep(Duration::from_millis(100)).await;
         }
     }
-    num_packets_received
+
+    num_packets_received.0
 }
 
-// Check that client can create connection even if the first several attempts
-// were unsuccessful. To prevent server from accepting a new connection, we use
-// the following observation: since max_connections_per_peer == 1 (<
-// max_unstaked_connections == 500), if we create a first connection and later
-// try another one, the second connection will be immediately closed. Since
-// client is not retrying sending failed transactions, this leads to the packets
-// loss: the connection has been created and closed when we already have sent
-// the data.
+// Check that client can create connection even if the first several attempts were unsuccessful.
 #[tokio::test]
 async fn test_connection_denied_until_allowed() {
     let SpawnTestServerResult {
@@ -206,38 +269,48 @@ async fn test_connection_denied_until_allowed() {
         stats: _stats,
     } = setup_quic_server(None, TestServerConfig::default());
 
-    let connection = make_client_endpoint(&server_address, None).await;
-
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
+    // To prevent server from accepting a new connection, we use the following observation.
+    // Since max_connections_per_peer == 1 (< max_unstaked_connections == 500), if we create a first
+    // connection and later try another one, the second connection will be immediately closed.
+    //
+    // Since client is not retrying sending failed transactions, this leads to the packets loss.
+    // The connection has been created and closed when we already have sent the data.
+    let throttling_connection = make_client_endpoint(&server_address, None).await;
 
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 10;
-    let generator_handle = spawn_generator(
-        transaction_sender,
-        tx_size,
-        expected_num_txs,
-        Duration::from_millis(100),
-    )
-    .await;
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    sleep(Duration::from_millis(1000)).await;
-    drop(connection);
+    let (scheduler_handle, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
-    let actual_num_packets = count_server_received_packets(receiver, tx_size).await;
-    assert!(actual_num_packets > 0 && actual_num_packets < expected_num_txs);
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
+    assert!(
+        actual_num_packets < expected_num_txs,
+        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?}\n\
+         Got packets: {actual_num_packets}"
+    );
 
-    // Stop sending
-    generator_handle.await.unwrap();
+    // Wait for the exchange to finish.
+    tx_sender_shutdown.await;
     let localhost_stats = join_scheduler(scheduler_handle).await;
+    // in case of pruning, server closes the connection with code 1 and error
+    // message b"dropped". This might lead to connection error
+    // (ApplicationClosed::ApplicationClose) or to stream error
+    // (ConnectionLost::ApplicationClosed::ApplicationClose).
     assert_eq!(
         localhost_stats.write_error_connection_lost
             + localhost_stats.connection_error_application_closed,
         1
     );
+
+    drop(throttling_connection);
 
     // Exit server
     exit.store(true, Ordering::Relaxed);
@@ -264,30 +337,27 @@ async fn test_connection_pruned_and_reopened() {
         },
     );
 
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
-
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 16;
-    let generator_handle = spawn_generator(
-        transaction_sender,
-        tx_size,
-        expected_num_txs,
-        Duration::from_millis(100),
-    )
-    .await;
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
+
+    let (scheduler_handle, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     sleep(Duration::from_millis(400)).await;
     let _connection_to_prune_client = make_client_endpoint(&server_address, None).await;
 
     // Check results
-    let actual_num_packets = count_server_received_packets(receiver, tx_size).await;
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
     assert!(actual_num_packets < expected_num_txs);
 
-    // Stop sending
-    generator_handle.await.unwrap();
+    // Wait for the exchange to finish.
+    tx_sender_shutdown.await;
     let localhost_stats = join_scheduler(scheduler_handle).await;
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
@@ -330,31 +400,25 @@ async fn test_staked_connection() {
         },
     );
 
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle = setup_connection_worker_scheduler(
-        server_address,
-        transaction_receiver,
-        Some(validator_identity),
-    )
-    .await;
-
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 10;
-    let generator_handle = spawn_generator(
-        transaction_sender,
-        tx_size,
-        expected_num_txs,
-        Duration::from_millis(100),
-    )
-    .await;
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
+
+    let (scheduler_handle, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, Some(validator_identity))
+            .await;
 
     // Check results
-    let actual_num_packets = count_server_received_packets(receiver, tx_size).await;
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
     assert_eq!(actual_num_packets, expected_num_txs);
 
-    // Stop sending
-    generator_handle.await.unwrap();
+    // Wait for the exchange to finish.
+    tx_sender_shutdown.await;
     let localhost_stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
         localhost_stats,
@@ -382,27 +446,26 @@ async fn test_connection_throttling() {
         stats: _stats,
     } = setup_quic_server(None, TestServerConfig::default());
 
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
-
     // Setup sending txs
     let tx_size = 1;
-    let expected_num_txs: usize = 100;
-    let generator_handle = spawn_generator(
-        transaction_sender,
-        tx_size,
-        expected_num_txs,
-        // send x10 more than the the throttling interval (10ms) allows
-        Duration::from_millis(1),
-    )
-    .await;
+    let expected_num_txs: usize = 50;
+    // Send at 1000 TPS - x10 more than the throttling interval of 10ms used in other tests allows.
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(1));
+
+    let (scheduler_handle, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
     // Check results
-    let actual_num_packets = count_server_received_packets(receiver, tx_size).await;
+    let actual_num_packets =
+        count_received_packets_for(receiver, tx_size, Duration::from_secs(1)).await;
     assert_eq!(actual_num_packets, expected_num_txs);
 
     // Stop sending
+    tx_sender_shutdown.await;
     let localhost_stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
         localhost_stats,
@@ -413,7 +476,6 @@ async fn test_connection_throttling() {
     );
 
     // Exit server
-    assert!(generator_handle.await.is_ok());
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }
@@ -422,41 +484,39 @@ async fn test_connection_throttling() {
 #[tokio::test]
 async fn test_no_host() {
     // A "black hole" address for the TPU.
-    let tpu_address = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 1)), 49151);
+    let server_ip = IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 1));
+    let server_address = SocketAddr::new(server_ip, 49151);
 
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(tpu_address, transaction_receiver, None).await;
-
-    // Setup sending txs
+    // Setup sending side.
     let tx_size = 1;
-    let expected_num_txs: usize = 10;
-    let generator_handle: JoinHandle<()> = tokio::spawn(async move {
-        for i in 0..expected_num_txs {
-            let wire_txs_batch = vec![vec![i as u8; tx_size]; 1];
-            let res = transaction_sender
-                .send(TransactionBatch::new(wire_txs_batch.clone()))
-                .await;
-            if res.is_err() {
-                // Scheduler consumes transactions from the channel and tries to
-                // create connection and send them. After several attempts, it
-                // will fail and will decide to drop receiver on it's end. This
-                // will trigger Err on send side.
-                break;
-            }
-            // to avoid throttling sleep the duration of the throttling period
-            sleep(Duration::from_millis(100)).await;
-        }
-    });
+    let max_send_attempts: usize = 10;
 
-    // Stop sending
-    generator_handle.await.unwrap();
-    // While attempting to establish a connection with a nonexistent host, we
-    // fill the worker's channel. Transactions from this channel will never be
-    // sent and will eventually be dropped without increasing the
-    // SendTransactionStats counters.
-    let result = scheduler_handle.await.unwrap();
-    assert_eq!(result.unwrap(), HashMap::default());
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        tx_sender_done,
+        ..
+    } = spawn_tx_sender(tx_size, max_send_attempts, Duration::from_millis(10));
+
+    let (scheduler_handle, _scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
+
+    // Wait for all the transactions to be sent, and some extra time for the delivery to be
+    // attempted.
+    tx_sender_done.await.unwrap();
+    sleep(Duration::from_millis(100)).await;
+
+    // Wait for the generator to finish.
+    tx_sender_shutdown.await;
+
+    // While attempting to establish a connection with a nonexistent host, we fill the worker's
+    // channel. Transactions from this channel will never be sent and will eventually be dropped
+    // without increasing the `SendTransactionStats` counters.
+    let stats = scheduler_handle
+        .await
+        .expect("Scheduler should stop successfully")
+        .expect("Scheduler execution was successful");
+    assert_eq!(stats, HashMap::new());
 }
 
 // Check that when the client is rate-limited by server, we update counters
@@ -485,39 +545,36 @@ async fn test_rate_limiting() {
 
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
     drop(connection_to_reach_limit);
-    // give more time to endpoint to avoid failing test when several tests are
-    // running in parallel.
-    sleep(Duration::from_millis(100)).await;
-
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 16;
-    let generator_handle = spawn_generator(
-        transaction_sender,
-        tx_size,
-        expected_num_txs,
-        Duration::from_millis(100),
-    )
-    .await;
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
-    // Stop sending
-    let localhost_stats = join_scheduler(scheduler_handle).await;
-    assert_eq!(
-        localhost_stats.write_error_connection_lost
-            + localhost_stats.connection_error_application_closed,
-        expected_num_txs as u64
-    );
-    assert!(generator_handle.await.is_ok());
+    let (scheduler_handle, scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
-    // Check results
-    let actual_num_packets = count_server_received_packets(receiver, tx_size).await;
+    let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
     assert_eq!(actual_num_packets, 0);
 
-    // Exit server
+    // Stop the sender.
+    tx_sender_shutdown.await;
+
+    // And the scheduler.
+    scheduler_cancel.cancel();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
+
+    // We do not expect to see any errors, as the connection is in the pending state still, when we
+    // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
+    // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
+    // accept both 0 and 1 as valid values for it.
+    assert_eq!(localhost_stats, SendTransactionStats::default());
+
+    // Stop the server.
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }
@@ -525,8 +582,9 @@ async fn test_rate_limiting() {
 // The same as test_rate_limiting but here we wait for 1 min to check that the
 // connection has been established.
 #[tokio::test]
-// Ignore because it takes more than 1 minute
-#[ignore]
+// TODO Provide an alternative testing interface for `streamer::nonblocking::quic::spawn_server`
+// that would accept throttling at a granularity below 1 minute.
+#[ignore = "takes 70s to complete"]
 async fn test_rate_limiting_establish_connection() {
     let SpawnTestServerResult {
         join_handle: server_handle,
@@ -546,37 +604,54 @@ async fn test_rate_limiting_establish_connection() {
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
     drop(connection_to_reach_limit);
 
-    let (transaction_sender, transaction_receiver) = channel(1);
-    let scheduler_handle =
-        setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
-
     // Setup sending txs
     let tx_size = 1;
-    let num_txs: usize = 65;
-    let generator_handle = spawn_generator(
-        transaction_sender,
-        tx_size,
-        num_txs,
-        Duration::from_millis(1000),
-    )
-    .await;
+    let expected_num_txs: usize = 65;
+    let SpawnTxSender {
+        tx_receiver,
+        tx_sender_shutdown,
+        ..
+    } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(1000));
 
-    sleep(Duration::from_secs(60)).await;
+    let (scheduler_handle, scheduler_cancel) =
+        setup_connection_worker_scheduler(server_address, tx_receiver, None).await;
 
-    // Stop sending
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let actual_num_packets =
+        count_received_packets_for(receiver, tx_size, Duration::from_secs(70)).await;
     assert!(
-        localhost_stats.write_error_connection_lost
-            + localhost_stats.connection_error_application_closed
-            > 0
+        actual_num_packets > 0,
+        "As we wait longer than 1 minute, at least one transaction should be delivered.  \
+         After 1 minute the server is expected to accept our connection.\n\
+         Actual packets delivered: {actual_num_packets}"
     );
-    assert!(generator_handle.await.is_ok());
 
-    // Check results
-    let actual_num_packets = count_server_received_packets(receiver, tx_size).await;
-    assert!(actual_num_packets > 0);
+    // Stop the sender.
+    tx_sender_shutdown.await;
 
-    // Exit server
+    // And the scheduler.
+    scheduler_cancel.cancel();
+    let mut localhost_stats = join_scheduler(scheduler_handle).await;
+    assert!(
+        localhost_stats.connection_error_timed_out > 0,
+        "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
+         the 1 minute delay.\n\
+         Actual connection_error_timed_out: {}",
+        localhost_stats.connection_error_timed_out
+    );
+    assert!(
+        localhost_stats.successfully_sent > 0,
+        "As we run the test for longer than 1 minute, we expect a connection to be established, \
+         and a number of transactions to be delivered.\n\
+         Actual successfully_sent: {}",
+        localhost_stats.successfully_sent
+    );
+
+    // All the rest of the error counters should be 0.
+    localhost_stats.connection_error_timed_out = 0;
+    localhost_stats.successfully_sent = 0;
+    assert_eq!(localhost_stats, SendTransactionStats::default());
+
+    // Stop the server.
     exit.store(true, Ordering::Relaxed);
     server_handle.await.unwrap();
 }
