@@ -5186,6 +5186,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-cpi"
+version = "2.1.0"
+dependencies = [
+ "solana-account-info",
+ "solana-define-syscall",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-stable-layout",
+]
+
+[[package]]
 name = "solana-curve25519"
 version = "2.1.0"
 dependencies = [
@@ -5664,6 +5676,7 @@ dependencies = [
  "solana-atomic-u64",
  "solana-bincode",
  "solana-clock",
+ "solana-cpi",
  "solana-decode-error",
  "solana-define-syscall",
  "solana-hash",
@@ -5682,6 +5695,7 @@ dependencies = [
  "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-short-vec",
+ "solana-stable-layout",
  "thiserror",
  "wasm-bindgen",
 ]
@@ -6719,6 +6733,14 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sanitize",
+]
+
+[[package]]
+name = "solana-stable-layout"
+version = "2.1.0"
+dependencies = [
+ "solana-instruction",
+ "solana-pubkey",
 ]
 
 [[package]]
