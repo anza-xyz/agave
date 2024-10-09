@@ -1670,8 +1670,8 @@ pub fn make_min_priority_thread_pool() -> ThreadPool {
 }
 
 pub fn make_hash_thread_pool() -> ThreadPool {
-    // 1/8 of the number of cpus and up to 8 threads gives good balance for the system.
-    let num_threads = (num_cpus::get() / 8).clamp(2, 8);
+    // 1/8 of the number of cpus and up to 6 threads gives good balance for the system.
+    let num_threads = (num_cpus::get() / 8).clamp(2, 6);
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solAccHash{i:02}"))
         .num_threads(num_threads)
