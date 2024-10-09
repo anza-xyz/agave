@@ -5682,6 +5682,7 @@ dependencies = [
  "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-short-vec",
+ "solana-stable-layout",
  "thiserror",
  "wasm-bindgen",
 ]
@@ -6719,6 +6720,14 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sanitize",
+]
+
+[[package]]
+name = "solana-stable-layout"
+version = "2.1.0"
+dependencies = [
+ "solana-instruction",
+ "solana-pubkey",
 ]
 
 [[package]]

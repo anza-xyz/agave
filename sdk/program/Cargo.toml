@@ -62,6 +62,7 @@ solana-serde-varint = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
+solana-stable-layout = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
