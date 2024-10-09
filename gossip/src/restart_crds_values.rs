@@ -9,6 +9,8 @@ use {
     thiserror::Error,
 };
 
+pub type RestartHeaviestForkRound = u8;
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct RestartLastVotedForkSlots {
@@ -35,6 +37,7 @@ pub struct RestartHeaviestFork {
     pub last_slot_hash: Hash,
     pub observed_stake: u64,
     pub shred_version: u16,
+    pub round: RestartHeaviestForkRound,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
@@ -152,6 +155,7 @@ impl RestartHeaviestFork {
             last_slot_hash: Hash::new_unique(),
             observed_stake: rng.gen_range(1..u64::MAX),
             shred_version: 1,
+            round: 0,
         }
     }
 }
@@ -363,9 +367,11 @@ mod test {
             last_slot_hash: Hash::default(),
             observed_stake: 800_000,
             shred_version: 1,
+            round: 0,
         };
         assert_eq!(fork.sanitize(), Ok(()));
         assert_eq!(fork.observed_stake, 800_000);
+        assert_eq!(fork.round, 0);
         fork.wallclock = crate::crds_value::MAX_WALLCLOCK;
         assert_eq!(fork.sanitize(), Err(SanitizeError::ValueOutOfBounds));
     }
