@@ -1659,10 +1659,6 @@ pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
 
-pub fn one_eighth_thread_count() -> usize {
-    std::cmp::max(2, num_cpus::get() / 8)
-}
-
 pub fn make_min_priority_thread_pool() -> ThreadPool {
     // Use lower thread count to reduce priority.
     let num_threads = quarter_thread_count();
@@ -1674,9 +1670,10 @@ pub fn make_min_priority_thread_pool() -> ThreadPool {
 }
 
 pub fn make_hash_thread_pool() -> ThreadPool {
-    let num_threads = one_eighth_thread_count();
+    // Up to 8 threads gives good balance for the system.
+    let num_threads = std::cmp::min(8, std::cmp::max(2, num_cpus::get() / 8));
     rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("solAccountsHash{i:02}"))
+        .thread_name(|i| format!("solAccHash{i:02}"))
         .num_threads(num_threads)
         .build()
         .unwrap()
