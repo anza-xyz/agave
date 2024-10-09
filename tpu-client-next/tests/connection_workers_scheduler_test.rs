@@ -92,8 +92,7 @@ async fn join_scheduler(
 // Specify the pessimistic time to finish generation and result checks.
 const TEST_MAX_TIME: Duration = Duration::from_millis(2500);
 
-// TODO(klykov): consider renaming to SpawnTxGenerator
-struct SpawnTxSender {
+struct SpawnTxGenerator {
     tx_receiver: Receiver<TransactionBatch>,
     tx_sender_shutdown: BoxFuture<'static, ()>,
     tx_sender_done: oneshot::Receiver<()>,
@@ -105,7 +104,11 @@ struct SpawnTxSender {
 /// It will not close the returned `tx_receiver` until `tx_sender_shutdown` is invoked.  Otherwise,
 /// there is a race condition, that exists between the last transaction being scheduled for delivery
 /// and the server connection being closed.
-fn spawn_tx_sender(tx_size: usize, num_tx_batches: usize, time_per_tx: Duration) -> SpawnTxSender {
+fn spawn_tx_sender(
+    tx_size: usize,
+    num_tx_batches: usize,
+    time_per_tx: Duration,
+) -> SpawnTxGenerator {
     let num_tx_batches: u32 = num_tx_batches
         .try_into()
         .expect("`num_tx_batches` fits into u32 for all the tests");
@@ -156,7 +159,7 @@ fn spawn_tx_sender(tx_size: usize, num_tx_batches: usize, time_per_tx: Duration)
         sender.await.unwrap();
     });
 
-    SpawnTxSender {
+    SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         tx_sender_done,
@@ -177,7 +180,7 @@ async fn test_basic_transactions_sending() {
     let tx_size = 1;
     let expected_num_txs: usize = 100;
     // Pretend that we are running at ~100 TPS.
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
@@ -280,7 +283,7 @@ async fn test_connection_denied_until_allowed() {
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 10;
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
@@ -340,7 +343,7 @@ async fn test_connection_pruned_and_reopened() {
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 16;
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
@@ -403,7 +406,7 @@ async fn test_staked_connection() {
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 10;
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
@@ -450,7 +453,7 @@ async fn test_connection_throttling() {
     let tx_size = 1;
     let expected_num_txs: usize = 50;
     // Send at 1000 TPS - x10 more than the throttling interval of 10ms used in other tests allows.
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
@@ -491,7 +494,7 @@ async fn test_no_host() {
     let tx_size = 1;
     let max_send_attempts: usize = 10;
 
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         tx_sender_done,
@@ -549,7 +552,7 @@ async fn test_rate_limiting() {
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 16;
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
@@ -607,7 +610,7 @@ async fn test_rate_limiting_establish_connection() {
     // Setup sending txs
     let tx_size = 1;
     let expected_num_txs: usize = 65;
-    let SpawnTxSender {
+    let SpawnTxGenerator {
         tx_receiver,
         tx_sender_shutdown,
         ..
