@@ -277,8 +277,24 @@ pub fn create_account_with_config(
     lamports: u64,
     config: CreateVoteAccountConfig,
 ) -> Vec<Instruction> {
-    let create_ix =
-        system_instruction::create_account(from_pubkey, vote_pubkey, lamports, config.space, &id());
+    let create_ix = match config.with_seed {
+        Some((base, seed)) => system_instruction::create_account_with_seed(
+            from_pubkey,
+            vote_pubkey,
+            base,
+            seed,
+            lamports,
+            config.space,
+            &id(),
+        ),
+        None => system_instruction::create_account(
+            from_pubkey,
+            vote_pubkey,
+            lamports,
+            config.space,
+            &id(),
+        ),
+    };
     let init_ix = initialize_account(vote_pubkey, vote_init);
     vec![create_ix, init_ix]
 }
