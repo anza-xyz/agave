@@ -229,6 +229,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-transaction-ffi"
+version = "2.1.0"
+
+[[package]]
 name = "agave-transaction-view"
 version = "2.1.0"
 dependencies = [
@@ -6374,6 +6378,7 @@ dependencies = [
 name = "solana-core"
 version = "2.1.0"
 dependencies = [
+ "agave-transaction-ffi",
  "ahash 0.8.10",
  "anyhow",
  "arrayvec",
