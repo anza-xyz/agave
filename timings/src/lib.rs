@@ -46,7 +46,7 @@ impl ProgramTiming {
 pub enum ExecuteTimingType {
     CheckUs,
     ValidateFeesUs,
-    LoadUs,
+    LoadAccountsUs,
     ExecuteUs,
     StoreUs,
     UpdateStakesCacheUs,
@@ -57,6 +57,7 @@ pub enum ExecuteTimingType {
     UpdateTransactionStatuses,
     ProgramCacheUs,
     CheckBlockLimitsUs,
+    LoadTransactionsUs,
 }
 
 pub struct Metrics([u64; ExecuteTimingType::CARDINALITY]);
@@ -101,13 +102,6 @@ eager_macro_rules! { $eager_1
                 i64
             ),
             (
-                "validate_fees_us",
-                *$self
-                    .metrics
-                    .index(ExecuteTimingType::ValidateFeesUs),
-                i64
-            ),
-            (
                 "program_cache_us",
                 *$self
                     .metrics
@@ -115,10 +109,24 @@ eager_macro_rules! { $eager_1
                 i64
             ),
             (
-                "load_us",
+                "load_accounts_us",
                 *$self
                     .metrics
-                    .index(ExecuteTimingType::LoadUs),
+                    .index(ExecuteTimingType::LoadAccountsUs),
+                i64
+            ),
+            (
+                "validate_fees_us",
+                *$self
+                    .metrics
+                    .index(ExecuteTimingType::ValidateFeesUs),
+                i64
+            ),
+            (
+                "load_transactions_us",
+                *$self
+                    .metrics
+                    .index(ExecuteTimingType::LoadTransactionsUs),
                 i64
             ),
             (
