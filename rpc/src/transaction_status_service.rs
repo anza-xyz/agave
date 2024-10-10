@@ -16,7 +16,7 @@ use {
             Arc,
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
 
@@ -73,6 +73,8 @@ impl TransactionStatusService {
                 token_balances,
                 transaction_indexes,
             }) => {
+                let start_time = Instant::now();
+
                 for (
                     transaction,
                     commit_result,
@@ -181,6 +183,12 @@ impl TransactionStatusService {
                             .expect("Expect database write to succeed: TransactionStatus");
                     }
                 }
+
+                let elapsed = start_time.elapsed();
+                println!(
+                    "write_transaction_status_batch execution time: {} microseconds",
+                    elapsed.as_micros()
+                );
             }
             TransactionStatusMessage::Freeze(slot) => {
                 max_complete_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
