@@ -459,6 +459,8 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_data_len: u64,
     pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     pub(crate) epoch_accounts_hash: Option<Hash>,
+    // Once the accounts lt hash feature gate is enabled, remove the Option wrapper
+    pub(crate) accounts_lt_hash: Option<AccountsLtHash>,
 }
 
 /// Bank's common fields shared by all supported snapshot versions for serialization.
@@ -502,6 +504,8 @@ pub struct BankFieldsToSerialize {
     pub is_delta: bool,
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+    // Once the accounts lt hash feature gate is enabled, remove the Option wrapper
+    pub accounts_lt_hash: Option<AccountsLtHash>,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -658,6 +662,7 @@ impl BankFieldsToSerialize {
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
+            accounts_lt_hash: Some(AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS]))),
         }
     }
 }
@@ -1718,16 +1723,21 @@ impl Bank {
             .fill_missing_sysvar_cache_entries(&bank);
         bank.rebuild_skipped_rewrites();
 
-        let calculate_accounts_lt_hash_duration = bank.is_accounts_lt_hash_enabled().then(|| {
-            let (_, duration) = meas_dur!({
-                *bank.accounts_lt_hash.get_mut().unwrap() = bank
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .calculate_accounts_lt_hash_at_startup(&bank.ancestors, bank.slot());
-            });
-            duration
-        });
+        let mut calculate_accounts_lt_hash_duration = None;
+        if bank.is_accounts_lt_hash_enabled() {
+            if let Some(accounts_lt_hash) = fields.accounts_lt_hash {
+                *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash
+            } else {
+                let (_, duration) = meas_dur!(
+                    *bank.accounts_lt_hash.get_mut().unwrap() = bank
+                        .rc
+                        .accounts
+                        .accounts_db
+                        .calculate_accounts_lt_hash_at_startup(&bank.ancestors, bank.slot())
+                );
+                calculate_accounts_lt_hash_duration = Some(duration);
+            }
+        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -1817,6 +1827,9 @@ impl Bank {
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
             versioned_epoch_stakes,
+            accounts_lt_hash: self
+                .is_accounts_lt_hash_enabled()
+                .then(|| self.accounts_lt_hash.lock().unwrap().clone()),
         }
     }
 
