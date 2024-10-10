@@ -312,6 +312,10 @@ impl Blockstore {
         self.db
     }
 
+    pub fn db_ref(&self) -> &Arc<Database> {
+        &self.db
+    }
+
     pub fn ledger_path(&self) -> &PathBuf {
         &self.ledger_path
     }
@@ -2915,6 +2919,31 @@ impl Blockstore {
         Ok(())
     }
 
+    pub fn add_transaction_status_to_batch<'a>(
+        &self,
+        slot: Slot,
+        signature: Signature,
+        keys_with_writable: impl Iterator<Item = (&'a Pubkey, bool)>,
+        status: TransactionStatusMeta,
+        transaction_index: usize,
+        db_write_batch: &mut WriteBatch<'_>,
+    ) -> Result<()> {
+        let status = status.into();
+        let transaction_index = u32::try_from(transaction_index)
+            .map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
+        self.transaction_status_cf
+            .put_protobuf((signature, slot), &status)?;
+
+        for (address, writeable) in keys_with_writable {
+            db_write_batch.put::<cf::AddressSignatures>(
+                (*address, slot, transaction_index, signature),
+                &AddressSignatureMeta { writeable },
+            )?;
+        }
+
+        Ok(())
+    }
+
     pub fn read_transaction_memos(
         &self,
         signature: Signature,
@@ -2940,6 +2969,16 @@ impl Blockstore {
         memos: String,
     ) -> Result<()> {
         self.transaction_memos_cf.put((*signature, slot), &memos)
+    }
+
+    pub fn add_transaction_memos_to_batch(
+        &self,
+        signature: &Signature,
+        slot: Slot,
+        memos: String,
+        db_write_batch: &mut WriteBatch<'_>,
+    ) -> Result<()> {
+        db_write_batch.put::<cf::TransactionMemos>((*signature, slot), &memos)
     }
 
     /// Acquires the `lowest_cleanup_slot` lock and returns a tuple of the held lock
