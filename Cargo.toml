@@ -118,6 +118,7 @@ members = [
     "sdk/macro",
     "sdk/msg",
     "sdk/package-metadata-macro",
+    "sdk/packet",
     "sdk/program",
     "sdk/program-error",
     "sdk/program-memory",
@@ -230,6 +231,7 @@ bytes = "1.7"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
+cfg_eval = "0.1.2"
 chrono = { version = "0.4.38", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
@@ -433,6 +435,7 @@ solana-net-utils = { path = "net-utils", version = "=2.1.0" }
 solana-nohash-hasher = "0.2.1"
 solana-notifier = { path = "notifier", version = "=2.1.0" }
 solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.1.0" }
+solana-packet = { path = "sdk/packet", version = "=2.1.0" }
 solana-perf = { path = "perf", version = "=2.1.0" }
 solana-poh = { path = "poh", version = "=2.1.0" }
 solana-poseidon = { path = "poseidon", version = "=2.1.0" }
