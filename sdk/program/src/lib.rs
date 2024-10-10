@@ -183,7 +183,6 @@
 //! [ed25519]: https://ed25519.cr.yp.to/
 //! [`Keypair`]: https://docs.rs/solana-sdk/latest/solana_sdk/signer/keypair/struct.Keypair.html
 //! [SHA-256]: https://en.wikipedia.org/wiki/SHA-2
-//! [`Sol`]: native_token::Sol
 //! [_lamports_]: https://solana.com/docs/intro#what-are-sols
 //!
 //! # Serialization
@@ -502,7 +501,6 @@ pub mod loader_v4;
 pub mod loader_v4_instruction;
 pub mod log;
 pub mod message;
-pub mod native_token;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
@@ -541,7 +539,8 @@ pub use {
     solana_account_info::{self as account_info, debug_account_data},
     solana_clock as clock,
     solana_msg::msg,
-    solana_program_option as program_option, solana_pubkey as pubkey, solana_rent as rent,
+    solana_native_token as native_token, solana_program_option as program_option,
+    solana_pubkey as pubkey, solana_rent as rent,
 };
 
 /// The [config native program][np].
