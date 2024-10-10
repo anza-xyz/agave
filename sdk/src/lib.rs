@@ -102,7 +102,6 @@ pub mod simple_vote_transaction_checker;
 pub mod system_transaction;
 pub mod timing;
 pub mod transaction;
-pub mod transaction_context;
 pub mod transport;
 pub mod wasm;
 
@@ -168,6 +167,11 @@ pub use solana_secp256k1_recover as secp256k1_recover;
 pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
+#[deprecated(
+    since = "2.1.0",
+    note = "Use `solana-transaction-context` crate instead"
+)]
+pub use solana_transaction_context as transaction_context;
 
 /// Convenience macro for `AddAssign` with saturating arithmetic.
 /// Replace by `std::num::Saturating` once stable

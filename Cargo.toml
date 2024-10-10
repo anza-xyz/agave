@@ -128,6 +128,7 @@ members = [
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
     "sdk/signature",
+    "sdk/transaction-context",
     "send-transaction-service",
     "short-vec",
     "stake-accounts",
@@ -478,6 +479,7 @@ solana-system-program = { path = "programs/system", version = "=2.1.0" }
 solana-test-validator = { path = "test-validator", version = "=2.1.0" }
 solana-thin-client = { path = "thin-client", version = "=2.1.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.1.0", default-features = false }
+solana-transaction-context = { path = "sdk/transaction-context", version = "=2.1.0" }
 solana-transaction-status = { path = "transaction-status", version = "=2.1.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.1.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.1.0" }
