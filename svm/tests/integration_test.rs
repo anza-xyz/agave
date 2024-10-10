@@ -1379,9 +1379,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     }
 
     for test_entry in &mut test_entries {
-        test_entry
-            .initial_programs
-            .push((program_name.to_string(), DEPLOYMENT_SLOT));
+        test_entry.add_initial_program(program_name);
 
         if enable_fee_only_transactions {
             test_entry
@@ -1589,9 +1587,7 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
     }
 
     for test_entry in &mut test_entries {
-        test_entry
-            .initial_programs
-            .push((program_name.to_string(), DEPLOYMENT_SLOT));
+        test_entry.add_initial_program(program_name);
 
         if enable_fee_only_transactions {
             test_entry
@@ -1667,11 +1663,9 @@ fn account_deallocate() -> Vec<SvmTestEntry> {
     for remove_lamports in [false, true] {
         let mut test_entry = SvmTestEntry::default();
 
-        let program_name = "write-to-account".to_string();
-        let program_id = program_address(&program_name);
-        test_entry
-            .initial_programs
-            .push((program_name, DEPLOYMENT_SLOT));
+        let program_name = "write-to-account";
+        let program_id = program_address(program_name);
+        test_entry.add_initial_program(program_name);
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
@@ -1744,11 +1738,9 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
             .push(feature_set::enable_transaction_loading_failure_fees::id());
     }
 
-    let program_name = "hello-solana".to_string();
-    let real_program_id = program_address(&program_name);
-    test_entry
-        .initial_programs
-        .push((program_name, DEPLOYMENT_SLOT));
+    let program_name = "hello-solana";
+    let real_program_id = program_address(program_name);
+    test_entry.add_initial_program(program_name);
 
     // 0/1: a rent-paying fee-payer goes to zero lamports on an executed transaction, the batch sees it as deallocated
     // 2/3: the same, except if fee-only transactions are enabled, it goes to zero lamports from a a fee-only transaction
@@ -1895,9 +1887,9 @@ fn fee_payer_deallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry>
 fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
-    let program_name = "write-to-account".to_string();
-    let program_id = program_address(&program_name);
-    let program_size = program_data_size(&program_name);
+    let program_name = "write-to-account";
+    let program_id = program_address(program_name);
+    let program_size = program_data_size(program_name);
 
     let mut common_test_entry = SvmTestEntry::default();
 
@@ -1984,9 +1976,7 @@ fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
     }
 
     for test_entry in &mut test_entries {
-        test_entry
-            .initial_programs
-            .push((program_name.to_string(), DEPLOYMENT_SLOT));
+        test_entry.add_initial_program(program_name);
 
         if enable_fee_only_transactions {
             test_entry
