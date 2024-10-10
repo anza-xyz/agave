@@ -20,6 +20,7 @@ bs58 = { workspace = true, features = ["alloc"] }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
+five8_const = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 memoffset = { workspace = true }
@@ -36,6 +37,7 @@ solana-atomic-u64 = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
+solana-feature = { workspace = true, features = ["bincode"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true, features = [
@@ -62,6 +64,7 @@ solana-serde-varint = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
+solana-system-instruction = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
@@ -131,7 +134,8 @@ frozen-abi = [
     "solana-instruction/frozen-abi",
     "solana-pubkey/frozen-abi",
     "solana-rent/frozen-abi",
-    "solana-short-vec/frozen-abi"
+    "solana-short-vec/frozen-abi",
+    "solana-system-instruction/frozen-abi"
 ]
 
 [lints]
