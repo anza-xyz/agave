@@ -4,7 +4,7 @@ use {
         bytes::advance_offset_for_type,
         instructions_frame::{InstructionsFrame, InstructionsIterator},
         message_header_frame::{MessageHeaderFrame, TransactionVersion},
-        result::{Result, TransactionViewError},
+        result::Result,
         signature_frame::SignatureFrame,
         static_account_keys_frame::StaticAccountKeysFrame,
     },
@@ -30,7 +30,8 @@ pub(crate) struct TransactionFrame {
 impl TransactionFrame {
     /// Parse a serialized transaction and verify basic structure.
     /// The `bytes` parameter must have no trailing data.
-    pub(crate) fn try_new(bytes: &[u8]) -> Result<Self> {
+    /// Returns the parsed `TransactionFrame` and the number of bytes consumed.
+    pub(crate) fn try_new(bytes: &[u8]) -> Result<(Self, usize)> {
         let mut offset = 0;
         let signature = SignatureFrame::try_new(bytes, &mut offset)?;
         let message_header = MessageHeaderFrame::try_new(bytes, &mut offset)?;
@@ -53,19 +54,17 @@ impl TransactionFrame {
             TransactionVersion::V0 => AddressTableLookupFrame::try_new(bytes, &mut offset)?,
         };
 
-        // Verify that the entire transaction was parsed.
-        if offset != bytes.len() {
-            return Err(TransactionViewError::ParseError);
-        }
-
-        Ok(Self {
-            signature,
-            message_header,
-            static_account_keys,
-            recent_blockhash_offset,
-            instructions,
-            address_table_lookup,
-        })
+        Ok((
+            Self {
+                signature,
+                message_header,
+                static_account_keys,
+                recent_blockhash_offset,
+                instructions,
+                address_table_lookup,
+            },
+            offset,
+        ))
     }
 
     /// Return the number of signatures in the transaction.
@@ -269,7 +268,8 @@ mod tests {
 
     fn verify_transaction_view_frame(tx: &VersionedTransaction) {
         let bytes = bincode::serialize(tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         assert_eq!(frame.signature.num_signatures, tx.signatures.len() as u8);
         assert_eq!(frame.signature.offset as usize, 1);
@@ -444,7 +444,8 @@ mod tests {
         let tx = simple_transfer();
         let mut bytes = bincode::serialize(&tx).unwrap();
         bytes.push(0);
-        assert!(TransactionFrame::try_new(&bytes).is_err());
+        let (_frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len() - 1); // 1 trailing byte
     }
 
     #[test]
@@ -521,7 +522,8 @@ mod tests {
     fn test_basic_accessors() {
         let tx = simple_transfer();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         assert_eq!(frame.num_signatures(), 1);
         assert!(matches!(frame.version(), TransactionVersion::Legacy));
@@ -549,7 +551,8 @@ mod tests {
     fn test_instructions_iter_empty() {
         let tx = minimally_sized_transaction();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
         unsafe {
@@ -562,7 +565,8 @@ mod tests {
     fn test_instructions_iter_single() {
         let tx = simple_transfer();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
         unsafe {
@@ -582,7 +586,8 @@ mod tests {
     fn test_instructions_iter_multiple() {
         let tx = multiple_transfers();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
         unsafe {
@@ -609,7 +614,8 @@ mod tests {
     fn test_address_table_lookup_iter_empty() {
         let tx = simple_transfer();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         // SAFETY: `bytes` is the same slice used to create `frame`.
         unsafe {
@@ -622,7 +628,8 @@ mod tests {
     fn test_address_table_lookup_iter_single() {
         let tx = v0_with_single_lookup();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         let atls_actual = tx.message.address_table_lookups().unwrap();
         // SAFETY: `bytes` is the same slice used to create `frame`.
@@ -640,7 +647,8 @@ mod tests {
     fn test_address_table_lookup_iter_multiple() {
         let tx = v0_with_multiple_lookups();
         let bytes = bincode::serialize(&tx).unwrap();
-        let frame = TransactionFrame::try_new(&bytes).unwrap();
+        let (frame, offset) = TransactionFrame::try_new(&bytes).unwrap();
+        assert_eq!(offset, bytes.len());
 
         let atls_actual = tx.message.address_table_lookups().unwrap();
         // SAFETY: `bytes` is the same slice used to create `frame`.

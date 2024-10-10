@@ -18,6 +18,7 @@ solana-svm-transaction = { workspace = true }
 agave-transaction-view = { path = ".", features = ["dev-context-only-utils"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
+solana-entry = { workspace = true }
 
 [features]
 dev-context-only-utils = []
