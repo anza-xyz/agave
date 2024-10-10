@@ -960,7 +960,7 @@ fn test_program_sbf_invoke_sanity() {
                 format!("Program log: invoke {program_lang} program"),
                 "Program log: Test max instruction data len exceeded".into(),
                 "skip".into(), // don't compare compute consumption logs
-                format!("Program {invoke_program_id} failed: Invoked an instruction with data that is too large (10241 > 10240)"),
+                format!("Program {invoke_program_id} failed: Invoked an instruction with data that is too large (1233 > 1232)"),
             ]),
         );
 

@@ -12,11 +12,11 @@ extern "C" {
 #endif
 
 /**
- * Maximum CPI instruction data size. 10 KiB was chosen to ensure that CPI
- * instructions are not more limited than transaction instructions if the size
- * of transactions is doubled in the future.
+ * Maximum CPI instruction data size. 1232 bytes was chosen so that CPI
+ * instructions are limited similarly to transaction instructions
+ * and use the same limit as `program_utils::limited_deserialize`.
  */
-static const uint64_t MAX_CPI_INSTRUCTION_DATA_LEN = 10240;
+static const uint64_t MAX_CPI_INSTRUCTION_DATA_LEN = 1232;
 
 /**
  * Maximum CPI instruction accounts. 255 was chosen to ensure that instruction

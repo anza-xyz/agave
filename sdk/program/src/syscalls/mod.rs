@@ -8,10 +8,10 @@ mod definitions;
 #[cfg(target_os = "solana")]
 pub use definitions::*;
 
-/// Maximum CPI instruction data size. 10 KiB was chosen to ensure that CPI
-/// instructions are not more limited than transaction instructions if the size
-/// of transactions is doubled in the future.
-pub const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
+/// Maximum CPI instruction data size. 1232 bytes was chosen so that CPI
+/// instructions are limited similarly to transaction instructions
+/// and use the same limit as `program_utils::limited_deserialize`.
+pub const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 1232;
 
 /// Maximum CPI instruction accounts. 255 was chosen to ensure that instruction
 /// accounts are always within the maximum instruction account limit for SBF
