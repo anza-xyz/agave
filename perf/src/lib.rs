@@ -3,6 +3,7 @@ pub mod cuda_runtime;
 pub mod data_budget;
 pub mod deduper;
 pub mod discard;
+pub mod mutable_packet_batch;
 pub mod packet;
 pub mod perf_libs;
 pub mod recycler;

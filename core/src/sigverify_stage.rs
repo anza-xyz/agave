@@ -13,6 +13,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
+        mutable_packet_batch::MutablePacketBatch,
         packet::{Packet, PacketBatch},
         sigverify::{
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
@@ -21,6 +22,7 @@ use {
     solana_sdk::timing,
     solana_streamer::streamer::{self, StreamerError},
     std::{
+        sync::Arc,
         thread::{self, Builder, JoinHandle},
         time::Instant,
     },
@@ -56,7 +58,11 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
+    fn verify_batches<T: MutablePacketBatch>(
+        &self,
+        batches: Vec<T>,
+        valid_packets: usize,
+    ) -> Vec<T>;
     fn process_received_packet(
         &mut self,
         _packet: &mut Packet,
@@ -66,7 +72,8 @@ pub trait SigVerifier {
     }
     fn process_excess_packet(&mut self, _packet: &Packet) {}
     fn process_passed_sigverify_packet(&mut self, _packet: &Packet) {}
-    fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
+    fn send_packets(&mut self, packet_batches: Vec<Arc<PacketBatch>>)
+        -> Result<(), Self::SendType>;
 }
 
 #[derive(Default, Clone)]
@@ -225,16 +232,19 @@ impl SigVerifierStats {
 
 impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
-    fn verify_batches(
+    fn verify_batches<T: MutablePacketBatch>(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<T>,
         _valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<T> {
         sigverify::ed25519_verify_disabled(&mut batches);
         batches
     }
 
-    fn send_packets(&mut self, _packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType> {
+    fn send_packets(
+        &mut self,
+        _packet_batches: Vec<Arc<PacketBatch>>,
+    ) -> Result<(), Self::SendType> {
         Ok(())
     }
 }
@@ -252,7 +262,7 @@ impl SigVerifyStage {
     }
 
     pub fn discard_excess_packets(
-        batches: &mut [PacketBatch],
+        batches: &mut [impl MutablePacketBatch],
         mut max_packets: usize,
         mut process_excess_packet: impl FnMut(&Packet),
     ) {
@@ -260,7 +270,7 @@ impl SigVerifyStage {
         let mut addrs = batches
             .iter_mut()
             .rev()
-            .flat_map(|batch| batch.iter_mut().rev())
+            .flat_map(|batch| batch.as_mut().iter_mut().rev())
             .filter(|packet| !packet.meta().discard())
             .map(|packet| (packet.meta().addr, packet))
             .into_group_map();
@@ -282,7 +292,7 @@ impl SigVerifyStage {
     }
 
     /// make this function public so that it is available for benchmarking
-    pub fn maybe_shrink_batches(packet_batches: &mut Vec<PacketBatch>) -> (u64, usize) {
+    pub fn maybe_shrink_batches(packet_batches: &mut Vec<impl MutablePacketBatch>) -> (u64, usize) {
         let mut shrink_time = Measure::start("sigverify_shrink_time");
         let num_packets = count_packets_in_batches(packet_batches);
         let num_discarded_packets = count_discarded_packets(packet_batches);

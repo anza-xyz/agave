@@ -225,7 +225,7 @@ impl PacketDeserializer {
 mod tests {
     use {
         super::*,
-        solana_perf::packet::to_packet_batches,
+        solana_perf::packet::to_arc_packet_batches,
         solana_sdk::{
             hash::Hash, pubkey::Pubkey, signature::Keypair, system_transaction,
             transaction::Transaction,
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn test_deserialize_and_collect_packets_simple_batches() {
         let transactions = vec![random_transfer(), random_transfer()];
-        let packet_batches = to_packet_batches(&transactions, 1);
+        let packet_batches = to_arc_packet_batches(&transactions, 1);
         assert_eq!(packet_batches.len(), 2);
 
         let packet_count: usize = packet_batches.iter().map(|x| x.len()).sum();
@@ -266,9 +266,11 @@ mod tests {
     #[test]
     fn test_deserialize_and_collect_packets_simple_batches_with_failure() {
         let transactions = vec![random_transfer(), random_transfer()];
-        let mut packet_batches = to_packet_batches(&transactions, 1);
+        let mut packet_batches = to_arc_packet_batches(&transactions, 1);
         assert_eq!(packet_batches.len(), 2);
-        packet_batches[0][0].meta_mut().set_discard(true);
+        Arc::make_mut(&mut packet_batches[0])[0]
+            .meta_mut()
+            .set_discard(true);
 
         let packet_count: usize = packet_batches.iter().map(|x| x.len()).sum();
         let results = PacketDeserializer::deserialize_and_collect_packets(

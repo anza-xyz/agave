@@ -268,7 +268,7 @@ impl ClusterInfoVoteListener {
     fn verify_votes(
         votes: Vec<Transaction>,
         bank_forks: &RwLock<BankForks>,
-    ) -> (Vec<Transaction>, Vec<PacketBatch>) {
+    ) -> (Vec<Transaction>, Vec<Arc<PacketBatch>>) {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
@@ -299,7 +299,7 @@ impl ClusterInfoVoteListener {
                 if !keys.any(|(i, key)| tx.message.is_signer(i) && key == authorized_voter) {
                     return None;
                 }
-                Some((tx, packet_batch))
+                Some((tx, Arc::new(packet_batch)))
             })
             .unzip()
     }
@@ -1447,7 +1447,7 @@ mod tests {
         assert!(packets.is_empty());
     }
 
-    fn verify_packets_len(packets: &[PacketBatch], ref_value: usize) {
+    fn verify_packets_len(packets: &[Arc<PacketBatch>], ref_value: usize) {
         let num_packets: usize = packets.iter().map(|pb| pb.len()).sum();
         assert_eq!(num_packets, ref_value);
     }

@@ -1,7 +1,10 @@
 //! Utility to deduplicate baches of incoming network packets.
 
 use {
-    crate::packet::{Packet, PacketBatch},
+    crate::{
+        mutable_packet_batch::MutablePacketBatch,
+        packet::{Packet, PacketBatch},
+    },
     ahash::RandomState,
     rand::Rng,
     std::{
@@ -89,11 +92,12 @@ fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
 
 pub fn dedup_packets_and_count_discards<const K: usize>(
     deduper: &Deduper<K, [u8]>,
-    batches: &mut [PacketBatch],
+    batches: &mut [impl MutablePacketBatch],
     mut process_received_packet: impl FnMut(&mut Packet, bool, bool),
 ) -> u64 {
     batches
         .iter_mut()
+        .map(MutablePacketBatch::as_mut)
         .flat_map(PacketBatch::iter_mut)
         .map(|packet| {
             if packet.meta().discard() {
