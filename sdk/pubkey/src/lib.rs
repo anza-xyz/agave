@@ -1008,9 +1008,50 @@ impl Pubkey {
     }
 }
 
+/// New random Pubkey for tests and benchmarks.
+#[cfg(all(feature = "rand", not(target_os = "solana")))]
+pub fn new_rand() -> Pubkey {
+    Pubkey::from(rand::random::<[u8; PUBKEY_BYTES]>())
+}
+
+#[cfg(all(feature = "std", not(target_os = "solana")))]
+pub fn write_pubkey_file(
+    outfile: &str,
+    pubkey: Pubkey,
+) -> Result<(), std::boxed::Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let serialized = std::format!("\"{pubkey}\"");
+
+    if let Some(outdir) = std::path::Path::new(&outfile).parent() {
+        std::fs::create_dir_all(outdir)?;
+    }
+    let mut f = std::fs::File::create(outfile)?;
+    f.write_all(&serialized.into_bytes())?;
+
+    Ok(())
+}
+
+#[cfg(all(feature = "std", not(target_os = "solana")))]
+pub fn read_pubkey_file(infile: &str) -> Result<Pubkey, std::boxed::Box<dyn std::error::Error>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(infile)?;
+    let mut buffer = std::string::String::new();
+    f.read_to_string(&mut buffer)?;
+    let trimmed = buffer.trim();
+    if !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Input must be a JSON string.",
+        )
+        .into());
+    }
+    let contents = &trimmed[1..trimmed.len() - 1];
+    Ok(Pubkey::from_str(contents)?)
+}
+
 #[cfg(test)]
 mod tests {
-    use {super::*, strum::IntoEnumIterator};
+    use {super::*, std::fs::remove_file, strum::IntoEnumIterator};
 
     #[test]
     fn test_new_unique() {
@@ -1277,5 +1318,16 @@ mod tests {
                 ParsePubkeyError::from_i64(variant_i64)
             );
         }
+    }
+
+    #[test]
+    fn test_read_write_pubkey() -> Result<(), std::boxed::Box<dyn std::error::Error>> {
+        let filename = "test_pubkey.json";
+        let pubkey = new_rand();
+        write_pubkey_file(filename, pubkey)?;
+        let read = read_pubkey_file(filename)?;
+        assert_eq!(read, pubkey);
+        remove_file(filename)?;
+        Ok(())
     }
 }
