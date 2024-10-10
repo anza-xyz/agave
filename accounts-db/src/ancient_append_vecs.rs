@@ -79,6 +79,8 @@ struct AncientSlotInfos {
     total_alive_bytes_shrink: Saturating<u64>,
     /// total alive bytes across all slots
     total_alive_bytes: Saturating<u64>,
+    /// best_slots_to_shrink
+    best_slots_to_shrink: Vec<(Slot, u64)>,
 }
 
 impl AncientSlotInfos {
@@ -177,8 +179,10 @@ impl AncientSlotInfos {
                     * tuning.percent_of_alive_shrunk_data
                     / 100,
             );
+        self.best_slots_to_shrink = Vec::with_capacity(self.shrink_indexes.len());
         for info_index in &self.shrink_indexes {
             let info = &mut self.all_infos[*info_index];
+            self.best_slots_to_shrink.push((info.slot, info.capacity));
             if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
                 // we exceeded the amount to shrink due to alive ratio, so don't shrink this one just due to 'should_shrink'
                 // It MAY be shrunk based on total capacity still.
@@ -396,7 +400,12 @@ impl AccountsDb {
         self.shrink_ancient_stats
             .slots_considered
             .fetch_add(sorted_slots.len() as u64, Ordering::Relaxed);
-        let ancient_slot_infos = self.collect_sort_filter_ancient_slots(sorted_slots, &tuning);
+        let mut ancient_slot_infos = self.collect_sort_filter_ancient_slots(sorted_slots, &tuning);
+
+        std::mem::swap(
+            &mut *self.best_ancient_slots_to_shrink.write().unwrap(),
+            &mut ancient_slot_infos.best_slots_to_shrink,
+        );
 
         if ancient_slot_infos.all_infos.is_empty() {
             return; // nothing to do

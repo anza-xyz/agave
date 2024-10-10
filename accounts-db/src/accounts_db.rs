@@ -141,6 +141,11 @@ const MAX_ITEMS_PER_CHUNK: Slot = 2_500;
 // This allows us to split up accounts index accesses across multiple threads.
 const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
 
+/// The number of shrink candidate slots that is small enough so that
+/// additional storages from ancient slots can be added to the
+/// candidates for shrinking.
+const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAncientStorage {
     /// ancient storages are created by appending
@@ -1463,6 +1468,11 @@ pub struct AccountsDb {
     /// Flag to indicate if the experimental accounts lattice hash is enabled.
     /// (For R&D only; a feature-gate also exists to turn this on and make it a part of consensus.)
     pub is_experimental_accumulator_hash_enabled: AtomicBool,
+
+    /// These are the ancient storages that could be valuable to shrink.
+    /// sorted by largest dead bytes to smallest
+    /// Members are Slot and capacity. If capacity is smaller, then that means the storage was already shrunk.
+    pub(crate) best_ancient_slots_to_shrink: RwLock<Vec<(Slot, u64)>>,
 }
 
 /// results from 'split_storages_ancient'
@@ -1811,6 +1821,7 @@ impl AccountsDb {
             is_experimental_accumulator_hash_enabled: default_accounts_db_config
                 .enable_experimental_accumulator_hash
                 .into(),
+            best_ancient_slots_to_shrink: RwLock::default(),
         }
     }
 
@@ -4352,8 +4363,12 @@ impl AccountsDb {
 
         let shrink_candidates_slots =
             std::mem::take(&mut *self.shrink_candidate_slots.lock().unwrap());
+        self.shrink_stats
+            .initial_candidates_count
+            .store(shrink_candidates_slots.len() as u64, Ordering::Relaxed);
+
         let candidates_count = shrink_candidates_slots.len();
-        let ((shrink_slots, shrink_slots_next_batch), select_time_us) = measure_us!({
+        let ((mut shrink_slots, shrink_slots_next_batch), select_time_us) = measure_us!({
             if let AccountShrinkThreshold::TotalSpace { shrink_ratio } = self.shrink_ratio {
                 let (shrink_slots, shrink_slots_next_batch) =
                     self.select_candidates_by_total_usage(&shrink_candidates_slots, shrink_ratio);
@@ -4374,6 +4389,29 @@ impl AccountsDb {
             }
         });
 
+        // If there are too few slots to shrink, add an ancient slot
+        // for shrinking.
+        if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
+            let ancients = self.best_ancient_slots_to_shrink.read().unwrap();
+            for (slot, capacity) in ancients.iter() {
+                if let Some(store) = self.storage.get_slot_storage_entry(*slot) {
+                    if !shrink_slots.contains(slot)
+                        && *capacity == store.capacity()
+                        && Self::is_candidate_for_shrink(self, &store)
+                    {
+                        let ancient_bytes_added_to_shrink = store.alive_bytes() as u64;
+                        shrink_slots.insert(*slot, store);
+                        self.shrink_stats
+                            .ancient_bytes_added_to_shrink
+                            .fetch_add(ancient_bytes_added_to_shrink, Ordering::Relaxed);
+                        self.shrink_stats
+                            .ancient_slots_added_to_shrink
+                            .fetch_add(1, Ordering::Relaxed);
+                        break;
+                    }
+                }
+            }
+        }
         if shrink_slots.is_empty()
             && shrink_slots_next_batch
                 .as_ref()
