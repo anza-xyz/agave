@@ -10,9 +10,7 @@ use {
         Endpoint, IdleTimeout, ServerConfig,
     },
     rustls::{
-        pki_types::{CertificateDer, UnixTime},
-        server::danger::ClientCertVerified,
-        DistinguishedName, KeyLogFile,
+        pki_types::{CertificateDer, UnixTime}, server::{danger::ClientCertVerified, ServerSessionMemoryCache}, DistinguishedName, KeyLogFile
     },
     solana_perf::packet::PacketBatch,
     solana_sdk::{
@@ -21,13 +19,10 @@ use {
         signature::Keypair,
     },
     std::{
-        net::UdpSocket,
-        sync::{
+        net::UdpSocket, sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
-        },
-        thread,
-        time::Duration,
+        }, thread, time::Duration
     },
     tokio::runtime::Runtime,
 };
@@ -125,9 +120,19 @@ pub(crate) fn configure_server(
         .with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     server_tls_config.key_log = Arc::new(KeyLogFile::new());
+    
+    // Required by rustls - 0 or 0xffff_ffff
+
+    server_tls_config.max_early_data_size = 0xffff_ffff;
+    
+    server_tls_config.send_tls13_tickets = 1;
+    // Session storage is small - 10,000 entries is 640k even with the inefficient hash mapping
+    server_tls_config.session_storage = ServerSessionMemoryCache::new(10_000);
+    server_tls_config.send_half_rtt_data = true;
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+    
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
     // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability
@@ -138,6 +143,7 @@ pub(crate) fn configure_server(
     config.receive_window((PACKET_DATA_SIZE as u32).into());
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
     config.max_idle_timeout(Some(timeout));
+    
 
     // disable bidi & datagrams
     const MAX_CONCURRENT_BIDI_STREAMS: u32 = 0;

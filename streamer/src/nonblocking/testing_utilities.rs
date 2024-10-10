@@ -3,29 +3,21 @@ use {
     super::quic::{
         spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID,
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
-    },
-    crate::{
+    }, crate::{
         quic::{StreamerStats, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         streamer::StakedNodes,
         tls_certificates::new_dummy_x509_certificate,
-    },
-    crossbeam_channel::unbounded,
-    quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
-        TokioRuntime, TransportConfig,
-    },
-    solana_perf::packet::PacketBatch,
-    solana_sdk::{
+    }, crossbeam_channel::unbounded, quinn::{
+        crypto::rustls::QuicClientConfig, ClientConfig, Connecting, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig, VarInt, ZeroRttAccepted
+    }, rustls::client::{ClientSessionMemoryCache, Resumption}, solana_perf::packet::PacketBatch, solana_sdk::{
         net::DEFAULT_TPU_COALESCE,
         quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
         signer::keypair::Keypair,
-    },
-    std::{
+    }, std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
-    },
-    tokio::task::JoinHandle,
+    }, tokio::task::JoinHandle
 };
 
 #[derive(Debug)]
@@ -93,7 +85,7 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
 
     crypto.enable_early_data = true;
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
-
+    //crypto.resumption = Resumption::in_memory_sessions(128);
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
 
     let mut transport_config = TransportConfig::default();
@@ -103,6 +95,33 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     config.transport_config(Arc::new(transport_config));
 
     config
+}
+
+
+pub fn get_client_config_0rtt(keypair: &Keypair) -> (ClientConfig, Arc<ClientSessionMemoryCache>) {
+    let (cert, key) = new_dummy_x509_certificate(keypair);
+
+    let mut crypto = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_client_auth_cert(vec![cert], key)
+        .expect("Failed to use client certificate");
+
+    crypto.enable_early_data = true;
+    crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
+    let cli_store = ClientSessionMemoryCache::new(128);
+    let cli_arc = Arc::new(cli_store);
+    crypto.resumption = Resumption::store(cli_arc.clone());
+    
+    let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
+    
+    let mut transport_config = TransportConfig::default();
+    let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
+    transport_config.max_idle_timeout(Some(timeout));
+    transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+    config.transport_config(Arc::new(transport_config));
+
+    (config, cli_arc)
 }
 
 #[derive(Debug, Clone)]
@@ -151,7 +170,7 @@ pub fn setup_quic_server(
                 os::fd::{FromRawFd, IntoRawFd},
                 str::FromStr as _,
             };
-            (0..10)
+            (0..01)
                 .map(|_| {
                     let sock = socket2::Socket::new(
                         socket2::Domain::IPV4,
@@ -228,4 +247,42 @@ pub async fn make_client_endpoint(
         .expect("Endpoint configuration should be correct")
         .await
         .expect("Test server should be already listening on 'localhost'")
+}
+
+
+pub async fn make_client_endpoint_0rtt(
+    addr: &SocketAddr,
+    client_keypair: Option<&Keypair>,
+) ->  Result<(Connection, ZeroRttAccepted), Connecting> {
+    let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut endpoint = quinn::Endpoint::new(
+        EndpointConfig::default(),
+        None,
+        client_socket,
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    let default_keypair = Keypair::new();
+    let (cc, store) = get_client_config_0rtt(
+        client_keypair.unwrap_or(&default_keypair),
+    );
+    endpoint.set_default_client_config(cc);
+    let c1 = endpoint
+        .connect(*addr, "localhost")
+        .expect("Endpoint configuration should be correct")
+        .await
+        .expect("Test server should be already listening on 'localhost'");
+    let mut uni = c1.open_uni().await.expect("Should open a unidirectional");
+    uni.write(&vec![0u8; 32]).await.expect("Should write the message");
+    uni.finish().expect("Should finish.");
+    //c1.close(VarInt::from_u32(0), &[]);
+    // Wait 10 seconds
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    c1.close(VarInt::from_u32(0), &[]);
+
+    endpoint.connect(*addr, "localhost")
+        .expect("Endpoint configuration should be correct")
+        .into_0rtt()
+    
+    
 }
