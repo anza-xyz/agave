@@ -37,7 +37,7 @@ pub fn verify_precompiles(message: &impl SVMMessage, feature_set: &FeatureSet) -
 mod tests {
     use {
         super::*,
-        rand0_7::{thread_rng, Rng},
+        rand::{thread_rng, Rng},
         solana_sdk::{
             ed25519_instruction::new_ed25519_instruction,
             hash::Hash,
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_verify_precompiles_secp256k1() {
-        let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secp_privkey = libsecp256k1::SecretKey::random(&mut rand0_7::thread_rng());
         let message_arr = b"hello";
         let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let mint_keypair = Keypair::new();
@@ -79,7 +79,7 @@ mod tests {
 
         assert!(verify_precompiles(&tx, &feature_set).is_ok());
 
-        let index = thread_rng().gen_range(0, secp_instruction.data.len());
+        let index = thread_rng().gen_range(0..secp_instruction.data.len());
         secp_instruction.data[index] = secp_instruction.data[index].wrapping_add(12);
         let tx =
             SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_verify_precompiles_ed25519() {
-        let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let message_arr = b"hello";
         let mut instruction = new_ed25519_instruction(&privkey, message_arr);
         let mint_keypair = Keypair::new();
@@ -111,7 +111,7 @@ mod tests {
         assert!(verify_precompiles(&tx, &feature_set).is_ok());
 
         let index = loop {
-            let index = thread_rng().gen_range(0, instruction.data.len());
+            let index = thread_rng().gen_range(0..instruction.data.len());
             // byte 1 is not used, so this would not cause the verify to fail
             if index != 1 {
                 break index;
@@ -132,9 +132,9 @@ mod tests {
     #[test]
     fn test_verify_precompiles_mixed() {
         let message_arr = b"hello";
-        let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
+        let secp_privkey = libsecp256k1::SecretKey::random(&mut rand0_7::thread_rng());
         let mut secp_instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
-        let ed25519_privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        let ed25519_privkey = ed25519_dalek::SigningKey::generate(&mut thread_rng());
         let ed25519_instruction = new_ed25519_instruction(&ed25519_privkey, message_arr);
 
         let mint_keypair = Keypair::new();
@@ -153,7 +153,7 @@ mod tests {
             ));
         assert!(verify_precompiles(&tx, &feature_set).is_ok());
 
-        let index = thread_rng().gen_range(0, secp_instruction.data.len());
+        let index = thread_rng().gen_range(0..secp_instruction.data.len());
         secp_instruction.data[index] = secp_instruction.data[index].wrapping_add(12);
         let tx =
             SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
