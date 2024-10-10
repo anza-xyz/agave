@@ -12,11 +12,12 @@
 //! ElGamal ciphertext.
 //!
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::encryption::{discrete_log::DiscreteLog, elgamal::ElGamalSecretKey};
 use {
     crate::{
         encryption::{
-            discrete_log::DiscreteLog,
-            elgamal::{DecryptHandle, ElGamalCiphertext, ElGamalPubkey, ElGamalSecretKey},
+            elgamal::{DecryptHandle, ElGamalCiphertext, ElGamalPubkey},
             pedersen::{Pedersen, PedersenCommitment, PedersenOpening},
         },
         RISTRETTO_POINT_LEN,
@@ -98,6 +99,7 @@ impl<const N: usize> GroupedElGamal<N> {
     ///
     /// The output of this function is of type `DiscreteLog`. To recover the originally encrypted
     /// amount, use `DiscreteLog::decode`.
+    #[cfg(not(target_arch = "wasm32"))]
     fn decrypt(
         grouped_ciphertext: &GroupedElGamalCiphertext<N>,
         secret: &ElGamalSecretKey,
@@ -112,6 +114,7 @@ impl<const N: usize> GroupedElGamal<N> {
     ///
     /// If the originally encrypted amount is not a positive 32-bit number, then the function
     /// Result contains `None`.
+    #[cfg(not(target_arch = "wasm32"))]
     fn decrypt_u32(
         grouped_ciphertext: &GroupedElGamalCiphertext<N>,
         secret: &ElGamalSecretKey,
@@ -147,6 +150,7 @@ impl<const N: usize> GroupedElGamalCiphertext<N> {
     ///
     /// The output of this function is of type `DiscreteLog`. To recover the originally encrypted
     /// amount, use `DiscreteLog::decode`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn decrypt(
         &self,
         secret: &ElGamalSecretKey,
@@ -160,6 +164,7 @@ impl<const N: usize> GroupedElGamalCiphertext<N> {
     ///
     /// If the originally encrypted amount is not a positive 32-bit number, then the function
     /// returns `None`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn decrypt_u32(
         &self,
         secret: &ElGamalSecretKey,

@@ -7200,6 +7200,7 @@ dependencies = [
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
  "itertools 0.12.1",
+ "js-sys",
  "lazy_static",
  "merlin",
  "num-derive",
@@ -7214,6 +7215,7 @@ dependencies = [
  "solana-sdk",
  "subtle",
  "thiserror",
+ "wasm-bindgen",
  "zeroize",
 ]
 
