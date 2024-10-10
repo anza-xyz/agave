@@ -128,33 +128,35 @@ fn create_transaction_confirmation_task(
                     })
                     .map(|x| *x.key())
                     .collect();
-                for signatures in
-                    transactions_to_verify.chunks(MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS)
-                {
-                    if let Ok(result) = rpc_client.get_signature_statuses(signatures).await {
-                        let statuses = result.value;
-                        for (signature, status) in signatures.iter().zip(statuses.into_iter()) {
-                            if let Some((status, data)) = status
-                                .filter(|status| {
-                                    status.satisfies_commitment(rpc_client.commitment())
-                                })
-                                .and_then(|status| {
-                                    unconfirmed_transaction_map
-                                        .remove(signature)
-                                        .map(|(_, data)| (status, data))
-                                })
-                            {
-                                num_confirmed_transactions.fetch_add(1, Ordering::Relaxed);
-                                match status.err {
-                                    Some(TransactionError::AlreadyProcessed) | None => {}
-                                    Some(error) => {
-                                        errors_map.insert(data.index, error);
+                let futures = transactions_to_verify
+                    .chunks(MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS)
+                    .map(|signatures| async {
+                        if let Ok(result) = rpc_client.get_signature_statuses(signatures).await {
+                            let statuses = result.value;
+                            for (signature, status) in signatures.iter().zip(statuses.into_iter()) {
+                                if let Some((status, data)) = status
+                                    .filter(|status| {
+                                        status.satisfies_commitment(rpc_client.commitment())
+                                    })
+                                    .and_then(|status| {
+                                        unconfirmed_transaction_map
+                                            .remove(signature)
+                                            .map(|(_, data)| (status, data))
+                                    })
+                                {
+                                    num_confirmed_transactions.fetch_add(1, Ordering::Relaxed);
+                                    match status.err {
+                                        Some(TransactionError::AlreadyProcessed) | None => {}
+                                        Some(error) => {
+                                            errors_map.insert(data.index, error);
+                                        }
                                     }
-                                }
-                            };
+                                };
+                            }
                         }
-                    }
-                }
+                    })
+                    .collect::<Vec<_>>();
+                join_all(futures).await;
 
                 last_block_height = current_block_height;
             }
