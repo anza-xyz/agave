@@ -319,6 +319,12 @@ pub enum SlotStatus {
 
     /// The highest slot that has been voted on by supermajority of the cluster, ie. is confirmed.
     Confirmed,
+
+    /// First Shred Received
+    FirstShredReceived,
+
+    /// All shreds for the slot have been received.
+    Completed,
 }
 
 impl SlotStatus {
@@ -327,6 +333,8 @@ impl SlotStatus {
             SlotStatus::Confirmed => "confirmed",
             SlotStatus::Processed => "processed",
             SlotStatus::Rooted => "rooted",
+            SlotStatus::FirstShredReceived => "first_shread_received",
+            SlotStatus::Completed => "completed",
         }
     }
 }

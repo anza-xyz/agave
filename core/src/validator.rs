@@ -15,7 +15,12 @@ use {
             ExternalRootSource, Tower,
         },
         poh_timing_report_service::PohTimingReportService,
-        repair::{self, serve_repair::ServeRepair, serve_repair_service::ServeRepairService},
+        repair::{
+            self,
+            quic_endpoint::{RepairQuicAsyncSenders, RepairQuicSenders, RepairQuicSockets},
+            serve_repair::ServeRepair,
+            serve_repair_service::ServeRepairService,
+        },
         rewards_recorder_service::{RewardsRecorderSender, RewardsRecorderService},
         sample_performance_service::SamplePerformanceService,
         sigverify,
@@ -77,7 +82,7 @@ use {
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
     },
-    solana_rayon_threadlimit::get_max_thread_count,
+    solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -277,10 +282,12 @@ pub struct ValidatorConfig {
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub wen_restart_proto_path: Option<PathBuf>,
+    pub wen_restart_coordinator: Option<Pubkey>,
     pub unified_scheduler_handler_threads: Option<usize>,
     pub ip_echo_server_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub tvu_shred_sigverify_threads: NonZeroUsize,
     pub delay_leader_block_for_pending_fork: bool,
 }
 
@@ -349,10 +356,12 @@ impl Default for ValidatorConfig {
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             wen_restart_proto_path: None,
+            wen_restart_coordinator: None,
             unified_scheduler_handler_threads: None,
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
         }
     }
@@ -367,6 +376,8 @@ impl ValidatorConfig {
             enable_block_production_forwarding: true, // enable forwarding by default for tests
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(get_max_thread_count())
+                .expect("thread count is non-zero"),
+            tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             ..Self::default()
         }
@@ -499,9 +510,9 @@ pub struct Validator {
     turbine_quic_endpoint: Option<Endpoint>,
     turbine_quic_endpoint_runtime: Option<TokioRuntime>,
     turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
-    repair_quic_endpoint: Option<Endpoint>,
-    repair_quic_endpoint_runtime: Option<TokioRuntime>,
-    repair_quic_endpoint_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    repair_quic_endpoints: Option<[Endpoint; 3]>,
+    repair_quic_endpoints_runtime: Option<TokioRuntime>,
+    repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
 }
 
 impl Validator {
@@ -664,6 +675,10 @@ impl Validator {
         let block_metadata_notifier = geyser_plugin_service
             .as_ref()
             .and_then(|geyser_plugin_service| geyser_plugin_service.get_block_metadata_notifier());
+
+        let slot_status_notifier = geyser_plugin_service
+            .as_ref()
+            .and_then(|geyser_plugin_service| geyser_plugin_service.get_slot_status_notifier());
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
@@ -831,6 +846,16 @@ impl Validator {
             "Using: block-verification-method: {}, block-production-method: {}",
             config.block_verification_method, config.block_production_method
         );
+        if matches!(
+            config.block_production_method,
+            BlockProductionMethod::ThreadLocalMultiIterator
+        ) {
+            warn!(
+                "--block-production-method thread-local-multi-iterator is deprecated \
+                   and will be removed in a future release. Please use \
+                   --block-production-method=central-scheduler instead."
+            );
+        }
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
 
@@ -1076,19 +1101,21 @@ impl Validator {
                     )
                 };
 
-            let rpc_completed_slots_service = if !config.rpc_config.full_api {
-                None
-            } else {
-                let (completed_slots_sender, completed_slots_receiver) =
-                    bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
-                blockstore.add_completed_slots_signal(completed_slots_sender);
+            let rpc_completed_slots_service =
+                if config.rpc_config.full_api || geyser_plugin_service.is_some() {
+                    let (completed_slots_sender, completed_slots_receiver) =
+                        bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
+                    blockstore.add_completed_slots_signal(completed_slots_sender);
 
-                Some(RpcCompletedSlotsService::spawn(
-                    completed_slots_receiver,
-                    rpc_subscriptions.clone(),
-                    exit.clone(),
-                ))
-            };
+                    Some(RpcCompletedSlotsService::spawn(
+                        completed_slots_receiver,
+                        rpc_subscriptions.clone(),
+                        slot_status_notifier.clone(),
+                        exit.clone(),
+                    ))
+                } else {
+                    None
+                };
 
             let optimistically_confirmed_bank_tracker =
                 Some(OptimisticallyConfirmedBankTracker::new(
@@ -1158,19 +1185,10 @@ impl Validator {
             bank_forks.clone(),
             config.repair_whitelist.clone(),
         );
-        let (repair_quic_endpoint_sender, repair_quic_endpoint_receiver) = unbounded();
-        let serve_repair_service = ServeRepairService::new(
-            serve_repair,
-            // Incoming UDP repair requests are adapted into RemoteRequest
-            // and also sent through the same channel.
-            repair_quic_endpoint_sender.clone(),
-            repair_quic_endpoint_receiver,
-            blockstore.clone(),
-            node.sockets.serve_repair,
-            socket_addr_space,
-            stats_reporter_sender,
-            exit.clone(),
-        );
+        let (repair_request_quic_sender, repair_request_quic_receiver) = unbounded();
+        let (repair_response_quic_sender, repair_response_quic_receiver) = unbounded();
+        let (ancestor_hashes_response_quic_sender, ancestor_hashes_response_quic_receiver) =
+            unbounded();
 
         let waited_for_supermajority = wait_for_supermajority(
             config,
@@ -1267,7 +1285,7 @@ impl Validator {
         };
 
         // Repair quic endpoint.
-        let repair_quic_endpoint_runtime = (current_runtime_handle.is_err()
+        let repair_quic_endpoints_runtime = (current_runtime_handle.is_err()
             && genesis_config.cluster_type != ClusterType::MainnetBeta)
             .then(|| {
                 tokio::runtime::Builder::new_multi_thread()
@@ -1276,24 +1294,48 @@ impl Validator {
                     .build()
                     .unwrap()
             });
-        let (repair_quic_endpoint, repair_quic_endpoint_sender, repair_quic_endpoint_join_handle) =
+        let (repair_quic_endpoints, repair_quic_async_senders, repair_quic_endpoints_join_handle) =
             if genesis_config.cluster_type == ClusterType::MainnetBeta {
-                let (sender, _receiver) = tokio::sync::mpsc::channel(1);
-                (None, sender, None)
+                (None, RepairQuicAsyncSenders::new_dummy(), None)
             } else {
-                repair::quic_endpoint::new_quic_endpoint(
-                    repair_quic_endpoint_runtime
+                let repair_quic_sockets = RepairQuicSockets {
+                    repair_server_quic_socket: node.sockets.serve_repair_quic,
+                    repair_client_quic_socket: node.sockets.repair_quic,
+                    ancestor_hashes_quic_socket: node.sockets.ancestor_hashes_requests_quic,
+                };
+                let repair_quic_senders = RepairQuicSenders {
+                    repair_request_quic_sender: repair_request_quic_sender.clone(),
+                    repair_response_quic_sender,
+                    ancestor_hashes_response_quic_sender,
+                };
+                repair::quic_endpoint::new_quic_endpoints(
+                    repair_quic_endpoints_runtime
                         .as_ref()
                         .map(TokioRuntime::handle)
                         .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap()),
                     &identity_keypair,
-                    node.sockets.serve_repair_quic,
-                    repair_quic_endpoint_sender,
+                    repair_quic_sockets,
+                    repair_quic_senders,
                     bank_forks.clone(),
                 )
-                .map(|(endpoint, sender, join_handle)| (Some(endpoint), sender, Some(join_handle)))
+                .map(|(endpoints, senders, join_handle)| {
+                    (Some(endpoints), senders, Some(join_handle))
+                })
                 .unwrap()
             };
+        let serve_repair_service = ServeRepairService::new(
+            serve_repair,
+            // Incoming UDP repair requests are adapted into RemoteRequest
+            // and also sent through the same channel.
+            repair_request_quic_sender,
+            repair_request_quic_receiver,
+            repair_quic_async_senders.repair_response_quic_sender,
+            blockstore.clone(),
+            node.sockets.serve_repair,
+            socket_addr_space,
+            stats_reporter_sender,
+            exit.clone(),
+        );
 
         let in_wen_restart = config.wen_restart_proto_path.is_some() && !waited_for_supermajority;
         let wen_restart_repair_slots = if in_wen_restart {
@@ -1362,6 +1404,7 @@ impl Validator {
                 wait_for_vote_to_start_leader,
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
+                shred_sigverify_threads: config.tvu_shred_sigverify_threads,
             },
             &max_slots,
             block_metadata_notifier,
@@ -1373,10 +1416,14 @@ impl Validator {
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
             turbine_quic_endpoint_receiver,
-            repair_quic_endpoint_sender,
+            repair_response_quic_receiver,
+            repair_quic_async_senders.repair_request_quic_sender,
+            repair_quic_async_senders.ancestor_hashes_request_quic_sender,
+            ancestor_hashes_response_quic_receiver,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
+            slot_status_notifier,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1384,6 +1431,7 @@ impl Validator {
             info!("Waiting for wen_restart phase one to finish");
             wait_for_wen_restart(WenRestartConfig {
                 wen_restart_path: config.wen_restart_proto_path.clone().unwrap(),
+                wen_restart_coordinator: config.wen_restart_coordinator.unwrap(),
                 last_vote,
                 blockstore: blockstore.clone(),
                 cluster_info: cluster_info.clone(),
@@ -1501,9 +1549,9 @@ impl Validator {
             turbine_quic_endpoint,
             turbine_quic_endpoint_runtime,
             turbine_quic_endpoint_join_handle,
-            repair_quic_endpoint,
-            repair_quic_endpoint_runtime,
-            repair_quic_endpoint_join_handle,
+            repair_quic_endpoints,
+            repair_quic_endpoints_runtime,
+            repair_quic_endpoints_join_handle,
         })
     }
 
@@ -1615,18 +1663,19 @@ impl Validator {
         }
 
         self.gossip_service.join().expect("gossip_service");
-        if let Some(repair_quic_endpoint) = &self.repair_quic_endpoint {
-            repair::quic_endpoint::close_quic_endpoint(repair_quic_endpoint);
-        }
+        self.repair_quic_endpoints
+            .iter()
+            .flatten()
+            .for_each(repair::quic_endpoint::close_quic_endpoint);
         self.serve_repair_service
             .join()
             .expect("serve_repair_service");
-        if let Some(repair_quic_endpoint_join_handle) = self.repair_quic_endpoint_join_handle {
-            self.repair_quic_endpoint_runtime
-                .map(|runtime| runtime.block_on(repair_quic_endpoint_join_handle))
+        if let Some(repair_quic_endpoints_join_handle) = self.repair_quic_endpoints_join_handle {
+            self.repair_quic_endpoints_runtime
+                .map(|runtime| runtime.block_on(repair_quic_endpoints_join_handle))
                 .transpose()
                 .unwrap();
-        };
+        }
         self.stats_reporter_service
             .join()
             .expect("stats_reporter_service");

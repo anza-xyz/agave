@@ -438,7 +438,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
     fn receive_and_buffer_packets(&mut self, decision: &BufferedPacketsDecision) -> bool {
         let remaining_queue_capacity = self.container.remaining_queue_capacity();
 
-        const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(100);
+        const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
         let (recv_timeout, should_buffer) = match decision {
             BufferedPacketsDecision::Consume(_) => (
                 if self.container.is_empty() {
@@ -733,8 +733,7 @@ mod tests {
         let decision_maker = DecisionMaker::new(Pubkey::new_unique(), poh_recorder.clone());
 
         let (banking_packet_sender, banking_packet_receiver) = unbounded();
-        let packet_deserializer =
-            PacketDeserializer::new(banking_packet_receiver, bank_forks.clone());
+        let packet_deserializer = PacketDeserializer::new(banking_packet_receiver);
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
         let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();

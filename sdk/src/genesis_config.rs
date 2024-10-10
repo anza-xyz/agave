@@ -4,7 +4,6 @@
 
 use {
     crate::{
-        account::{Account, AccountSharedData},
         clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
         epoch_schedule::EpochSchedule,
         fee_calculator::FeeRateGovernor,
@@ -22,6 +21,7 @@ use {
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
+    solana_account::{Account, AccountSharedData},
     std::{
         collections::BTreeMap,
         fmt,
@@ -87,7 +87,7 @@ impl FromStr for ClusterType {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "z6vuQfrTaknTiRs1giPFzG1Jcw8eReidFTNDTmaX6GN")
+    frozen_abi(digest = "7kinRF6sWtJWxz9Wt8Zu4CB4SxaiFsNW2y9wnZH1FkNM")
 )]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct GenesisConfig {

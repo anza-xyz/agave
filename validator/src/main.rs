@@ -1301,6 +1301,8 @@ pub fn main() {
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
         scan_filter_for_shrinking,
+        enable_experimental_accumulator_hash: matches
+            .is_present("accounts_db_experimental_accumulator_hash"),
         ..AccountsDbConfig::default()
     };
 
@@ -1390,6 +1392,7 @@ pub fn main() {
         replay_forks_threads,
         replay_transactions_threads,
         tvu_receive_threads,
+        tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(&matches);
 
     let mut validator_config = ValidatorConfig {
@@ -1533,9 +1536,11 @@ pub fn main() {
         ip_echo_server_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
+        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         ..ValidatorConfig::default()
     };
 

@@ -101,13 +101,16 @@ members = [
     "runtime-transaction",
     "sanitize",
     "sdk",
+    "sdk/account",
     "sdk/account-info",
     "sdk/atomic-u64",
+    "sdk/bincode",
     "sdk/cargo-build-sbf",
     "sdk/cargo-test-sbf",
     "sdk/clock",
     "sdk/decode-error",
     "sdk/derivation-path",
+    "sdk/epoch-schedule",
     "sdk/feature-set",
     "sdk/gen-headers",
     "sdk/hash",
@@ -119,11 +122,14 @@ members = [
     "sdk/program-error",
     "sdk/program-memory",
     "sdk/program-option",
+    "sdk/program-pack",
     "sdk/pubkey",
+    "sdk/rent",
     "sdk/serde-varint",
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
     "sdk/signature",
+    "sdk/slot-hashes",
     "send-transaction-service",
     "short-vec",
     "stake-accounts",
@@ -163,7 +169,10 @@ members = [
     "zk-token-sdk",
 ]
 
-exclude = ["programs/sbf", "svm/tests/example-programs"]
+exclude = [
+    "programs/sbf",
+    "svm/tests/example-programs",
+]
 
 resolver = "2"
 
@@ -215,7 +224,7 @@ bv = "0.11.1"
 byte-unit = "4.0.19"
 bytecount = "0.6.8"
 bytemuck = "1.18.0"
-bytemuck_derive = "1.7.1"
+bytemuck_derive = "1.8.0"
 byteorder = "1.5.0"
 bytes = "1.7"
 bzip2 = "0.4.4"
@@ -254,7 +263,7 @@ fd-lock = "3.0.13"
 flate2 = "1.0.31"
 fnv = "1.0.7"
 fs_extra = "1.3.0"
-futures = "0.3.30"
+futures = "0.3.31"
 futures-util = "0.3.29"
 gag = "1.0.0"
 generic-array = { version = "0.14.7", default-features = false }
@@ -272,13 +281,13 @@ hyper = "0.14.30"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
 index_list = "0.2.13"
-indexmap = "2.5.0"
+indexmap = "2.6.0"
 indicatif = "0.17.8"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.70"
+js-sys = "0.3.71"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -319,7 +328,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.2.1"
-proc-macro2 = "1.0.86"
+proc-macro2 = "1.0.87"
 proptest = "1.5"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -334,12 +343,12 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
-regex = "1.10.6"
+regex = "1.11.0"
 reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.13", default-features = false }
+rustls = { version = "0.23.14", default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.23"
 seqlock = "0.2.0"
@@ -347,7 +356,7 @@ serde = "1.0.210" # must match the serde_derive version, see https://github.com/
 serde_bytes = "0.11.15"
 serde_derive = "1.0.210" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_json = "1.0.128"
-serde_with = { version = "3.9.0", default-features = false }
+serde_with = { version = "3.11.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.8"
@@ -359,6 +368,7 @@ smallvec = "1.13.2"
 smpl_jwt = "0.7.1"
 socket2 = "0.5.7"
 soketto = "0.7"
+solana-account = { path = "sdk/account", version = "=2.1.0" }
 solana-account-decoder = { path = "account-decoder", version = "=2.1.0" }
 solana-account-info = { path = "sdk/account-info", version = "=2.1.0" }
 solana-accounts-db = { path = "accounts-db", version = "=2.1.0" }
@@ -368,6 +378,7 @@ solana-banks-client = { path = "banks-client", version = "=2.1.0" }
 solana-banks-interface = { path = "banks-interface", version = "=2.1.0" }
 solana-banks-server = { path = "banks-server", version = "=2.1.0" }
 solana-bench-tps = { path = "bench-tps", version = "=2.1.0" }
+solana-bincode = { path = "sdk/bincode", version = "=2.1.0" }
 solana-bloom = { path = "bloom", version = "=2.1.0" }
 solana-bn254 = { path = "curves/bn254", version = "=2.1.0" }
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.1.0" }
@@ -393,6 +404,7 @@ solana-define-syscall = { path = "define-syscall", version = "=2.1.0" }
 solana-derivation-path = { path = "sdk/derivation-path", version = "=2.1.0" }
 solana-download-utils = { path = "download-utils", version = "=2.1.0" }
 solana-entry = { path = "entry", version = "=2.1.0" }
+solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.1.0" }
 solana-faucet = { path = "faucet", version = "=2.1.0" }
 solana-feature-set = { path = "sdk/feature-set", version = "=2.1.0" }
 solana-fee = { path = "fee", version = "=2.1.0" }
@@ -404,7 +416,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=2.1.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.1.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.1.0" }
 solana-gossip = { path = "gossip", version = "=2.1.0" }
-solana-hash = { path = "sdk/hash", version = "=2.1.0" }
+solana-hash = { path = "sdk/hash", version = "=2.1.0", default-features = false }
 solana-inline-spl = { path = "inline-spl", version = "=2.1.0" }
 solana-instruction = { path = "sdk/instruction", version = "=2.1.0", default-features = false }
 solana-lattice-hash = { path = "lattice-hash", version = "=2.1.0" }
@@ -428,6 +440,7 @@ solana-program = { path = "sdk/program", version = "=2.1.0", default-features = 
 solana-program-error = { path = "sdk/program-error", version = "=2.1.0" }
 solana-program-memory = { path = "sdk/program-memory", version = "=2.1.0" }
 solana-program-option = { path = "sdk/program-option", version = "=2.1.0" }
+solana-program-pack = { path = "sdk/program-pack", version = "=2.1.0" }
 solana-program-runtime = { path = "program-runtime", version = "=2.1.0" }
 solana-program-test = { path = "program-test", version = "=2.1.0" }
 solana-pubkey = { path = "sdk/pubkey", version = "=2.1.0", default-features = false }
@@ -435,11 +448,13 @@ solana-pubsub-client = { path = "pubsub-client", version = "=2.1.0" }
 solana-quic-client = { path = "quic-client", version = "=2.1.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.1.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=2.1.0", default-features = false }
+solana-rent = { path = "sdk/rent", version = "=2.1.0", default-features = false }
 solana-sanitize = { path = "sanitize", version = "=2.1.0" }
 solana-serde-varint = { path = "sdk/serde-varint", version = "=2.1.0" }
 solana-serialize-utils = { path = "sdk/serialize-utils", version = "=2.1.0" }
 solana-sha256-hasher = { path = "sdk/sha256-hasher", version = "=2.1.0" }
 solana-signature = { path = "sdk/signature", version = "=2.1.0", default-features = false }
+solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.1.0" }
 solana-timings = { path = "timings", version = "=2.1.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.1.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.1.0" }
@@ -503,7 +518,7 @@ sysctl = "0.4.6"
 systemstat = "0.2.3"
 tar = "0.4.42"
 tarpc = "0.29.0"
-tempfile = "3.12.0"
+tempfile = "3.13.0"
 test-case = "3.3.1"
 thiserror = "1.0.64"
 tiny-bip39 = "0.8.2"

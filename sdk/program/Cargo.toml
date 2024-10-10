@@ -33,8 +33,10 @@ sha2 = { workspace = true }
 sha3 = { workspace = true }
 solana-account-info = { workspace = true, features = ["bincode"] }
 solana-atomic-u64 = { workspace = true }
+solana-bincode = { workspace = true }
 solana-clock = { workspace = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
+solana-epoch-schedule = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true, features = [
@@ -51,7 +53,9 @@ solana-msg = { workspace = true }
 solana-program-error = { workspace = true, features = ["serde"] }
 solana-program-memory = { workspace = true }
 solana-program-option = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true, features = ["bytemuck", "curve25519", "serde", "std"] }
+solana-rent = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
@@ -59,6 +63,7 @@ solana-serde-varint = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
@@ -124,9 +129,11 @@ dev-context-only-utils = ["dep:qualifier_attr"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "solana-epoch-schedule/frozen-abi",
     "solana-hash/frozen-abi",
     "solana-instruction/frozen-abi",
     "solana-pubkey/frozen-abi",
+    "solana-rent/frozen-abi",
     "solana-short-vec/frozen-abi"
 ]
 
