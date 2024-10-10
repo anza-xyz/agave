@@ -5,7 +5,8 @@ use {
         banking_trace::BankingTracer,
         cache_block_meta_service::CacheBlockMetaSender,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
+            DumpedSlotNotifier, DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
+            VoteTracker,
         },
         cluster_slots_service::{cluster_slots::ClusterSlots, ClusterSlotsUpdateSender},
         commitment_service::{AggregateCommitmentService, CommitmentAggregationData},
@@ -533,6 +534,7 @@ impl ReplayStage {
         dumped_slots_sender: DumpedSlotsSender,
         banking_tracer: Arc<BankingTracer>,
         popular_pruned_forks_receiver: PopularPrunedForksReceiver,
+        dumped_slot_notifier: DumpedSlotNotifier,
     ) -> Result<Self, String> {
         let ReplayStageConfig {
             vote_account,
@@ -1101,6 +1103,7 @@ impl ReplayStage {
                     poh_bank.map(|bank| bank.slot()),
                     &mut purge_repair_slot_counter,
                     &dumped_slots_sender,
+                    &dumped_slot_notifier,
                     &my_pubkey,
                     &leader_schedule_cache,
                 );
@@ -1455,6 +1458,7 @@ impl ReplayStage {
         poh_bank_slot: Option<Slot>,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         dumped_slots_sender: &DumpedSlotsSender,
+        dumped_slot_notifier: &DumpedSlotNotifier,
         my_pubkey: &Pubkey,
         leader_schedule_cache: &LeaderScheduleCache,
     ) {
@@ -1563,6 +1567,7 @@ impl ReplayStage {
                         &root_bank,
                         bank_forks,
                         blockstore,
+                        dumped_slot_notifier,
                     );
 
                     dumped.push((*duplicate_slot, *correct_hash));
@@ -1661,7 +1666,11 @@ impl ReplayStage {
         root_bank: &Bank,
         bank_forks: &RwLock<BankForks>,
         blockstore: &Blockstore,
+        dumped_slot_notifier: &DumpedSlotNotifier,
     ) {
+        // Hold lock until end of function
+        let mut lock = dumped_slot_notifier.lock().unwrap();
+        *lock = true;
         warn!("purging slot {}", duplicate_slot);
 
         // Doesn't need to be root bank, just needs a common bank to
@@ -6158,6 +6167,7 @@ pub(crate) mod tests {
             &root_bank,
             &bank_forks,
             &blockstore,
+            &DumpedSlotNotifier::default(),
         );
         for i in 5..=7 {
             assert!(bank_forks.read().unwrap().get(i).is_none());
@@ -6198,6 +6208,7 @@ pub(crate) mod tests {
             &root_bank,
             &bank_forks,
             &blockstore,
+            &DumpedSlotNotifier::default(),
         );
         for i in 4..=6 {
             assert!(bank_forks.read().unwrap().get(i).is_none());
@@ -6221,6 +6232,7 @@ pub(crate) mod tests {
             &root_bank,
             &bank_forks,
             &blockstore,
+            &DumpedSlotNotifier::default(),
         );
         for i in 1..=6 {
             assert!(bank_forks.read().unwrap().get(i).is_none());
@@ -6288,6 +6300,7 @@ pub(crate) mod tests {
             &root_bank,
             &bank_forks,
             &blockstore,
+            &DumpedSlotNotifier::default(),
         );
         for slot in &[3, 5, 6, 7] {
             assert!(bank_forks.read().unwrap().get(*slot).is_none());
@@ -6978,6 +6991,7 @@ pub(crate) mod tests {
             None,
             &mut purge_repair_slot_counter,
             &dumped_slots_sender,
+            &DumpedSlotNotifier::default(),
             &Pubkey::new_unique(),
             leader_schedule_cache,
         );
@@ -7097,6 +7111,7 @@ pub(crate) mod tests {
             None,
             &mut PurgeRepairSlotCounter::default(),
             &dumped_slots_sender,
+            &DumpedSlotNotifier::default(),
             &Pubkey::new_unique(),
             leader_schedule_cache,
         );
@@ -8324,6 +8339,7 @@ pub(crate) mod tests {
             None,
             &mut purge_repair_slot_counter,
             &dumped_slots_sender,
+            &DumpedSlotNotifier::default(),
             my_pubkey,
             &leader_schedule_cache,
         );
@@ -8404,6 +8420,7 @@ pub(crate) mod tests {
             None,
             &mut purge_repair_slot_counter,
             &dumped_slots_sender,
+            &DumpedSlotNotifier::default(),
             my_pubkey,
             leader_schedule_cache,
         );

@@ -6,8 +6,8 @@ use {
         banking_trace::BankingTracer,
         cache_block_meta_service::CacheBlockMetaSender,
         cluster_info_vote_listener::{
-            DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VerifiedVoteReceiver,
-            VoteTracker,
+            DumpedSlotNotifier, DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
+            VerifiedVoteReceiver, VoteTracker,
         },
         cluster_slots_service::{cluster_slots::ClusterSlots, ClusterSlotsService},
         completed_data_sets_service::CompletedDataSetsSender,
@@ -162,6 +162,7 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
+        dumped_slot_notifier: DumpedSlotNotifier,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
@@ -348,6 +349,7 @@ impl Tvu {
                 dumped_slots_sender,
                 banking_tracer,
                 popular_pruned_forks_receiver,
+                dumped_slot_notifier,
             )?)
         };
 
@@ -546,6 +548,7 @@ pub mod tests {
             cluster_slots,
             wen_restart_repair_slots,
             None,
+            DumpedSlotNotifier::default(),
         )
         .expect("assume success");
         if enable_wen_restart {

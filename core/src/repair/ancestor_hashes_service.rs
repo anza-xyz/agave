@@ -897,6 +897,7 @@ mod test {
     use {
         super::*,
         crate::{
+            cluster_info_vote_listener::DumpedSlotNotifier,
             repair::{
                 cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
                 duplicate_repair_status::DuplicateAncestorDecision,
@@ -2059,6 +2060,7 @@ mod test {
             None,
             &mut PurgeRepairSlotCounter::default(),
             &dumped_slots_sender,
+            &DumpedSlotNotifier::default(),
             &my_pubkey,
             &leader_schedule_cache,
         );
