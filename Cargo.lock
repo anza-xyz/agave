@@ -6605,6 +6605,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-epoch-info"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "solana-faucet"
 version = "2.1.0"
 dependencies = [
@@ -7845,6 +7853,7 @@ dependencies = [
  "solana-bn254",
  "solana-decode-error",
  "solana-derivation-path",
+ "solana-epoch-info",
  "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
