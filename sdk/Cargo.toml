@@ -42,6 +42,7 @@ frozen-abi = [
     "solana-feature-set/frozen-abi",
     "solana-account/frozen-abi",
     "solana-program/frozen-abi",
+    "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi"
 ]
@@ -97,6 +98,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
+solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
