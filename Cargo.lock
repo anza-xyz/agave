@@ -6811,6 +6811,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-inflation"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+]
+
+[[package]]
 name = "solana-inline-spl"
 version = "2.1.0"
 dependencies = [
@@ -7848,6 +7858,7 @@ dependencies = [
  "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-inflation",
  "solana-logger",
  "solana-program",
  "solana-program-memory",
