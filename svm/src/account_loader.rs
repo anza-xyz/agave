@@ -5,13 +5,15 @@ use {
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
+        transaction_processing_result::ProcessedTransaction,
     },
+    ahash::AHashMap,
     itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        account::{Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
         fee::FeeDetails,
         native_loader,
         nonce::State as NonceState,
@@ -93,6 +95,260 @@ pub struct FeesOnlyTransaction {
     pub load_error: TransactionError,
     pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
+}
+
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
+    pub program_cache: ProgramCacheForTxBatch,
+    account_overrides: Option<&'a AccountOverrides>,
+    account_cache: AHashMap<Pubkey, AccountCacheItem>,
+    callbacks: &'a CB,
+}
+impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
+    pub fn new_with_account_cache_capacity(
+        callbacks: &'a CB,
+        account_overrides: Option<&'a AccountOverrides>,
+        program_cache: ProgramCacheForTxBatch,
+        capacity: usize,
+    ) -> AccountLoader<'a, CB> {
+        Self {
+            program_cache,
+            account_overrides,
+            account_cache: AHashMap::with_capacity(capacity),
+            callbacks,
+        }
+    }
+
+    pub fn load_account(
+        &mut self,
+        account_key: &Pubkey,
+        usage_pattern: AccountUsagePattern,
+    ) -> Option<LoadedTransactionAccount> {
+        let is_writable = usage_pattern == AccountUsagePattern::Writable;
+        let is_invisible = usage_pattern == AccountUsagePattern::ReadOnlyInvisible;
+
+        if let Some(cache_item) = self.account_cache.get_mut(account_key) {
+            // Non-builtin accounts owned by NativeLoader are never loaded into the cache.
+            let is_owned_by_loader = PROGRAM_OWNERS.iter().contains(cache_item.account.owner());
+
+            if !cache_item.inspected_as_writable {
+                // Inspecting a read-only account is harmless. Inspecting a writable
+                // account must be done before rent collection, and must never be done
+                // again in-batch, because inspection is intended to preserve the
+                // state prior to any writes.
+                self.callbacks.inspect_account(
+                    account_key,
+                    AccountState::Alive(&cache_item.account),
+                    is_writable,
+                );
+                cache_item.inspected_as_writable = cache_item.inspected_as_writable || is_writable;
+            }
+
+            if cache_item.account.lamports() == 0 {
+                None
+            } else if let Some(program) = (is_invisible && is_owned_by_loader)
+                .then_some(())
+                .and_then(|_| self.program_cache.find(account_key))
+            {
+                // NOTE if this account could be found in the program cache, we must
+                // substitute its size here, to perserve an oddity with transaction size
+                // calculations. However, we CANNOT skip the accounts cache check,
+                // in case the account was non-executable and modified in-batch.
+                //
+                // We must also check the current owner, in case this account was closed
+                // and reopened, in which case we ignore the stale program cache entry.
+                //
+                // When we properly check if program cache entries are executable,
+                // we can go to the program cache first and remove this branch, because
+                // executable accounts are immutable.
+                Some(LoadedTransactionAccount {
+                    loaded_size: program.account_size,
+                    account: account_shared_data_from_program(&program),
+                    rent_collected: 0,
+                })
+            } else {
+                Some(LoadedTransactionAccount {
+                    loaded_size: cache_item.account.data().len(),
+                    account: cache_item.account.clone(),
+                    rent_collected: 0,
+                })
+            }
+        } else if let Some(account_override) = self
+            .account_overrides
+            .and_then(|overrides| overrides.get(account_key))
+        {
+            // We mark `inspected_as_writable` because overrides are never inspected.
+            self.account_cache.insert(
+                *account_key,
+                AccountCacheItem {
+                    account: account_override.clone(),
+                    inspected_as_writable: true,
+                },
+            );
+
+            Some(LoadedTransactionAccount {
+                loaded_size: account_override.data().len(),
+                account: account_override.clone(),
+                rent_collected: 0,
+            })
+        } else if let Some(program) = is_invisible
+            .then_some(())
+            .and_then(|_| self.program_cache.find(account_key))
+        {
+            self.callbacks.get_account_shared_data(account_key)?;
+            // Optimization to skip loading of accounts which are only used as
+            // programs in top-level instructions and not passed as instruction accounts.
+            Some(LoadedTransactionAccount {
+                loaded_size: program.account_size,
+                account: account_shared_data_from_program(&program),
+                rent_collected: 0,
+            })
+        } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
+            // Inspect the account prior to collecting rent, since
+            // rent collection can modify the account.
+            self.callbacks
+                .inspect_account(account_key, AccountState::Alive(&account), is_writable);
+
+            self.account_cache.insert(
+                *account_key,
+                AccountCacheItem {
+                    account: account.clone(),
+                    inspected_as_writable: is_writable,
+                },
+            );
+
+            Some(LoadedTransactionAccount {
+                loaded_size: account.data().len(),
+                account,
+                rent_collected: 0,
+            })
+        } else {
+            self.callbacks
+                .inspect_account(account_key, AccountState::Dead, is_writable);
+
+            None
+        }
+    }
+
+    pub fn update_accounts_for_executed_tx(
+        &mut self,
+        message: &impl SVMMessage,
+        processed_transaction: &ProcessedTransaction,
+    ) {
+        match processed_transaction {
+            ProcessedTransaction::Executed(executed_tx) => {
+                if executed_tx.execution_details.status.is_ok() {
+                    self.update_accounts_for_successful_tx(
+                        message,
+                        &executed_tx.loaded_transaction.accounts,
+                    );
+                } else {
+                    self.update_accounts_for_failed_tx(
+                        message,
+                        &executed_tx.loaded_transaction.rollback_accounts,
+                    );
+                }
+            }
+            ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                self.update_accounts_for_failed_tx(message, &fees_only_tx.rollback_accounts);
+            }
+        }
+    }
+
+    pub fn update_accounts_for_failed_tx(
+        &mut self,
+        message: &impl SVMMessage,
+        rollback_accounts: &RollbackAccounts,
+    ) {
+        let fee_payer_address = message.fee_payer();
+        match rollback_accounts {
+            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+                self.update_account(fee_payer_address, fee_payer_account);
+            }
+            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+                self.update_account(nonce.address(), nonce.account());
+            }
+            RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce,
+                fee_payer_account,
+            } => {
+                self.update_account(nonce.address(), nonce.account());
+                self.update_account(fee_payer_address, fee_payer_account);
+            }
+        }
+    }
+
+    fn update_accounts_for_successful_tx(
+        &mut self,
+        message: &impl SVMMessage,
+        transaction_accounts: &[TransactionAccount],
+    ) {
+        for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
+            if !message.is_writable(i) {
+                continue;
+            }
+
+            // Accounts that are invoked and also not passed as an instruction
+            // account to a program don't need to be stored because it's assumed
+            // to be impossible for a committable transaction to modify an
+            // invoked account if said account isn't passed to some program.
+            if message.is_invoked(i) && !message.is_instruction_account(i) {
+                continue;
+            }
+
+            self.update_account(address, account);
+        }
+    }
+
+    fn update_account(&mut self, account_key: &Pubkey, account: &AccountSharedData) {
+        // If an account has been dropped, we must hide the data from any future transactions.
+        // We NEVER remove items from cache, or else we will fetch stale data from accounts-db.
+        // Because `update_account()` is only called on writable accounts using the same rules
+        // as commit, this (correctly) does not shadow rent-paying zero-lamport read-only accounts.
+        let account = if account.lamports() == 0 {
+            &AccountSharedData::default()
+        } else {
+            account
+        };
+
+        // Accounts are inspected during loading, and we only update writable accounts.
+        // Ergo, `inspected_as_writable` is always true.
+        self.account_cache
+            .entry(*account_key)
+            .and_modify(|cache_item| {
+                debug_assert!(cache_item.inspected_as_writable);
+                cache_item.account = account.clone();
+            })
+            .or_insert_with(|| AccountCacheItem {
+                account: account.clone(),
+                inspected_as_writable: true,
+            });
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum AccountUsagePattern {
+    Writable,
+    ReadOnlyInstruction,
+    ReadOnlyInvisible,
+}
+impl AccountUsagePattern {
+    pub fn new(message: &impl SVMMessage, account_index: usize) -> Self {
+        let is_writable = message.is_writable(account_index);
+        let is_instruction_account = message.is_instruction_account(account_index);
+
+        match (is_writable, is_instruction_account) {
+            (true, _) => Self::Writable,
+            (false, true) => Self::ReadOnlyInstruction,
+            (false, false) => Self::ReadOnlyInvisible,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AccountCacheItem {
+    account: AccountSharedData,
+    inspected_as_writable: bool,
 }
 
 /// Collect rent from an account if rent is still enabled and regardless of
@@ -181,61 +437,25 @@ pub fn validate_fee_payer(
     )
 }
 
-/// Collect information about accounts used in txs transactions and
-/// return vector of tuples, one for each transaction in the
-/// batch. Each tuple contains struct of information about accounts as
-/// its first element and an optional transaction nonce info as its
-/// second element.
-pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
-    txs: &[impl SVMMessage],
-    validation_results: Vec<TransactionValidationResult>,
-    error_metrics: &mut TransactionErrorMetrics,
-    account_overrides: Option<&AccountOverrides>,
-    feature_set: &FeatureSet,
-    rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
-) -> Vec<TransactionLoadResult> {
-    txs.iter()
-        .zip(validation_results)
-        .map(|(transaction, validation_result)| {
-            load_transaction(
-                callbacks,
-                transaction,
-                validation_result,
-                error_metrics,
-                account_overrides,
-                feature_set,
-                rent_collector,
-                loaded_programs,
-            )
-        })
-        .collect()
-}
-
-fn load_transaction<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
+pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
+    account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
-    account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
 ) -> TransactionLoadResult {
     match validation_result {
         Err(e) => TransactionLoadResult::NotLoaded(e),
         Ok(tx_details) => {
             let load_result = load_transaction_accounts(
-                callbacks,
+                account_loader,
                 message,
                 tx_details.loaded_fee_payer_account,
                 &tx_details.compute_budget_limits,
                 error_metrics,
-                account_overrides,
                 feature_set,
                 rent_collector,
-                loaded_programs,
             );
 
             match load_result {
@@ -269,15 +489,13 @@ struct LoadedTransactionAccounts {
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
+    account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     loaded_fee_payer_account: LoadedTransactionAccount,
     compute_budget_limits: &ComputeBudgetLimits,
     error_metrics: &mut TransactionErrorMetrics,
-    account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<LoadedTransactionAccounts> {
     let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
@@ -285,12 +503,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut accounts_found = Vec::with_capacity(account_keys.len());
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
-
-    let instruction_accounts = message
-        .instructions_iter()
-        .flat_map(|instruction| instruction.accounts)
-        .unique()
-        .collect::<Vec<&u8>>();
 
     let mut collect_loaded_account = |key, (loaded_account, found)| -> Result<()> {
         let LoadedTransactionAccount {
@@ -323,15 +535,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
         let (loaded_account, account_found) = load_transaction_account(
-            callbacks,
+            account_loader,
             message,
             account_key,
             account_index,
-            &instruction_accounts[..],
-            account_overrides,
             feature_set,
             rent_collector,
-            loaded_programs,
         )?;
         collect_loaded_account(account_key, (loaded_account, account_found))?;
     }
@@ -371,7 +580,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 .iter()
                 .any(|(key, _)| key == owner_id)
             {
-                if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
+                // NOTE this will be changed to a `load_account()` call in a PR immediately following this one
+                // we want to stop pushing loaders on the accounts vec, but tests need to change if we do that
+                // and this PR is complex enough that we want to code review any new behaviors separately
+                if let Some(owner_account) =
+                    account_loader.callbacks.get_account_shared_data(owner_id)
+                {
                     if !native_loader::check_id(owner_account.owner())
                         || !owner_account.executable()
                     {
@@ -404,93 +618,51 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
 }
 
 fn load_transaction_account<CB: TransactionProcessingCallback>(
-    callbacks: &CB,
+    account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
-    instruction_accounts: &[&u8],
-    account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<(LoadedTransactionAccount, bool)> {
     let mut account_found = true;
-    let is_instruction_account = u8::try_from(account_index)
-        .map(|i| instruction_accounts.contains(&&i))
-        .unwrap_or(false);
-    let is_writable = message.is_writable(account_index);
+    let usage_pattern = AccountUsagePattern::new(message, account_index);
+
     let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
-        // for each transaction instruction, it cannot be overridden.
+        // for each transaction instruction, it cannot be loaded.
         LoadedTransactionAccount {
             loaded_size: 0,
             account: construct_instructions_account(message),
             rent_collected: 0,
         }
-    } else if let Some(account_override) =
-        account_overrides.and_then(|overrides| overrides.get(account_key))
+    } else if let Some(mut loaded_account) = account_loader.load_account(account_key, usage_pattern)
     {
-        LoadedTransactionAccount {
-            loaded_size: account_override.data().len(),
-            account: account_override.clone(),
-            rent_collected: 0,
-        }
-    } else if let Some(program) = (!is_instruction_account && !is_writable)
-        .then_some(())
-        .and_then(|_| loaded_programs.find(account_key))
-    {
-        callbacks
-            .get_account_shared_data(account_key)
-            .ok_or(TransactionError::AccountNotFound)?;
-        // Optimization to skip loading of accounts which are only used as
-        // programs in top-level instructions and not passed as instruction accounts.
-        LoadedTransactionAccount {
-            loaded_size: program.account_size,
-            account: account_shared_data_from_program(&program),
-            rent_collected: 0,
-        }
+        loaded_account.rent_collected = if usage_pattern == AccountUsagePattern::Writable {
+            collect_rent_from_account(
+                feature_set,
+                rent_collector,
+                account_key,
+                &mut loaded_account.account,
+            )
+            .rent_amount
+        } else {
+            0
+        };
+
+        loaded_account
     } else {
-        callbacks
-            .get_account_shared_data(account_key)
-            .map(|mut account| {
-                // Inspect the account prior to collecting rent, since
-                // rent collection can modify the account.
-                callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
-
-                let rent_collected = if is_writable {
-                    collect_rent_from_account(
-                        feature_set,
-                        rent_collector,
-                        account_key,
-                        &mut account,
-                    )
-                    .rent_amount
-                } else {
-                    0
-                };
-
-                LoadedTransactionAccount {
-                    loaded_size: account.data().len(),
-                    account,
-                    rent_collected,
-                }
-            })
-            .unwrap_or_else(|| {
-                callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
-
-                account_found = false;
-                let mut default_account = AccountSharedData::default();
-
-                // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
-                // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
-                // with this field already set would allow us to skip rent collection for these accounts.
-                default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                LoadedTransactionAccount {
-                    loaded_size: default_account.data().len(),
-                    account: default_account,
-                    rent_collected: 0,
-                }
-            })
+        account_found = false;
+        let mut default_account = AccountSharedData::default();
+        // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+        // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+        // with this field already set would allow us to skip rent collection for these accounts.
+        default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        LoadedTransactionAccount {
+            loaded_size: default_account.data().len(),
+            account: default_account,
+            rent_collected: 0,
+        }
     };
 
     Ok((loaded_account, account_found))
