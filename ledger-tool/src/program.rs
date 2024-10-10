@@ -543,7 +543,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        true, // copy_account_data
+        true,  // copy_account_data
+        false, // is_abi_v2
     )
     .unwrap();
 

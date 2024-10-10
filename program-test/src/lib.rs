@@ -134,6 +134,7 @@ pub fn invoke_builtin_function(
         transaction_context,
         instruction_context,
         true, // copy_account_data // There is no VM so direct mapping can not be implemented here
+        false, // is_abi_v2
     )?;
 
     // Deserialize data back into instruction params
