@@ -103,6 +103,7 @@ members = [
     "sdk",
     "sdk/account",
     "sdk/account-info",
+    "sdk/account-utils",
     "sdk/atomic-u64",
     "sdk/bincode",
     "sdk/cargo-build-sbf",
@@ -371,6 +372,7 @@ soketto = "0.7"
 solana-account = { path = "sdk/account", version = "=2.1.0" }
 solana-account-decoder = { path = "account-decoder", version = "=2.1.0" }
 solana-account-info = { path = "sdk/account-info", version = "=2.1.0" }
+solana-account-utils = { path = "sdk/account-utils", version = "=2.1.0" }
 solana-accounts-db = { path = "accounts-db", version = "=2.1.0" }
 solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.1.0" }
 solana-atomic-u64 = { path = "sdk/atomic-u64", version = "=2.1.0" }

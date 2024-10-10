@@ -1,0 +1,22 @@
+[package]
+name = "solana-account-utils"
+description = "Useful extras for Solana `Account` state."
+documentation = "https://docs.rs/solana-account-utils"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bincode = { workspace = true }
+serde = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
+solana-instruction = { workspace = true }
+
+[dev-dependencies]
+solana-pubkey = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

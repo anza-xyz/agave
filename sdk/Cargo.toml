@@ -85,6 +85,7 @@ sha2 = { workspace = true }
 sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
+solana-account-utils = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }

@@ -5678,6 +5678,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-account-utils"
+version = "2.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "solana-account",
+ "solana-instruction",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "solana-accounts-bench"
 version = "2.1.0"
 dependencies = [
@@ -7857,6 +7868,7 @@ dependencies = [
  "sha3",
  "siphasher",
  "solana-account",
+ "solana-account-utils",
  "solana-bn254",
  "solana-decode-error",
  "solana-derivation-path",
