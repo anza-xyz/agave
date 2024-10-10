@@ -489,7 +489,6 @@ pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod epoch_stake;
 pub mod feature;
-pub mod fee_calculator;
 pub mod hash;
 pub mod incinerator;
 pub mod instruction;
@@ -503,7 +502,6 @@ pub mod loader_v4_instruction;
 pub mod log;
 pub mod message;
 pub mod native_token;
-pub mod nonce;
 pub mod program;
 pub mod program_error;
 pub mod program_stubs;
@@ -521,6 +519,8 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
+#[deprecated(since = "2.1.0", note = "Use `solana-fee-calculator` crate instead")]
+pub use solana_fee_calculator as fee_calculator;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-pack` crate instead")]
@@ -541,7 +541,8 @@ pub use {
     solana_account_info::{self as account_info, debug_account_data},
     solana_clock as clock,
     solana_msg::msg,
-    solana_program_option as program_option, solana_pubkey as pubkey, solana_rent as rent,
+    solana_nonce as nonce, solana_program_option as program_option, solana_pubkey as pubkey,
+    solana_rent as rent,
 };
 
 /// The [config native program][np].

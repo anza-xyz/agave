@@ -5288,6 +5288,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-fee-calculator"
+version = "2.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "solana-genesis-utils"
 version = "2.1.0"
 dependencies = [
@@ -5578,6 +5587,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b8a731ed60e89177c8a7ab05fe0f1511cedd3e70e773f288f9de33a9cfdc21e"
 
 [[package]]
+name = "solana-nonce"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-fee-calculator",
+ "solana-hash",
+ "solana-pubkey",
+ "solana-sha256-hasher",
+]
+
+[[package]]
 name = "solana-perf"
 version = "2.1.0"
 dependencies = [
@@ -5666,9 +5687,11 @@ dependencies = [
  "solana-clock",
  "solana-decode-error",
  "solana-define-syscall",
+ "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
  "solana-msg",
+ "solana-nonce",
  "solana-program-error",
  "solana-program-memory",
  "solana-program-option",

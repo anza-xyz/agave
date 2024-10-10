@@ -2,13 +2,13 @@
 
 mod current;
 pub use current::{Data, DurableNonce, State};
-use {
-    crate::{hash::Hash, pubkey::Pubkey},
-    serde_derive::{Deserialize, Serialize},
-    std::collections::HashSet,
-};
+use {solana_hash::Hash, solana_pubkey::Pubkey, std::collections::HashSet};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Versions {
     Legacy(Box<State>),
     /// Current variants have durable nonce and blockhash domains separated.
@@ -114,8 +114,7 @@ impl From<Versions> for State {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::{fee_calculator::FeeCalculator, pubkey::Pubkey},
+        super::*, solana_fee_calculator::FeeCalculator, solana_pubkey::Pubkey,
         std::iter::repeat_with,
     };
 

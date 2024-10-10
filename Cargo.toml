@@ -111,11 +111,13 @@ members = [
     "sdk/decode-error",
     "sdk/derivation-path",
     "sdk/feature-set",
+    "sdk/fee-calculator",
     "sdk/gen-headers",
     "sdk/hash",
     "sdk/instruction",
     "sdk/macro",
     "sdk/msg",
+    "sdk/nonce",
     "sdk/package-metadata-macro",
     "sdk/program",
     "sdk/program-error",
@@ -404,6 +406,7 @@ solana-download-utils = { path = "download-utils", version = "=2.1.0" }
 solana-entry = { path = "entry", version = "=2.1.0" }
 solana-faucet = { path = "faucet", version = "=2.1.0" }
 solana-feature-set = { path = "sdk/feature-set", version = "=2.1.0" }
+solana-fee-calculator = { path = "sdk/fee-calculator", version = "=2.1.0" }
 solana-fee = { path = "fee", version = "=2.1.0" }
 solana-frozen-abi = { path = "frozen-abi", version = "=2.1.0" }
 solana-frozen-abi-macro = { path = "frozen-abi/macro", version = "=2.1.0" }
@@ -413,7 +416,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=2.1.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.1.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.1.0" }
 solana-gossip = { path = "gossip", version = "=2.1.0" }
-solana-hash = { path = "sdk/hash", version = "=2.1.0" }
+solana-hash = { path = "sdk/hash", version = "=2.1.0", default-features = false }
 solana-inline-spl = { path = "inline-spl", version = "=2.1.0" }
 solana-instruction = { path = "sdk/instruction", version = "=2.1.0", default-features = false }
 solana-lattice-hash = { path = "lattice-hash", version = "=2.1.0" }
@@ -428,6 +431,7 @@ solana-metrics = { path = "metrics", version = "=2.1.0" }
 solana-msg = { path = "sdk/msg", version = "=2.1.0" }
 solana-net-utils = { path = "net-utils", version = "=2.1.0" }
 solana-nohash-hasher = "0.2.1"
+solana-nonce = { path = "sdk/nonce", version = "=2.1.0" }
 solana-notifier = { path = "notifier", version = "=2.1.0" }
 solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.1.0" }
 solana-perf = { path = "perf", version = "=2.1.0" }
