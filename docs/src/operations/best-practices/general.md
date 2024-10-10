@@ -33,7 +33,6 @@ This is a monthly call that is hosted by the Solana Foundation.
 - Schedule: every second Thursday of the month 18:00 CET
 - Agenda: See [validator-announcements channel in Discord](https://discord.com/channels/428295358100013066/586252910506016798). 
 - This call **is recorded** and past calls can be watched back on the [Community Validator Discussions playlist](https://www.youtube.com/playlist?list=PLilwLeBwGuK78yjGBZwYhTf7rao0t13Zw)
-- Meeting link: [link](https://meet.google.com/ehg-ycog-aeb)
 
 ### Community Led Validator Call
 
@@ -41,7 +40,6 @@ This is also a monthly call which is hosted by the Solana validator community it
 - Schedule: every fourth Thursday of the month 18:00 CET
 - Agenda: See [HackMD site](https://hackmd.io/1DFauFMWTZG37-U7CXhxMg?view#Solana-Community-Validator-Call-Agendas). 
 - This call is **not recorded**
-- Meeting link: [link](https://meet.google.com/oxt-avji-yvz)
 
 ***Please note that the scheduling of these calls can be changed last minute due to any circumstances. For the most up-to-date information go to the [validator-announcements channel in Discord](https://discord.com/channels/428295358100013066/586252910506016798).***
 
