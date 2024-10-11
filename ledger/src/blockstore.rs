@@ -5333,6 +5333,9 @@ pub mod tests {
         crossbeam_channel::unbounded,
         rand::{seq::SliceRandom, thread_rng},
         solana_account_decoder::parse_token::UiTokenAmount,
+        solana_accounts_db::hardened_unpack::{
+            open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
+        },
         solana_entry::entry::{next_entry, next_entry_mut},
         solana_runtime::bank::{Bank, RewardType},
         solana_sdk::{
@@ -5403,6 +5406,17 @@ pub mod tests {
         assert!(Path::new(ledger_path.path())
             .join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL)
             .exists());
+
+        assert_eq!(
+            genesis_config,
+            open_genesis_config(ledger_path.path(), MAX_GENESIS_ARCHIVE_UNPACKED_SIZE).unwrap()
+        );
+        // Remove DEFAULT_GENESIS_FILE to force extraction of DEFAULT_GENESIS_ARCHIVE
+        std::fs::remove_file(ledger_path.path().join(DEFAULT_GENESIS_FILE)).unwrap();
+        assert_eq!(
+            genesis_config,
+            open_genesis_config(ledger_path.path(), MAX_GENESIS_ARCHIVE_UNPACKED_SIZE).unwrap()
+        );
     }
 
     #[test]
