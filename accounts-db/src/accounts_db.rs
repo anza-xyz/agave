@@ -8612,7 +8612,7 @@ impl AccountsDb {
                     accounts_data_len_from_duplicates: u64,
                     num_duplicate_accounts: u64,
                     uncleaned_roots: IntSet<Slot>,
-                    duplicates_lt_hash: DuplicatesLtHash,
+                    duplicates_lt_hash: Box<DuplicatesLtHash>,
                 }
                 impl DuplicatePubkeysVisitedInfo {
                     fn reduce(mut a: Self, mut b: Self) -> Self {
@@ -8716,7 +8716,7 @@ impl AccountsDb {
             rent_paying_accounts_by_partition: rent_paying_accounts_by_partition
                 .into_inner()
                 .unwrap(),
-            duplicates_lt_hash: Box::new(outer_duplicates_lt_hash.unwrap()),
+            duplicates_lt_hash: outer_duplicates_lt_hash.unwrap(),
         }
     }
 
@@ -8760,11 +8760,11 @@ impl AccountsDb {
         pubkeys: &[Pubkey],
         rent_collector: &RentCollector,
         timings: &GenerateIndexTimings,
-    ) -> (u64, u64, IntSet<Slot>, DuplicatesLtHash) {
+    ) -> (u64, u64, IntSet<Slot>, Box<DuplicatesLtHash>) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
         let mut uncleaned_slots = IntSet::default();
-        let mut duplicates_lt_hash = DuplicatesLtHash::default();
+        let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
         let mut removed_rent_paying = 0;
         let mut removed_top_off = 0;
         let mut lt_hash_time = Duration::default();
