@@ -1,3 +1,4 @@
+use solana_rpc_client::rpc_client::SerializableTransaction;
 use {
     crate::{
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
@@ -6,10 +7,15 @@ use {
         },
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
+        tx_latency::{measure_tx_latency, HttpOrWs},
     },
     chrono::Utc,
+    crossbeam_channel::{bounded, Sender},
     log::*,
-    rand::distributions::{Distribution, Uniform},
+    rand::{
+        distributions::{Distribution, Uniform},
+        prelude::SliceRandom,
+    },
     rayon::prelude::*,
     solana_client::nonce_utils,
     solana_metrics::{self, datapoint_info},
@@ -23,7 +29,7 @@ use {
         message::Message,
         native_token::Sol,
         pubkey::Pubkey,
-        signature::{Keypair, Signer},
+        signature::{Keypair, Signature, Signer},
         system_instruction,
         timing::timestamp,
         transaction::Transaction,
@@ -368,6 +374,7 @@ fn create_sender_threads<T>(
     exit_signal: Arc<AtomicBool>,
     shared_tx_active_thread_count: &Arc<AtomicIsize>,
     signatures_sender: Option<SignatureBatchSender>,
+    latency_sender: Option<Sender<Signature>>,
 ) -> Vec<JoinHandle<()>>
 where
     T: 'static + TpsClient + Send + Sync + ?Sized,
@@ -380,6 +387,7 @@ where
             let total_tx_sent_count = total_tx_sent_count.clone();
             let client = client.clone();
             let signatures_sender = signatures_sender.clone();
+            let latency_sender = latency_sender.clone();
             Builder::new()
                 .name("solana-client-sender".to_string())
                 .spawn(move || {
@@ -391,6 +399,7 @@ where
                         thread_batch_sleep_ms,
                         &client,
                         signatures_sender,
+                        latency_sender,
                     );
                 })
                 .unwrap()
@@ -422,6 +431,7 @@ where
         num_conflict_groups,
         block_data_file,
         transaction_data_file,
+        measure_tx_latency: measure_latency,
         ..
     } = config;
 
@@ -486,6 +496,15 @@ where
         transaction_data_file.as_deref(),
     );
 
+    // using zero capacity to process transaction only when receiving side is ready for it
+    // (finished processing previous one)
+    let (latency_sender, latency_receiver) = if measure_latency {
+        let (tx, rx) = bounded(0);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
     let sender_threads = create_sender_threads(
         &client,
         &shared_txs,
@@ -495,7 +514,10 @@ where
         exit_signal.clone(),
         &shared_tx_active_thread_count,
         signatures_sender,
+        latency_sender,
     );
+
+    let latency_thread = latency_receiver.map(|rx| measure_tx_latency(rx, HttpOrWs::Http, 100));
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
 
@@ -538,6 +560,13 @@ where
     if let Some(log_transaction_service) = log_transaction_service {
         info!("Waiting for log_transaction_service thread...");
         if let Err(err) = log_transaction_service.join() {
+            info!("  join() failed with: {:?}", err);
+        }
+    }
+
+    if let Some(latency) = latency_thread {
+        info!("Waiting for measure_tx_latency thread...");
+        if let Err(err) = latency.join() {
             info!("  join() failed with: {:?}", err);
         }
     }
@@ -950,6 +979,7 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
     thread_batch_sleep_ms: usize,
     client: &Arc<T>,
     signatures_sender: Option<SignatureBatchSender>,
+    latency_sender: Option<Sender<Signature>>,
 ) {
     let mut last_sent_time = timestamp();
     'thread_loop: loop {
@@ -1003,6 +1033,15 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
                 }) {
                     error!("Receiver has been dropped with error `{error}`, stop sending transactions.");
                     break 'thread_loop;
+                }
+            }
+
+            if let Some(ref latency_sender) = latency_sender {
+                // measure latency of a random transaction from batch
+                if let Some(tx_to_measure) = transactions.choose(&mut rand::thread_rng()) {
+                    if let Err(_) = latency_sender.try_send(*tx_to_measure.get_signature()) {
+                        // ignore error
+                    }
                 }
             }
 
