@@ -73,7 +73,6 @@ mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
-#[allow(dead_code)]
 mod scheduler_messages;
 mod transaction_scheduler;
 
