@@ -80,6 +80,7 @@ pub struct Config {
     pub commitment_config: CommitmentConfig,
     pub block_data_file: Option<String>,
     pub transaction_data_file: Option<String>,
+    pub measure_tx_latency: bool,
 }
 
 impl Eq for Config {}
@@ -117,6 +118,7 @@ impl Default for Config {
             commitment_config: CommitmentConfig::confirmed(),
             block_data_file: None,
             transaction_data_file: None,
+            measure_tx_latency: false,
         }
     }
 }
@@ -454,6 +456,11 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                     This option is useful for debug purposes."
                 ),
         )
+        .arg(
+            Arg::with_name("measure_tx_latency")
+                .long("measure-tx-latency")
+                .help("Measure the latency of some transactions"),
+        )
 }
 
 /// Parses a clap `ArgMatches` structure into a `Config`
@@ -633,6 +640,10 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
     args.transaction_data_file = matches
         .value_of("transaction_data_file")
         .map(|s| s.to_string());
+
+    if matches.is_present("measure_tx_latency") {
+        args.measure_tx_latency = true;
+    }
 
     Ok(args)
 }
