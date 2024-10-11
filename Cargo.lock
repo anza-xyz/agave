@@ -7885,6 +7885,7 @@ dependencies = [
  "solana-logger",
  "solana-program",
  "solana-program-memory",
+ "solana-pubkey",
  "solana-sanitize",
  "solana-sdk",
  "solana-sdk-macro",
