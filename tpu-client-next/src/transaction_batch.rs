@@ -27,7 +27,7 @@ impl TransactionBatch {
             timestamp: timestamp(),
         }
     }
-    pub fn get_timestamp(&self) -> u64 {
+    pub fn timestamp(&self) -> u64 {
         self.timestamp
     }
 }

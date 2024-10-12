@@ -141,7 +141,7 @@ impl ConnectionWorker {
     }
 
     /// Retrieves the statistics for transactions sent by this worker.
-    pub fn get_transaction_stats(&self) -> &SendTransactionStats {
+    pub fn transaction_stats(&self) -> &SendTransactionStats {
         &self.send_txs_stats
     }
 
@@ -154,7 +154,7 @@ impl ConnectionWorker {
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
         let now = timestamp();
         if !self.skip_check_transaction_age
-            && now.saturating_sub(transactions.get_timestamp()) > MAX_PROCESSING_AGE_MS
+            && now.saturating_sub(transactions.timestamp()) > MAX_PROCESSING_AGE_MS
         {
             debug!("Drop outdated transaction batch.");
             return;

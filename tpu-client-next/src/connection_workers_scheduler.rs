@@ -128,7 +128,7 @@ impl ConnectionWorkersScheduler {
 
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop_and_join().await;
-        Ok(workers.get_transaction_stats().clone())
+        Ok(workers.transaction_stats().clone())
     }
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
@@ -139,7 +139,7 @@ impl ConnectionWorkersScheduler {
         let client_certificate = if let Some(validator_identity) = validator_identity {
             Arc::new(QuicClientCertificate::new(&validator_identity))
         } else {
-            Arc::new(QuicClientCertificate::default())
+            Arc::new(QuicClientCertificate::new(&Keypair::new()))
         };
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
@@ -161,7 +161,7 @@ impl ConnectionWorkersScheduler {
             ConnectionWorker::new(endpoint, peer, txs_receiver, skip_check_transaction_age);
         let handle = tokio::spawn(async move {
             worker.run().await;
-            worker.get_transaction_stats().clone()
+            worker.transaction_stats().clone()
         });
 
         WorkerInfo::new(txs_sender, handle, cancel)

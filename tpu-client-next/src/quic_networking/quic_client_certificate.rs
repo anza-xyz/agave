@@ -9,12 +9,6 @@ pub struct QuicClientCertificate {
     pub key: PrivateKeyDer<'static>,
 }
 
-impl Default for QuicClientCertificate {
-    fn default() -> Self {
-        QuicClientCertificate::new(&Keypair::new())
-    }
-}
-
 impl QuicClientCertificate {
     pub fn new(keypair: &Keypair) -> Self {
         let (certificate, key) = new_dummy_x509_certificate(keypair);

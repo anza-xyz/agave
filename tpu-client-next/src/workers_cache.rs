@@ -144,7 +144,7 @@ impl WorkersCache {
         }
     }
 
-    pub fn get_transaction_stats(&self) -> &HashMap<IpAddr, SendTransactionStats> {
+    pub fn transaction_stats(&self) -> &HashMap<IpAddr, SendTransactionStats> {
         &self.send_stats_per_addr
     }
 

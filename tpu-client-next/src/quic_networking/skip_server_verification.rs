@@ -11,11 +11,9 @@ use {
     },
 };
 
-/// Implementation of [`ServerCertVerifier`] that ignores the server certificate.  But still checks
-/// the TLS signatures.
-///
-/// This is a duplicate of `solana_quic_client::nonblocking::quic_client::SkipServerVerification`.
-pub struct SkipServerVerification(Arc<CryptoProvider>);
+/// Implementation of [`ServerCertVerifier`] that ignores the server
+/// certificate. Yet still checks the TLS signatures.
+pub(crate) struct SkipServerVerification(Arc<CryptoProvider>);
 
 impl SkipServerVerification {
     pub fn new() -> Arc<Self> {
