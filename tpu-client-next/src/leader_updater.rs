@@ -26,7 +26,7 @@ use {
 #[async_trait]
 pub trait LeaderUpdater: Send {
     fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr>;
-    async fn stop_and_join(&mut self);
+    async fn stop(&mut self);
 }
 
 pub struct LeaderUpdaterError;
@@ -95,7 +95,7 @@ impl LeaderUpdater for LeaderUpdaterService {
             .leader_tpu_sockets(self.lookahead_slots)
     }
 
-    async fn stop_and_join(&mut self) {
+    async fn stop(&mut self) {
         self.exit.store(true, Ordering::Relaxed);
         self.leader_tpu_service.join().await;
     }
@@ -113,5 +113,5 @@ impl LeaderUpdater for PinnedLeaderUpdater {
         self.address.clone()
     }
 
-    async fn stop_and_join(&mut self) {}
+    async fn stop(&mut self) {}
 }

@@ -35,7 +35,7 @@ pub enum ConnectionWorkersSchedulerError {
 
 pub struct ConnectionWorkersSchedulerConfig {
     pub bind: SocketAddr,
-    pub validator_identity: Option<Keypair>,
+    pub stake_identity: Option<Keypair>,
     pub num_connections: usize,
     pub skip_check_transaction_age: bool,
     /// Size of the channel to transmit transaction batches to the target workers.
@@ -51,7 +51,7 @@ impl ConnectionWorkersScheduler {
     pub async fn run(
         ConnectionWorkersSchedulerConfig {
             bind,
-            validator_identity,
+            stake_identity: validator_identity,
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
@@ -93,7 +93,7 @@ impl ConnectionWorkersScheduler {
             }
 
             tokio::select! {
-                send_res = workers.send_txs_to_worker(new_leader, transaction_batch) => match send_res {
+                send_res = workers.send_transactions_to_address(new_leader, transaction_batch) => match send_res {
                     Ok(()) => (),
                     Err(WorkersCacheError::ShutdownError) => {
                         debug!("Connection to {new_leader} was closed, worker cache shutdown");
@@ -127,7 +127,7 @@ impl ConnectionWorkersScheduler {
         workers.shutdown().await;
 
         endpoint.close(0u32.into(), b"Closing connection");
-        leader_updater.stop_and_join().await;
+        leader_updater.stop().await;
         Ok(workers.transaction_stats().clone())
     }
 

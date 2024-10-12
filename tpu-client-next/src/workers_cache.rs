@@ -107,7 +107,7 @@ impl WorkersCache {
     /// Sends a batch of transactions to the worker for a given peer. If the
     /// worker for the peer is disconnected or fails, it is removed from the
     /// cache.
-    pub async fn send_txs_to_worker(
+    pub async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,

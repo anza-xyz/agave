@@ -183,7 +183,7 @@ impl ConnectionWorker {
     /// the connection is successful, the state is updated to `Active`. If an
     /// error occurs, the state may transition to `Retry` or `Closing`,
     /// depending on the nature of the error.
-    async fn create_connection(&mut self, num_reconnects: usize) {
+    async fn create_connection(&mut self, max_retries_attempt: usize) {
         let connecting = self.endpoint.connect(self.peer, "connect");
         match connecting {
             Ok(connecting) => {
@@ -202,7 +202,8 @@ impl ConnectionWorker {
                     Err(err) => {
                         warn!("Connection error {}: {}", self.peer, err);
                         record_error(err.into(), &mut self.send_txs_stats);
-                        self.connection = ConnectionState::Retry(num_reconnects.saturating_add(1));
+                        self.connection =
+                            ConnectionState::Retry(max_retries_attempt.saturating_add(1));
                     }
                 }
             }

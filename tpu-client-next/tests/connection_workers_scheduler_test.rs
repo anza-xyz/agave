@@ -65,7 +65,7 @@ async fn setup_connection_worker_scheduler(
     let cancel = CancellationToken::new();
     let config = ConnectionWorkersSchedulerConfig {
         bind,
-        validator_identity,
+        stake_identity: validator_identity,
         num_connections: 1,
         skip_check_transaction_age: false,
         worker_channel_size: 2,
