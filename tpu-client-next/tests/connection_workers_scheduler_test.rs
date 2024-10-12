@@ -69,6 +69,7 @@ async fn setup_connection_worker_scheduler(
         num_connections: 1,
         skip_check_transaction_age: false,
         worker_channel_size: 2,
+        max_reconnect_attempts: 4,
     };
     let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
         config,

@@ -40,6 +40,8 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub skip_check_transaction_age: bool,
     /// Size of the channel to transmit transaction batches to the target workers.
     pub worker_channel_size: usize, // = 2;
+    /// Maximum number of reconnection attempts in case the connection errors out.
+    pub max_reconnect_attempts: usize, // = 4;
 }
 
 impl ConnectionWorkersScheduler {
@@ -55,6 +57,7 @@ impl ConnectionWorkersScheduler {
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
+            max_reconnect_attempts,
         }: ConnectionWorkersSchedulerConfig,
         mut leader_updater: Box<dyn LeaderUpdater>,
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
@@ -88,6 +91,7 @@ impl ConnectionWorkersScheduler {
                     new_leader,
                     worker_channel_size,
                     skip_check_transaction_age,
+                    max_reconnect_attempts,
                 );
                 workers.push(*new_leader, worker).await;
             }
@@ -118,6 +122,7 @@ impl ConnectionWorkersScheduler {
                         peer,
                         worker_channel_size,
                         skip_check_transaction_age,
+                        max_reconnect_attempts,
                     );
                     workers.push(*peer, worker).await;
                 }
@@ -152,13 +157,19 @@ impl ConnectionWorkersScheduler {
         peer: &SocketAddr,
         worker_channel_size: usize,
         skip_check_transaction_age: bool,
+        max_reconnect_attempts: usize,
     ) -> WorkerInfo {
         let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
         let endpoint = endpoint.clone();
         let peer = *peer;
 
-        let (mut worker, cancel) =
-            ConnectionWorker::new(endpoint, peer, txs_receiver, skip_check_transaction_age);
+        let (mut worker, cancel) = ConnectionWorker::new(
+            endpoint,
+            peer,
+            txs_receiver,
+            skip_check_transaction_age,
+            max_reconnect_attempts,
+        );
         let handle = tokio::spawn(async move {
             worker.run().await;
             worker.transaction_stats().clone()

@@ -1,5 +1,5 @@
-//! This module defines `ConnectionWorker` which encapsulates the
-//! functionality needed to handle one connection within the scope of task.
+//! This module defines `ConnectionWorker` which encapsulates the functionality
+//! needed to handle one connection within the scope of task.
 use {
     super::SendTransactionStats,
     crate::{
@@ -20,9 +20,6 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-
-/// Maximum number of reconnection attempts in case the connection errors out.
-const MAX_RECONNECT_ATTEMPTS: usize = 4;
 
 /// Interval between retry attempts for creating a new connection. This value is
 /// a best-effort estimate, based on current network conditions.
@@ -60,7 +57,7 @@ impl Drop for ConnectionState {
 
 /// [`ConnectionWorker`] holds connection to the validator with address `peer`. If
 /// connection has been closed, [`ConnectionWorker`] tries to reconnect
-/// [`MAX_RECONNECT_ATTEMPTS`] times. If connection is in `Active` state, it sends
+/// `max_reconnect_attempts` times. If connection is in `Active` state, it sends
 /// transactions received from `transactions_receiver`. Additionally, it
 /// accumulates statistics about connections and streams failures.
 pub(crate) struct ConnectionWorker {
@@ -69,6 +66,7 @@ pub(crate) struct ConnectionWorker {
     transactions_receiver: mpsc::Receiver<TransactionBatch>,
     connection: ConnectionState,
     skip_check_transaction_age: bool,
+    max_reconnect_attempts: usize,
     send_txs_stats: SendTransactionStats,
     cancel: CancellationToken,
 }
@@ -79,6 +77,7 @@ impl ConnectionWorker {
         peer: SocketAddr,
         transactions_receiver: mpsc::Receiver<TransactionBatch>,
         skip_check_transaction_age: bool,
+        max_reconnect_attempts: usize,
     ) -> (Self, CancellationToken) {
         // TODO(klykov): check if this token should be child of the scheduler token
         let cancel = CancellationToken::new();
@@ -89,6 +88,7 @@ impl ConnectionWorker {
             transactions_receiver,
             connection: ConnectionState::NotSetup,
             skip_check_transaction_age,
+            max_reconnect_attempts,
             send_txs_stats: SendTransactionStats::default(),
             cancel: cancel.clone(),
         };
@@ -122,7 +122,7 @@ impl ConnectionWorker {
                             .await;
                     }
                     ConnectionState::Retry(num_reconnects) => {
-                        if *num_reconnects > MAX_RECONNECT_ATTEMPTS {
+                        if *num_reconnects > self.max_reconnect_attempts {
                             error!("Failed to establish connection: reach max reconnect attempts.");
                             self.connection = ConnectionState::Closing;
                             continue;
