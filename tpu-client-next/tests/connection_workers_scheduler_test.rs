@@ -16,6 +16,7 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
+        connection_workers_scheduler::ConnectionWorkersSchedulerConfig,
         leader_updater::create_leader_updater, transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
         SendTransactionStatsPerAddr,
@@ -62,13 +63,18 @@ async fn setup_connection_worker_scheduler(
 
     let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let cancel = CancellationToken::new();
-    let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
+    let config = ConnectionWorkersSchedulerConfig {
         bind,
         validator_identity,
+        num_connections: 1,
+        skip_check_transaction_age: false,
+        worker_channel_size: 2,
+    };
+    let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
+        config,
         leader_updater,
-        cancel.clone(),
         transaction_receiver,
-        1,
+        cancel.clone(),
     ));
 
     (scheduler, cancel)

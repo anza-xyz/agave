@@ -127,16 +127,16 @@ impl SendTransactionStats {
 
 macro_rules! display_send_transaction_stats_body {
     ($self:ident, $f:ident, $($field:ident),* $(,)?) => {
-                write!(
+        write!(
             $f,
-                    concat!(
-                        "SendTransactionStats:\n",
-                        $(
-                            "\x20   ", stringify!($field), ": {},\n",
-                        )*
-                    ),
+            concat!(
+                "SendTransactionStats:\n",
+                $(
+                    "\x20   ", stringify!($field), ": {},\n",
+                )*
+            ),
             $($self.$field),*
-                )
+        )
     };
 }
 

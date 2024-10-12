@@ -19,9 +19,6 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Size of the channel to transmit transaction batches to the target workers.
-const WORKER_CHANNEL_SIZE: usize = 2;
-
 /// [`ConnectionWorkersScheduler`] is responsible for managing and scheduling
 /// connection workers that handle transactions over the network.
 pub struct ConnectionWorkersScheduler;
@@ -36,6 +33,15 @@ pub enum ConnectionWorkersSchedulerError {
     LeaderReceiverDropped,
 }
 
+pub struct ConnectionWorkersSchedulerConfig {
+    pub bind: SocketAddr,
+    pub validator_identity: Option<Keypair>,
+    pub num_connections: usize,
+    pub skip_check_transaction_age: bool,
+    /// Size of the channel to transmit transaction batches to the target workers.
+    pub worker_channel_size: usize, // = 2;
+}
+
 impl ConnectionWorkersScheduler {
     /// Runs the main loop that handles worker scheduling and management for
     /// connections. Returns the error quic statistics per connection address or
@@ -43,12 +49,16 @@ impl ConnectionWorkersScheduler {
     /// not delivered due to network problems, they will not be retried when the
     /// problem is resolved.
     pub async fn run(
-        bind: SocketAddr,
-        validator_identity: Option<Keypair>,
+        ConnectionWorkersSchedulerConfig {
+            bind,
+            validator_identity,
+            num_connections,
+            skip_check_transaction_age,
+            worker_channel_size,
+        }: ConnectionWorkersSchedulerConfig,
         mut leader_updater: Box<dyn LeaderUpdater>,
-        cancel: CancellationToken,
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
-        num_connections: usize,
+        cancel: CancellationToken,
     ) -> Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError> {
         let endpoint = Self::setup_endpoint(bind, validator_identity)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
@@ -65,7 +75,7 @@ impl ConnectionWorkersScheduler {
                 },
                 () = cancel.cancelled() => {
                     debug!("Cancelled: Shutting down");
-                break;
+                    break;
                 }
             };
             let updated_leaders = leader_updater.next_num_lookahead_slots_leaders();
@@ -73,7 +83,12 @@ impl ConnectionWorkersScheduler {
             let future_leaders = &updated_leaders[1..];
             if !workers.contains(new_leader) {
                 debug!("No existing workers for {new_leader:?}, starting a new one.");
-                let worker = Self::spawn_worker(&endpoint, new_leader);
+                let worker = Self::spawn_worker(
+                    &endpoint,
+                    new_leader,
+                    worker_channel_size,
+                    skip_check_transaction_age,
+                );
                 workers.push(*new_leader, worker).await;
             }
 
@@ -86,7 +101,7 @@ impl ConnectionWorkersScheduler {
                     Err(err) => {
                         warn!("Connection to {new_leader} was closed, worker error: {err}");
                        // If we has failed to send batch, it will be dropped.
-            }
+                    }
                 },
                 () = cancel.cancelled() => {
                     debug!("Cancelled: Shutting down");
@@ -98,7 +113,12 @@ impl ConnectionWorkersScheduler {
             // hide the latency of opening the connection.
             for peer in future_leaders {
                 if !workers.contains(peer) {
-                    let worker = Self::spawn_worker(&endpoint, peer);
+                    let worker = Self::spawn_worker(
+                        &endpoint,
+                        peer,
+                        worker_channel_size,
+                        skip_check_transaction_age,
+                    );
                     workers.push(*peer, worker).await;
                 }
             }
@@ -127,12 +147,18 @@ impl ConnectionWorkersScheduler {
     }
 
     /// Spawns a worker to handle communication with a given peer.
-    fn spawn_worker(endpoint: &Endpoint, peer: &SocketAddr) -> WorkerInfo {
-        let (txs_sender, txs_receiver) = mpsc::channel(WORKER_CHANNEL_SIZE);
+    fn spawn_worker(
+        endpoint: &Endpoint,
+        peer: &SocketAddr,
+        worker_channel_size: usize,
+        skip_check_transaction_age: bool,
+    ) -> WorkerInfo {
+        let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
         let endpoint = endpoint.clone();
         let peer = *peer;
 
-        let (mut worker, cancel) = ConnectionWorker::new(endpoint, peer, txs_receiver);
+        let (mut worker, cancel) =
+            ConnectionWorker::new(endpoint, peer, txs_receiver, skip_check_transaction_age);
         let handle = tokio::spawn(async move {
             worker.run().await;
             worker.get_transaction_stats().clone()

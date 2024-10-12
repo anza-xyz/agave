@@ -66,10 +66,11 @@ impl Drop for ConnectionState {
 pub(crate) struct ConnectionWorker {
     endpoint: Endpoint,
     peer: SocketAddr,
-    cancel: CancellationToken,
     transactions_receiver: mpsc::Receiver<TransactionBatch>,
     connection: ConnectionState,
+    skip_check_transaction_age: bool,
     send_txs_stats: SendTransactionStats,
+    cancel: CancellationToken,
 }
 
 impl ConnectionWorker {
@@ -77,16 +78,19 @@ impl ConnectionWorker {
         endpoint: Endpoint,
         peer: SocketAddr,
         transactions_receiver: mpsc::Receiver<TransactionBatch>,
+        skip_check_transaction_age: bool,
     ) -> (Self, CancellationToken) {
+        // TODO(klykov): check if this token should be child of the scheduler token
         let cancel = CancellationToken::new();
 
         let this = Self {
             endpoint,
             peer,
-            cancel: cancel.clone(),
             transactions_receiver,
             connection: ConnectionState::NotSetup,
+            skip_check_transaction_age,
             send_txs_stats: SendTransactionStats::default(),
+            cancel: cancel.clone(),
         };
 
         (this, cancel)
@@ -149,7 +153,9 @@ impl ConnectionWorker {
     /// to send the same transactions again.
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
         let now = timestamp();
-        if now.saturating_sub(transactions.get_timestamp()) > MAX_PROCESSING_AGE_MS {
+        if !self.skip_check_transaction_age
+            && now.saturating_sub(transactions.get_timestamp()) > MAX_PROCESSING_AGE_MS
+        {
             debug!("Drop outdated transaction batch.");
             return;
         }
