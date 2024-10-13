@@ -509,6 +509,7 @@ pub mod program_error;
 pub mod program_stubs;
 pub mod program_utils;
 pub mod secp256k1_program;
+pub mod secp256r1_program;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stable_layout;
@@ -564,7 +565,7 @@ pub mod sdk_ids {
         crate::{
             address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
             config, ed25519_program, feature, incinerator, loader_v4, secp256k1_program,
-            solana_program::pubkey::Pubkey, stake, system_program, sysvar, vote,
+            secp256r1_program, solana_program::pubkey::Pubkey, stake, system_program, sysvar, vote,
         },
         lazy_static::lazy_static,
     };
@@ -574,6 +575,7 @@ pub mod sdk_ids {
             let mut sdk_ids = vec![
                 ed25519_program::id(),
                 secp256k1_program::id(),
+                secp256r1_program::id(),
                 system_program::id(),
                 sysvar::id(),
                 bpf_loader::id(),

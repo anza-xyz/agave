@@ -871,6 +871,10 @@ pub mod reenable_sbpf_v1_execution {
     solana_program::declare_id!("TestFeature21111111111111111111111111111111");
 }
 
+pub mod enable_secp256r1_precompile {
+    solana_program::declare_id!("GkVUbiefEqFzzLcArWgNG7r3BCs551UUjdH2hVE5ns3E");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1083,6 +1087,7 @@ lazy_static! {
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
         (disable_sbpf_v1_execution::id(), "Disables execution of SBPFv1 programs"),
         (reenable_sbpf_v1_execution::id(), "Re-enables execution of SBPFv1 programs"),
+        (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

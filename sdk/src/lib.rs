@@ -52,8 +52,8 @@ pub use solana_program::{
     epoch_rewards, epoch_schedule, fee_calculator, impl_sysvar_get, incinerator, instruction,
     keccak, lamports, loader_instruction, loader_upgradeable_instruction, loader_v4,
     loader_v4_instruction, message, msg, native_token, nonce, program, program_error,
-    program_option, program_pack, rent, secp256k1_program, serialize_utils, slot_hashes,
-    slot_history, stable_layout, stake, stake_history, syscalls, system_instruction,
+    program_option, program_pack, rent, secp256k1_program, secp256r1_program, serialize_utils,
+    slot_hashes, slot_history, stable_layout, stake, stake_history, syscalls, system_instruction,
     system_program, sysvar, unchecked_div_by_const, vote,
 };
 #[cfg(feature = "borsh")]
@@ -95,6 +95,7 @@ pub mod reward_info;
 pub mod reward_type;
 pub mod rpc_port;
 pub mod secp256k1_instruction;
+pub mod secp256r1_instruction;
 pub mod shred_version;
 pub mod signature;
 pub mod signer;

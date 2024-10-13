@@ -86,6 +86,11 @@ lazy_static! {
             None, // always enabled
             crate::ed25519_instruction::verify,
         ),
+        Precompile::new(
+            crate::secp256r1_program::id(),
+            Pubkey::try_from("GkVUbiefEqFzzLcArWgNG7r3BCs551UUjdH2hVE5ns3E").ok(),
+            crate::secp256r1_instruction::verify,
+        )
     ];
 }
 

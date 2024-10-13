@@ -7846,6 +7846,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "num_enum",
+ "openssl",
  "pbkdf2 0.11.0",
  "qualifier_attr",
  "rand 0.7.3",
