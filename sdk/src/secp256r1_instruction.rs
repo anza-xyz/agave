@@ -142,7 +142,9 @@ pub fn verify(
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
     let num_signatures = data[0] as usize;
-
+    if num_signatures == 0 {
+        return Err(PrecompileError::InvalidInstructionDataSize);
+    }
     if num_signatures > 8 {
         return Err(PrecompileError::InvalidInstructionDataSize);
     }
