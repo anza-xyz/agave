@@ -232,7 +232,6 @@ pub fn verify(
         // Create an ECDSA signature object from the ASN.1 integers
         let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_private_components(r_bignum, s_bignum)
             .map_err(|_| PrecompileError::InvalidSignature)?;
-        //println!("Sig: {:?}", ecdsa_sig.to_der().map_err(|_| PrecompileError::InvalidSignature)?);
 
         let public_key_point = EcPoint::from_bytes(&group, pubkey, &mut ctx)
             .map_err(|_| PrecompileError::InvalidPublicKey)?;
