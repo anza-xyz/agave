@@ -400,8 +400,8 @@ pub mod test {
         );
 
         let offsets = Secp256r1SignatureOffsets {
-            message_data_offset: std::u16::MAX,
-            message_data_size: std::u16::MAX,
+            message_data_offset: u16::MAX,
+            message_data_size: u16::MAX,
             ..Secp256r1SignatureOffsets::default()
         };
         assert_eq!(
@@ -413,7 +413,7 @@ pub mod test {
     #[test]
     fn test_pubkey_offset() {
         let offsets = Secp256r1SignatureOffsets {
-            public_key_offset: std::u16::MAX,
+            public_key_offset: u16::MAX,
             ..Secp256r1SignatureOffsets::default()
         };
         assert_eq!(
@@ -434,7 +434,7 @@ pub mod test {
     #[test]
     fn test_signature_offset() {
         let offsets = Secp256r1SignatureOffsets {
-            signature_offset: std::u16::MAX,
+            signature_offset: u16::MAX,
             ..Secp256r1SignatureOffsets::default()
         };
         assert_eq!(
