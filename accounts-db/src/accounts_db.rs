@@ -12054,11 +12054,11 @@ pub mod tests {
     }
 
     /// This test creates an ancient storage with three alive accounts
-    /// of various sizes. It then simulates killing one of the accounts
-    /// in a more recent (non-ancient) slot by overwriting the account
-    /// that has the smallest data size.  The dead account is expected
-    /// to be deleted from its ancient storages in the process
-    /// shrinking candidate slots.  The capacity of the updated new
+    /// of various sizes. It then simulates killing one of the
+    /// accounts in a more recent (non-ancient) slot by overwriting
+    /// the account that has the smallest data size.  The dead account
+    /// is expected to be deleted from its ancient storage in the
+    /// process of shrinking candidate slots.  The capacity of the
     /// storage after shrinking is expected to be the sum of alive
     /// bytes of the two remaining alive ancient accounts.
     #[test]
@@ -12080,7 +12080,7 @@ pub mod tests {
         db.combine_ancient_slots(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
         let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
         let ancient_accounts = db.get_unique_accounts_from_storage(&storage);
-        // Check that three accounts are indeed present in the combined storage
+        // Check that three accounts are indeed present in the combined storage.
         assert_eq!(ancient_accounts.stored_accounts.len(), 3);
         // Find an ancient account with smallest data length.
         // This will be a dead account, overwritten in the current slot.
@@ -12101,7 +12101,7 @@ pub mod tests {
         );
         db.calculate_accounts_delta_hash(current_slot);
         db.add_root_and_flush_write_cache(current_slot);
-        // This should remove the dead ancient account from the index
+        // This should remove the dead ancient account from the index.
         db.clean_accounts_for_tests();
         db.shrink_ancient_slots(&epoch_schedule);
         let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
