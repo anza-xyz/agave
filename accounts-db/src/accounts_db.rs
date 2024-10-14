@@ -12053,14 +12053,14 @@ pub mod tests {
         );
     }
 
-    /// This test creates an ancient storage with three live accounts
+    /// This test creates an ancient storage with three alive accounts
     /// of various sizes. It then simulates killing one the accounts
     /// in a more recent (non-ancient) slot by overwriting the account
     /// that has the smallest data size.  The dead account is expected
     /// to be deleted from its ancient storages in the process
     /// shrinking candidate slots.  The capacity of the updated new
     /// storage after shrinking is expected to be the sum of alive
-    /// bytes of the two remaining live ancient accounts.
+    /// bytes of the two remaining alive ancient accounts.
     #[test]
     fn test_shrink_candidate_slots_with_dead_ancient_account() {
         solana_logger::setup();
@@ -12083,7 +12083,7 @@ pub mod tests {
         // Check that three accounts are indeed present in the combined storage
         assert_eq!(ancient_accounts.stored_accounts.len(), 3);
         // Find an ancient account with smallest data length.
-        // This will be a dead account, overwrittent in the current slot.
+        // This will be a dead account, overwritten in the current slot.
         let modified_account_pubkey = ancient_accounts
             .stored_accounts
             .iter()
@@ -12107,14 +12107,14 @@ pub mod tests {
         let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
         let created_accounts = db.get_unique_accounts_from_storage(&storage);
         // The dead account should still be in the ancient storage,
-        // because the storage wouldn't be shrunk with normal live to
+        // because the storage wouldn't be shrunk with normal alive to
         // capacity ratio.
         assert_eq!(created_accounts.stored_accounts.len(), 3);
         db.shrink_candidate_slots(&epoch_schedule);
         let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
         let created_accounts = db.get_unique_accounts_from_storage(&storage);
         // At this point the dead ancient account should be removed
-        // and storage capacity shrunk to the sum of live bytes of
+        // and storage capacity shrunk to the sum of alive bytes of
         // accounts it holds.  This is the data lengths of the
         // accounts plus the length of their metadata.
         assert_eq!(created_accounts.capacity, 1000 + 2000 + 136 * 2);
