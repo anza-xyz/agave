@@ -435,7 +435,7 @@ solana-msg = { path = "sdk/msg", version = "=2.1.0" }
 solana-net-utils = { path = "net-utils", version = "=2.1.0" }
 solana-nohash-hasher = "0.2.1"
 solana-notifier = { path = "notifier", version = "=2.1.0" }
-solana-package-metadata = { path = "sdk/package-metadata", version = "=2.0.0" }
+solana-package-metadata = { path = "sdk/package-metadata", version = "=2.1.0" }
 solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.1.0" }
 solana-perf = { path = "perf", version = "=2.1.0" }
 solana-poh = { path = "poh", version = "=2.1.0" }

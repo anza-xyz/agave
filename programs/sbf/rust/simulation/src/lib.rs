@@ -12,7 +12,7 @@ use {
     std::convert::TryInto,
 };
 
-solana_package_metadata::declare_id_with_package_metadata!("solana.program-id");
+solana_program::declare_id!("Sim1jD5C35odT8mzctm8BWnjic8xW5xgeb5MbcbErTo");
 
 solana_program::entrypoint_no_alloc!(process_instruction);
 

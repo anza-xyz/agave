@@ -16,7 +16,7 @@
 ///
 /// You can fetch the copyright with the following:
 /// ```ignore
-/// use solana_sdk_macro::package_metadata;
+/// use solana_package_metadata::package_metadata;
 ///
 /// pub fn main() {
 ///     let copyright = package_metadata!("copyright");
@@ -48,6 +48,8 @@
 /// It does *not* currently support accessing TOML array elements directly.
 /// TOML tables are not supported.
 pub use solana_package_metadata_macro::package_metadata;
+/// Re-export solana_pubkey::declare_id for easy usage within the macro
+pub use solana_pubkey::declare_id;
 
 /// Convenience macro for declaring a program id from Cargo.toml package metadata.
 ///
@@ -75,7 +77,7 @@ pub use solana_package_metadata_macro::package_metadata;
 /// This program id behaves exactly as if the developer had written:
 ///
 /// ```
-/// solana_program::declare_id!("MyProgram1111111111111111111111111111111111");
+/// solana_pubkey::declare_id!("MyProgram1111111111111111111111111111111111");
 /// ```
 ///
 /// Meaning that it's possible to refer to the program id using `crate::id()`,
@@ -83,8 +85,6 @@ pub use solana_package_metadata_macro::package_metadata;
 #[macro_export]
 macro_rules! declare_id_with_package_metadata {
     ($key:literal) => {
-        solana_program::declare_id!(solana_program::pubkey::Pubkey::from_str_const(
-            $crate::package_metadata!($key)
-        ));
+        $crate::declare_id!($crate::package_metadata!($key));
     };
 }
