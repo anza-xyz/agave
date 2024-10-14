@@ -173,8 +173,11 @@ mod tests {
         solana_cost_model::transaction_cost::UsageCostDetails,
         solana_feature_set::FeatureSet,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, message::Message, pubkey::Pubkey,
-            system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            message::{Message, TransactionSignatureDetails},
+            pubkey::Pubkey,
+            system_instruction,
+            transaction::Transaction,
         },
     };
 
@@ -204,6 +207,19 @@ mod tests {
         let limit_ratio: u32 =
             ((block_cost_limits::MAX_WRITABLE_ACCOUNT_UNITS - cost + 1) / cost) as u32;
         (sanitized_transaction, deserialized_packet, limit_ratio)
+    }
+
+    fn zero_transaction_cost() -> TransactionCost {
+        TransactionCost::Transaction(UsageCostDetails {
+            writable_accounts: vec![],
+            signature_cost: 0,
+            write_lock_cost: 0,
+            data_bytes_cost: 0,
+            programs_execution_cost: 0,
+            loaded_accounts_data_size_cost: 0,
+            allocated_accounts_data_size: 0,
+            signature_details: TransactionSignatureDetails::new(0, 0, 0),
+        })
     }
 
     #[test]
@@ -382,7 +398,7 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             forward_packet_batches_by_accounts.batch_block_limit = test_cost + 1;
 
-            let transaction_cost = TransactionCost::Transaction(UsageCostDetails::default());
+            let transaction_cost = zero_transaction_cost();
             assert_eq!(
                 0,
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(
@@ -411,7 +427,7 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             forward_packet_batches_by_accounts.batch_account_limit = test_cost + 1;
 
-            let transaction_cost = TransactionCost::Transaction(UsageCostDetails::default());
+            let transaction_cost = zero_transaction_cost();
             assert_eq!(
                 0,
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(
@@ -445,7 +461,7 @@ mod tests {
             forward_packet_batches_by_accounts.batch_vote_limit = test_cost / 2 + 1;
             forward_packet_batches_by_accounts.batch_account_limit = test_cost / 3 + 1;
 
-            let transaction_cost = TransactionCost::Transaction(UsageCostDetails::default());
+            let transaction_cost = zero_transaction_cost();
             assert_eq!(
                 2,
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(

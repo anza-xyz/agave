@@ -613,6 +613,7 @@ mod tests {
         solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_sdk::{
             hash::Hash,
+            message::TransactionSignatureDetails,
             signature::{Keypair, Signer},
             system_transaction,
         },
@@ -939,11 +940,14 @@ mod tests {
             .map(|n| {
                 if n % 2 == 0 {
                     Ok(TransactionCost::Transaction(UsageCostDetails {
+                        writable_accounts: vec![],
                         signature_cost,
                         write_lock_cost,
                         data_bytes_cost,
                         programs_execution_cost,
-                        ..UsageCostDetails::default()
+                        loaded_accounts_data_size_cost: 0,
+                        allocated_accounts_data_size: 0,
+                        signature_details: TransactionSignatureDetails::new(0, 0, 0),
                     }))
                 } else {
                     Err(TransactionError::WouldExceedMaxBlockCostLimit)

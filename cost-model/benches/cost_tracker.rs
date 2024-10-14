@@ -6,7 +6,7 @@ use {
         cost_tracker::CostTracker,
         transaction_cost::{TransactionCost, UsageCostDetails},
     },
-    solana_sdk::pubkey::Pubkey,
+    solana_sdk::{message::TransactionSignatureDetails, pubkey::Pubkey},
     test::Bencher,
 };
 
@@ -24,18 +24,25 @@ fn setup(num_transactions: usize, contentious_transactions: bool) -> BenchSetup 
     let pubkey = Pubkey::new_unique();
     let tx_costs = (0..num_transactions)
         .map(|_| {
-            let mut usage_cost_details = UsageCostDetails::default();
+            let mut writable_accounts = Vec::with_capacity(max_accounts_per_tx);
             (0..max_accounts_per_tx).for_each(|_| {
                 let writable_account_key = if contentious_transactions {
                     pubkey
                 } else {
                     Pubkey::new_unique()
                 };
-                usage_cost_details
-                    .writable_accounts
-                    .push(writable_account_key)
+                writable_accounts.push(writable_account_key)
             });
-            usage_cost_details.programs_execution_cost = 9999;
+            let usage_cost_details = UsageCostDetails {
+                writable_accounts,
+                signature_cost: 0,
+                write_lock_cost: 0,
+                data_bytes_cost: 0,
+                programs_execution_cost: 9999,
+                loaded_accounts_data_size_cost: 0,
+                allocated_accounts_data_size: 0,
+                signature_details: TransactionSignatureDetails::new(0, 0, 0),
+            };
             TransactionCost::Transaction(usage_cost_details)
         })
         .collect_vec();

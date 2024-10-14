@@ -7,7 +7,6 @@
 
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
-    log::*,
     solana_builtins_default_costs::BUILTIN_INSTRUCTION_COSTS,
     solana_compute_budget::compute_budget_limits::{
         DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
@@ -19,6 +18,7 @@ use {
         compute_budget::{self, ComputeBudgetInstruction},
         fee::FeeStructure,
         instruction::CompiledInstruction,
+        message::TransactionSignatureDetails,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
         saturating_add_assign,
@@ -51,16 +51,27 @@ impl CostModel {
                 writable_accounts: Self::get_writable_accounts(transaction),
             }
         } else {
-            let mut tx_cost = UsageCostDetails::new_with_default_capacity();
-
-            Self::get_signature_cost(&mut tx_cost, transaction, feature_set);
-            Self::get_write_lock_cost(&mut tx_cost, transaction, feature_set);
-            Self::get_transaction_cost(&mut tx_cost, transaction, feature_set);
-            tx_cost.allocated_accounts_data_size =
+            let (signatures_count_detail, signature_cost) =
+                Self::get_signature_cost(transaction, feature_set);
+            let (writable_accounts, write_lock_cost) =
+                Self::get_write_lock_cost(transaction, feature_set);
+            let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
+                Self::get_transaction_cost(transaction, feature_set);
+            let allocated_accounts_data_size =
                 Self::calculate_allocated_accounts_data_size(transaction);
 
-            debug!("transaction {:?} has cost {:?}", transaction, tx_cost);
-            TransactionCost::Transaction(tx_cost)
+            let usage_cost_details = UsageCostDetails {
+                writable_accounts,
+                signature_cost,
+                write_lock_cost,
+                data_bytes_cost,
+                programs_execution_cost,
+                loaded_accounts_data_size_cost,
+                allocated_accounts_data_size,
+                signature_details: signatures_count_detail,
+            };
+
+            TransactionCost::Transaction(usage_cost_details)
         }
     }
 
@@ -77,35 +88,42 @@ impl CostModel {
                 writable_accounts: Self::get_writable_accounts(transaction),
             }
         } else {
-            let mut tx_cost = UsageCostDetails::new_with_default_capacity();
+            let (signatures_count_detail, signature_cost) =
+                Self::get_signature_cost(transaction, feature_set);
+            let (writable_accounts, write_lock_cost) =
+                Self::get_write_lock_cost(transaction, feature_set);
 
-            Self::get_signature_cost(&mut tx_cost, transaction, feature_set);
-            Self::get_write_lock_cost(&mut tx_cost, transaction, feature_set);
-            Self::get_instructions_data_cost(&mut tx_cost, transaction);
-            tx_cost.allocated_accounts_data_size =
+            let instructions_data_cost = Self::get_instructions_data_cost(transaction);
+            let allocated_accounts_data_size =
                 Self::calculate_allocated_accounts_data_size(transaction);
 
-            tx_cost.programs_execution_cost = actual_programs_execution_cost;
-            tx_cost.loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
+            let programs_execution_cost = actual_programs_execution_cost;
+            let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
                 actual_loaded_accounts_data_size_bytes,
                 feature_set,
             );
 
-            TransactionCost::Transaction(tx_cost)
+            let usage_cost_details = UsageCostDetails {
+                writable_accounts,
+                signature_cost,
+                write_lock_cost,
+                data_bytes_cost: instructions_data_cost,
+                programs_execution_cost,
+                loaded_accounts_data_size_cost,
+                allocated_accounts_data_size,
+                signature_details: signatures_count_detail,
+            };
+
+            TransactionCost::Transaction(usage_cost_details)
         }
     }
 
+    /// Returns signature details and the total signature cost
     fn get_signature_cost(
-        tx_cost: &mut UsageCostDetails,
         transaction: &SanitizedTransaction,
         feature_set: &FeatureSet,
-    ) {
+    ) -> (TransactionSignatureDetails, u64) {
         let signatures_count_detail = transaction.message().get_signature_details();
-        tx_cost.num_transaction_signatures = signatures_count_detail.num_transaction_signatures();
-        tx_cost.num_secp256k1_instruction_signatures =
-            signatures_count_detail.num_secp256k1_instruction_signatures();
-        tx_cost.num_ed25519_instruction_signatures =
-            signatures_count_detail.num_ed25519_instruction_signatures();
 
         let ed25519_verify_cost =
             if feature_set.is_active(&feature_set::ed25519_precompile_verify_strict::id()) {
@@ -114,7 +132,7 @@ impl CostModel {
                 ED25519_VERIFY_COST
             };
 
-        tx_cost.signature_cost = signatures_count_detail
+        let signature_cost = signatures_count_detail
             .num_transaction_signatures()
             .saturating_mul(SIGNATURE_COST)
             .saturating_add(
@@ -127,6 +145,8 @@ impl CostModel {
                     .num_ed25519_instruction_signatures()
                     .saturating_mul(ed25519_verify_cost),
             );
+
+        (signatures_count_detail, signature_cost)
     }
 
     fn get_writable_accounts(transaction: &SanitizedTransaction) -> Vec<Pubkey> {
@@ -145,26 +165,28 @@ impl CostModel {
             .collect()
     }
 
+    /// Returns the set of write-lock pubkeys and the total write-lock cost
     fn get_write_lock_cost(
-        tx_cost: &mut UsageCostDetails,
         transaction: &SanitizedTransaction,
         feature_set: &FeatureSet,
-    ) {
-        tx_cost.writable_accounts = Self::get_writable_accounts(transaction);
+    ) -> (Vec<Pubkey>, u64) {
+        let writable_accounts = Self::get_writable_accounts(transaction);
         let num_write_locks =
             if feature_set.is_active(&feature_set::cost_model_requested_write_lock_cost::id()) {
                 transaction.message().num_write_locks()
             } else {
-                tx_cost.writable_accounts.len() as u64
+                writable_accounts.len() as u64
             };
-        tx_cost.write_lock_cost = WRITE_LOCK_UNITS.saturating_mul(num_write_locks);
+        let write_lock_cost = WRITE_LOCK_UNITS.saturating_mul(num_write_locks);
+
+        (writable_accounts, write_lock_cost)
     }
 
+    /// Return (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost)
     fn get_transaction_cost(
-        tx_cost: &mut UsageCostDetails,
         transaction: &impl SVMMessage,
         feature_set: &FeatureSet,
-    ) {
+    ) -> (u64, u64, u64) {
         let mut programs_execution_costs = 0u64;
         let mut loaded_accounts_data_size_cost = 0u64;
         let mut data_bytes_len_total = 0u64;
@@ -219,15 +241,15 @@ impl CostModel {
             }
         }
 
-        tx_cost.programs_execution_cost = programs_execution_costs;
-        tx_cost.loaded_accounts_data_size_cost = loaded_accounts_data_size_cost;
-        tx_cost.data_bytes_cost = data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST;
+        (
+            programs_execution_costs,
+            loaded_accounts_data_size_cost,
+            data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST,
+        )
     }
 
-    fn get_instructions_data_cost(
-        tx_cost: &mut UsageCostDetails,
-        transaction: &SanitizedTransaction,
-    ) {
+    /// Return the instruction data bytes cost.
+    fn get_instructions_data_cost(transaction: &SanitizedTransaction) -> u64 {
         let ix_data_bytes_len_total: u64 = transaction
             .message()
             .instructions()
@@ -235,7 +257,7 @@ impl CostModel {
             .map(|instruction| instruction.data.len() as u64)
             .sum();
 
-        tx_cost.data_bytes_cost = ix_data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST;
+        ix_data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST
     }
 
     pub fn calculate_loaded_accounts_data_size_cost(
@@ -319,6 +341,7 @@ impl CostModel {
 mod tests {
     use {
         super::*,
+        log::debug,
         solana_sdk::{
             compute_budget::{self, ComputeBudgetInstruction},
             fee::ACCOUNT_DATA_COST_PAGE_SIZE,
@@ -526,14 +549,11 @@ mod tests {
             .get(&system_program::id())
             .unwrap();
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(
-            &mut tx_cost,
-            &simple_transaction,
-            &FeatureSet::all_enabled(),
-        );
-        assert_eq!(*expected_execution_cost, tx_cost.programs_execution_cost);
-        assert_eq!(3, tx_cost.data_bytes_cost);
+        let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
+            CostModel::get_transaction_cost(&simple_transaction, &FeatureSet::all_enabled());
+
+        assert_eq!(*expected_execution_cost, program_execution_cost);
+        assert_eq!(3, data_bytes_cost);
     }
 
     #[test]
@@ -554,17 +574,13 @@ mod tests {
         let token_transaction = SanitizedTransaction::from_transaction_for_tests(tx);
         debug!("token_transaction {:?}", token_transaction);
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(
-            &mut tx_cost,
-            &token_transaction,
-            &FeatureSet::all_enabled(),
-        );
+        let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
+            CostModel::get_transaction_cost(&token_transaction, &FeatureSet::all_enabled());
         assert_eq!(
             DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
-            tx_cost.programs_execution_cost
+            program_execution_cost
         );
-        assert_eq!(0, tx_cost.data_bytes_cost);
+        assert_eq!(0, data_bytes_cost);
     }
 
     #[test]
@@ -619,15 +635,12 @@ mod tests {
         );
         let token_transaction = SanitizedTransaction::from_transaction_for_tests(tx);
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(
-            &mut tx_cost,
-            &token_transaction,
-            &FeatureSet::all_enabled(),
-        );
+        let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
+            CostModel::get_transaction_cost(&token_transaction, &FeatureSet::all_enabled());
+
         // If cu-limit is specified, that would the cost for all programs
-        assert_eq!(12_345, tx_cost.programs_execution_cost);
-        assert_eq!(1, tx_cost.data_bytes_cost);
+        assert_eq!(12_345, program_execution_cost);
+        assert_eq!(1, data_bytes_cost);
     }
 
     #[test]
@@ -664,13 +677,9 @@ mod tests {
         );
         let token_transaction = SanitizedTransaction::from_transaction_for_tests(tx);
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(
-            &mut tx_cost,
-            &token_transaction,
-            &FeatureSet::all_enabled(),
-        );
-        assert_eq!(0, tx_cost.programs_execution_cost);
+        let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
+            CostModel::get_transaction_cost(&token_transaction, &FeatureSet::all_enabled());
+        assert_eq!(0, program_execution_cost);
     }
 
     #[test]
@@ -695,10 +704,10 @@ mod tests {
             .unwrap();
         let expected_cost = program_cost * 2;
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(&mut tx_cost, &tx, &FeatureSet::all_enabled());
-        assert_eq!(expected_cost, tx_cost.programs_execution_cost);
-        assert_eq!(6, tx_cost.data_bytes_cost);
+        let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
+            CostModel::get_transaction_cost(&tx, &FeatureSet::all_enabled());
+        assert_eq!(expected_cost, program_execution_cost);
+        assert_eq!(6, data_bytes_cost);
     }
 
     #[test]
@@ -726,10 +735,10 @@ mod tests {
         debug!("many random transaction {:?}", tx);
 
         let expected_cost = DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64 * 2;
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(&mut tx_cost, &tx, &FeatureSet::all_enabled());
-        assert_eq!(expected_cost, tx_cost.programs_execution_cost);
-        assert_eq!(0, tx_cost.data_bytes_cost);
+        let (program_execution_cost, _loaded_accounts_data_size_cost, data_bytes_cost) =
+            CostModel::get_transaction_cost(&tx, &FeatureSet::all_enabled());
+        assert_eq!(expected_cost, program_execution_cost);
+        assert_eq!(0, data_bytes_cost);
     }
 
     #[test]
@@ -850,12 +859,12 @@ mod tests {
             .unwrap();
         let expected_bpf_cost = DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT;
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(&mut tx_cost, &transaction, &FeatureSet::all_enabled());
+        let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
+            CostModel::get_transaction_cost(&transaction, &FeatureSet::all_enabled());
 
         assert_eq!(
             expected_builtin_cost + expected_bpf_cost as u64,
-            tx_cost.programs_execution_cost
+            program_execution_cost
         );
     }
 
@@ -881,9 +890,8 @@ mod tests {
                 .get(&compute_budget::id())
                 .unwrap();
 
-        let mut tx_cost = UsageCostDetails::default();
-        CostModel::get_transaction_cost(&mut tx_cost, &transaction, &FeatureSet::all_enabled());
-
-        assert_eq!(expected_cost, tx_cost.programs_execution_cost);
+        let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
+            CostModel::get_transaction_cost(&transaction, &FeatureSet::all_enabled());
+        assert_eq!(expected_cost, program_execution_cost);
     }
 }
