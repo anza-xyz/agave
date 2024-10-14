@@ -1,9 +1,13 @@
-//! This module provides [`LeaderUpdater`] trait along with it's implementations
-//! `LeaderUpdaterService` and `PinnedLeaderUpdater`. Currently, the main
-//! purpose of [`LeaderUpdater`] is to abstract over leader updates, hiding the
-//! details of how leaders are retrieved and which structures are used.
-//! Specifically, `LeaderUpdaterService` keeps [`LeaderTpuService`] internal to
-//! this module. Yet, it also allows to implement custom leader estimation.
+//! This module provides [`LeaderUpdater`] trait along with
+//! `create_leader_updater` function to create an instance of this trait.
+//!
+//! Currently, the main purpose of [`LeaderUpdater`] is to abstract over leader
+//! updates, hiding the details of how leaders are retrieved and which
+//! structures are used. It contains trait implementations
+//! `LeaderUpdaterService` and `PinnedLeaderUpdater`, where
+//! `LeaderUpdaterService` keeps [`LeaderTpuService`] internal to this module.
+//! Yet, it also allows to implement custom leader estimation.
+
 use {
     async_trait::async_trait,
     log::*,
@@ -21,14 +25,23 @@ use {
 };
 
 /// [`LeaderUpdater`] trait abstracts out functionality required for the
-/// [`ConnectionWorkersScheduler`](crate::network::ConnectionWorkersScheduler)
-/// to identify next leaders to send transactions to.
+/// [`ConnectionWorkersScheduler`](crate::ConnectionWorkersScheduler) to
+/// identify next leaders to send transactions to.
 #[async_trait]
 pub trait LeaderUpdater: Send {
-    fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr>;
+    /// Returns next unique leaders for the next `lookahead_slots` starting from
+    /// current estimated slot.
+    ///
+    /// If the current leader estimation is incorrect and transactions are sent to
+    /// only one estimated leader, there is a risk of losing all the transactions,
+    /// depending on the forwarding policy.
+    fn next_leaders(&self, lookahead_slots: u64) -> Vec<SocketAddr>;
+
+    /// Stop [`LeaderUpdater`] and releases all associated resources.
     async fn stop(&mut self);
 }
 
+/// Error type for [`LeaderUpdater`].
 pub struct LeaderUpdaterError;
 
 impl fmt::Display for LeaderUpdaterError {
@@ -44,15 +57,15 @@ impl fmt::Debug for LeaderUpdaterError {
 }
 
 /// Creates a [`LeaderUpdater`] based on the configuration provided by the
-/// caller. If a pinned address is provided, it will return a
-/// `PinnedLeaderUpdater` that always returns the provided address instead of
-/// checking leader schedule. Otherwise, it creates a `LeaderUpdaterService`
-/// which dynamically updates the leaders by connecting to the network via the
-/// [`LeaderTpuService`].
+/// caller.
+///
+/// If `pinned_address` is provided, it returns a `PinnedLeaderUpdater` that
+/// always returns the provided address instead of checking leader schedule.
+/// Otherwise, it creates a `LeaderUpdaterService` which dynamically updates the
+/// leaders by connecting to the network via the [`LeaderTpuService`].
 pub async fn create_leader_updater(
     rpc_client: Arc<RpcClient>,
     websocket_url: String,
-    lookahead_slots: u64,
     pinned_address: Option<SocketAddr>,
 ) -> Result<Box<dyn LeaderUpdater>, LeaderUpdaterError> {
     if let Some(pinned_address) = pinned_address {
@@ -72,7 +85,6 @@ pub async fn create_leader_updater(
     Ok(Box::new(LeaderUpdaterService {
         leader_tpu_service,
         exit,
-        lookahead_slots,
     }))
 }
 
@@ -82,17 +94,12 @@ pub async fn create_leader_updater(
 struct LeaderUpdaterService {
     leader_tpu_service: LeaderTpuService,
     exit: Arc<AtomicBool>,
-    /// Number of *estimated* next leaders. If the estimation for the current
-    /// leader is wrong and we have sent to only one leader, we may lose all the
-    /// txs (depends on the forwarding policy).
-    lookahead_slots: u64,
 }
 
 #[async_trait]
 impl LeaderUpdater for LeaderUpdaterService {
-    fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr> {
-        self.leader_tpu_service
-            .leader_tpu_sockets(self.lookahead_slots)
+    fn next_leaders(&self, lookahead_slots: u64) -> Vec<SocketAddr> {
+        self.leader_tpu_service.leader_tpu_sockets(lookahead_slots)
     }
 
     async fn stop(&mut self) {
@@ -109,7 +116,7 @@ struct PinnedLeaderUpdater {
 
 #[async_trait]
 impl LeaderUpdater for PinnedLeaderUpdater {
-    fn next_num_lookahead_slots_leaders(&self) -> Vec<SocketAddr> {
+    fn next_leaders(&self, _lookahead_slots: u64) -> Vec<SocketAddr> {
         self.address.clone()
     }
 

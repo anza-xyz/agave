@@ -37,7 +37,10 @@ impl WorkerInfo {
         }
     }
 
-    async fn send_txs(&self, txs_batch: TransactionBatch) -> Result<(), WorkersCacheError> {
+    async fn send_transactions(
+        &self,
+        txs_batch: TransactionBatch,
+    ) -> Result<(), WorkersCacheError> {
         self.sender
             .send(txs_batch)
             .await
@@ -45,7 +48,8 @@ impl WorkerInfo {
         Ok(())
     }
 
-    /// Closes the worker by dropping the sender and awaiting the worker's statistics.
+    /// Closes the worker by dropping the sender and awaiting the worker's
+    /// statistics.
     async fn shutdown(self) -> Result<SendTransactionStats, WorkersCacheError> {
         self.cancel.cancel();
         drop(self.sender);
@@ -121,7 +125,7 @@ impl WorkersCache {
                 "Failed to fetch worker for peer {peer}.\n\
              Peer existence must be checked before this call using `contains` method.",
             );
-            let send_res = current_worker.send_txs(txs_batch).await;
+            let send_res = current_worker.send_transactions(txs_batch).await;
 
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
                 // Remove the worker from the cache, if the peer has disconnected.

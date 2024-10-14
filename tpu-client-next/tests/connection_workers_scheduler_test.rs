@@ -23,7 +23,7 @@ use {
     },
     std::{
         collections::HashMap,
-        net::{IpAddr, Ipv6Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         num::Saturating,
         str::FromStr,
         sync::{atomic::Ordering, Arc},
@@ -39,6 +39,18 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+
+fn test_config(validator_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
+    ConnectionWorkersSchedulerConfig {
+        bind: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0),
+        stake_identity: validator_identity,
+        num_connections: 1,
+        skip_check_transaction_age: false,
+        worker_channel_size: 2,
+        max_reconnect_attempts: 4,
+        lookahead_slots: 1,
+    }
+}
 
 async fn setup_connection_worker_scheduler(
     tpu_address: SocketAddr,
@@ -57,20 +69,12 @@ async fn setup_connection_worker_scheduler(
     ));
 
     // Setup sending txs
-    let leader_updater = create_leader_updater(rpc_client, websocket_url, 1, Some(tpu_address))
+    let leader_updater = create_leader_updater(rpc_client, websocket_url, Some(tpu_address))
         .await
         .expect("Leader updates was successfully created");
 
-    let bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let cancel = CancellationToken::new();
-    let config = ConnectionWorkersSchedulerConfig {
-        bind,
-        stake_identity: validator_identity,
-        num_connections: 1,
-        skip_check_transaction_age: false,
-        worker_channel_size: 2,
-        max_reconnect_attempts: 4,
-    };
+    let config = test_config(validator_identity);
     let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
         config,
         leader_updater,

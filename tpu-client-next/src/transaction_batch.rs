@@ -1,9 +1,9 @@
 //! This module holds [`TransactionBatch`] structure.
+
 use solana_sdk::timing::timestamp;
 
-/// Batch of generated transactions
-/// timestamp is used to discard batches which are too old
-/// to have valid blockhash.
+/// Batch of generated transactions timestamp is used to discard batches which
+/// are too old to have valid blockhash.
 #[derive(Clone, PartialEq)]
 pub struct TransactionBatch {
     wired_transactions: Vec<WiredTransaction>,

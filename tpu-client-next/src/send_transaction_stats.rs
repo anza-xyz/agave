@@ -31,63 +31,63 @@ pub struct SendTransactionStats {
 #[allow(clippy::arithmetic_side_effects)]
 pub fn record_error(err: QuicError, stats: &mut SendTransactionStats) {
     match err {
-        QuicError::ConnectError(ConnectError::EndpointStopping) => {
+        QuicError::Connect(ConnectError::EndpointStopping) => {
             stats.connect_error_other += 1;
         }
-        QuicError::ConnectError(ConnectError::CidsExhausted) => {
+        QuicError::Connect(ConnectError::CidsExhausted) => {
             stats.connect_error_cids_exhausted += 1;
         }
-        QuicError::ConnectError(ConnectError::InvalidServerName(_)) => {
+        QuicError::Connect(ConnectError::InvalidServerName(_)) => {
             stats.connect_error_other += 1;
         }
-        QuicError::ConnectError(ConnectError::InvalidRemoteAddress(_)) => {
+        QuicError::Connect(ConnectError::InvalidRemoteAddress(_)) => {
             stats.connect_error_invalid_remote_address += 1;
         }
-        QuicError::ConnectError(ConnectError::NoDefaultClientConfig) => {
+        QuicError::Connect(ConnectError::NoDefaultClientConfig) => {
             stats.connect_error_other += 1;
         }
-        QuicError::ConnectError(ConnectError::UnsupportedVersion) => {
+        QuicError::Connect(ConnectError::UnsupportedVersion) => {
             stats.connect_error_other += 1;
         }
-        QuicError::ConnectionError(ConnectionError::VersionMismatch) => {
+        QuicError::Connection(ConnectionError::VersionMismatch) => {
             stats.connection_error_version_mismatch += 1;
         }
-        QuicError::ConnectionError(ConnectionError::TransportError(_)) => {
+        QuicError::Connection(ConnectionError::TransportError(_)) => {
             stats.connection_error_transport_error += 1;
         }
-        QuicError::ConnectionError(ConnectionError::ConnectionClosed(_)) => {
+        QuicError::Connection(ConnectionError::ConnectionClosed(_)) => {
             stats.connection_error_connection_closed += 1;
         }
-        QuicError::ConnectionError(ConnectionError::ApplicationClosed(_)) => {
+        QuicError::Connection(ConnectionError::ApplicationClosed(_)) => {
             stats.connection_error_application_closed += 1;
         }
-        QuicError::ConnectionError(ConnectionError::Reset) => {
+        QuicError::Connection(ConnectionError::Reset) => {
             stats.connection_error_reset += 1;
         }
-        QuicError::ConnectionError(ConnectionError::TimedOut) => {
+        QuicError::Connection(ConnectionError::TimedOut) => {
             stats.connection_error_timed_out += 1;
         }
-        QuicError::ConnectionError(ConnectionError::LocallyClosed) => {
+        QuicError::Connection(ConnectionError::LocallyClosed) => {
             stats.connection_error_locally_closed += 1;
         }
-        QuicError::ConnectionError(ConnectionError::CidsExhausted) => {
+        QuicError::Connection(ConnectionError::CidsExhausted) => {
             stats.connection_error_cids_exhausted += 1;
         }
-        QuicError::WriteError(WriteError::Stopped(_)) => {
+        QuicError::StreamWrite(WriteError::Stopped(_)) => {
             stats.write_error_stopped += 1;
         }
-        QuicError::WriteError(WriteError::ConnectionLost(_)) => {
+        QuicError::StreamWrite(WriteError::ConnectionLost(_)) => {
             stats.write_error_connection_lost += 1;
         }
-        QuicError::WriteError(WriteError::ClosedStream) => {
+        QuicError::StreamWrite(WriteError::ClosedStream) => {
             stats.write_error_closed_stream += 1;
         }
-        QuicError::WriteError(WriteError::ZeroRttRejected) => {
+        QuicError::StreamWrite(WriteError::ZeroRttRejected) => {
             stats.write_error_zero_rtt_rejected += 1;
         }
         // Endpoint is created on the scheduler level and handled separately
         // No counters are used for this case.
-        QuicError::EndpointError(_) => (),
+        QuicError::Endpoint(_) => (),
     }
 }
 

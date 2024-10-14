@@ -39,11 +39,11 @@ impl From<io::Error> for IoErrorWithPartialEq {
 #[derive(Error, Debug, PartialEq)]
 pub enum QuicError {
     #[error(transparent)]
-    WriteError(#[from] WriteError),
+    StreamWrite(#[from] WriteError),
     #[error(transparent)]
-    ConnectionError(#[from] ConnectionError),
+    Connection(#[from] ConnectionError),
     #[error(transparent)]
-    ConnectError(#[from] ConnectError),
+    Connect(#[from] ConnectError),
     #[error(transparent)]
-    EndpointError(#[from] IoErrorWithPartialEq),
+    Endpoint(#[from] IoErrorWithPartialEq),
 }

@@ -1,5 +1,6 @@
-//! This module defines [`ConnectionWorkersScheduler`] which creates and
-//! orchestrates `ConnectionWorker` instances.
+//! This module defines [`ConnectionWorkersScheduler`] which sends transactions
+//! to the upcoming leaders.
+
 use {
     super::{leader_updater::LeaderUpdater, SendTransactionStatsPerAddr},
     crate::{
@@ -19,10 +20,15 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// [`ConnectionWorkersScheduler`] is responsible for managing and scheduling
-/// connection workers that handle transactions over the network.
+/// The [`ConnectionWorkersScheduler`] sends transactions from the provided
+/// receiver channel to upcoming leaders. It obtains information about future
+/// leaders from the implementation of the [`LeaderUpdater`] trait.
+///
+/// Internally, it enables the management and coordination of multiple network
+/// connections, schedules and oversees connection workers.
 pub struct ConnectionWorkersScheduler;
 
+/// Errors that arise from running [`ConnectionWorkersSchedulerError`].
 #[derive(Debug, Error, PartialEq)]
 pub enum ConnectionWorkersSchedulerError {
     #[error(transparent)]
@@ -33,23 +39,49 @@ pub enum ConnectionWorkersSchedulerError {
     LeaderReceiverDropped,
 }
 
+/// Configuration for the [`ConnectionWorkersScheduler`].
+///
+/// This struct holds the necessary settings to initialize and manage connection
+/// workers, including network binding, identity, connection limits, and
+/// behavior related to transaction handling.
 pub struct ConnectionWorkersSchedulerConfig {
+    /// The local address to bind the scheduler to.
     pub bind: SocketAddr,
+
+    /// Optional stake identity keypair used in the endpoint certificate for
+    /// identifying the sender.
     pub stake_identity: Option<Keypair>,
+
+    /// The number of connections to be maintained by the scheduler.
     pub num_connections: usize,
+
+    /// Whether to skip checking the transaction blockhash expiration.
     pub skip_check_transaction_age: bool,
-    /// Size of the channel to transmit transaction batches to the target workers.
-    pub worker_channel_size: usize, // = 2;
-    /// Maximum number of reconnection attempts in case the connection errors out.
-    pub max_reconnect_attempts: usize, // = 4;
+
+    /// The size of the channel used to transmit transaction batches to the
+    /// worker tasks.
+    pub worker_channel_size: usize,
+
+    /// The maximum number of reconnection attempts allowed in case of
+    /// connection failure.
+    pub max_reconnect_attempts: usize,
+
+    /// The number of slots to look ahead during the leader estimation
+    /// procedure. Determines how far into the future leaders are estimated,
+    /// allowing connections to be established with those leaders in advance.
+    pub lookahead_slots: u64,
 }
 
 impl ConnectionWorkersScheduler {
+    /// Starts the scheduler, which manages the distribution of transactions to
+    /// the network's upcoming leaders.
+    ///
     /// Runs the main loop that handles worker scheduling and management for
     /// connections. Returns the error quic statistics per connection address or
-    /// an error if something goes wrong. Importantly, if some transactions were
-    /// not delivered due to network problems, they will not be retried when the
-    /// problem is resolved.
+    /// an error.
+    ///
+    /// Importantly, if some transactions were not delivered due to network
+    /// problems, they will not be retried when the problem is resolved.
     pub async fn run(
         ConnectionWorkersSchedulerConfig {
             bind,
@@ -58,6 +90,7 @@ impl ConnectionWorkersScheduler {
             skip_check_transaction_age,
             worker_channel_size,
             max_reconnect_attempts,
+            lookahead_slots,
         }: ConnectionWorkersSchedulerConfig,
         mut leader_updater: Box<dyn LeaderUpdater>,
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
@@ -81,7 +114,7 @@ impl ConnectionWorkersScheduler {
                     break;
                 }
             };
-            let updated_leaders = leader_updater.next_num_lookahead_slots_leaders();
+            let updated_leaders = leader_updater.next_leaders(lookahead_slots);
             let new_leader = &updated_leaders[0];
             let future_leaders = &updated_leaders[1..];
             if !workers.contains(new_leader) {

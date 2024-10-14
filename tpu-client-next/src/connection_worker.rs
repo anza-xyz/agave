@@ -1,5 +1,6 @@
-//! This module defines `ConnectionWorker` which encapsulates the functionality
+//! This module defines [`ConnectionWorker`] which encapsulates the functionality
 //! needed to handle one connection within the scope of task.
+
 use {
     super::SendTransactionStats,
     crate::{
@@ -30,8 +31,9 @@ const RETRY_SLEEP_INTERVAL: Duration =
 /// batches are dropped.
 const MAX_PROCESSING_AGE_MS: u64 = MAX_PROCESSING_AGE as u64 * DEFAULT_MS_PER_SLOT;
 
-/// [`ConnectionState`] represents the current state of a quic connection. This
-/// enum tracks the lifecycle of connection from initial setup to closing phase.
+/// [`ConnectionState`] represents the current state of a quic connection.
+///
+/// It tracks the lifecycle of connection from initial setup to closing phase.
 /// The transition function between states is defined in `ConnectionWorker`
 /// implementation.
 enum ConnectionState {
@@ -42,6 +44,9 @@ enum ConnectionState {
 }
 
 impl Drop for ConnectionState {
+    /// When [`ConnectionState`] is dropped, underlying connection is closed
+    /// which means that there is no guarantee that the open streams will
+    /// finish.
     fn drop(&mut self) {
         if let Self::Active(connection) = self {
             debug!(
@@ -49,14 +54,14 @@ impl Drop for ConnectionState {
                 connection.remote_address(),
                 connection.stats()
             );
-            // no guarantee that all the streams will finish
             connection.close(0u32.into(), b"done");
         }
     }
 }
 
-/// [`ConnectionWorker`] holds connection to the validator with address `peer`. If
-/// connection has been closed, [`ConnectionWorker`] tries to reconnect
+/// [`ConnectionWorker`] holds connection to the validator with address `peer`.
+///
+/// If connection has been closed, [`ConnectionWorker`] tries to reconnect
 /// `max_reconnect_attempts` times. If connection is in `Active` state, it sends
 /// transactions received from `transactions_receiver`. Additionally, it
 /// accumulates statistics about connections and streams failures.
@@ -72,6 +77,16 @@ pub(crate) struct ConnectionWorker {
 }
 
 impl ConnectionWorker {
+    /// Constructs a [`ConnectionWorker`].
+    ///
+    /// [`ConnectionWorker`] maintains a connection to a `peer` and processes
+    /// transactions from `transactions_receiver`. If
+    /// `skip_check_transaction_age` is set to `true`, the worker skips checking
+    /// for transaction blockhash expiration. The `max_reconnect_attempts`
+    /// parameter controls how many times the worker will attempt to reconnect
+    /// in case of connection failure. Returns the created `ConnectionWorker`
+    /// along with a cancellation token that can be used by the caller to stop
+    /// the worker.
     pub fn new(
         endpoint: Endpoint,
         peer: SocketAddr,
@@ -79,7 +94,6 @@ impl ConnectionWorker {
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
     ) -> (Self, CancellationToken) {
-        // TODO(klykov): check if this token should be child of the scheduler token
         let cancel = CancellationToken::new();
 
         let this = Self {
@@ -96,10 +110,11 @@ impl ConnectionWorker {
         (this, cancel)
     }
 
-    /// Starts the main loop of the [`ConnectionWorker`]. This method manages the
-    /// connection to the peer and handles state transitions. It runs
-    /// indefinitely until the connection is closed or an unrecoverable error
-    /// occurs.
+    /// Starts the main loop of the [`ConnectionWorker`].
+    ///
+    /// This method manages the connection to the peer and handles state
+    /// transitions. It runs indefinitely until the connection is closed or an
+    /// unrecoverable error occurs.
     pub async fn run(&mut self) {
         let cancel = self.cancel.clone();
 
@@ -145,12 +160,15 @@ impl ConnectionWorker {
         &self.send_txs_stats
     }
 
-    /// Sends a batch of transactions using the provided `connection`. Each
-    /// transaction in the batch is sent over the QUIC streams one at the time,
-    /// which prevents traffic fragmentation and shows better TPS in comparison
-    /// with multistream send. If the batch is determined to be outdated, it
-    /// will be dropped without being sent. In case of error, it doesn't retry
-    /// to send the same transactions again.
+    /// Sends a batch of transactions using the provided `connection`.
+    ///
+    /// Each transaction in the batch is sent over the QUIC streams one at the
+    /// time, which prevents traffic fragmentation and shows better TPS in
+    /// comparison with multistream send. If the batch is determined to be
+    /// outdated and flag `skip_check_transaction_age` is unset, it will be
+    /// dropped without being sent.
+    ///
+    /// In case of error, it doesn't retry to send the same transactions again.
     async fn send_transactions(&mut self, connection: Connection, transactions: TransactionBatch) {
         let now = timestamp();
         if !self.skip_check_transaction_age
@@ -179,9 +197,11 @@ impl ConnectionWorker {
         );
     }
 
-    /// Attempts to create a new connection to the specified `peer` address. If
-    /// the connection is successful, the state is updated to `Active`. If an
-    /// error occurs, the state may transition to `Retry` or `Closing`,
+    /// Attempts to create a new connection to the specified `peer` address.
+    ///
+    /// If the connection is successful, the state is updated to `Active`.
+    ///
+    /// If an error occurs, the state may transition to `Retry` or `Closing`,
     /// depending on the nature of the error.
     async fn create_connection(&mut self, max_retries_attempt: usize) {
         let connecting = self.endpoint.connect(self.peer, "connect");
