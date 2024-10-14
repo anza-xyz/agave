@@ -12092,8 +12092,8 @@ pub mod tests {
             .pubkey;
         let modified_account_owner = *AccountSharedData::default().owner();
         let modified_account = AccountSharedData::new(223, 0, &modified_account_owner);
-        let offset = db.ancient_append_vec_offset.unwrap().abs() as u64;
-        let current_slot = epoch_schedule.slots_per_epoch + offset + 1;
+        let ancient_append_vec_offset = db.ancient_append_vec_offset.unwrap().abs();
+        let current_slot = epoch_schedule.slots_per_epoch + ancient_append_vec_offset as u64 + 1;
         // Simulate killing of the ancient account by overwriting it in the current slot.
         db.store_for_tests(
             current_slot,
