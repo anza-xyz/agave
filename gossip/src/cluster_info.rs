@@ -45,7 +45,6 @@ use {
     rand::{seq::SliceRandom, thread_rng, CryptoRng, Rng},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     serde::ser::Serialize,
-    solana_feature_set::FeatureSet,
     solana_ledger::shred::Shred,
     solana_measure::measure::Measure,
     solana_net_utils::{
@@ -63,6 +62,7 @@ use {
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT, DEFAULT_SLOTS_PER_EPOCH},
+        feature_set::FeatureSet,
         hash::Hash,
         pubkey::Pubkey,
         quic::QUIC_PORT_OFFSET,
@@ -311,7 +311,7 @@ pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "GfVFxfPfYcFLCaa29uxQxyKJAuTZ1cYqcRKhVrEKwDK7")
+    frozen_abi(digest = "CrDvLSXUKSc4CK63y1uWGMtV5MJbTna3QM1Wij5sUybA")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -1003,6 +1003,7 @@ impl ClusterInfo {
         last_slot: Slot,
         last_slot_hash: Hash,
         observed_stake: u64,
+        round: u8,
     ) {
         let restart_heaviest_fork = RestartHeaviestFork {
             from: self.id(),
@@ -1011,6 +1012,7 @@ impl ClusterInfo {
             last_slot_hash,
             observed_stake,
             shred_version: self.my_shred_version(),
+            round,
         };
         self.push_message(CrdsValue::new_signed(
             CrdsData::RestartHeaviestFork(restart_heaviest_fork),
@@ -1285,7 +1287,11 @@ impl ClusterInfo {
             .collect()
     }
 
-    pub fn get_restart_heaviest_fork(&self, cursor: &mut Cursor) -> Vec<RestartHeaviestFork> {
+    pub fn get_restart_heaviest_fork(
+        &self,
+        cursor: &mut Cursor,
+        round: u8,
+    ) -> Vec<RestartHeaviestFork> {
         let self_shred_version = self.my_shred_version();
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
@@ -1294,7 +1300,7 @@ impl ClusterInfo {
                 let CrdsData::RestartHeaviestFork(fork) = &entry.value.data else {
                     return None;
                 };
-                (fork.shred_version == self_shred_version).then_some(fork)
+                (fork.shred_version == self_shred_version && fork.round == round).then_some(fork)
             })
             .cloned()
             .collect()
@@ -4945,17 +4951,17 @@ mod tests {
 
         // make sure empty crds is handled correctly
         let mut cursor = Cursor::default();
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut cursor);
+        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut cursor, 0);
         assert_eq!(heaviest_forks, vec![]);
 
         // add new message
         let slot1 = 53;
         let hash1 = Hash::new_unique();
         let stake1 = 15_000_000;
-        cluster_info.push_restart_heaviest_fork(slot1, hash1, stake1);
+        cluster_info.push_restart_heaviest_fork(slot1, hash1, stake1, 0);
         cluster_info.flush_push_queue();
 
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut cursor);
+        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut cursor, 0);
         assert_eq!(heaviest_forks.len(), 1);
         let fork = &heaviest_forks[0];
         assert_eq!(fork.last_slot, slot1);
@@ -4980,6 +4986,7 @@ mod tests {
                 last_slot_hash: hash2,
                 observed_stake: stake2,
                 shred_version: 42,
+                round: 0,
             })),
         ];
         {
@@ -4992,7 +4999,7 @@ mod tests {
         }
         // Should exclude other node's heaviest_fork because of different
         // shred-version.
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut Cursor::default());
+        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut Cursor::default(), 0);
         assert_eq!(heaviest_forks.len(), 1);
         assert_eq!(heaviest_forks[0].from, pubkey);
         // Match shred versions.
@@ -5004,7 +5011,7 @@ mod tests {
         cluster_info.flush_push_queue();
 
         // Should now include the previous heaviest_fork from the other node.
-        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut Cursor::default());
+        let heaviest_forks = cluster_info.get_restart_heaviest_fork(&mut Cursor::default(), 0);
         assert_eq!(heaviest_forks.len(), 1);
         assert_eq!(heaviest_forks[0].from, pubkey2);
     }
