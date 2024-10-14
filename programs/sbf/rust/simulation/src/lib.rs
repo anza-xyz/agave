@@ -4,6 +4,7 @@ use {
     solana_program::{
         account_info::{next_account_info, AccountInfo},
         clock::Clock,
+        declare_id,
         entrypoint::ProgramResult,
         msg,
         pubkey::Pubkey,
@@ -12,7 +13,7 @@ use {
     std::convert::TryInto,
 };
 
-solana_program::declare_id!("Sim1jD5C35odT8mzctm8BWnjic8xW5xgeb5MbcbErTo");
+declare_id!("Sim1jD5C35odT8mzctm8BWnjic8xW5xgeb5MbcbErTo");
 
 solana_program::entrypoint_no_alloc!(process_instruction);
 
