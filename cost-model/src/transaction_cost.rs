@@ -1,6 +1,7 @@
 use {
     crate::block_cost_limits,
     solana_sdk::{message::TransactionSignatureDetails, pubkey::Pubkey},
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 /// TransactionCost is used to represent resources required to process
@@ -14,12 +15,12 @@ use {
 const SIMPLE_VOTE_USAGE_COST: u64 = 3428;
 
 #[derive(Debug)]
-pub enum TransactionCost {
-    SimpleVote { writable_accounts: Vec<Pubkey> },
-    Transaction(UsageCostDetails),
+pub enum TransactionCost<'a, Tx: SVMMessage> {
+    SimpleVote { transaction: &'a Tx },
+    Transaction(UsageCostDetails<'a, Tx>),
 }
 
-impl TransactionCost {
+impl<'a, Tx: SVMMessage> TransactionCost<'a, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
         match self {
@@ -88,11 +89,16 @@ impl TransactionCost {
         }
     }
 
-    pub fn writable_accounts(&self) -> &[Pubkey] {
-        match self {
-            Self::SimpleVote { writable_accounts } => writable_accounts,
-            Self::Transaction(usage_cost) => &usage_cost.writable_accounts,
-        }
+    pub fn writable_accounts(&self) -> impl Iterator<Item = &Pubkey> {
+        let transaction = match self {
+            Self::SimpleVote { transaction } => transaction,
+            Self::Transaction(usage_cost) => usage_cost.transaction,
+        };
+        transaction
+            .account_keys()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| transaction.is_writable(index).then_some(key))
     }
 
     pub fn num_transaction_signatures(&self) -> u64 {
@@ -125,8 +131,8 @@ impl TransactionCost {
 
 // costs are stored in number of 'compute unit's
 #[derive(Debug)]
-pub struct UsageCostDetails {
-    pub writable_accounts: Vec<Pubkey>,
+pub struct UsageCostDetails<'a, Tx: SVMMessage> {
+    pub transaction: &'a Tx,
     pub signature_cost: u64,
     pub write_lock_cost: u64,
     pub data_bytes_cost: u64,
@@ -136,13 +142,80 @@ pub struct UsageCostDetails {
     pub signature_details: TransactionSignatureDetails,
 }
 
-impl UsageCostDetails {
+impl<'a, Tx: SVMMessage> UsageCostDetails<'a, Tx> {
     pub fn sum(&self) -> u64 {
         self.signature_cost
             .saturating_add(self.write_lock_cost)
             .saturating_add(self.data_bytes_cost)
             .saturating_add(self.programs_execution_cost)
             .saturating_add(self.loaded_accounts_data_size_cost)
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+#[derive(Debug)]
+pub struct WritableKeysTransaction(pub Vec<Pubkey>);
+
+#[cfg(feature = "dev-context-only-utils")]
+impl SVMMessage for WritableKeysTransaction {
+    fn num_total_signatures(&self) -> u64 {
+        unimplemented!("WritableKeysTransaction::num_total_signatures")
+    }
+
+    fn num_write_locks(&self) -> u64 {
+        unimplemented!("WritableKeysTransaction::num_write_locks")
+    }
+
+    fn recent_blockhash(&self) -> &solana_sdk::hash::Hash {
+        unimplemented!("WritableKeysTransaction::recent_blockhash")
+    }
+
+    fn num_instructions(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::num_instructions")
+    }
+
+    fn instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = solana_svm_transaction::instruction::SVMInstruction> {
+        core::iter::empty()
+    }
+
+    fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, solana_svm_transaction::instruction::SVMInstruction)> {
+        core::iter::empty()
+    }
+
+    fn account_keys(&self) -> solana_sdk::message::AccountKeys {
+        solana_sdk::message::AccountKeys::new(&self.0, None)
+    }
+
+    fn fee_payer(&self) -> &Pubkey {
+        unimplemented!("WritableKeysTransaction::fee_payer")
+    }
+
+    fn is_writable(&self, _index: usize) -> bool {
+        true
+    }
+
+    fn is_signer(&self, _index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_signer")
+    }
+
+    fn is_invoked(&self, _key_index: usize) -> bool {
+        unimplemented!("WritableKeysTransaction::is_invoked")
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        unimplemented!("WritableKeysTransaction::num_lookup_tables")
+    }
+
+    fn message_address_table_lookups(
+        &self,
+    ) -> impl Iterator<
+        Item = solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
+    > {
+        core::iter::empty()
     }
 }
 

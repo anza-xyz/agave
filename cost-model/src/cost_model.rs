@@ -42,26 +42,23 @@ enum SystemProgramAccountAllocation {
 }
 
 impl CostModel {
-    pub fn calculate_cost(
-        transaction: &SanitizedTransaction,
+    pub fn calculate_cost<'a>(
+        transaction: &'a SanitizedTransaction,
         feature_set: &FeatureSet,
-    ) -> TransactionCost {
+    ) -> TransactionCost<'a, SanitizedTransaction> {
         if transaction.is_simple_vote_transaction() {
-            TransactionCost::SimpleVote {
-                writable_accounts: Self::get_writable_accounts(transaction),
-            }
+            TransactionCost::SimpleVote { transaction }
         } else {
             let (signatures_count_detail, signature_cost) =
                 Self::get_signature_cost(transaction, feature_set);
-            let (writable_accounts, write_lock_cost) =
-                Self::get_write_lock_cost(transaction, feature_set);
+            let write_lock_cost = Self::get_write_lock_cost(transaction, feature_set);
             let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
                 Self::get_transaction_cost(transaction, feature_set);
             let allocated_accounts_data_size =
                 Self::calculate_allocated_accounts_data_size(transaction);
 
             let usage_cost_details = UsageCostDetails {
-                writable_accounts,
+                transaction,
                 signature_cost,
                 write_lock_cost,
                 data_bytes_cost,
@@ -77,21 +74,18 @@ impl CostModel {
 
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
     // costs.
-    pub fn calculate_cost_for_executed_transaction(
-        transaction: &SanitizedTransaction,
+    pub fn calculate_cost_for_executed_transaction<'a>(
+        transaction: &'a SanitizedTransaction,
         actual_programs_execution_cost: u64,
         actual_loaded_accounts_data_size_bytes: u32,
         feature_set: &FeatureSet,
-    ) -> TransactionCost {
+    ) -> TransactionCost<'a, SanitizedTransaction> {
         if transaction.is_simple_vote_transaction() {
-            TransactionCost::SimpleVote {
-                writable_accounts: Self::get_writable_accounts(transaction),
-            }
+            TransactionCost::SimpleVote { transaction }
         } else {
             let (signatures_count_detail, signature_cost) =
                 Self::get_signature_cost(transaction, feature_set);
-            let (writable_accounts, write_lock_cost) =
-                Self::get_write_lock_cost(transaction, feature_set);
+            let write_lock_cost = Self::get_write_lock_cost(transaction, feature_set);
 
             let instructions_data_cost = Self::get_instructions_data_cost(transaction);
             let allocated_accounts_data_size =
@@ -104,7 +98,7 @@ impl CostModel {
             );
 
             let usage_cost_details = UsageCostDetails {
-                writable_accounts,
+                transaction,
                 signature_cost,
                 write_lock_cost,
                 data_bytes_cost: instructions_data_cost,
@@ -149,37 +143,23 @@ impl CostModel {
         (signatures_count_detail, signature_cost)
     }
 
-    fn get_writable_accounts(transaction: &SanitizedTransaction) -> Vec<Pubkey> {
-        let message = transaction.message();
+    fn get_writable_accounts(message: &impl SVMMessage) -> impl Iterator<Item = &Pubkey> {
         message
             .account_keys()
             .iter()
             .enumerate()
-            .filter_map(|(i, k)| {
-                if message.is_writable(i) {
-                    Some(*k)
-                } else {
-                    None
-                }
-            })
-            .collect()
+            .filter_map(|(i, k)| message.is_writable(i).then_some(k))
     }
 
-    /// Returns the set of write-lock pubkeys and the total write-lock cost
-    fn get_write_lock_cost(
-        transaction: &SanitizedTransaction,
-        feature_set: &FeatureSet,
-    ) -> (Vec<Pubkey>, u64) {
-        let writable_accounts = Self::get_writable_accounts(transaction);
+    /// Returns the total write-lock cost.
+    fn get_write_lock_cost(transaction: &impl SVMMessage, feature_set: &FeatureSet) -> u64 {
         let num_write_locks =
             if feature_set.is_active(&feature_set::cost_model_requested_write_lock_cost::id()) {
-                transaction.message().num_write_locks()
+                transaction.num_write_locks()
             } else {
-                writable_accounts.len() as u64
+                Self::get_writable_accounts(transaction).count() as u64
             };
-        let write_lock_cost = WRITE_LOCK_UNITS.saturating_mul(num_write_locks);
-
-        (writable_accounts, write_lock_cost)
+        WRITE_LOCK_UNITS.saturating_mul(num_write_locks)
     }
 
     /// Return (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost)
@@ -341,6 +321,7 @@ impl CostModel {
 mod tests {
     use {
         super::*,
+        itertools::Itertools,
         log::debug,
         solana_sdk::{
             compute_budget::{self, ComputeBudgetInstruction},
@@ -597,7 +578,7 @@ mod tests {
         {
             let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
             assert_eq!(WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().len());
+            assert_eq!(1, tx_cost.writable_accounts().count());
         }
 
         // Feature enabled - write lock is demoted but still counts towards cost
@@ -605,7 +586,7 @@ mod tests {
             let tx_cost =
                 CostModel::calculate_cost(&simple_transaction, &FeatureSet::all_enabled());
             assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().len());
+            assert_eq!(1, tx_cost.writable_accounts().count());
         }
     }
 
@@ -765,11 +746,12 @@ mod tests {
         );
 
         let tx_cost = CostModel::calculate_cost(&tx, &FeatureSet::all_enabled());
-        assert_eq!(2 + 2, tx_cost.writable_accounts().len());
-        assert_eq!(signer1.pubkey(), tx_cost.writable_accounts()[0]);
-        assert_eq!(signer2.pubkey(), tx_cost.writable_accounts()[1]);
-        assert_eq!(key1, tx_cost.writable_accounts()[2]);
-        assert_eq!(key2, tx_cost.writable_accounts()[3]);
+        let writable_accounts = tx_cost.writable_accounts().collect_vec();
+        assert_eq!(2 + 2, writable_accounts.len());
+        assert_eq!(signer1.pubkey(), *writable_accounts[0]);
+        assert_eq!(signer2.pubkey(), *writable_accounts[1]);
+        assert_eq!(key1, *writable_accounts[2]);
+        assert_eq!(key2, *writable_accounts[3]);
     }
 
     #[test]
@@ -796,7 +778,7 @@ mod tests {
         let tx_cost = CostModel::calculate_cost(&tx, &FeatureSet::all_enabled());
         assert_eq!(expected_account_cost, tx_cost.write_lock_cost());
         assert_eq!(*expected_execution_cost, tx_cost.programs_execution_cost());
-        assert_eq!(2, tx_cost.writable_accounts().len());
+        assert_eq!(2, tx_cost.writable_accounts().count());
         assert_eq!(
             expected_loaded_accounts_data_size_cost,
             tx_cost.loaded_accounts_data_size_cost()
@@ -832,7 +814,7 @@ mod tests {
         let tx_cost = CostModel::calculate_cost(&tx, &feature_set);
         assert_eq!(expected_account_cost, tx_cost.write_lock_cost());
         assert_eq!(expected_execution_cost, tx_cost.programs_execution_cost());
-        assert_eq!(2, tx_cost.writable_accounts().len());
+        assert_eq!(2, tx_cost.writable_accounts().count());
         assert_eq!(
             expected_loaded_accounts_data_size_cost,
             tx_cost.loaded_accounts_data_size_cost()

@@ -4,7 +4,7 @@ use {
     itertools::Itertools,
     solana_cost_model::{
         cost_tracker::CostTracker,
-        transaction_cost::{TransactionCost, UsageCostDetails},
+        transaction_cost::{TransactionCost, UsageCostDetails, WritableKeysTransaction},
     },
     solana_sdk::{message::TransactionSignatureDetails, pubkey::Pubkey},
     test::Bencher,
@@ -12,7 +12,7 @@ use {
 
 struct BenchSetup {
     cost_tracker: CostTracker,
-    tx_costs: Vec<TransactionCost>,
+    transactions: Vec<WritableKeysTransaction>,
 }
 
 fn setup(num_transactions: usize, contentious_transactions: bool) -> BenchSetup {
@@ -22,7 +22,7 @@ fn setup(num_transactions: usize, contentious_transactions: bool) -> BenchSetup 
 
     let max_accounts_per_tx = 128;
     let pubkey = Pubkey::new_unique();
-    let tx_costs = (0..num_transactions)
+    let transactions = (0..num_transactions)
         .map(|_| {
             let mut writable_accounts = Vec::with_capacity(max_accounts_per_tx);
             (0..max_accounts_per_tx).for_each(|_| {
@@ -33,8 +33,24 @@ fn setup(num_transactions: usize, contentious_transactions: bool) -> BenchSetup 
                 };
                 writable_accounts.push(writable_account_key)
             });
-            let usage_cost_details = UsageCostDetails {
-                writable_accounts,
+            WritableKeysTransaction(writable_accounts)
+        })
+        .collect_vec();
+
+    BenchSetup {
+        cost_tracker,
+        transactions,
+    }
+}
+
+fn get_costs(
+    transactions: &[WritableKeysTransaction],
+) -> Vec<TransactionCost<WritableKeysTransaction>> {
+    transactions
+        .iter()
+        .map(|transaction| {
+            TransactionCost::Transaction(UsageCostDetails {
+                transaction,
                 signature_cost: 0,
                 write_lock_cost: 0,
                 data_bytes_cost: 0,
@@ -42,23 +58,18 @@ fn setup(num_transactions: usize, contentious_transactions: bool) -> BenchSetup 
                 loaded_accounts_data_size_cost: 0,
                 allocated_accounts_data_size: 0,
                 signature_details: TransactionSignatureDetails::new(0, 0, 0),
-            };
-            TransactionCost::Transaction(usage_cost_details)
+            })
         })
-        .collect_vec();
-
-    BenchSetup {
-        cost_tracker,
-        tx_costs,
-    }
+        .collect_vec()
 }
 
 #[bench]
 fn bench_cost_tracker_non_contentious_transaction(bencher: &mut Bencher) {
     let BenchSetup {
         mut cost_tracker,
-        tx_costs,
+        transactions,
     } = setup(1024, false);
+    let tx_costs = get_costs(&transactions);
 
     bencher.iter(|| {
         for tx_cost in tx_costs.iter() {
@@ -74,8 +85,9 @@ fn bench_cost_tracker_non_contentious_transaction(bencher: &mut Bencher) {
 fn bench_cost_tracker_contentious_transaction(bencher: &mut Bencher) {
     let BenchSetup {
         mut cost_tracker,
-        tx_costs,
+        transactions,
     } = setup(1024, true);
+    let tx_costs = get_costs(&transactions);
 
     bencher.iter(|| {
         for tx_cost in tx_costs.iter() {
