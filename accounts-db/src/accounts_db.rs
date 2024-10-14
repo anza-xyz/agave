@@ -4392,15 +4392,16 @@ impl AccountsDb {
         // If there are too few slots to shrink, add an ancient slot
         // for shrinking.
         if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
-            let ancients = self.best_ancient_slots_to_shrink.read().unwrap();
-            for (slot, capacity) in ancients.iter() {
-                if let Some(store) = self.storage.get_slot_storage_entry(*slot) {
-                    if !shrink_slots.contains(slot)
-                        && *capacity == store.capacity()
+            let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
+            ancients.reverse();
+            while let Some((slot, capacity)) = ancients.pop() {
+                if let Some(store) = self.storage.get_slot_storage_entry(slot) {
+                    if !shrink_slots.contains(&slot)
+                        && capacity == store.capacity()
                         && Self::is_candidate_for_shrink(self, &store)
                     {
                         let ancient_bytes_added_to_shrink = store.alive_bytes() as u64;
-                        shrink_slots.insert(*slot, store);
+                        shrink_slots.insert(slot, store);
                         self.shrink_stats
                             .ancient_bytes_added_to_shrink
                             .fetch_add(ancient_bytes_added_to_shrink, Ordering::Relaxed);
