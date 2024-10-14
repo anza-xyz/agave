@@ -12053,6 +12053,73 @@ pub mod tests {
         );
     }
 
+    /// This test creates an ancient storage with three live accounts
+    /// of various sizes. It then simulates killing one the accounts
+    /// in a more recent (non-ancient) slot by overwriting the account
+    /// that has the smallest data size.  The dead account is expected
+    /// to be deleted from its ancient storages in the process
+    /// shrinking candidate slots.  The capacity of the updated new
+    /// storage after shrinking is expected to be the sum of alive
+    /// bytes of the two remaining live ancient accounts.
+    #[test]
+    fn test_shrink_candidate_slots_with_dead_ancient_account() {
+        solana_logger::setup();
+        let epoch_schedule = EpochSchedule::default();
+        let num_ancient_slots = 3;
+        // Prepare 3 append vecs to combine [medium, big, small]
+        let account_data_sizes = vec![1000, 2000, 150];
+        let (db, starting_ancient_slot) =
+            create_db_with_storages_and_index_with_customized_account_size_per_slot(
+                true,
+                num_ancient_slots,
+                account_data_sizes,
+            );
+        db.add_root(starting_ancient_slot);
+        let slots_to_combine: Vec<Slot> =
+            (starting_ancient_slot..starting_ancient_slot + num_ancient_slots as Slot).collect();
+        db.combine_ancient_slots(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
+        let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
+        let ancient_accounts = db.get_unique_accounts_from_storage(&storage);
+        // Check that three accounts are indeed present in the combined storage
+        assert_eq!(ancient_accounts.stored_accounts.len(), 3);
+        // Find an ancient account with smallest data length.
+        // This will be a dead account, overwrittent in the current slot.
+        let modified_account_pubkey = ancient_accounts
+            .stored_accounts
+            .iter()
+            .min_by(|a, b| a.data_len.cmp(&b.data_len))
+            .unwrap()
+            .pubkey;
+        let modified_account_owner = *AccountSharedData::default().owner();
+        let modified_account = AccountSharedData::new(223, 0, &modified_account_owner);
+        let offset = db.ancient_append_vec_offset.unwrap().abs() as u64;
+        let current_slot = epoch_schedule.slots_per_epoch + offset + 1;
+        // Simulate killing of the ancient account by overwriting it in the current slot.
+        db.store_for_tests(
+            current_slot,
+            &[(&modified_account_pubkey, &modified_account)],
+        );
+        db.calculate_accounts_delta_hash(current_slot);
+        db.add_root_and_flush_write_cache(current_slot);
+        // This should remove the dead ancient account from the index
+        db.clean_accounts_for_tests();
+        db.shrink_ancient_slots(&epoch_schedule);
+        let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
+        let created_accounts = db.get_unique_accounts_from_storage(&storage);
+        // The dead account should still be in the ancient storage,
+        // because the storage wouldn't be shrunk with normal live to
+        // capacity ratio.
+        assert_eq!(created_accounts.stored_accounts.len(), 3);
+        db.shrink_candidate_slots(&epoch_schedule);
+        let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
+        let created_accounts = db.get_unique_accounts_from_storage(&storage);
+        // At this point the dead ancient account should be removed
+        // and storage capacity shrunk to the sum of live bytes of
+        // accounts it holds.  This is the data lengths of the
+        // accounts plus the length of their metadata.
+        assert_eq!(created_accounts.capacity, 1000 + 2000 + 136 * 2);
+    }
+
     #[test]
     fn test_select_candidates_by_total_usage_no_candidates() {
         // no input candidates -- none should be selected
