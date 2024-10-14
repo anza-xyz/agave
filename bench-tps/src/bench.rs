@@ -374,7 +374,7 @@ fn create_sender_threads<T>(
     exit_signal: Arc<AtomicBool>,
     shared_tx_active_thread_count: &Arc<AtomicIsize>,
     signatures_sender: Option<SignatureBatchSender>,
-    latency_sender: Option<Sender<Signature>>,
+    latency_sender: Option<Sender<(Signature, Instant)>>,
 ) -> Vec<JoinHandle<()>>
 where
     T: 'static + TpsClient + Send + Sync + ?Sized,
@@ -517,7 +517,8 @@ where
         latency_sender,
     );
 
-    let latency_thread = latency_receiver.map(|rx| measure_tx_latency(rx, HttpOrWs::Http, 100));
+    let latency_thread =
+        latency_receiver.map(|rx| measure_tx_latency(rx, HttpOrWs::Http, 100, client.clone()));
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
 
@@ -979,7 +980,7 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
     thread_batch_sleep_ms: usize,
     client: &Arc<T>,
     signatures_sender: Option<SignatureBatchSender>,
-    latency_sender: Option<Sender<Signature>>,
+    latency_sender: Option<Sender<(Signature, Instant)>>,
 ) {
     let mut last_sent_time = timestamp();
     'thread_loop: loop {
@@ -1039,7 +1040,9 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
             if let Some(ref latency_sender) = latency_sender {
                 // measure latency of a random transaction from batch
                 if let Some(tx_to_measure) = transactions.choose(&mut rand::thread_rng()) {
-                    if let Err(_) = latency_sender.try_send(*tx_to_measure.get_signature()) {
+                    if let Err(_) =
+                        latency_sender.try_send((*tx_to_measure.get_signature(), Instant::now()))
+                    {
                         // ignore error
                     }
                 }

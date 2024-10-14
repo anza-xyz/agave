@@ -1,3 +1,4 @@
+use solana_transaction_status::TransactionStatus;
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
     solana_rpc_client::rpc_client::RpcClient,
@@ -45,6 +46,15 @@ impl TpsClient for RpcClient {
 
     fn get_signature_status(&self, signature: &Signature) -> TpsClientResult<Option<Result<()>>> {
         RpcClient::get_signature_status(self, signature).map_err(|err| err.into())
+    }
+
+    fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> TpsClientResult<Vec<Option<TransactionStatus>>> {
+        RpcClient::get_signature_statuses(self, signatures)
+            .map(|response| response.value)
+            .map_err(|err| err.into())
     }
 
     fn get_transaction_count(&self) -> TpsClientResult<u64> {

@@ -1,3 +1,4 @@
+use solana_transaction_status::TransactionStatus;
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
     solana_connection_cache::connection_cache::{
@@ -58,6 +59,16 @@ where
     fn get_signature_status(&self, signature: &Signature) -> TpsClientResult<Option<Result<()>>> {
         self.rpc_client()
             .get_signature_status(signature)
+            .map_err(|err| err.into())
+    }
+
+    fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> TpsClientResult<Vec<Option<TransactionStatus>>> {
+        self.rpc_client()
+            .get_signature_statuses(signatures)
+            .map(|response| response.value)
             .map_err(|err| err.into())
     }
 
