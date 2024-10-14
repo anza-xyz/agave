@@ -12054,7 +12054,7 @@ pub mod tests {
     }
 
     /// This test creates an ancient storage with three alive accounts
-    /// of various sizes. It then simulates killing one the accounts
+    /// of various sizes. It then simulates killing one of the accounts
     /// in a more recent (non-ancient) slot by overwriting the account
     /// that has the smallest data size.  The dead account is expected
     /// to be deleted from its ancient storages in the process
