@@ -1472,7 +1472,7 @@ pub struct AccountsDb {
     /// These are the ancient storages that could be valuable to shrink.
     /// sorted by largest dead bytes to smallest
     /// Members are Slot and capacity. If capacity is smaller, then that means the storage was already shrunk.
-    pub(crate) best_ancient_slots_to_shrink: RwLock<Vec<(Slot, u64)>>,
+    pub(crate) best_ancient_slots_to_shrink: RwLock<Vec<(Slot, u64, u64)>>,
 }
 
 /// results from 'split_storages_ancient'
@@ -4394,7 +4394,7 @@ impl AccountsDb {
         // assumed to be in reverse order.
         if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
             let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
-            while let Some((slot, capacity)) = ancients.pop() {
+            while let Some((slot, capacity, _dead_bytes)) = ancients.pop() {
                 if let Some(store) = self.storage.get_slot_storage_entry(slot) {
                     if !shrink_slots.contains(&slot)
                         && capacity == store.capacity()
