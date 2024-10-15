@@ -1469,9 +1469,12 @@ pub struct AccountsDb {
     /// (For R&D only; a feature-gate also exists to turn this on and make it a part of consensus.)
     pub is_experimental_accumulator_hash_enabled: AtomicBool,
 
-    /// These are the ancient storages that could be valuable to shrink.
-    /// sorted by largest dead bytes to smallest
-    /// Members are Slot and capacity. If capacity is smaller, then that means the storage was already shrunk.
+    /// These are the ancient storages that could be valuable to
+    /// shrink, sorted by amount of dead bytes. The elements
+    /// are popped from the end of the vector, hence the sorting is
+    /// expected to be from the smallest dead bytes to the largest.
+    /// Members are Slot and capacity. If capacity is smaller, then
+    /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<Vec<(Slot, u64)>>,
 }
 
