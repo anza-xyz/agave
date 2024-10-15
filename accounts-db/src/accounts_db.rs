@@ -12127,7 +12127,7 @@ pub mod tests {
         // The above check works only when the AppendVec storage is
         // used. More generally the pubkey of the smallest account
         // shouldn't be present in the shrunk storage, which is
-        // validated by the following scan ofthe storage accounts.
+        // validated by the following scan of the storage accounts.
         storage.accounts.scan_pubkeys(|pubkey| {
             assert_ne!(pubkey, &modified_account_pubkey);
         });
