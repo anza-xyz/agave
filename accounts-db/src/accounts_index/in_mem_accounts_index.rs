@@ -89,6 +89,10 @@ impl<T: IndexValue> PossibleEvictions<T> {
 
 // one instance of this represents one bin of the accounts index.
 pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
+    // The highest slot seen in the index. It is for evicting ref_count > 1
+    // entries (see should_evict_from_mem(...)).
+    highest_slot: AtomicU64,
+
     last_age_flushed: AtomicAge,
 
     // backing store
@@ -191,6 +195,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             ),
             num_ages_to_distribute_flushes,
             startup_stats: Arc::clone(&storage.startup_stats),
+            highest_slot: AtomicU64::default(),
         }
     }
 
@@ -1008,24 +1013,47 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // this could be tunable dynamically based on memory pressure
         // we could look at more ages or we could throw out more items we are choosing to keep in the cache
         if Self::should_evict_based_on_age(current_age, entry, startup, ages_flushing_now) {
-            if entry.ref_count() != 1 {
-                Self::update_stat(&self.stats().held_in_mem.ref_count, 1);
-                (false, None)
-            } else {
-                // only read the slot list if we are planning to throw the item out
-                let slot_list = entry.slot_list.read().unwrap();
-                if slot_list.len() != 1 {
+            match entry.ref_count() {
+                1 | 2 => {
+                    // only read the slot list if we are planning to throw the item out
+                    let slot_list = entry.slot_list.read().unwrap();
+                    let mut cached = false;
+                    let mut oldest_slot = Slot::MAX;
+                    let mut newest_slot = Slot::MIN;
+                    for (slot, info) in slot_list.iter() {
+                        cached = cached || info.is_cached();
+                        oldest_slot = oldest_slot.min(*slot);
+                        newest_slot = newest_slot.max(*slot);
+                    }
+                    let current_slot = newest_slot
+                        .max(self.highest_slot.fetch_max(newest_slot, Ordering::Relaxed));
+                    if cached {
+                        // Don't evict when entry is cached.
+                        if update_stats {
+                            Self::update_stat(&self.stats().held_in_mem.slot_list_cached, 1);
+                        }
+                        (false, None)
+                    } else {
+                        // Evict when ref_count == 1 or oldest_slot is more than one epoch old
+                        if slot_list.len() == 1
+                            || current_slot.saturating_sub(oldest_slot)
+                                > solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH
+                        {
+                            (true, Some(slot_list))
+                        } else {
+                            if update_stats {
+                                Self::update_stat(&self.stats().held_in_mem.slot_list_len, 1);
+                            }
+                            (false, None)
+                        }
+                    }
+                }
+                _ => {
+                    // Don't evict when ref_count > 2.
                     if update_stats {
-                        Self::update_stat(&self.stats().held_in_mem.slot_list_len, 1);
+                        Self::update_stat(&self.stats().held_in_mem.ref_count, 1);
                     }
-                    (false, None) // keep 0 and > 1 slot lists in mem. They will be cleaned or shrunk soon.
-                } else {
-                    // keep items with slot lists that contained cached items
-                    let evict = !slot_list.iter().any(|(_, info)| info.is_cached());
-                    if !evict && update_stats {
-                        Self::update_stat(&self.stats().held_in_mem.slot_list_cached, 1);
-                    }
-                    (evict, if evict { Some(slot_list) } else { None })
+                    (false, None)
                 }
             }
         } else {
@@ -1570,31 +1598,63 @@ mod tests {
         bucket
     }
 
+    /// Test should_evict_from_mem() for different ref_counts.
+    ///
+    ///  This test that under normal condition - where no entries are one epoch
+    /// old, only ref_count = 1 entries should be evicted.
     #[test]
     fn test_should_evict_from_mem_ref_count() {
-        for ref_count in [0, 1, 2] {
+        for ref_count in [0, 1, 2, 3] {
             let bucket = new_for_test::<u64>();
             let startup = false;
             let current_age = 0;
-            let one_element_slot_list = vec![(0, 0)];
-            let one_element_slot_list_entry = Arc::new(AccountMapEntryInner::new(
-                one_element_slot_list,
+
+            let slot_list: Vec<_> = (0..ref_count).map(|i| (i, i)).collect();
+            let slot_list_entry = Arc::new(AccountMapEntryInner::new(
+                slot_list,
                 ref_count,
                 AccountMapEntryMeta::default(),
             ));
-
-            // exceeded budget
             assert_eq!(
                 bucket
-                    .should_evict_from_mem(
-                        current_age,
-                        &one_element_slot_list_entry,
-                        startup,
-                        false,
-                        1,
-                    )
+                    .should_evict_from_mem(current_age, &slot_list_entry, startup, false, 1,)
                     .0,
                 ref_count == 1
+            );
+        }
+    }
+
+    /// Test should_evict_from_mem() for different ref_counts with one epoch old
+    /// entries in slot_list.
+    ///
+    /// This test the case for entries are one epoch old, ref_count = 1 and
+    /// ref_count = 2 entries should be evicted.
+    #[test]
+    fn test_should_evict_from_mem_ref_count_one_epoch_old() {
+        for (ref_count, expected) in [(0, false), (1, true), (2, true), (3, false)] {
+            let bucket = new_for_test::<u64>();
+            let startup = false;
+            let current_age = 0;
+            let num_slots_per_epoch = solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH;
+            let slot_list: Vec<_> = (0..ref_count)
+                .map(|i| {
+                    if i == 0 {
+                        (i, i)
+                    } else {
+                        (i + num_slots_per_epoch, i)
+                    }
+                })
+                .collect();
+            let slot_list_entry = Arc::new(AccountMapEntryInner::new(
+                slot_list,
+                ref_count,
+                AccountMapEntryMeta::default(),
+            ));
+            assert_eq!(
+                bucket
+                    .should_evict_from_mem(current_age, &slot_list_entry, startup, false, 1,)
+                    .0,
+                expected
             );
         }
     }
