@@ -192,7 +192,7 @@ use {
                 AtomicBool, AtomicI64, AtomicU64, AtomicUsize,
                 Ordering::{AcqRel, Acquire, Relaxed},
             },
-            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
+            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
         },
         thread::Builder,
         time::{Duration, Instant},
@@ -1420,12 +1420,9 @@ impl Bank {
         new
     }
 
-    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Weak<RwLock<BankForks>>) {
+    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Arc<RwLock<BankForks>>) {
         self.transaction_processor
-            .program_cache
-            .write()
-            .unwrap()
-            .set_fork_graph(fork_graph);
+            .set_fork_graph_in_program_cache(fork_graph);
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {

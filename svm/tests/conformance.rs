@@ -245,8 +245,8 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
 
     mock_bank.override_feature_set(feature_set);
     let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
+    batch_processor.set_fork_graph_in_program_cache(Arc::new(RwLock::new(MockForkGraph {})));
 
-    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     {
         let mut program_cache = batch_processor.program_cache.write().unwrap();
         program_cache.environments = ProgramRuntimeEnvironments {
@@ -256,7 +256,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
                 FunctionRegistry::default(),
             )),
         };
-        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph.clone()));
     }
 
     batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);

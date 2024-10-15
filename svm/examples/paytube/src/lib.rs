@@ -140,7 +140,7 @@ impl PayTubeChannel {
             &account_loader,
             &feature_set,
             &compute_budget,
-            Arc::clone(&fork_graph),
+            fork_graph,
         );
 
         // The PayTube transaction processing runtime environment.

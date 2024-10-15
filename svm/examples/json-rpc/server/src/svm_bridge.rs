@@ -203,6 +203,8 @@ pub fn create_executable_environment(
     mock_bank: &mut MockBankCallback,
     transaction_processor: &TransactionBatchProcessor<MockForkGraph>,
 ) {
+    transaction_processor.set_fork_graph_in_program_cache(fork_graph);
+
     let mut program_cache = transaction_processor.program_cache.write().unwrap();
 
     program_cache.environments = ProgramRuntimeEnvironments {
@@ -214,7 +216,6 @@ pub fn create_executable_environment(
         )),
     };
 
-    program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
     // add programs to cache
     for key in account_keys.iter() {
         if let Some(account) = mock_bank.get_account_shared_data(key) {

@@ -56,11 +56,11 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
         /* builtin_program_ids */ HashSet::new(),
     );
 
+    // Initialize the mocked fork graph.
+    processor.set_fork_graph_in_program_cache(fork_graph);
+
     {
         let mut cache = processor.program_cache.write().unwrap();
-
-        // Initialize the mocked fork graph.
-        cache.fork_graph = Some(Arc::downgrade(&fork_graph));
 
         // Initialize a proper cache environment.
         // (Use Loader v4 program to initialize runtime v2 if desired)
