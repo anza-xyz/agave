@@ -14,6 +14,29 @@ use {
     },
 };
 
+#[macro_export]
+macro_rules! format_field {
+    ($output:ident, $name:expr, $field:expr) => {
+        $output.push_str($name);
+        let field_output = format!("{:?}", $field);
+        field_output
+            .split('\n')
+            .for_each(|s| $output.push_str(&format!("    {s}\n")));
+    };
+}
+
+#[macro_export]
+macro_rules! format_vector {
+    ($output:ident, $name:expr, $field:expr) => {
+        $output.push_str($name);
+        for (x, v) in $field.iter().enumerate() {
+            let prefix = format!("    {x}:");
+            format_field!($output, &prefix, v);
+        }
+        $output.push_str("    ]\n");
+    };
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BankHashStats {
@@ -51,13 +74,12 @@ impl BankHashStats {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct AccountsStats {
     pub delta_hash_scan_time_total_us: AtomicU64,
     pub delta_hash_accumulate_time_total_us: AtomicU64,
     pub delta_hash_num: AtomicU64,
     pub skipped_rewrites_num: AtomicUsize,
-
     pub last_store_report: AtomicInterval,
     pub store_hash_accounts: AtomicU64,
     pub calc_stored_meta: AtomicU64,
@@ -78,7 +100,90 @@ pub struct AccountsStats {
     pub purge_exact_count: AtomicU64,
 }
 
-#[derive(Debug, Default)]
+impl std::fmt::Debug for AccountsStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from("AccountsStatus {\n");
+        output.push_str(&format!(
+            "    delta_hash_scan_time_total_us: {:?}\n",
+            self.delta_hash_scan_time_total_us
+        ));
+        output.push_str(&format!(
+            "    delta_hash_accumulate_time_total_us: {:?}\n",
+            self.delta_hash_accumulate_time_total_us
+        ));
+        output.push_str(&format!("    delta_hash_num: {:?}\n", self.delta_hash_num));
+        output.push_str(&format!(
+            "    skipped_rewrites_num: {:?}\n",
+            self.skipped_rewrites_num
+        ));
+        output.push_str(&format!(
+            "    last_store_report: {:?}\n",
+            self.last_store_report
+        ));
+        output.push_str(&format!(
+            "    store_hash_accounts: {:?}\n",
+            self.store_hash_accounts
+        ));
+        output.push_str(&format!(
+            "    calc_stored_meta: {:?}\n",
+            self.calc_stored_meta
+        ));
+        output.push_str(&format!("    store_accounts: {:?}\n", self.store_accounts));
+        output.push_str(&format!(
+            "    store_update_index: {:?}\n",
+            self.store_update_index
+        ));
+        output.push_str(&format!(
+            "    store_handle_reclaims: {:?}\n",
+            self.store_handle_reclaims
+        ));
+        output.push_str(&format!(
+            "    store_append_accounts: {:?}\n",
+            self.store_append_accounts
+        ));
+        output.push_str(&format!(
+            "    stakes_cache_check_and_store_us: {:?}\n",
+            self.stakes_cache_check_and_store_us
+        ));
+        output.push_str(&format!(
+            "    store_num_accounts: {:?}\n",
+            self.store_num_accounts
+        ));
+        output.push_str(&format!(
+            "    store_total_data: {:?}\n",
+            self.store_total_data
+        ));
+        output.push_str(&format!(
+            "    create_store_count: {:?}\n",
+            self.create_store_count
+        ));
+        output.push_str(&format!(
+            "    store_get_slot_store: {:?}\n",
+            self.store_get_slot_store
+        ));
+        output.push_str(&format!(
+            "    store_find_existing: {:?}\n",
+            self.store_find_existing
+        ));
+        output.push_str(&format!("    dropped_stores: {:?}\n", self.dropped_stores));
+        output.push_str(&format!(
+            "    store_uncleaned_update: {:?}\n",
+            self.store_uncleaned_update
+        ));
+        output.push_str(&format!(
+            "    handle_dead_keys_us: {:?}\n",
+            self.handle_dead_keys_us
+        ));
+        output.push_str(&format!("    purge_exact_us: {:?}\n", self.purge_exact_us));
+        output.push_str(&format!(
+            "    purge_exact_count: {:?}\n",
+            self.purge_exact_count
+        ));
+        write!(f, "{}}}", output)
+    }
+}
+
+#[derive(Default)]
 pub struct PurgeStats {
     pub last_report: AtomicInterval,
     pub safety_checks_elapsed: AtomicU64,
@@ -93,6 +198,62 @@ pub struct PurgeStats {
     pub scan_storages_elapsed: AtomicU64,
     pub purge_accounts_index_elapsed: AtomicU64,
     pub handle_reclaims_elapsed: AtomicU64,
+}
+
+impl std::fmt::Debug for PurgeStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from("PurgeStats {\n");
+        output.push_str(&format!("    last_report: {:?}\n", self.last_report));
+        output.push_str(&format!(
+            "    safety_checks_elapsed: {:?}\n",
+            self.safety_checks_elapsed
+        ));
+        output.push_str(&format!(
+            "    remove_cache_elapsed: {:?}\n",
+            self.remove_cache_elapsed
+        ));
+        output.push_str(&format!(
+            "    remove_storage_entries_elapsed: {:?}\n",
+            self.remove_storage_entries_elapsed
+        ));
+        output.push_str(&format!(
+            "    drop_storage_entries_elapsed: {:?}\n",
+            self.drop_storage_entries_elapsed
+        ));
+        output.push_str(&format!(
+            "    num_cached_slots_removed: {:?}\n",
+            self.num_cached_slots_removed
+        ));
+        output.push_str(&format!(
+            "    num_stored_slots_removed: {:?}\n",
+            self.num_stored_slots_removed
+        ));
+        output.push_str(&format!(
+            "    total_removed_storage_entries: {:?}\n",
+            self.total_removed_storage_entries
+        ));
+        output.push_str(&format!(
+            "    total_removed_cached_bytes: {:?}\n",
+            self.total_removed_cached_bytes
+        ));
+        output.push_str(&format!(
+            "    total_removed_stored_bytes: {:?}\n",
+            self.total_removed_stored_bytes
+        ));
+        output.push_str(&format!(
+            "    scan_storages_elapsed: {:?}\n",
+            self.scan_storages_elapsed
+        ));
+        output.push_str(&format!(
+            "    purge_accounts_index_elapsed: {:?}\n",
+            self.purge_accounts_index_elapsed
+        ));
+        output.push_str(&format!(
+            "    handle_reclaims_elapsed: {:?}\n",
+            self.handle_reclaims_elapsed
+        ));
+        write!(f, "{}}}", output)
+    }
 }
 
 impl PurgeStats {
@@ -206,7 +367,7 @@ impl FlushStats {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct LatestAccountsIndexRootsStats {
     pub roots_len: AtomicUsize,
     pub uncleaned_roots_len: AtomicUsize,
@@ -215,6 +376,35 @@ pub struct LatestAccountsIndexRootsStats {
     pub unrooted_cleaned_count: AtomicUsize,
     pub clean_unref_from_storage_us: AtomicU64,
     pub clean_dead_slot_us: AtomicU64,
+}
+
+impl std::fmt::Debug for LatestAccountsIndexRootsStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from("LatestAccountsIndexRootsStats {\n");
+        output.push_str(&format!("    roots_len: {:?}\n", self.roots_len));
+        output.push_str(&format!(
+            "    uncleaned_roots_len: {:?}\n",
+            self.uncleaned_roots_len
+        ));
+        output.push_str(&format!("    roots_range: {:?}\n", self.roots_range));
+        output.push_str(&format!(
+            "    rooted_cleaned_count: {:?}\n",
+            self.rooted_cleaned_count
+        ));
+        output.push_str(&format!(
+            "    unrooted_cleaned_count: {:?}\n",
+            self.unrooted_cleaned_count
+        ));
+        output.push_str(&format!(
+            "    clean_unref_from_storage_us: {:?}\n",
+            self.clean_unref_from_storage_us
+        ));
+        output.push_str(&format!(
+            "    clean_dead_slot_us: {:?}\n",
+            self.clean_dead_slot_us
+        ));
+        write!(f, "{}}}", output)
+    }
 }
 
 impl LatestAccountsIndexRootsStats {
@@ -305,7 +495,7 @@ impl LatestAccountsIndexRootsStats {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct CleanAccountsStats {
     pub purge_stats: PurgeStats,
     pub latest_accounts_index_roots_stats: LatestAccountsIndexRootsStats,
@@ -329,7 +519,53 @@ impl CleanAccountsStats {
     }
 }
 
-#[derive(Debug, Default)]
+impl std::fmt::Debug for CleanAccountsStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from("CleanAccountsStatus {\n");
+        format_field!(output, "    purge_stats:", self.purge_stats);
+        format_field!(
+            output,
+            "    latest_accounts_index_roots_stats:",
+            self.latest_accounts_index_roots_stats
+        );
+        output.push_str(&format!(
+            "    clean_old_root_us: {:?}\n",
+            self.clean_old_root_us
+        ));
+        output.push_str(&format!(
+            "    clean_old_root_reclaim_us: {:?}\n",
+            self.clean_old_root_reclaim_us
+        ));
+        output.push_str(&format!(
+            "    reset_uncleaned_roots_us: {:?}\n",
+            self.reset_uncleaned_roots_us
+        ));
+        output.push_str(&format!(
+            "    remove_dead_accounts_remove_us: {:?}\n",
+            self.remove_dead_accounts_remove_us
+        ));
+        output.push_str(&format!(
+            "    remove_dead_accounts_shrink_us: {:?}\n",
+            self.remove_dead_accounts_shrink_us
+        ));
+        output.push_str(&format!(
+            "    clean_stored_dead_slots_us: {:?}\n",
+            self.clean_stored_dead_slots_us
+        ));
+        output.push_str(&format!(
+            "    uncleaned_roots_slot_list_1: {:?}\n",
+            self.uncleaned_roots_slot_list_1
+        ));
+        output.push_str(&format!(
+            "    get_account_sizes_us: {:?}\n",
+            self.get_account_sizes_us
+        ));
+        output.push_str(&format!("    slots_cleaned: {:?}\n", self.slots_cleaned));
+        write!(f, "{}}}", output)
+    }
+}
+
+#[derive(Default)]
 pub struct ShrinkAncientStats {
     pub shrink_stats: ShrinkStats,
     pub ancient_append_vecs_shrunk: AtomicU64,
@@ -347,6 +583,68 @@ pub struct ShrinkAncientStats {
     pub slots_eligible_to_shrink: AtomicU64,
     pub total_dead_bytes: AtomicU64,
     pub total_alive_bytes: AtomicU64,
+}
+
+impl std::fmt::Debug for ShrinkAncientStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from("ShrinkAncientStatus {\n");
+        format_field!(output, "    shrink_stats:", self.shrink_stats);
+        output.push_str(&format!(
+            "    ancient_append_vecs_shrunk: {:?}\n",
+            self.ancient_append_vecs_shrunk
+        ));
+        output.push_str(&format!("    total_us: {:?}\n", self.total_us));
+        output.push_str(&format!("    random_shrink: {:?}\n", self.random_shrink));
+        output.push_str(&format!(
+            "    slots_considered: {:?}\n",
+            self.slots_considered
+        ));
+        output.push_str(&format!(
+            "    ancient_scanned: {:?}\n",
+            self.ancient_scanned
+        ));
+        output.push_str(&format!(
+            "    bytes_ancient_created: {:?}\n",
+            self.bytes_ancient_created
+        ));
+        output.push_str(&format!(
+            "    bytes_from_must_shrink: {:?}\n",
+            self.bytes_from_must_shrink
+        ));
+        output.push_str(&format!(
+            "    bytes_from_smallest_storages: {:?}\n",
+            self.bytes_from_smallest_storages
+        ));
+        output.push_str(&format!(
+            "    bytes_from_newest_storages: {:?}\n",
+            self.bytes_from_newest_storages
+        ));
+        output.push_str(&format!(
+            "    many_ref_slots_skipped: {:?}\n",
+            self.many_ref_slots_skipped
+        ));
+        output.push_str(&format!(
+            "    slots_cannot_move_count: {:?}\n",
+            self.slots_cannot_move_count
+        ));
+        output.push_str(&format!(
+            "    many_refs_old_alive: {:?}\n",
+            self.many_refs_old_alive
+        ));
+        output.push_str(&format!(
+            "    slots_eligible_to_shrink: {:?}\n",
+            self.slots_eligible_to_shrink
+        ));
+        output.push_str(&format!(
+            "    total_dead_bytes: {:?}\n",
+            self.total_dead_bytes
+        ));
+        output.push_str(&format!(
+            "    total_alive_bytes: {:?}\n",
+            self.total_alive_bytes
+        ));
+        write!(f, "{}}}", output)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -368,7 +666,8 @@ impl ShrinkStatsSub {
         self.newest_alive_packed_count += other.newest_alive_packed_count;
     }
 }
-#[derive(Debug, Default)]
+
+#[derive(Default)]
 pub struct ShrinkStats {
     pub last_report: AtomicInterval,
     pub num_slots_shrunk: AtomicUsize,
@@ -399,6 +698,111 @@ pub struct ShrinkStats {
     pub num_ancient_slots_shrunk: AtomicU64,
     pub ancient_slots_added_to_shrink: AtomicU64,
     pub ancient_bytes_added_to_shrink: AtomicU64,
+}
+
+impl std::fmt::Debug for ShrinkStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from("ShrinkStatus {\n");
+        output.push_str(&format!("    last_report: {:?}\n", self.last_report));
+        output.push_str(&format!(
+            "    num_slots_shrunk: {:?}\n",
+            self.num_slots_shrunk
+        ));
+        output.push_str(&format!(
+            "    storage_read_elapsed: {:?}\n",
+            self.storage_read_elapsed
+        ));
+        output.push_str(&format!(
+            "    num_duplicated_accounts: {:?}\n",
+            self.num_duplicated_accounts
+        ));
+        output.push_str(&format!(
+            "    index_read_elapsed: {:?}\n",
+            self.index_read_elapsed
+        ));
+        output.push_str(&format!(
+            "    create_and_insert_store_elapsed: {:?}\n",
+            self.create_and_insert_store_elapsed
+        ));
+        output.push_str(&format!(
+            "    store_accounts_elapsed: {:?}\n",
+            self.store_accounts_elapsed
+        ));
+        output.push_str(&format!(
+            "    update_index_elapsed: {:?}\n",
+            self.update_index_elapsed
+        ));
+        output.push_str(&format!(
+            "    handle_reclaims_elapsed: {:?}\n",
+            self.handle_reclaims_elapsed
+        ));
+        output.push_str(&format!(
+            "    remove_old_stores_shrink_us: {:?}\n",
+            self.remove_old_stores_shrink_us
+        ));
+        output.push_str(&format!(
+            "    rewrite_elapsed: {:?}\n",
+            self.rewrite_elapsed
+        ));
+        output.push_str(&format!(
+            "    unpackable_slots_count: {:?}\n",
+            self.unpackable_slots_count
+        ));
+        output.push_str(&format!(
+            "    newest_alive_packed_count: {:?}\n",
+            self.newest_alive_packed_count
+        ));
+        output.push_str(&format!(
+            "    drop_storage_entries_elapsed: {:?}\n",
+            self.drop_storage_entries_elapsed
+        ));
+        output.push_str(&format!(
+            "    accounts_removed: {:?}\n",
+            self.accounts_removed
+        ));
+        output.push_str(&format!("    bytes_removed: {:?}\n", self.bytes_removed));
+        output.push_str(&format!("    bytes_written: {:?}\n", self.bytes_written));
+        output.push_str(&format!("    skipped_shrink: {:?}\n", self.skipped_shrink));
+        output.push_str(&format!("    dead_accounts: {:?}\n", self.dead_accounts));
+        output.push_str(&format!("    alive_accounts: {:?}\n", self.alive_accounts));
+        output.push_str(&format!(
+            "    index_scan_returned_none: {:?}\n",
+            self.index_scan_returned_none
+        ));
+        output.push_str(&format!(
+            "    index_scan_returned_some: {:?}\n",
+            self.index_scan_returned_some
+        ));
+        output.push_str(&format!(
+            "    accounts_loaded: {:?}\n",
+            self.accounts_loaded
+        ));
+        output.push_str(&format!(
+            "    initial_candidates_count: {:?}\n",
+            self.initial_candidates_count
+        ));
+        output.push_str(&format!(
+            "    purged_zero_lamports: {:?}\n",
+            self.purged_zero_lamports
+        ));
+        output.push_str(&format!(
+            "    accounts_not_found_in_index: {:?}\n",
+            self.accounts_not_found_in_index
+        ));
+        output.push_str(&format!(
+            "    num_ancient_slots_shrunk: {:?}\n",
+            self.num_ancient_slots_shrunk
+        ));
+        output.push_str(&format!(
+            "    ancient_slots_added_to_shrink: {:?}\n",
+            self.ancient_slots_added_to_shrink
+        ));
+        output.push_str(&format!(
+            "    ancient_bytes_added_to_shrink: {:?}\n",
+            self.ancient_bytes_added_to_shrink
+        ));
+        write!(f, "{}}}", output)
+    }
 }
 
 impl ShrinkStats {
