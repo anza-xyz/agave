@@ -503,6 +503,102 @@ pub unsafe fn deserialize_into<'a>(
     (program_id, num_accounts, instruction_data)
 }
 
+#[repr(C)]
+pub struct ABIv2InstructionContext {
+    magic: u32,
+    version: u32,
+    instruction_data_vm_address: u64,
+    length_of_instruction_data: u32,
+    number_of_unique_instruction_accounts: u16,
+    number_of_instruction_accounts: u16,
+    program_key: Pubkey,
+}
+
+#[repr(C)]
+pub struct ABIv2InstructionAccount {
+    key: Pubkey,
+    owner: Pubkey,
+    flags: u64,
+    lamports: u64,
+    payload_vm_address: u64,
+    payload_length: u32,
+    payload_capacity: u32,
+}
+
+/// Eagerly deserialize the input arguments in ABI v2
+///
+/// # Safety
+/// This method is safe when called once, on a buffer serialized by the program runtime.
+pub unsafe fn deserialize_abi_v2_eagerly<'a>(
+    input: *mut u8,
+    account_infos: &mut [MaybeUninit<AccountInfo<'a>>],
+) -> (&'a Pubkey, usize, &'a [u8]) {
+    let header = &*(input as *const ABIv2InstructionContext);
+    let unique_instruction_accounts = from_raw_parts_mut(
+        input.add(std::mem::size_of::<ABIv2InstructionContext>()) as *mut ABIv2InstructionAccount,
+        header.number_of_unique_instruction_accounts as usize,
+    );
+    let instruction_account_indirection = from_raw_parts_mut(
+        (unique_instruction_accounts.as_ptr() as *mut u8).add(
+            std::mem::size_of::<ABIv2InstructionAccount>()
+                .unchecked_mul(header.number_of_unique_instruction_accounts as usize),
+        ) as *mut u16,
+        header.number_of_instruction_accounts as usize,
+    );
+
+    let mut number_of_unique_instruction_accounts = 0;
+    for index in 0..header.number_of_instruction_accounts {
+        let deduplicated_index = *instruction_account_indirection
+            .get(index as usize)
+            .unwrap_unchecked() as usize;
+        let aliased_index = instruction_account_indirection
+            .get_mut(deduplicated_index)
+            .unwrap_unchecked();
+        let account_info = account_infos.get_mut(index as usize).unwrap_unchecked()
+            as *mut MaybeUninit<AccountInfo>;
+        if deduplicated_index == number_of_unique_instruction_accounts {
+            let instruction_account = unique_instruction_accounts
+                .get_mut(deduplicated_index)
+                .unwrap_unchecked();
+            (*account_info).write(AccountInfo {
+                key: &*(&instruction_account.key as *const Pubkey),
+                is_signer: (instruction_account.flags & (1 << 8)) != 0,
+                is_writable: (instruction_account.flags & (1 << 16)) != 0,
+                lamports: Rc::new(RefCell::new(
+                    &mut *(&mut instruction_account.lamports as *mut u64),
+                )),
+                data: Rc::new(RefCell::new(from_raw_parts_mut(
+                    instruction_account.payload_vm_address as *mut u8,
+                    instruction_account.payload_length as usize,
+                ))),
+                owner: &*(&instruction_account.owner as *const Pubkey),
+                executable: false,
+                rent_epoch: 0,
+            });
+            *aliased_index = index;
+            number_of_unique_instruction_accounts =
+                number_of_unique_instruction_accounts.unchecked_add(1);
+        } else {
+            (*account_info).write(
+                account_infos
+                    .get(*aliased_index as usize)
+                    .unwrap_unchecked()
+                    .assume_init_ref()
+                    .clone(),
+            );
+        }
+    }
+
+    (
+        &header.program_key,
+        header.number_of_instruction_accounts as usize,
+        from_raw_parts(
+            header.instruction_data_vm_address as *mut u8,
+            header.length_of_instruction_data as usize,
+        ),
+    )
+}
+
 #[cfg(test)]
 mod test {
     use {super::*, std::alloc::GlobalAlloc};

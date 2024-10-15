@@ -5,12 +5,15 @@ use {
     solana_program_runtime::invoke_context::SerializedAccountMetadata,
     solana_rbpf::{
         aligned_memory::{AlignedMemory, Pod},
-        ebpf::{HOST_ALIGN, MM_INPUT_START},
+        ebpf::{HOST_ALIGN, MM_INPUT_START, MM_PROGRAM_START},
         memory_region::{MemoryRegion, MemoryState},
     },
     solana_sdk::{
         bpf_loader_deprecated,
-        entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
+        entrypoint::{
+            ABIv2InstructionAccount, ABIv2InstructionContext, BPF_ALIGN_OF_U128,
+            MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER,
+        },
         instruction::InstructionError,
         pubkey::Pubkey,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
@@ -102,7 +105,8 @@ impl Serializer {
         } else {
             self.push_region(true);
             let vaddr = self.vaddr;
-            self.push_account_data_region(account)?;
+            self.push_account_data_region(vaddr, account)?;
+            self.vaddr += account.get_data().len() as u64;
             vaddr
         };
 
@@ -129,21 +133,19 @@ impl Serializer {
         Ok(vm_data_addr)
     }
 
-    fn push_account_data_region(
+    pub fn push_account_data_region(
         &mut self,
+        vaddr: u64,
         account: &mut BorrowedAccount<'_>,
     ) -> Result<(), InstructionError> {
         if !account.get_data().is_empty() {
             let region = match account_data_region_memory_state(account) {
-                MemoryState::Readable => MemoryRegion::new_readonly(account.get_data(), self.vaddr),
-                MemoryState::Writable => {
-                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
-                }
+                MemoryState::Readable => MemoryRegion::new_readonly(account.get_data(), vaddr),
+                MemoryState::Writable => MemoryRegion::new_writable(account.get_data_mut()?, vaddr),
                 MemoryState::Cow(index_in_transaction) => {
-                    MemoryRegion::new_cow(account.get_data(), self.vaddr, index_in_transaction)
+                    MemoryRegion::new_cow(account.get_data(), vaddr, index_in_transaction)
                 }
             };
-            self.vaddr += region.len;
             self.regions.push(region);
         }
 
@@ -192,6 +194,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    is_abi_v2: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -234,7 +237,13 @@ pub fn serialize_parameters(
         // time it's iterated on.
         .collect::<Vec<_>>();
 
-    if is_loader_deprecated {
+    if is_abi_v2 {
+        serialize_parameters_v2(
+            accounts,
+            instruction_context.get_instruction_data(),
+            &program_id,
+        )
+    } else if is_loader_deprecated {
         serialize_parameters_unaligned(
             accounts,
             instruction_context.get_instruction_data(),
@@ -255,6 +264,7 @@ pub fn deserialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    is_abi_v2: bool,
     buffer: &[u8],
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
@@ -263,7 +273,14 @@ pub fn deserialize_parameters(
         .get_owner()
         == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
-    if is_loader_deprecated {
+    if is_abi_v2 {
+        deserialize_parameters_v2(
+            transaction_context,
+            instruction_context,
+            buffer,
+            account_lengths,
+        )
+    } else if is_loader_deprecated {
         deserialize_parameters_unaligned(
             transaction_context,
             instruction_context,
@@ -603,6 +620,162 @@ pub fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
     Ok(())
 }
 
+fn serialize_parameters_v2(
+    mut accounts: Vec<SerializeAccount>,
+    instruction_data: &[u8],
+    program_id: &Pubkey,
+) -> Result<
+    (
+        AlignedMemory<HOST_ALIGN>,
+        Vec<MemoryRegion>,
+        Vec<SerializedAccountMetadata>,
+    ),
+    InstructionError,
+> {
+    let mut accounts_metadata = Vec::with_capacity(accounts.len());
+    // Calculate size in order to alloc once
+    let number_of_unique_instruction_accounts = accounts.iter().fold(0, |accumulator, account| {
+        if matches!(account, SerializeAccount::Account(_, _)) {
+            accumulator + 1
+        } else {
+            accumulator
+        }
+    });
+    let size = size_of::<ABIv2InstructionContext>()
+        + size_of::<ABIv2InstructionAccount>() * number_of_unique_instruction_accounts
+        + size_of::<u16>() * accounts.len(); // instruction_context.get_number_of_instruction_accounts();
+
+    // Serialize into the buffer
+    const INSTRUCTION_DATA_VM_ADDRESS: u64 = MM_INPUT_START + MM_PROGRAM_START;
+    let mut s = Serializer::new(size, MM_INPUT_START, true, false);
+    s.write::<u32>(0x76494241u32.to_le());
+    s.write::<u32>(0x00000002u32.to_le());
+    s.write::<u64>(INSTRUCTION_DATA_VM_ADDRESS.to_le());
+    s.write::<u32>((instruction_data.len() as u32).to_le());
+    s.write::<u16>((number_of_unique_instruction_accounts as u16).to_le());
+    s.write::<u16>((accounts.len() as u16).to_le());
+    s.write_all(program_id.as_ref());
+    let mut index: IndexOfAccount = 2;
+    for account in accounts.iter_mut() {
+        if let SerializeAccount::Account(_, ref mut borrowed_account) = account {
+            let vm_key_addr = s.write_all(borrowed_account.get_key().as_ref());
+            let vm_owner_addr = s.write_all(borrowed_account.get_owner().as_ref());
+            let mut flags = 0u64;
+            if borrowed_account.is_signer() {
+                flags |= 1 << 8;
+            }
+            if borrowed_account.is_writable() {
+                flags |= 1 << 16;
+            }
+            s.write::<u64>(flags.to_le());
+            let vm_lamports_addr = s.write::<u64>(borrowed_account.get_lamports().to_le());
+            let vm_data_addr = MM_INPUT_START + MM_PROGRAM_START * index as u64;
+            s.push_account_data_region(vm_data_addr, borrowed_account)?;
+            s.write::<u64>(vm_data_addr.to_le());
+            s.write::<u32>((borrowed_account.get_data().len() as u32).to_le());
+            s.write::<u32>((borrowed_account.capacity() as u32).to_le());
+            accounts_metadata.push(SerializedAccountMetadata {
+                original_data_len: borrowed_account.get_data().len(),
+                vm_key_addr,
+                vm_owner_addr,
+                vm_lamports_addr,
+                vm_data_addr,
+            });
+            index += 1;
+        }
+    }
+    index = 0;
+    let mut deduplicated_account_indices = Vec::with_capacity(accounts.len());
+    for account in accounts.iter() {
+        match account {
+            SerializeAccount::Account(instruction_account_index, _) => {
+                deduplicated_account_indices.push(instruction_account_index - index);
+            }
+            SerializeAccount::Duplicate(position) => {
+                deduplicated_account_indices.push(
+                    *deduplicated_account_indices
+                        .get(*position as usize)
+                        .unwrap(),
+                );
+                index += 1;
+            }
+        }
+    }
+    for deduplicated_account_index in deduplicated_account_indices {
+        s.write::<u16>(deduplicated_account_index.to_le());
+    }
+
+    let (mem, mut regions) = s.finish();
+    regions.push(MemoryRegion::new_readonly(
+        instruction_data,
+        INSTRUCTION_DATA_VM_ADDRESS,
+    ));
+    Ok((mem, regions, accounts_metadata))
+}
+
+pub fn deserialize_parameters_v2<I: IntoIterator<Item = usize>>(
+    transaction_context: &TransactionContext,
+    instruction_context: &InstructionContext,
+    buffer: &[u8],
+    account_lengths: I,
+) -> Result<(), InstructionError> {
+    let mut start = size_of::<ABIv2InstructionContext>();
+    for (instruction_account_index, pre_len) in (0..instruction_context
+        .get_number_of_instruction_accounts())
+        .zip(account_lengths.into_iter())
+    {
+        let duplicate =
+            instruction_context.is_instruction_account_duplicate(instruction_account_index)?;
+        if duplicate.is_none() {
+            let mut borrowed_account = instruction_context
+                .try_borrow_instruction_account(transaction_context, instruction_account_index)?;
+            start += size_of::<Pubkey>(); // key
+            let owner = buffer
+                .get(start..start + size_of::<Pubkey>())
+                .ok_or(InstructionError::InvalidArgument)?;
+            start += size_of::<Pubkey>(); // owner
+            start += size_of::<u64>(); // flags
+            let lamports = LittleEndian::read_u64(
+                buffer
+                    .get(start..)
+                    .ok_or(InstructionError::InvalidArgument)?,
+            );
+            if borrowed_account.get_lamports() != lamports {
+                borrowed_account.set_lamports(lamports)?;
+            }
+            start += size_of::<u64>(); // lamports
+            start += size_of::<u64>(); // payload_vm_address
+            let post_len = LittleEndian::read_u32(
+                buffer
+                    .get(start..)
+                    .ok_or(InstructionError::InvalidArgument)?,
+            ) as usize;
+            start += size_of::<u32>(); // payload_length
+            start += size_of::<u32>(); // payload_capacity
+            match borrowed_account
+                .can_data_be_resized(post_len)
+                .and_then(|_| borrowed_account.can_data_be_changed())
+            {
+                Ok(()) => {
+                    if post_len.saturating_sub(pre_len) > MAX_PERMITTED_DATA_INCREASE
+                        || post_len > MAX_PERMITTED_DATA_LENGTH as usize
+                    {
+                        return Err(InstructionError::InvalidRealloc);
+                    }
+                    borrowed_account.set_data_length(post_len)?;
+                }
+                Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
+                _ => {}
+            }
+            if borrowed_account.get_owner().to_bytes() != owner {
+                // Change the owner at the end so that we are allowed to change the lamports and data before
+                borrowed_account.set_owner(owner)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
     if account.can_data_be_changed().is_ok() {
         if account.is_shared() {
@@ -729,6 +902,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
+                    false,
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -883,6 +1057,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
             )
             .unwrap();
 
@@ -942,6 +1117,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
                 serialized.as_slice(),
                 &accounts_metadata,
             )
@@ -974,6 +1150,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
@@ -1012,6 +1189,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                false, // is_abi_v2
                 serialized.as_slice(),
                 &account_lengths,
             )
