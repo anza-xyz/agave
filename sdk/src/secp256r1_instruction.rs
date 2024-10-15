@@ -4,9 +4,10 @@
 
 #![cfg(feature = "full")]
 
+#[cfg(not(target_arch = "wasm32"))]
 use {
-    crate::{feature_set::FeatureSet, instruction::Instruction, precompiles::PrecompileError},
-    bytemuck::{bytes_of, Pod, Zeroable},
+    crate::instruction::Instruction,
+    bytemuck::bytes_of,
     openssl::{
         bn::{BigNum, BigNumContext},
         ec::{EcGroup, EcKey, EcPoint},
@@ -16,26 +17,38 @@ use {
         sign::{Signer, Verifier},
     },
 };
+use {
+    crate::{feature_set::FeatureSet, precompiles::PrecompileError},
+    bytemuck::{Pod, Zeroable},
+};
 
+#[cfg(not(target_arch = "wasm32"))]
 pub const COMPRESSED_PUBKEY_SERIALIZED_SIZE: usize = 33;
+#[cfg(not(target_arch = "wasm32"))]
 pub const SIGNATURE_SERIALIZED_SIZE: usize = 64;
+#[cfg(not(target_arch = "wasm32"))]
 pub const SIGNATURE_OFFSETS_SERIALIZED_SIZE: usize = 14;
 // bytemuck requires structures to be aligned
+#[cfg(not(target_arch = "wasm32"))]
 pub const SIGNATURE_OFFSETS_START: usize = 2;
+#[cfg(not(target_arch = "wasm32"))]
 pub const DATA_START: usize = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
 
 // Order as defined in SEC2: 2.7.2 Recommended Parameters secp256r1
+#[cfg(not(target_arch = "wasm32"))]
 pub const SECP256R1_ORDER: [u8; 32] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
 ];
 
 // Computed SECP256R1_ORDER - 1
+#[cfg(not(target_arch = "wasm32"))]
 pub const SECP256R1_ORDER_MINUS_ONE: [u8; 32] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x50,
 ];
 // Computed half order
+#[cfg(not(target_arch = "wasm32"))]
 const SECP256R1_HALF_ORDER: [u8; 32] = [
     0x7F, 0xFF, 0xFF, 0xFF, 0x80, 0x00, 0x00, 0x00, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xDE, 0x73, 0x7D, 0x56, 0xD3, 0x8B, 0xCF, 0x42, 0x79, 0xDC, 0xE5, 0x61, 0x7E, 0x31, 0x92, 0xA8,
@@ -53,6 +66,7 @@ pub struct Secp256r1SignatureOffsets {
     message_instruction_index: u16, // index of instruction data to get message data
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn new_secp256r1_instruction(
     message: &[u8],
 ) -> Result<Instruction, Box<dyn std::error::Error>> {
@@ -133,6 +147,7 @@ pub fn new_secp256r1_instruction(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn verify(
     data: &[u8],
     instruction_datas: &[&[u8]],
@@ -261,6 +276,16 @@ pub fn verify(
     Ok(())
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn verify(
+    _data: &[u8],
+    _instruction_datas: &[&[u8]],
+    _feature_set: &FeatureSet,
+) -> Result<(), PrecompileError> {
+    Err(PrecompileError::InvalidSignature)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn get_data_slice<'a>(
     data: &'a [u8],
     instruction_datas: &'a [&[u8]],
