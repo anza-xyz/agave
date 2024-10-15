@@ -42,7 +42,7 @@ fn program_cache_execution(threads: usize) {
     let mut mock_bank = MockBankCallback::default();
     let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(5, 5, HashSet::new());
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
-    batch_processor.program_cache.write().unwrap().fork_graph = Some(Arc::downgrade(&fork_graph));
+    batch_processor.set_fork_graph_in_program_cache(fork_graph);
 
     let programs = vec![
         deploy_program("hello-solana".to_string(), 0, &mut mock_bank),
@@ -131,7 +131,7 @@ fn svm_concurrent() {
         2,
         HashSet::new(),
     ));
-    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
+    batch_processor.set_fork_graph_in_program_cache(Arc::new(RwLock::new(MockForkGraph {})));
 
     create_executable_environment(
         fork_graph.clone(),

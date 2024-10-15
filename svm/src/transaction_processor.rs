@@ -209,6 +209,48 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
+    /// Sets the fork graph in the processor's program cache instance.
+    ///
+    /// For newly created batch processors, which aren't created using
+    /// `new_from`, this method should be called to set the fork graph
+    /// in the program cache before processing transactions.
+    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Arc<RwLock<FG>>) {
+        self.program_cache
+            .write()
+            .unwrap()
+            .set_fork_graph(Arc::downgrade(&fork_graph));
+    }
+
+    /// Configure the program runtime environments for the transaction batch
+    /// processor's program cache.
+    ///
+    /// For newly created batch processors, which aren't created using
+    /// `new_from`, this method should be called to configure the program
+    /// runtime environments before processing transactions.
+    pub fn configure_program_runtime_environments(
+        &self,
+        feature_set: &FeatureSet,
+        compute_budget: &ComputeBudget,
+        reject_deployment_of_broken_elfs: bool,
+        debugging_features: bool,
+    ) {
+        let mut program_cache = self.program_cache.write().unwrap();
+        program_cache.latest_root_slot = self.slot;
+        program_cache.latest_root_epoch = self.epoch;
+        program_cache.environments.program_runtime_v1 = Arc::new(
+            create_program_runtime_environment_v1(
+                feature_set,
+                compute_budget,
+                reject_deployment_of_broken_elfs,
+                debugging_features,
+            )
+            .unwrap(),
+        );
+        program_cache.environments.program_runtime_v2 = Arc::new(
+            create_program_runtime_environment_v2(compute_budget, debugging_features),
+        );
+    }
+
     /// Returns the current environments depending on the given epoch
     /// Returns None if the call could result in a deadlock
     #[cfg(feature = "dev-context-only-utils")]
@@ -1300,8 +1342,8 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        batch_processor.set_fork_graph_in_program_cache(fork_graph);
+
         let key = Pubkey::new_unique();
 
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
@@ -1315,8 +1357,8 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        batch_processor.set_fork_graph_in_program_cache(fork_graph);
+
         let key = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
@@ -1803,8 +1845,7 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        batch_processor.set_fork_graph_in_program_cache(fork_graph);
 
         let key = Pubkey::new_unique();
         let name = "a_builtin_name";

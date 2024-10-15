@@ -130,7 +130,7 @@ impl BankForks {
             scheduler_pool: None,
         }));
 
-        root_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
+        root_bank.set_fork_graph_in_program_cache(Arc::clone(&bank_forks));
         bank_forks
     }
 

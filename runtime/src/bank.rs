@@ -92,9 +92,6 @@ use {
         stake_rewards::StakeReward,
         storable_accounts::StorableAccounts,
     },
-    solana_bpf_loader_program::syscalls::{
-        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
-    },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_cost_model::cost_tracker::CostTracker,
     solana_feature_set::{
@@ -192,7 +189,7 @@ use {
                 AtomicBool, AtomicI64, AtomicU64, AtomicUsize,
                 Ordering::{AcqRel, Acquire, Relaxed},
             },
-            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
+            Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
         },
         thread::Builder,
         time::{Duration, Instant},
@@ -1420,12 +1417,9 @@ impl Bank {
         new
     }
 
-    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Weak<RwLock<BankForks>>) {
+    pub fn set_fork_graph_in_program_cache(&self, fork_graph: Arc<RwLock<BankForks>>) {
         self.transaction_processor
-            .program_cache
-            .write()
-            .unwrap()
-            .set_fork_graph(fork_graph);
+            .set_fork_graph_in_program_cache(fork_graph);
     }
 
     pub fn prune_program_cache(&self, new_root_slot: Slot, new_root_epoch: Epoch) {
@@ -5073,23 +5067,13 @@ impl Bank {
             }
         }
 
-        let mut program_cache = self.transaction_processor.program_cache.write().unwrap();
-        program_cache.latest_root_slot = self.slot();
-        program_cache.latest_root_epoch = self.epoch();
-        program_cache.environments.program_runtime_v1 = Arc::new(
-            create_program_runtime_environment_v1(
+        self.transaction_processor
+            .configure_program_runtime_environments(
                 &self.feature_set,
                 &self.compute_budget().unwrap_or_default(),
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap(),
-        );
-        program_cache.environments.program_runtime_v2 =
-            Arc::new(create_program_runtime_environment_v2(
-                &self.compute_budget().unwrap_or_default(),
-                false, /* debugging_features */
-            ));
+                /* reject_deployment_of_broken_elfs*/ false,
+                /* debugging_features*/ false,
+            );
     }
 
     pub fn set_inflation(&self, inflation: Inflation) {

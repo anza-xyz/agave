@@ -5,17 +5,12 @@ use {
     },
     lazy_static::lazy_static,
     prost::Message,
-    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        solana_rbpf::{
-            program::{BuiltinProgram, FunctionRegistry},
-            vm::Config,
-        },
+        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -240,26 +235,17 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         ..ComputeBudget::default()
     };
 
-    let v1_environment =
-        create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
+    batch_processor.set_fork_graph_in_program_cache(Arc::new(RwLock::new(MockForkGraph {})));
+    batch_processor.configure_program_runtime_environments(
+        &feature_set,
+        &compute_budget,
+        false,
+        false,
+    );
+    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
 
     mock_bank.override_feature_set(feature_set);
-    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
-
-    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
-    {
-        let mut program_cache = batch_processor.program_cache.write().unwrap();
-        program_cache.environments = ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(v1_environment),
-            program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
-                Config::default(),
-                FunctionRegistry::default(),
-            )),
-        };
-        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph.clone()));
-    }
-
-    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
     register_builtins(&batch_processor, &mock_bank);
 
     #[allow(deprecated)]

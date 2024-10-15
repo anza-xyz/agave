@@ -201,7 +201,6 @@ pub fn deploy_program_with_upgrade_authority(
 
 #[allow(unused)]
 pub fn create_executable_environment(
-    fork_graph: Arc<RwLock<MockForkGraph>>,
     mock_bank: &MockBankCallback,
     program_cache: &mut ProgramCache<MockForkGraph>,
 ) {
@@ -213,8 +212,6 @@ pub fn create_executable_environment(
             FunctionRegistry::default(),
         )),
     };
-
-    program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
 
     // We must fill in the sysvar cache entries
 

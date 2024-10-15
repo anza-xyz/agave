@@ -1,7 +1,6 @@
 //! A helper to initialize Solana SVM API's `TransactionBatchProcessor`.
 
 use {
-    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::loaded_programs::{
         BlockRelation, ForkGraph, LoadProgramMetrics, ProgramCacheEntry,
@@ -42,19 +41,19 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
 ) -> TransactionBatchProcessor<PayTubeForkGraph> {
     let processor = TransactionBatchProcessor::<PayTubeForkGraph>::default();
 
+    // Initialize the mocked fork graph.
+    processor.set_fork_graph_in_program_cache(fork_graph);
+
+    // Initialize a proper cache environment.
+    processor.configure_program_runtime_environments(
+        feature_set,
+        compute_budget,
+        /* reject_deployment_of_broken_elfs*/ false,
+        /* debugging_features*/ false,
+    );
+
     {
         let mut cache = processor.program_cache.write().unwrap();
-
-        // Initialize the mocked fork graph.
-        // let fork_graph = Arc::new(RwLock::new(PayTubeForkGraph {}));
-        cache.fork_graph = Some(Arc::downgrade(&fork_graph));
-
-        // Initialize a proper cache environment.
-        // (Use Loader v4 program to initialize runtime v2 if desired)
-        cache.environments.program_runtime_v1 = Arc::new(
-            create_program_runtime_environment_v1(feature_set, compute_budget, false, false)
-                .unwrap(),
-        );
 
         // Add the SPL Token program to the cache.
         if let Some(program_account) = callbacks.get_account_shared_data(&spl_token::id()) {

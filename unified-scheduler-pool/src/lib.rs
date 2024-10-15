@@ -2221,7 +2221,7 @@ mod tests {
         let slot = bank.slot();
         let bank_fork = BankForks::new_rw_arc(bank);
         let bank = bank_fork.read().unwrap().get(slot).unwrap();
-        bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_fork));
+        bank.set_fork_graph_in_program_cache(Arc::clone(&bank_fork));
         (bank, bank_fork)
     }
 
