@@ -142,36 +142,21 @@ impl Accounts {
             let lookup_table = AddressLookupTable::deserialize(table_account.data())
                 .map_err(|_ix_err| AddressLookupError::InvalidAccountData)?;
 
-<<<<<<< HEAD
-            Ok(LoadedAddresses {
-                writable: lookup_table.lookup(
-                    current_slot,
-                    &address_table_lookup.writable_indexes,
-                    slot_hashes,
-                )?,
-                readonly: lookup_table.lookup(
-                    current_slot,
-                    &address_table_lookup.readonly_indexes,
-                    slot_hashes,
-                )?,
-            })
-=======
             Ok((
                 LoadedAddresses {
                     writable: lookup_table.lookup(
                         current_slot,
-                        address_table_lookup.writable_indexes,
+                        &address_table_lookup.writable_indexes,
                         slot_hashes,
                     )?,
                     readonly: lookup_table.lookup(
                         current_slot,
-                        address_table_lookup.readonly_indexes,
+                        &address_table_lookup.readonly_indexes,
                         slot_hashes,
                     )?,
                 },
                 lookup_table.meta.deactivation_slot,
             ))
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
         } else {
             Err(AddressLookupError::InvalidAccountOwner)
         }

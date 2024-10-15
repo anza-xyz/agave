@@ -730,7 +730,6 @@ mod tests {
                 MessageHash, SanitizedTransaction, TransactionError, VersionedTransaction,
             },
         },
-        solana_svm_transaction::svm_message::SVMMessage,
         std::{
             collections::HashSet,
             sync::{atomic::AtomicBool, RwLock},
@@ -1120,7 +1119,7 @@ mod tests {
         for tx in &txs {
             bank.process_transaction(&system_transaction::transfer(
                 mint_keypair,
-                &tx.account_keys()[0],
+                &tx.message().account_keys()[0],
                 2,
                 genesis_config.hash(),
             ))

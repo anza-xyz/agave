@@ -19,12 +19,8 @@ use {
         forwarder::Forwarder,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer,
-<<<<<<< HEAD
-        ForwardOption, TOTAL_BUFFERED_PACKETS,
-=======
         scheduler_messages::MaxAge,
-        ForwardOption, LikeClusterInfo, TOTAL_BUFFERED_PACKETS,
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
+        ForwardOption, TOTAL_BUFFERED_PACKETS,
     },
     crossbeam_channel::RecvTimeoutError,
     solana_compute_budget::compute_budget_processor::process_compute_budget_instructions,
@@ -518,21 +514,14 @@ impl SchedulerController {
 
         const CHUNK_SIZE: usize = 128;
         let lock_results: [_; CHUNK_SIZE] = core::array::from_fn(|_| Ok(()));
-<<<<<<< HEAD
-=======
 
-        let mut arc_packets = ArrayVec::<_, CHUNK_SIZE>::new();
-        let mut transactions = ArrayVec::<_, CHUNK_SIZE>::new();
-        let mut max_ages = ArrayVec::<_, CHUNK_SIZE>::new();
-        let mut fee_budget_limits_vec = ArrayVec::<_, CHUNK_SIZE>::new();
-
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
             let mut post_sanitization_count: usize = 0;
 
             let mut arc_packets = Vec::with_capacity(chunk.len());
             let mut transactions = Vec::with_capacity(chunk.len());
+            let mut max_ages = Vec::with_capacity(chunk.len());
             let mut fee_budget_limits_vec = Vec::with_capacity(chunk.len());
 
             chunk
@@ -547,30 +536,18 @@ impl SchedulerController {
                         .map(|(tx, deactivation_slot)| (packet.clone(), tx, deactivation_slot))
                 })
                 .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
-<<<<<<< HEAD
-                .filter(|(_packet, tx)| {
+                .filter(|(_packet, tx, _deactivation_slot)| {
                     SanitizedTransaction::validate_account_locks(
                         tx.message(),
-=======
-                .filter(|(_packet, tx, _deactivation_slot)| {
-                    validate_account_locks(
-                        tx.message().account_keys(),
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
                         transaction_account_lock_limit,
                     )
                     .is_ok()
                 })
-<<<<<<< HEAD
-                .filter_map(|(packet, tx)| {
-                    process_compute_budget_instructions(tx.message().program_instructions_iter())
-                        .map(|compute_budget| (packet, tx, compute_budget.into()))
-=======
                 .filter_map(|(packet, tx, deactivation_slot)| {
-                    process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx))
+                    process_compute_budget_instructions(tx.message().program_instructions_iter())
                         .map(|compute_budget| {
                             (packet, tx, deactivation_slot, compute_budget.into())
                         })
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
                         .ok()
                 })
                 .for_each(|(packet, tx, deactivation_slot, fee_budget_limits)| {
@@ -600,23 +577,13 @@ impl SchedulerController {
             let mut post_transaction_check_count: usize = 0;
             let mut num_dropped_on_capacity: usize = 0;
             let mut num_buffered: usize = 0;
-<<<<<<< HEAD
-            for (((packet, transaction), fee_budget_limits), _) in arc_packets
+            for ((((packet, transaction), max_age), fee_budget_limits), _) in arc_packets
                 .into_iter()
                 .zip(transactions)
+                .zip(max_ages)
                 .zip(fee_budget_limits_vec)
                 .zip(check_results)
                 .filter(|(_, check_result)| check_result.is_ok())
-=======
-            for ((((packet, transaction), max_age), fee_budget_limits), _check_result) in
-                arc_packets
-                    .drain(..)
-                    .zip(transactions.drain(..))
-                    .zip(max_ages.drain(..))
-                    .zip(fee_budget_limits_vec.drain(..))
-                    .zip(check_results)
-                    .filter(|(_, check_result)| check_result.is_ok())
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
             {
                 saturating_add_assign!(post_transaction_check_count, 1);
                 let transaction_id = self.transaction_id_generator.next();

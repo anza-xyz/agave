@@ -24,13 +24,8 @@ use {
         transaction_batch::TransactionBatch,
     },
     solana_sdk::{
-<<<<<<< HEAD
-        clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
-        feature_set,
-=======
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
-        fee::FeeBudgetLimits,
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
+        feature_set,
         message::SanitizedMessage,
         saturating_add_assign,
         timing::timestamp,
@@ -474,23 +469,13 @@ impl Consumer {
                     // valid, and we can continue with processing.
                     // If they do not, then the ATL has expired and the transaction
                     // can be dropped.
-                    let (_addresses, _deactivation_slot) =
-                        bank.load_addresses_from_ref(tx.message_address_table_lookups())?;
+                    let (_addresses, _deactivation_slot) = bank.load_addresses_from_ref(
+                        tx.message().message_address_table_lookups().iter(),
+                    )?;
                 }
 
                 // Verify pre-compiles.
-<<<<<<< HEAD
                 tx.verify_precompiles(&bank.feature_set)?;
-                // Any transaction executed between sanitization time and now may have closed the lookup table(s).
-                // Above re-sanitization already loads addresses, so don't need to re-check in that case.
-                let lookup_tables = tx.message().message_address_table_lookups();
-                if !lookup_tables.is_empty() {
-                    bank.load_addresses(lookup_tables)?;
-=======
-                if !move_precompile_verification_to_svm {
-                    verify_precompiles(tx, &bank.feature_set)?;
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
-                }
             }
 
             Ok(())

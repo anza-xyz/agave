@@ -1,13 +1,10 @@
 use {
     super::packet_filter::PacketFilterFailure,
     solana_perf::packet::Packet,
-<<<<<<< HEAD
-    solana_runtime::compute_budget_details::{ComputeBudgetDetails, GetComputeBudgetDetails},
-=======
-    solana_runtime::bank::Bank,
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
-    solana_sanitize::SanitizeError,
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
+    solana_runtime::{
+        bank::Bank,
+        compute_budget_details::{ComputeBudgetDetails, GetComputeBudgetDetails},
+    },
     solana_sdk::{
         clock::Slot,
         hash::Hash,
@@ -18,13 +15,6 @@ use {
         signature::Signature,
         transaction::{SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction},
     },
-<<<<<<< HEAD
-=======
-    solana_short_vec::decode_shortu16_len,
-    solana_svm_transaction::{
-        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-    },
->>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
     std::{cmp::Ordering, collections::HashSet, mem::size_of},
     thiserror::Error,
 };
@@ -150,11 +140,7 @@ impl ImmutableDeserializedPacket {
             return Ok((LoadedAddresses::default(), Slot::MAX));
         };
 
-        bank.load_addresses_from_ref(
-            address_table_lookups
-                .iter()
-                .map(SVMMessageAddressTableLookup::from),
-        )
+        bank.load_addresses_from_ref(address_table_lookups.iter())
     }
 }
 
