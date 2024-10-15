@@ -1,7 +1,6 @@
 //! A nonblocking [`RpcSender`] used for unit testing [`RpcClient`](crate::rpc_client::RpcClient).
 
 use {
-    crate::rpc_sender::*,
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     serde_json::{json, Number, Value},
@@ -19,6 +18,7 @@ use {
             RpcVoteAccountStatus,
         },
     },
+    solana_rpc_sender::*,
     solana_sdk::{
         account::Account,
         clock::{Slot, UnixTimestamp},
