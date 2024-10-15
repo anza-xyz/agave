@@ -184,7 +184,8 @@ impl AncientSlotInfos {
         for info_index in &self.shrink_indexes {
             let info = &mut self.all_infos[*info_index];
             let dead_bytes = info.capacity - info.alive_bytes;
-            self.best_slots_to_shrink.push((info.slot, info.capacity, dead_bytes));
+            self.best_slots_to_shrink
+                .push((info.slot, info.capacity, dead_bytes));
             if bytes_to_shrink_due_to_ratio.0 >= threshold_bytes {
                 // we exceeded the amount to shrink due to alive ratio, so don't shrink this one just due to 'should_shrink'
                 // It MAY be shrunk based on total capacity still.
