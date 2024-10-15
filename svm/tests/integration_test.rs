@@ -2062,6 +2062,12 @@ fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
     let program_size = program_data_size(program_name);
 
     let mut common_test_entry = SvmTestEntry::default();
+    common_test_entry.add_initial_program(program_name);
+    if enable_fee_only_transactions {
+        common_test_entry
+            .enabled_features
+            .push(feature_set::enable_transaction_loading_failure_fees::id());
+    }
 
     let fee_payer_keypair = Keypair::new();
     let fee_payer = fee_payer_keypair.pubkey();
@@ -2145,14 +2151,124 @@ fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
         test_entries.push(test_entry);
     }
 
-    for test_entry in &mut test_entries {
-        test_entry.add_initial_program(program_name);
+    test_entries
+}
 
-        if enable_fee_only_transactions {
-            test_entry
-                .enabled_features
-                .push(feature_set::enable_transaction_loading_failure_fees::id());
-        }
+fn rent_delinquent() -> Vec<SvmTestEntry> {
+    let mut test_entries = vec![];
+    let mut common_test_entry = SvmTestEntry::default();
+
+    let program_name = "write-to-account";
+    let program_id = program_address(program_name);
+    common_test_entry.add_initial_program(program_name);
+
+    let fee_payer_keypair = Keypair::new();
+    let fee_payer = fee_payer_keypair.pubkey();
+
+    let mut fee_payer_data = AccountSharedData::default();
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL * 2);
+    common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
+
+    let target = Pubkey::new_unique();
+
+    let target_data_before = AccountSharedData::create(0, vec![1], program_id, false, 0);
+    common_test_entry.add_initial_account(target, &target_data_before);
+
+    let push_expected_size_log = |common_test_entry: &mut SvmTestEntry, expected_size| {
+        common_test_entry
+            .transaction_batch
+            .last_mut()
+            .unwrap()
+            .asserts
+            .logs
+            .push(format!("Program log: account size {}", expected_size));
+    };
+
+    let print_transaction_read_only = WriteProgramInstruction::Print.create_transaction(
+        program_id,
+        &fee_payer_keypair,
+        target,
+        None,
+    );
+
+    // read-only rent-delinquent account exists
+    common_test_entry.push_transaction(print_transaction_read_only.clone());
+    push_expected_size_log(&mut common_test_entry, 1);
+
+    // account was not shadowed or deallocated by previous transaction
+    common_test_entry.push_transaction(print_transaction_read_only.clone());
+    push_expected_size_log(&mut common_test_entry, 1);
+
+    // transfer that fails and uses the rent-delinquent account as writable
+    common_test_entry.push_transaction_with_status(
+        system_transaction::transfer(
+            &fee_payer_keypair,
+            &target,
+            LAMPORTS_PER_SOL * 10,
+            Hash::default(),
+        ),
+        ExecutionStatus::ExecutedFailed,
+    );
+
+    // account was not shadowed or deallocated by previous transaction
+    common_test_entry.push_transaction(print_transaction_read_only.clone());
+    push_expected_size_log(&mut common_test_entry, 1);
+
+    let mut print_transaction_writable = print_transaction_read_only.clone();
+    print_transaction_writable
+        .message
+        .header
+        .num_readonly_unsigned_accounts -= 1;
+    let print_transaction_writable = print_transaction_writable;
+
+    let common_test_entry = common_test_entry;
+
+    // batch 0:
+    // * all transactions above
+    // * transfer that brings the account to rent-exemption
+    // * account has not been deallocated (using the writable print transaction to update rent epoch)
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        test_entry.push_transaction(system_transaction::transfer(
+            &fee_payer_keypair,
+            &target,
+            LAMPORTS_PER_SOL,
+            Hash::default(),
+        ));
+
+        test_entry.push_transaction(print_transaction_writable.clone());
+        push_expected_size_log(&mut test_entry, 1);
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SOL);
+        test_entry.increase_expected_lamports(&target, LAMPORTS_PER_SOL);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 1:
+    // * all transactions above
+    // * successful transaction that takes the rent-delinquent account as writable
+    // * account has been deallocated
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        test_entry.push_transaction(print_transaction_writable);
+        push_expected_size_log(&mut test_entry, 1);
+
+        test_entry.push_transaction(print_transaction_read_only);
+        push_expected_size_log(&mut test_entry, 0);
+
+        test_entry.update_expected_account_data(target, &AccountSharedData::default());
+
+        test_entries.push(test_entry);
+    }
+
+    for test_entry in &mut test_entries {
+        test_entry.decrease_expected_lamports(
+            &fee_payer,
+            LAMPORTS_PER_SIGNATURE * test_entry.transaction_batch.len() as u64,
+        );
     }
 
     test_entries
@@ -2176,6 +2292,7 @@ fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
 #[test_case(fee_payer_deallocate(true))]
 #[test_case(account_reallocate(false))]
 #[test_case(account_reallocate(true))]
+#[test_case(rent_delinquent())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         let env = SvmTestEnvironment::create(test_entry);
