@@ -12292,4 +12292,145 @@ pub mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_write_transaction_memos() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let signature: Signature = Signature::new_unique();
+
+        blockstore
+            .write_transaction_memos(&signature, 4, "test_write_transaction_memos".to_string())
+            .unwrap();
+
+        let memo = blockstore
+            .read_transaction_memos(signature, 4)
+            .expect("Expected to find memo");
+        assert_eq!(memo, Some("test_write_transaction_memos".to_string()));
+    }
+
+    #[test]
+    fn test_add_transaction_memos_to_batch() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let signatures: Vec<Signature> = (0..2).map(|_| Signature::new_unique()).collect();
+        let mut memos_batch = blockstore.db_ref().batch().unwrap();
+
+        blockstore
+            .add_transaction_memos_to_batch(
+                &signatures[0],
+                4,
+                "test_write_transaction_memos1".to_string(),
+                &mut memos_batch,
+            )
+            .unwrap();
+
+        blockstore
+            .add_transaction_memos_to_batch(
+                &signatures[1],
+                5,
+                "test_write_transaction_memos2".to_string(),
+                &mut memos_batch,
+            )
+            .unwrap();
+
+        blockstore.db_ref().write(memos_batch).unwrap();
+
+        let memo1 = blockstore
+            .read_transaction_memos(signatures[0], 4)
+            .expect("Expected to find memo");
+        assert_eq!(memo1, Some("test_write_transaction_memos1".to_string()));
+
+        let memo2 = blockstore
+            .read_transaction_memos(signatures[1], 5)
+            .expect("Expected to find memo");
+        assert_eq!(memo2, Some("test_write_transaction_memos2".to_string()));
+    }
+
+    #[test]
+    fn test_write_transaction_status() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let signatures: Vec<Signature> = (0..2).map(|_| Signature::new_unique()).collect();
+        let keys_with_writable: Vec<(Pubkey, bool)> =
+            vec![(Pubkey::new_unique(), true), (Pubkey::new_unique(), false)];
+        let slot = 5;
+
+        blockstore
+            .write_transaction_status(
+                slot,
+                signatures[0],
+                keys_with_writable
+                    .iter()
+                    .map(|&(ref pubkey, writable)| (pubkey, writable)),
+                TransactionStatusMeta {
+                    fee: 4200,
+                    ..TransactionStatusMeta::default()
+                },
+                0,
+            )
+            .unwrap();
+
+        let tx_status = blockstore
+            .read_transaction_status((signatures[0], slot))
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx_status.fee, 4200);
+    }
+
+    #[test]
+    fn test_add_transaction_status_to_batch() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path())
+            .expect("Expected to be able to open database ledger");
+        let signatures: Vec<Signature> = (0..2).map(|_| Signature::new_unique()).collect();
+        let keys_with_writable: Vec<Vec<(Pubkey, bool)>> = (0..2)
+            .map(|_| vec![(Pubkey::new_unique(), true), (Pubkey::new_unique(), false)])
+            .collect();
+        let slot = 5;
+        let mut status_batch = blockstore.db_ref().batch().unwrap();
+
+        for (i, signature) in signatures.iter().enumerate() {
+            blockstore
+                .add_transaction_status_to_batch(
+                    slot,
+                    *signature,
+                    keys_with_writable[i].iter().map(|(k, v)| (k, *v)),
+                    TransactionStatusMeta {
+                        fee: 5700 + i as u64,
+                        status: if i % 2 == 0 {
+                            Ok(())
+                        } else {
+                            Err(TransactionError::InsufficientFundsForFee)
+                        },
+                        ..TransactionStatusMeta::default()
+                    },
+                    i,
+                    &mut status_batch,
+                )
+                .unwrap();
+        }
+
+        blockstore.db_ref().write(status_batch).unwrap();
+
+        let tx_status1 = blockstore
+            .read_transaction_status((signatures[0], slot))
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx_status1.fee, 5700);
+        assert_eq!(tx_status1.status.unwrap(), ());
+
+        let tx_status2 = blockstore
+            .read_transaction_status((signatures[1], slot))
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx_status2.fee, 5701);
+        assert_eq!(
+            tx_status2.status,
+            Err(TransactionError::InsufficientFundsForFee)
+        );
+    }
 }
