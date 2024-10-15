@@ -9152,7 +9152,9 @@ pub mod tests {
             accounts_hash::MERKLE_FANOUT,
             accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
             ancient_append_vecs,
-            append_vec::{test_utils::TempFile, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{
+                aligned_stored_size, test_utils::TempFile, AppendVec, AppendVecStoredAccountMeta,
+            },
             storable_accounts::AccountForStorage,
         },
         assert_matches::assert_matches,
@@ -12118,7 +12120,17 @@ pub mod tests {
         // and storage capacity shrunk to the sum of alive bytes of
         // accounts it holds.  This is the data lengths of the
         // accounts plus the length of their metadata.
-        assert_eq!(created_accounts.capacity, 1000 + 2000 + 136 * 2);
+        assert_eq!(
+            created_accounts.capacity as usize,
+            aligned_stored_size(1000) + aligned_stored_size(2000)
+        );
+        // The above check works only when the AppendVec storage is
+        // used. More generally the pubkey of the smallest account
+        // shouldn't be present in the shrunk storage, which is
+        // validated by the following scan ofthe storage accounts.
+        storage.accounts.scan_pubkeys(|pubkey| {
+            assert_ne!(pubkey, &modified_account_pubkey);
+        });
     }
 
     #[test]
