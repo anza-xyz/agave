@@ -12421,7 +12421,7 @@ pub mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(tx_status1.fee, 5700);
-        assert_eq!(tx_status1.status.unwrap(), ());
+        assert_eq!(tx_status1.status, Ok(()));
 
         let tx_status2 = blockstore
             .read_transaction_status((signatures[1], slot))
