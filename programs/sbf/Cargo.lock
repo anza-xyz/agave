@@ -6031,15 +6031,14 @@ dependencies = [
  "jsonrpc-core",
  "reqwest",
  "reqwest-middleware",
- "semver",
  "serde",
  "serde_derive",
  "serde_json",
  "solana-account-decoder",
  "solana-inline-spl",
+ "solana-rpc-response",
  "solana-sdk",
  "solana-transaction-status-client-types",
- "solana-version",
  "thiserror",
 ]
 
@@ -6049,6 +6048,20 @@ version = "2.1.0"
 dependencies = [
  "solana-rpc-client",
  "solana-sdk",
+ "thiserror",
+]
+
+[[package]]
+name = "solana-rpc-response"
+version = "2.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_derive",
+ "solana-account-decoder",
+ "solana-sdk",
+ "solana-transaction-status-client-types",
+ "solana-version",
  "thiserror",
 ]
 
