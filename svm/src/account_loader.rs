@@ -1417,6 +1417,13 @@ mod tests {
 
     #[test]
     fn test_load_transaction_accounts_program_account_executable_bypass() {
+        // currently, the account loader retrieves read-only non-instruction accounts from the program cache
+        // it creates a mock AccountSharedData with the executable flag set to true
+        // however, it does not check whether these accounts are actually executable before doing so
+        // this affects consensus: a transaction that uses a cached non-executable program executes and fails
+        // but if the transaction gets the program from accounts-db, it will be dropped during account loading
+        // this test enforces the current behavior, so that future account loader changes do not break consensus
+
         let mut mock_bank = TestCallbacks::default();
         let account_keypair = Keypair::new();
         let program_keypair = Keypair::new();
