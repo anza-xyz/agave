@@ -406,6 +406,10 @@ impl AccountsDb {
             &mut *self.best_ancient_slots_to_shrink.write().unwrap(),
             &mut ancient_slot_infos.best_slots_to_shrink,
         );
+        // Reverse the vector so that the elements with the largest
+        // dead bytes are poped first when used to extend the
+        // shrinking candidates.
+        self.best_ancient_slots_to_shrink.write().unwrap().reverse();
 
         if ancient_slot_infos.all_infos.is_empty() {
             return; // nothing to do

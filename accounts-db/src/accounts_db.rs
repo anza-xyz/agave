@@ -4390,10 +4390,10 @@ impl AccountsDb {
         });
 
         // If there are too few slots to shrink, add an ancient slot
-        // for shrinking.
+        // for shrinking.  The best ancient slots to shrink are
+        // assumed to be in reverse order.
         if shrink_slots.len() < SHRINK_INSERT_ANCIENT_THRESHOLD {
             let mut ancients = self.best_ancient_slots_to_shrink.write().unwrap();
-            ancients.reverse();
             while let Some((slot, capacity)) = ancients.pop() {
                 if let Some(store) = self.storage.get_slot_storage_entry(slot) {
                     if !shrink_slots.contains(&slot)
