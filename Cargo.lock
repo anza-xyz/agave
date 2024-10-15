@@ -6658,9 +6658,13 @@ name = "solana-feature-set"
 version = "2.1.0"
 dependencies = [
  "lazy_static",
+ "solana-clock",
+ "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
- "solana-program",
+ "solana-hash",
+ "solana-pubkey",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
@@ -6842,7 +6846,7 @@ name = "solana-inline-spl"
 version = "2.1.0"
 dependencies = [
  "bytemuck",
- "solana-program",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -6872,6 +6876,7 @@ dependencies = [
  "clap 3.2.23",
  "dirs-next",
  "num_cpus",
+ "serde_json",
  "solana-clap-v3-utils",
  "solana-cli-config",
  "solana-derivation-path",
@@ -7037,6 +7042,7 @@ dependencies = [
  "byte-unit",
  "clap 3.2.23",
  "serde",
+ "serde_derive",
  "serde_json",
  "solana-logger",
  "solana-version",
@@ -7111,6 +7117,10 @@ version = "2.1.0"
 dependencies = [
  "solana-define-syscall",
 ]
+
+[[package]]
+name = "solana-native-token"
+version = "2.1.0"
 
 [[package]]
 name = "solana-net-shaper"
@@ -7312,6 +7322,7 @@ dependencies = [
  "solana-instruction",
  "solana-logger",
  "solana-msg",
+ "solana-native-token",
  "solana-program-error",
  "solana-program-memory",
  "solana-program-option",
@@ -7892,6 +7903,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-logger",
+ "solana-native-token",
  "solana-program",
  "solana-program-memory",
  "solana-pubkey",

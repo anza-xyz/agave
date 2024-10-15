@@ -99,7 +99,6 @@ members = [
     "rpc-test",
     "runtime",
     "runtime-transaction",
-    "sanitize",
     "sdk",
     "sdk/account",
     "sdk/account-info",
@@ -117,6 +116,7 @@ members = [
     "sdk/instruction",
     "sdk/macro",
     "sdk/msg",
+    "sdk/native-token",
     "sdk/package-metadata",
     "sdk/package-metadata-macro",
     "sdk/program",
@@ -126,6 +126,7 @@ members = [
     "sdk/program-pack",
     "sdk/pubkey",
     "sdk/rent",
+    "sdk/sanitize",
     "sdk/serde-varint",
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
@@ -432,6 +433,7 @@ solana-measure = { path = "measure", version = "=2.1.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.1.0" }
 solana-metrics = { path = "metrics", version = "=2.1.0" }
 solana-msg = { path = "sdk/msg", version = "=2.1.0" }
+solana-native-token = { path = "sdk/native-token", version = "=2.1.0" }
 solana-net-utils = { path = "net-utils", version = "=2.1.0" }
 solana-nohash-hasher = "0.2.1"
 solana-notifier = { path = "notifier", version = "=2.1.0" }
@@ -453,7 +455,7 @@ solana-quic-client = { path = "quic-client", version = "=2.1.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.1.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=2.1.0", default-features = false }
 solana-rent = { path = "sdk/rent", version = "=2.1.0", default-features = false }
-solana-sanitize = { path = "sanitize", version = "=2.1.0" }
+solana-sanitize = { path = "sdk/sanitize", version = "=2.1.0" }
 solana-serde-varint = { path = "sdk/serde-varint", version = "=2.1.0" }
 solana-serialize-utils = { path = "sdk/serialize-utils", version = "=2.1.0" }
 solana-sha256-hasher = { path = "sdk/sha256-hasher", version = "=2.1.0" }
