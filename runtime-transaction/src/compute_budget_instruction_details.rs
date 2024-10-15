@@ -70,6 +70,13 @@ impl ComputeBudgetInstructionDetails {
                 || {
                     self.num_non_compute_budget_instructions
                         .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
+                    /* Note:
+                     * - to add CB ixs CUs to meter to match what's actually consumed woud be
+                     * nice, but need fewature gate, because increase budget could make some tx
+                     * would fail (exceeds budget) suceeds.
+                     *
+                    .saturating_add(self.num_compute_budget_instructions.saturating_mul(150))
+                    // */
                 },
                 |(_index, requested_compute_unit_limit)| requested_compute_unit_limit,
             )
