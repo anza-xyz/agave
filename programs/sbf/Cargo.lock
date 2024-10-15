@@ -5278,7 +5278,11 @@ name = "solana-feature-set"
 version = "2.1.0"
 dependencies = [
  "lazy_static",
- "solana-program",
+ "solana-clock",
+ "solana-epoch-schedule",
+ "solana-hash",
+ "solana-pubkey",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
@@ -5395,7 +5399,7 @@ name = "solana-inline-spl"
 version = "2.1.0"
 dependencies = [
  "bytemuck",
- "solana-program",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -5560,6 +5564,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-native-token"
+version = "2.1.0"
+
+[[package]]
 name = "solana-net-utils"
 version = "2.1.0"
 dependencies = [
@@ -5676,6 +5684,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-msg",
+ "solana-native-token",
  "solana-program-error",
  "solana-program-memory",
  "solana-program-option",
@@ -5803,6 +5812,7 @@ dependencies = [
  "getrandom 0.2.10",
  "js-sys",
  "num-traits",
+ "rand 0.8.5",
  "serde",
  "serde_derive",
  "solana-atomic-u64",
@@ -6633,6 +6643,7 @@ dependencies = [
  "solana-decode-error",
  "solana-derivation-path",
  "solana-feature-set",
+ "solana-native-token",
  "solana-program",
  "solana-program-memory",
  "solana-pubkey",
