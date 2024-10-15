@@ -1283,10 +1283,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                     // If the entry *was* updated, re-mark it as dirty then
                                     // skip to the next pubkey/entry.
                                     let ref_count = v.ref_count();
-                                    if ref_count != 1 || slot_list.len() != 1 {
-                                        v.set_dirty(true);
-                                        break;
-                                    }
                                     disk.try_write(
                                         &k,
                                         (
