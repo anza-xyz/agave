@@ -434,7 +434,7 @@ impl<O: BucketOccupied> BucketStorage<O> {
             );
         });
         // Access to the disk bucket files are random (excluding the linear search on collisions),
-        // so advice the kernel to treat the mmaps as such.
+        // so advise the kernel to treat the mmaps as such.
         #[cfg(unix)]
         mmap.advise(memmap2::Advice::Random).unwrap();
         measure_mmap.stop();
