@@ -3,9 +3,9 @@
 
 use {
     crate::mock_bank::{
-        create_executable_environment, deploy_program, deploy_program_with_upgrade_authority,
-        program_address, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
-        EXECUTION_SLOT, WALLCLOCK_TIME,
+        create_executable_environment, deploy_program_with_upgrade_authority, program_address,
+        register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH, EXECUTION_SLOT,
+        WALLCLOCK_TIME,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -1155,11 +1155,8 @@ fn svm_integration(test_entries: Vec<SvmTestEntry>) {
 
 #[test]
 fn svm_inspect_account() {
-    let mock_bank = MockBankCallback::default();
+    let mut initial_test_entry = SvmTestEntry::default();
     let mut expected_inspected_accounts: HashMap<_, Vec<_>> = HashMap::new();
-
-    let transfer_program =
-        deploy_program("simple-transfer".to_string(), DEPLOYMENT_SLOT, &mock_bank);
 
     let fee_payer_keypair = Keypair::new();
     let sender_keypair = Keypair::new();
@@ -1167,18 +1164,14 @@ fn svm_inspect_account() {
     let fee_payer = fee_payer_keypair.pubkey();
     let sender = sender_keypair.pubkey();
     let recipient = Pubkey::new_unique();
-    let system = system_program::id();
 
     // Setting up the accounts for the transfer
 
     // fee payer
     let mut fee_payer_account = AccountSharedData::default();
-    fee_payer_account.set_lamports(80_020);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(fee_payer, fee_payer_account.clone());
+    fee_payer_account.set_lamports(85_000);
+    fee_payer_account.set_rent_epoch(u64::MAX);
+    initial_test_entry.add_initial_account(fee_payer, &fee_payer_account);
     expected_inspected_accounts
         .entry(fee_payer)
         .or_default()
@@ -1187,11 +1180,8 @@ fn svm_inspect_account() {
     // sender
     let mut sender_account = AccountSharedData::default();
     sender_account.set_lamports(11_000_000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(sender, sender_account.clone());
+    sender_account.set_rent_epoch(u64::MAX);
+    initial_test_entry.add_initial_account(sender, &sender_account);
     expected_inspected_accounts
         .entry(sender)
         .or_default()
@@ -1203,153 +1193,92 @@ fn svm_inspect_account() {
         .or_default()
         .push((None, true));
 
-    let instruction = Instruction::new_with_bytes(
-        transfer_program,
-        &u64::to_be_bytes(1_000_000),
-        vec![
-            AccountMeta::new(sender, true),
-            AccountMeta::new(recipient, false),
-            AccountMeta::new_readonly(system, false),
-        ],
-    );
+    let transfer_amount = 1_000_000;
     let transaction = Transaction::new_signed_with_payer(
-        &[instruction],
+        &[system_instruction::transfer(
+            &sender,
+            &recipient,
+            transfer_amount,
+        )],
         Some(&fee_payer),
         &[&fee_payer_keypair, &sender_keypair],
         Hash::default(),
     );
-    let sanitized_transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
-    let transaction_check = Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    });
+
+    initial_test_entry.push_transaction(transaction);
+
+    let mut recipient_account = AccountSharedData::default();
+    recipient_account.set_lamports(transfer_amount);
+
+    initial_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+    initial_test_entry.decrease_expected_lamports(&sender, transfer_amount);
+    initial_test_entry.create_expected_account(recipient, &recipient_account);
+
+    let initial_test_entry = initial_test_entry;
 
     // Load and execute the transaction
-
-    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new_uninitialized(
-        EXECUTION_SLOT,
-        EXECUTION_EPOCH,
-    );
-
-    let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
-
-    create_executable_environment(
-        fork_graph.clone(),
-        &mock_bank,
-        &mut batch_processor.program_cache.write().unwrap(),
-    );
-
-    // The sysvars must be put in the cache
-    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
-    register_builtins(&mock_bank, &batch_processor);
-
-    let _result = batch_processor.load_and_execute_sanitized_transactions(
-        &mock_bank,
-        &[sanitized_transaction],
-        vec![transaction_check],
-        &TransactionProcessingEnvironment::default(),
-        &TransactionProcessingConfig::default(),
-    );
-
-    // the system account is modified during transaction processing,
-    // so set the expected inspected account afterwards.
-    let system_account = mock_bank
-        .account_shared_data
-        .read()
-        .unwrap()
-        .get(&system)
-        .cloned();
-    expected_inspected_accounts
-        .entry(system)
-        .or_default()
-        .push((system_account, false));
+    let mut env = SvmTestEnvironment::create(initial_test_entry.clone());
+    env.execute();
 
     // do another transfer; recipient should be alive now
 
     // fee payer
-    let mut fee_payer_account = AccountSharedData::default();
-    fee_payer_account.set_lamports(80_000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(fee_payer, fee_payer_account.clone());
+    let intermediate_fee_payer_account = initial_test_entry.final_accounts.get(&fee_payer).cloned();
+    assert!(intermediate_fee_payer_account.is_some());
+
     expected_inspected_accounts
         .entry(fee_payer)
         .or_default()
-        .push((Some(fee_payer_account.clone()), true));
+        .push((intermediate_fee_payer_account, true));
 
     // sender
-    let mut sender_account = AccountSharedData::default();
-    sender_account.set_lamports(10_000_000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(sender, sender_account.clone());
+    let intermediate_sender_account = initial_test_entry.final_accounts.get(&sender).cloned();
+    assert!(intermediate_sender_account.is_some());
+
     expected_inspected_accounts
         .entry(sender)
         .or_default()
-        .push((Some(sender_account.clone()), true));
+        .push((intermediate_sender_account, true));
 
     // recipient -- now alive
-    let mut recipient_account = AccountSharedData::default();
-    recipient_account.set_lamports(1_000_000);
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(recipient, recipient_account.clone());
+    let intermediate_recipient_account = initial_test_entry.final_accounts.get(&recipient).cloned();
+    assert!(intermediate_recipient_account.is_some());
+
     expected_inspected_accounts
         .entry(recipient)
         .or_default()
-        .push((Some(recipient_account.clone()), true));
+        .push((intermediate_recipient_account, true));
 
-    let instruction = Instruction::new_with_bytes(
-        transfer_program,
-        &u64::to_be_bytes(456),
-        vec![
-            AccountMeta::new(sender, true),
-            AccountMeta::new(recipient, false),
-            AccountMeta::new_readonly(system, false),
-        ],
-    );
+    let mut final_test_entry = SvmTestEntry {
+        initial_accounts: initial_test_entry.final_accounts.clone(),
+        final_accounts: initial_test_entry.final_accounts.clone(),
+        ..SvmTestEntry::default()
+    };
+
+    let transfer_amount = 456;
     let transaction = Transaction::new_signed_with_payer(
-        &[instruction],
+        &[system_instruction::transfer(
+            &sender,
+            &recipient,
+            transfer_amount,
+        )],
         Some(&fee_payer),
         &[&fee_payer_keypair, &sender_keypair],
         Hash::default(),
     );
-    let sanitized_transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
-    let transaction_check = Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 20,
-    });
+
+    final_test_entry.push_transaction(transaction);
+
+    final_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+    final_test_entry.decrease_expected_lamports(&sender, transfer_amount);
+    final_test_entry.increase_expected_lamports(&recipient, transfer_amount);
 
     // Load and execute the second transaction
-    let _result = batch_processor.load_and_execute_sanitized_transactions(
-        &mock_bank,
-        &[sanitized_transaction],
-        vec![transaction_check],
-        &TransactionProcessingEnvironment::default(),
-        &TransactionProcessingConfig::default(),
-    );
-
-    // the system account is modified during transaction processing,
-    // so set the expected inspected account afterwards.
-    let system_account = mock_bank
-        .account_shared_data
-        .read()
-        .unwrap()
-        .get(&system)
-        .cloned();
-    expected_inspected_accounts
-        .entry(system)
-        .or_default()
-        .push((system_account, false));
+    env.test_entry = final_test_entry;
+    env.execute();
 
     // Ensure all the expected inspected accounts were inspected
-    let actual_inspected_accounts = mock_bank.inspected_accounts.read().unwrap().clone();
+    let actual_inspected_accounts = env.mock_bank.inspected_accounts.read().unwrap().clone();
     for (expected_pubkey, expected_account) in &expected_inspected_accounts {
         let actual_account = actual_inspected_accounts.get(expected_pubkey).unwrap();
         assert_eq!(
@@ -1358,7 +1287,7 @@ fn svm_inspect_account() {
         );
     }
 
-    // The transfer program account is retreived from the program cache, which does not
+    // The system program is retreived from the program cache, which does not
     // inspect accounts, because they are necessarily read-only. Verify it has not made
     // its way into the inspected accounts list.
     let num_expected_inspected_accounts: usize =
@@ -1370,6 +1299,4 @@ fn svm_inspect_account() {
         num_expected_inspected_accounts,
         num_actual_inspected_accounts,
     );
-
-    assert!(!actual_inspected_accounts.contains_key(&transfer_program));
 }
