@@ -307,13 +307,14 @@ mod tests {
     use {
         super::*,
         solana_perf::packet::PacketFlags,
+        solana_runtime::bank::Bank,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
             message::Message,
             reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signer},
             system_instruction, system_transaction,
-            transaction::{SimpleAddressLoader, Transaction},
+            transaction::Transaction,
         },
         solana_vote_program::vote_transaction,
     };
@@ -476,6 +477,7 @@ mod tests {
             &keypair,
             None,
         );
+        let bank = Bank::default_for_tests();
 
         // packets with no votes
         {
@@ -487,7 +489,7 @@ mod tests {
             let txs = packet_vector.iter().filter_map(|tx| {
                 tx.immutable_section().build_sanitized_transaction(
                     votes_only,
-                    SimpleAddressLoader::Disabled,
+                    &bank,
                     &ReservedAccountKeys::empty_key_set(),
                 )
             });
@@ -497,7 +499,7 @@ mod tests {
             let txs = packet_vector.iter().filter_map(|tx| {
                 tx.immutable_section().build_sanitized_transaction(
                     votes_only,
-                    SimpleAddressLoader::Disabled,
+                    &bank,
                     &ReservedAccountKeys::empty_key_set(),
                 )
             });
@@ -516,7 +518,7 @@ mod tests {
             let txs = packet_vector.iter().filter_map(|tx| {
                 tx.immutable_section().build_sanitized_transaction(
                     votes_only,
-                    SimpleAddressLoader::Disabled,
+                    &bank,
                     &ReservedAccountKeys::empty_key_set(),
                 )
             });
@@ -526,7 +528,7 @@ mod tests {
             let txs = packet_vector.iter().filter_map(|tx| {
                 tx.immutable_section().build_sanitized_transaction(
                     votes_only,
-                    SimpleAddressLoader::Disabled,
+                    &bank,
                     &ReservedAccountKeys::empty_key_set(),
                 )
             });
@@ -545,7 +547,7 @@ mod tests {
             let txs = packet_vector.iter().filter_map(|tx| {
                 tx.immutable_section().build_sanitized_transaction(
                     votes_only,
-                    SimpleAddressLoader::Disabled,
+                    &bank,
                     &ReservedAccountKeys::empty_key_set(),
                 )
             });
@@ -555,7 +557,7 @@ mod tests {
             let txs = packet_vector.iter().filter_map(|tx| {
                 tx.immutable_section().build_sanitized_transaction(
                     votes_only,
-                    SimpleAddressLoader::Disabled,
+                    &bank,
                     &ReservedAccountKeys::empty_key_set(),
                 )
             });

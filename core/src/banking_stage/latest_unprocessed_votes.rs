@@ -352,6 +352,7 @@ impl LatestUnprocessedVotes {
     ) -> usize {
         let mut continue_forwarding = true;
         let pubkeys_by_stake = self.weighted_random_order_by_stake();
+<<<<<<< HEAD
         pubkeys_by_stake
             .into_iter()
             .filter(|&pubkey| {
@@ -389,6 +390,48 @@ impl LatestUnprocessedVotes {
                 false
             })
             .count()
+=======
+        let mut forwarded_count: usize = 0;
+        for pubkey in pubkeys_by_stake {
+            let Some(vote) = self.get_entry(pubkey) else {
+                continue;
+            };
+
+            let mut vote = vote.write().unwrap();
+            if vote.is_vote_taken() || vote.is_forwarded() {
+                continue;
+            }
+
+            let deserialized_vote_packet = vote.vote.as_ref().unwrap().clone();
+            let Some((sanitized_vote_transaction, _deactivation_slot)) = deserialized_vote_packet
+                .build_sanitized_transaction(
+                    bank.vote_only_bank(),
+                    bank.as_ref(),
+                    bank.get_reserved_account_keys(),
+                )
+            else {
+                continue;
+            };
+
+            let forwarding_successful = forward_packet_batches_by_accounts.try_add_packet(
+                &sanitized_vote_transaction,
+                deserialized_vote_packet,
+                &bank.feature_set,
+            );
+
+            if !forwarding_successful {
+                // To match behavior of regular transactions we stop forwarding votes as soon as one
+                // fails. We are assuming that failure (try_add_packet) means no more space
+                // available.
+                break;
+            }
+
+            vote.forwarded = true;
+            forwarded_count += 1;
+        }
+
+        forwarded_count
+>>>>>>> 7b0a57316d (Scheduler: Improve TTL (#3161))
     }
 
     /// Drains all votes yet to be processed sorted by a weighted random ordering by stake
